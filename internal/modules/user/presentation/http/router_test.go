@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/presentation/dto"
@@ -127,13 +128,13 @@ func (s *stubService) SetDefaultAddress(_ context.Context, in appdto.AddressRefI
 	return appdto.AddressOutput{ID: in.AddressID, IsDefault: true}, nil
 }
 
-func (s *stubService) LookupCustomer(_ context.Context, userID uuid.UUID) (appdto.CustomerLookupOutput, error) {
+func (s *stubService) LookupCustomer(_ context.Context, userID uuid.UUID) (contracts.Customer, error) {
 	s.record("LookupCustomer")
 	s.lookup = userID
 	if s.lookupErr != nil {
-		return appdto.CustomerLookupOutput{}, s.lookupErr
+		return contracts.Customer{}, s.lookupErr
 	}
-	return appdto.CustomerLookupOutput{ID: userID, Email: "user@example.com", Role: access.RoleCustomer}, nil
+	return contracts.Customer{ID: userID, Email: "user@example.com", Role: access.RoleCustomer}, nil
 }
 
 var _ appinterface.UserService = (*stubService)(nil)

@@ -5,6 +5,7 @@ package mapper
 import (
 	"context"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
@@ -68,17 +69,52 @@ func (m *Mapper) Addresses(ctx context.Context, list []model.Address) []dto.Addr
 	return out
 }
 
-// Customer maps a profile and its addresses into the read-only administrator
-// view of a customer.
-func (m *Mapper) Customer(ctx context.Context, profile model.Profile, list []model.Address) dto.CustomerLookupOutput {
-	return dto.CustomerLookupOutput{
+// Customer maps a profile and its addresses into the read-only view of a customer
+// that operators and other modules read.
+//
+// It produces the cross-module contract DTO rather than an application DTO of its
+// own. That is deliberate: the contract *is* this view, so a second shape would be
+// a parallel one that could drift without anything failing
+// (docs/system-design/contract-purity.md).
+//
+// The contract address deliberately carries no divisionNeedsReview flag. A consumer
+// that has to place an order must be able to remap a retired code, not be warned
+// about it by another module, and the flag needs a dataset read this mapper only
+// performs for the customer's own screen. What a consumer does get is the ordering:
+// the caller passes the rows the repository already ordered default address first
+// (FR-007d), and this mapping preserves that order.
+func (m *Mapper) Customer(profile model.Profile, list []model.Address) contracts.Customer {
+	return contracts.Customer{
 		ID:          profile.ID,
 		Email:       profile.Email,
 		Role:        profile.Role,
 		DisplayName: profile.DisplayName,
 		Phone:       profile.Phone,
-		Addresses:   m.Addresses(ctx, list),
+		Addresses:   customerAddresses(list),
 	}
+}
+
+// customerAddresses maps the account's addresses in the order they were given. An
+// empty list maps to a nil slice, which is the contract's own "no address" signal.
+func customerAddresses(list []model.Address) []contracts.CustomerAddress {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]contracts.CustomerAddress, 0, len(list))
+	for _, address := range list {
+		out = append(out, contracts.CustomerAddress{
+			ID:             address.ID,
+			RecipientName:  address.RecipientName,
+			RecipientPhone: address.RecipientPhone,
+			ProvinceCode:   address.ProvinceCode,
+			ProvinceName:   address.ProvinceName,
+			WardCode:       address.WardCode,
+			WardName:       address.WardName,
+			StreetAddress:  address.StreetAddress,
+			IsDefault:      address.IsDefault,
+		})
+	}
+	return out
 }
 
 func avatarOutput(avatar *model.AvatarReference) *dto.AvatarOutput {

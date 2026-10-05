@@ -177,13 +177,13 @@ contact details and address list; confirm an audit row exists for the read.
 
 ### Tests for User Story 4 (write first — they MUST fail)
 
-- [ ] T052 [P] [US4] HTTP authorization tests in `internal/modules/user/presentation/http/admin_test.go`: customer token → `403`, admin token → `200`, unknown account → `404 USER_NOT_FOUND`, a non-UUID `userId` → `400 VALIDATION_ERROR`, and the audit action recorded for each successful read
+- [x] T052 [P] [US4] HTTP authorization tests in `internal/modules/user/presentation/http/admin_test.go`: customer token → `403`, admin token → `200`, unknown account → `404 USER_NOT_FOUND`, a non-UUID `userId` → `400 VALIDATION_ERROR`, and the audit action recorded for each successful read
 
 ### Implementation for User Story 4
 
-- [ ] T053 [US4] Implement the lookup use case in `internal/modules/user/application/implement/admin_lookup.go` and make the module satisfy `internal/contracts.CustomerLookupService`, returning addresses default-first per FR-007d
-- [ ] T054 [US4] Implement the ADMIN-guarded `GET /api/v1/users/{userId}` route in `internal/modules/user/presentation/http/handler.go`, offering no write path for customer data
-- [ ] T055 [US4] Add the audit assertion to the integration test in `internal/modules/user/presentation/http/http_integration_test.go`: an admin read writes `USER_PROFILE_VIEWED_BY_ADMIN`
+- [x] T053 [US4] Implement the lookup use case in `internal/modules/user/application/implement/admin_lookup.go` and make the module satisfy `internal/contracts.CustomerLookupService`, returning addresses default-first per FR-007d
+- [x] T054 [US4] Implement the ADMIN-guarded `GET /api/v1/users/{userId}` route in `internal/modules/user/presentation/http/handler.go`, offering no write path for customer data
+- [x] T055 [US4] Add the audit assertion to the integration test in `internal/modules/user/presentation/http/http_integration_test.go`: an admin read writes `USER_PROFILE_VIEWED_BY_ADMIN`
 
 **Checkpoint**: All four stories work; later modules have a stable contract to reuse.
 

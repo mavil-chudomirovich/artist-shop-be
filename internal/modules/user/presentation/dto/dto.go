@@ -139,7 +139,11 @@ type UpdateAddressRequest struct {
 	StreetAddress *string `json:"streetAddress"`
 }
 
-// AddressResponse is one shipping address.
+// AddressResponse is one shipping address as the owner of the account sees it.
+//
+// It is a distinct type from OperatorAddressResponse on purpose: the two views
+// can answer different questions about the review flag, and one
+// `,omitempty` cannot be right for both (research D10).
 type AddressResponse struct {
 	// ID identifies the address.
 	ID uuid.UUID `json:"id"`
@@ -162,7 +166,43 @@ type AddressResponse struct {
 	// DivisionNeedsReview is true when a stored code is no longer in the official
 	// dataset; the captured names are still returned so the customer can see what
 	// was saved.
+	//
+	// It is always stated, false included: the customer's own list knows the
+	// answer, because the use case checks every stored code against the dataset.
+	// Omitting a known false would make a client read "absent" as "unknown",
+	// which in JavaScript is `undefined` rather than `false`.
 	DivisionNeedsReview bool `json:"divisionNeedsReview"`
+}
+
+// OperatorAddressResponse is one shipping address in the administrator's
+// read-only view of a customer.
+//
+// It has no divisionNeedsReview member, and that absence is deliberate rather
+// than an omission. The cross-module contract DTO the lookup is built from
+// carries no such flag, so nothing on that path checks a stored code against the
+// official dataset: answering `false` would claim every code is current when
+// nothing verified it. Absent means "this view cannot say", while the customer
+// view above means it and therefore states it. Splitting the two types is what
+// lets each answer honestly — one `,omitempty` shared by both could not.
+type OperatorAddressResponse struct {
+	// ID identifies the address.
+	ID uuid.UUID `json:"id"`
+	// RecipientName is the person the order goes to.
+	RecipientName string `json:"recipientName"`
+	// RecipientPhone is the normalised recipient phone number.
+	RecipientPhone string `json:"recipientPhone"`
+	// ProvinceCode is the stored first-level administrative unit.
+	ProvinceCode string `json:"provinceCode"`
+	// ProvinceName is the display name captured at save time.
+	ProvinceName string `json:"provinceName"`
+	// WardCode is the stored second-level administrative unit.
+	WardCode string `json:"wardCode"`
+	// WardName is the display name captured at save time.
+	WardName string `json:"wardName"`
+	// StreetAddress is the free-text house number and street.
+	StreetAddress string `json:"streetAddress"`
+	// IsDefault reports whether the account's default address.
+	IsDefault bool `json:"isDefault"`
 }
 
 // CustomerLookupResponse is the read-only administrator view of a customer.
@@ -178,8 +218,9 @@ type CustomerLookupResponse struct {
 	// Phone is null when unset.
 	Phone *string `json:"phone"`
 	// Addresses holds the customer's non-hidden addresses, default first and then
-	// most recently updated.
-	Addresses []AddressResponse `json:"addresses"`
+	// most recently updated. They are the operator type, which carries no
+	// divisionNeedsReview member.
+	Addresses []OperatorAddressResponse `json:"addresses"`
 }
 
 // ProvinceResponse is one first-level administrative unit for the cascading

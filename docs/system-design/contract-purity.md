@@ -20,8 +20,7 @@ nội bộ và không đọc bảng của nhau.
    trúc của module cung cấp. Contract chỉ mô tả dữ liệu được trao đổi.
 3. **Kiểu tường minh.** Contract khai báo rõ kiểu. Không dùng `map[string]any`, không
    dùng kiểu nội bộ làm kiểu contract.
-4. **Module cung cấp adapter ở composition root.** `internal/contracts` chỉ có interface
-   và DTO; bản hiện thực nằm trong module cung cấp và được wire ở `cmd/api`.
+4. **Module cung cấp adapter ở composition root.** `internal/contracts` chỉ có interface và DTO; bản hiện thực nằm trong module cung cấp và được wire ở `cmd/api`. Khi bản hiện thực **đã thỏa trực tiếp** interface của contract — ví dụ `implement.Service` của module user thỏa `contracts.CustomerLookupService` — thì không cần adapter trung gian: composition root wire chính bản hiện thực đó. Không được để bản hiện thực trả DTO song song với DTO của contract.
 5. **Đổi phụ thuộc là thay đổi phá vỡ.** Thêm trường bắt buộc, đổi kiểu, đổi nghĩa, hoặc
    bỏ trường đều là breaking. Thêm trường tuỳ chọn thì tương thích ngược.
 6. **Mỗi thay đổi contract phải kèm test** ở phía tiêu thụ.
@@ -55,7 +54,7 @@ type Customer struct {
     ID          uuid.UUID
     Email       string
     DisplayName string
-    Phone       string
+    Phone       *string
 }
 ```
 

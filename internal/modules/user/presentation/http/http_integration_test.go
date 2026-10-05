@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	authdomainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	authtoken "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
@@ -64,8 +65,12 @@ type integrationFixture struct {
 	owner uuid.UUID
 	// other is a second seeded account that must stay invisible to that session.
 	other uuid.UUID
+	// admin is a seeded administrator, the only role the lookup route accepts.
+	admin uuid.UUID
 	// token is a live access token for owner.
 	token string
+	// adminToken is a live access token for admin.
+	adminToken string
 	// mediaConfigured reports whether media credentials are present. The profile
 	// story must work with none of them (FR-021).
 	mediaConfigured bool
@@ -128,13 +133,19 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 		Mapper:    mapper.New(divisions),
 	})
 
-	owner := seedAccount(t, pool, "owner@example.com")
-	other := seedAccount(t, pool, "other@example.com")
+	owner := seedAccount(t, pool, "owner@example.com", access.RoleCustomer)
+	other := seedAccount(t, pool, "other@example.com", access.RoleCustomer)
+	admin := seedAccount(t, pool, "admin@example.com", access.RoleAdmin)
 
 	token, _, err := authtoken.NewAccessIssuer(integrationSecret, integrationTokenTTL).
 		Issue(owner, access.RoleCustomer)
 	if err != nil {
 		t.Fatalf("issue access token: %v", err)
+	}
+	adminToken, _, err := authtoken.NewAccessIssuer(integrationSecret, integrationTokenTTL).
+		Issue(admin, access.RoleAdmin)
+	if err != nil {
+		t.Fatalf("issue the administrator token: %v", err)
 	}
 
 	handler := New(
@@ -157,6 +168,8 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 		owner:           owner,
 		other:           other,
 		token:           token,
+		admin:           admin,
+		adminToken:      adminToken,
 		mediaConfigured: config.MediaConfig{}.IsConfigured(),
 		media:           media,
 	}
@@ -196,10 +209,10 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
 }
 
-// integrationService binds the real profile, avatar and address use cases to the
-// module's full use-case surface. The administrator-lookup method still comes from
-// the stub, whose route these tests never reach; this adapter disappears once every
-// story has landed and T023 wires *implement.Service directly.
+// integrationService binds the real profile, avatar, address and administrator-lookup
+// use cases to the module's full use-case surface. Every route is therefore served
+// by *implement.Service except the ones no story delivered; this adapter disappears
+// once T023 wires *implement.Service directly.
 type integrationService struct {
 	*stubService
 	user *implement.Service
@@ -239,6 +252,10 @@ func (s integrationService) DeleteAddress(ctx context.Context, in appdto.Address
 
 func (s integrationService) SetDefaultAddress(ctx context.Context, in appdto.AddressRefInput) (appdto.AddressOutput, error) {
 	return s.user.SetDefaultAddress(ctx, in)
+}
+
+func (s integrationService) LookupCustomer(ctx context.Context, id uuid.UUID) (contracts.Customer, error) {
+	return s.user.LookupCustomer(ctx, id)
 }
 
 var _ appinterface.UserService = integrationService{}
@@ -282,13 +299,13 @@ func integrationAuthHooks(t *testing.T) middleware.AuthHooks {
 
 // seedAccount inserts an account the way the auth module does. This module never
 // creates an account; the test seeds one so it has a session to act as.
-func seedAccount(t *testing.T, pool *pgxpool.Pool, email string) uuid.UUID {
+func seedAccount(t *testing.T, pool *pgxpool.Pool, email string, role access.Role) uuid.UUID {
 	t.Helper()
 	id := uuid.New()
 	const query = `
 		INSERT INTO users (id, email, password_hash, role, status)
-		VALUES ($1, $2, 'not-used-by-this-test', 'CUSTOMER', 'active')`
-	if _, err := pool.Exec(context.Background(), query, id, email); err != nil {
+		VALUES ($1, $2, 'not-used-by-this-test', $3, 'active')`
+	if _, err := pool.Exec(context.Background(), query, id, email, string(role)); err != nil {
 		t.Fatalf("seed account %s: %v", email, err)
 	}
 	return id
@@ -1545,5 +1562,112 @@ func TestAnAvatarSizedUploadReachesTheRouteThroughTheSharedPipeline(t *testing.T
 	if plainRec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("expected 415 for a JSON route sent text/plain, got %d (%s)",
 			plainRec.Code, plainRec.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// US4 against real infrastructure.
+//
+// The operator lookup is read-only, so what a real database adds here is the part a
+// stub cannot show: that the addresses come back in the repository's default-first
+// order rather than in storage order, that a customer token is refused before the
+// query runs, and that the audit row names the administrator and the customer
+// (FR-007d, FR-022, FR-022a).
+// ---------------------------------------------------------------------------
+
+// lookupPath is the operator route as the composition root mounts it.
+func (f *integrationFixture) lookupPath() string {
+	return profilePath[:len(profilePath)-len("/me")] + "/" + f.owner.String()
+}
+
+func TestAnAdministratorLookupIsAuditedAgainstPostgres(t *testing.T) {
+	f := newIntegrationFixture(t)
+	if rec := f.call(http.MethodPatch, profilePath,
+		`{"displayName":"Nguyen Van A","phone":"0912 345 678"}`, f.token); rec.Code != http.StatusOK {
+		t.Fatalf("seed the owner's profile: %d (%s)", rec.Code, rec.Body.String())
+	}
+	// The first address becomes the default (FR-009); the second is the more recently
+	// updated one, so an answer with the default first can only come from the
+	// repository's ordering.
+	first := f.createAddress(t, f.token, addressProvinceCode, addressWardCode, "12 Nguyen Hue")
+	f.createAddress(t, f.token, addressProvinceCode, otherAddressWardCode, "1 Le Loi")
+
+	rec := f.call(http.MethodGet, f.lookupPath(), "", f.adminToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeLookup(t, rec)
+	if body.Data.ID != f.owner || body.Data.Email != "owner@example.com" {
+		t.Fatalf("expected the owner's contact details, got %+v", body.Data)
+	}
+	if body.Data.DisplayName != "Nguyen Van A" {
+		t.Fatalf("expected the stored display name, got %q", body.Data.DisplayName)
+	}
+	if body.Data.Phone == nil || *body.Data.Phone != "0912345678" {
+		t.Fatalf("expected the normalised phone, got %v", body.Data.Phone)
+	}
+	if len(body.Data.Addresses) != 2 {
+		t.Fatalf("expected both stored addresses, got %+v", body.Data.Addresses)
+	}
+	if body.Data.Addresses[0].ID != first || !body.Data.Addresses[0].IsDefault {
+		t.Fatalf("expected the default address first, got %+v", body.Data.Addresses)
+	}
+
+	// FR-022a: the read is traceable to the administrator, to this customer and to a
+	// point in time. The actor comes from the token, never from the path.
+	events := f.waitForAuditRows(t, constant.AuditProfileViewedByAdmin, 1)
+	event := events[0]
+	if event.ActorID == nil || *event.ActorID != f.admin {
+		t.Fatalf("expected the administrator %s as the actor, got %v", f.admin, event.ActorID)
+	}
+	if event.ActorRole != string(access.RoleAdmin) {
+		t.Fatalf("expected the administrator role, got %q", event.ActorRole)
+	}
+	if event.TargetType != "user" || event.TargetID != f.owner.String() {
+		t.Fatalf("expected the read customer as the target, got %q/%q", event.TargetType, event.TargetID)
+	}
+	if event.Outcome != audit.OutcomeSuccess {
+		t.Fatalf("expected a SUCCESS outcome, got %q", event.Outcome)
+	}
+	if event.OccurredAt.IsZero() {
+		t.Fatal("expected a point in time on the event")
+	}
+
+	// A customer token is refused, and the refusal adds no row of its own (the
+	// privilege denial belongs to the auth module's hook, not to this trail).
+	if rec := f.call(http.MethodGet, f.lookupPath(), "", f.token); rec.Code != http.StatusForbidden {
+		t.Fatalf("a customer token: expected 403, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := len(f.auditRows(t, constant.AuditProfileViewedByAdmin)); got != 1 {
+		t.Fatalf("a refused read must not add a row, got %d", got)
+	}
+
+	// The read changed nothing: the customer's row still says what it said.
+	stored := f.storedRow(t, f.owner)
+	if stored.DisplayName == nil || *stored.DisplayName != "Nguyen Van A" {
+		t.Fatalf("a read changed the customer's profile: %+v", stored)
+	}
+	if got := f.visibleDefaultIDs(t, f.owner); len(got) != 1 || got[0] != first {
+		t.Fatalf("a read moved the default address: %v", got)
+	}
+}
+
+// An account nobody created is the module's own 404, and the response confirms
+// nothing about which identifiers exist.
+func TestAnAdministratorLookupOfAnUnknownAccountIsNotFound(t *testing.T) {
+	f := newIntegrationFixture(t)
+	path := profilePath[:len(profilePath)-len("/me")] + "/" + uuid.New().String()
+
+	rec := f.call(http.MethodGet, path, "", f.adminToken)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != constant.CodeUserNotFound {
+		t.Fatalf("expected %s, got %s", constant.CodeUserNotFound, got)
+	}
+	if got := len(f.auditRows(t, constant.AuditProfileViewedByAdmin)); got != 0 {
+		t.Fatalf("a read that opened nothing must not be audited, got %d rows", got)
 	}
 }

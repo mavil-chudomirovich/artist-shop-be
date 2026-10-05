@@ -165,7 +165,7 @@ func TestCustomerCarriesTheAddressesDefaultFirst(t *testing.T) {
 	m := New(divisions)
 	profile := model.Profile{ID: uuid.New(), Email: "user@example.com", Role: access.RoleCustomer}
 
-	out := m.Customer(context.Background(), profile, []model.Address{storedAddress("79", "26734")})
+	out := m.Customer(profile, []model.Address{storedAddress("79", "26734")})
 
 	if out.ID != profile.ID || out.Email != profile.Email || out.Role != access.RoleCustomer {
 		t.Fatalf("unexpected customer identity: %+v", out)

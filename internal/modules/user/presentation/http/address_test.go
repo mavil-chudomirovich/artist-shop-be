@@ -1017,6 +1017,39 @@ func TestAStoredCodeThatLeftTheDatasetIsFlaggedInTheResponse(t *testing.T) {
 	}
 }
 
+// research D10 through the wire, the other way round: codes that are still current
+// answer an explicit false rather than an absent member.
+//
+// The body is decoded into a map on purpose. A typed decode cannot tell an absent
+// member from a false one — both read as the zero value — so only a map proves the
+// member is stated.
+func TestTheCustomerListStatesDivisionNeedsReviewWhenTheCodesAreCurrent(t *testing.T) {
+	fixture := newAddressFixture(t)
+	fixture.create(t, liveToken)
+
+	rec := do(fixture.router, http.MethodGet, "/me/addresses", liveToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode address list %q: %v", rec.Body.String(), err)
+	}
+	if len(envelope.Data) != 1 {
+		t.Fatalf("expected the one saved address, got %d", len(envelope.Data))
+	}
+	value, stated := envelope.Data[0]["divisionNeedsReview"]
+	if !stated {
+		t.Fatalf("a known answer must be stated, not omitted: %s", rec.Body.String())
+	}
+	if flag, isBool := value.(bool); !isBool || flag {
+		t.Fatalf("expected an explicit false for codes still in the dataset, got %v", value)
+	}
+}
+
 // SC-002, FR-005: no address route runs without a usable session, so nothing is
 // read or written.
 func TestAddressRoutesRefuseACallerWithoutAToken(t *testing.T) {

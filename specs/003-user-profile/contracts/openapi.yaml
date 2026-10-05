@@ -631,7 +631,48 @@ components:
           description: >
             True when the stored province or ward code is no longer in the current
             official dataset. The captured names are still returned so the customer
-            can see what was saved.
+            can see what was saved. Always present on the customer's own addresses,
+            including when false; deliberately absent on the operator lookup, where
+            nothing on the request path checks the dataset.
+    CustomerLookupAddress:
+      type: object
+      description: >
+        An address as an operator sees it: the same nine members as Address, without
+        divisionNeedsReview. The operator lookup never validates the stored codes
+        against the dataset, so it reports what was saved and stays silent about
+        whether the codes are still current.
+      required:
+        [
+          id,
+          recipientName,
+          recipientPhone,
+          provinceCode,
+          provinceName,
+          wardCode,
+          wardName,
+          streetAddress,
+          isDefault,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipientName:
+          type: string
+        recipientPhone:
+          type: string
+        provinceCode:
+          type: string
+        provinceName:
+          type: string
+        wardCode:
+          type: string
+        wardName:
+          type: string
+        streetAddress:
+          type: string
+        isDefault:
+          type: boolean
     CreateAddressRequest:
       type: object
       required:
@@ -711,4 +752,4 @@ components:
             updated. Hidden addresses are never included. Consumers such as the order
             module may rely on that ordering to offer the default first (FR-007d).
           items:
-            $ref: "#/components/schemas/Address"
+            $ref: "#/components/schemas/CustomerLookupAddress"

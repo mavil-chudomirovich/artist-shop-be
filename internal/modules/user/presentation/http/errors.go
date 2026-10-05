@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
@@ -43,7 +44,11 @@ func fieldError(field, issue string) *httpx.AppError {
 func mapError(err error) *httpx.AppError {
 	var invalidAddress *domainerr.AddressFieldError
 	switch {
-	case errors.Is(err, domainerr.ErrUserNotFound):
+	// The two sentinels are the same condition seen from two sides: the module's own
+	// domain error, and the cross-module contract error the operator lookup reports
+	// so a consumer can branch on it without importing this module. Both answer the
+	// documented 404 rather than adding a code a client would have to learn twice.
+	case errors.Is(err, domainerr.ErrUserNotFound), errors.Is(err, contracts.ErrCustomerNotFound):
 		return coded(constant.CodeUserNotFound, http.StatusNotFound, "No account carries that identifier")
 	case errors.Is(err, domainerr.ErrAddressNotFound):
 		return coded(constant.CodeAddressNotFound, http.StatusNotFound, "Address not found")

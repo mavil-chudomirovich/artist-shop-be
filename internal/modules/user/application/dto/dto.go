@@ -169,21 +169,3 @@ type AddressRefInput struct {
 	// address of another customer is simply not found (FR-013).
 	AddressID uuid.UUID
 }
-
-// CustomerLookupOutput is the read-only administrator view of a customer: their
-// contact details plus their non-hidden addresses, default first (FR-022).
-type CustomerLookupOutput struct {
-	// ID identifies the account.
-	ID uuid.UUID
-	// Email is the account email, owned by the auth module.
-	Email string
-	// Role is the account role.
-	Role access.Role
-	// DisplayName may be empty when the customer never set one.
-	DisplayName string
-	// Phone is the normalised phone number, or nil when unset.
-	Phone *string
-	// Addresses holds the customer's non-hidden addresses, default first and
-	// then most recently updated (FR-007d).
-	Addresses []AddressOutput
-}

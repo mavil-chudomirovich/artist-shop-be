@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
 )
@@ -161,8 +162,17 @@ type UserService interface {
 	SetDefaultAddress(ctx context.Context, in dto.AddressRefInput) (dto.AddressOutput, error)
 
 	// LookupCustomer returns a customer's contact details and addresses for an
-	// operator. It is read-only, reports domainerr.ErrUserNotFound for an unknown
-	// account and audits every successful read (FR-022, FR-022a). It is what
-	// makes the module satisfy internal/contracts.CustomerLookupService.
-	LookupCustomer(ctx context.Context, userID uuid.UUID) (dto.CustomerLookupOutput, error)
+	// operator. It is read-only, reports contracts.ErrCustomerNotFound for an
+	// unknown account and audits every successful read (FR-022, FR-022a).
+	//
+	// It returns the cross-module contract DTO rather than an application DTO of
+	// its own, because *implement.Service satisfies
+	// internal/contracts.CustomerLookupService directly: a second shape would be a
+	// parallel one that could drift without anything failing
+	// (docs/system-design/contract-purity.md).
+	//
+	// The acting administrator is taken from the context that presentation filled
+	// from the session (ActorFromContext); the userID is the subject of the read,
+	// never the actor.
+	LookupCustomer(ctx context.Context, userID uuid.UUID) (contracts.Customer, error)
 }

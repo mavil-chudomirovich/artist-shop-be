@@ -285,6 +285,31 @@ retired code.
 
 ---
 
+## D11: How the administrator identity reaches the customer lookup
+
+**Decision**: the lookup method keeps the committed signature
+`LookupCustomer(ctx, userID) (Customer, error)` and carries the administrator
+identity in the **request context**, not as a parameter.
+
+**Why**: FR-022a requires recording *who* looked, while `internal/contracts/user.go`
+declares the method with no actor argument. Changing the contract now would be a
+breaking change (rule 5 of `docs/system-design/contract-purity.md`), and the contract is
+shared with the order module, which does not exist yet. Adding a parameter later is a
+deliberate, breaking decision to be taken with the first real consumer.
+
+The context carrier is module-owned (`application/interface.Actor`) and is filled by
+`presentation` from the authenticated session, so no client input can reach it: the
+Constitution III rule holds. `userId` in the path names *whose* data is read; the session
+names *who* is asking. A non-request caller, such as the order module, gets a nil actor
+and the event is still recorded with an empty actor — a known, documented gap recorded in
+`deferred.md` rather than papered over.
+
+**Rejected**: adding an `actor` parameter now (breaking a shared contract with no
+consumer to justify it); auditing only the account id (FR-022a asks for the actor, and an
+operator lookup is exactly where accountability matters).
+
+---
+
 ## Open questions carried into implementation
 
 None. Every decision above is settled; the tasks phase can proceed without asking.

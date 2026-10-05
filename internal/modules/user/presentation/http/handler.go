@@ -15,10 +15,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/constant"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/presentation/dto"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
@@ -68,19 +70,32 @@ func decode(r *http.Request, dst any) error {
 // acting account, which is what makes cross-account access impossible by
 // construction (FR-006, research D5).
 func (h *Handler) sessionAccount(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	actor, ok := h.sessionActor(w, r)
+	return actor.ID, ok
+}
+
+// sessionActor returns the acting account together with the role its session
+// carries. Only the operator lookup needs the role: the audit row it writes has to
+// name who looked, and a role taken from the token is a privilege the caller really
+// holds rather than one it claimed.
+//
+// A missing or unparseable identity answers UNAUTHENTICATED, which on the
+// self-service routes is a client mistake and behind the ADMIN guard is an invalid
+// session this service cannot produce.
+func (h *Handler) sessionActor(w http.ResponseWriter, r *http.Request) (appinterface.Actor, bool) {
 	identity, ok := middleware.IdentityFromContext(r.Context())
 	if !ok {
 		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
-		return uuid.Nil, false
+		return appinterface.Actor{}, false
 	}
 	accountID, err := uuid.Parse(identity.Subject)
 	if err != nil {
 		// The auth module only issues tokens whose subject is a UUID, so this is
 		// an invalid session rather than a client mistake.
 		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
-		return uuid.Nil, false
+		return appinterface.Actor{}, false
 	}
-	return accountID, true
+	return appinterface.Actor{ID: accountID, Role: access.Role(identity.Role)}, true
 }
 
 // pathUUID reads a UUID path parameter. A value that is not a UUID is a request
@@ -417,13 +432,23 @@ func (h *Handler) SetDefaultAddress(w http.ResponseWriter, r *http.Request) {
 // LookupCustomer is the read-only operator lookup. The route is guarded by the
 // ADMIN role middleware, offers no write path for customer data, and the use
 // case audits every successful read (FR-022, FR-022a).
+//
+// The path identifier names whose data is read; the session names who is asking.
+// Handing the actor to the use case through the context is what keeps FR-022a
+// satisfiable at all: the contract method takes only the subject, so the identity
+// has to travel beside it (research D5).
 func (h *Handler) LookupCustomer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
 	userID, appErr := pathUUID(r, "userId", fieldUserID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	customer, err := h.svc.LookupCustomer(r.Context(), userID)
+	ctx := appinterface.WithActor(r.Context(), actor)
+	customer, err := h.svc.LookupCustomer(ctx, userID)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -454,6 +479,9 @@ func toAvatarResponse(avatar *appdto.AvatarOutput) *httpdto.AvatarResponse {
 	}
 }
 
+// toAddressResponse maps one address of the customer's own view. It is the
+// single conversion point for that view: every self-service address route reads
+// its answer through it, so the shape a customer sees cannot drift per route.
 func toAddressResponse(address appdto.AddressOutput) httpdto.AddressResponse {
 	return httpdto.AddressResponse{
 		ID:                  address.ID,
@@ -480,13 +508,44 @@ func toAddressResponses(list []appdto.AddressOutput) []httpdto.AddressResponse {
 	return out
 }
 
-func toCustomerLookupResponse(customer appdto.CustomerLookupOutput) httpdto.CustomerLookupResponse {
+func toCustomerLookupResponse(customer contracts.Customer) httpdto.CustomerLookupResponse {
 	return httpdto.CustomerLookupResponse{
 		ID:          customer.ID,
 		Email:       customer.Email,
 		Role:        customer.Role,
 		DisplayName: customer.DisplayName,
 		Phone:       customer.Phone,
-		Addresses:   toAddressResponses(customer.Addresses),
+		Addresses:   toCustomerAddressResponses(customer.Addresses),
 	}
+}
+
+// toCustomerAddressResponses maps the operator view's addresses.
+//
+// This is the single conversion point for the operator view, built from the
+// cross-module contract type. It targets OperatorAddressResponse rather than the
+// customer's AddressResponse: the contract address carries no
+// divisionNeedsReview, nothing on this path checks a stored code against the
+// official dataset, and a shared member would have to either assert an
+// unverified `false` or drop the very `false` the customer's own list needs to
+// state (research D10).
+//
+// Unlike the customer's own listing, an account with no address answers with an
+// empty array rather than null: the contract declares addresses as a required
+// array, so a null would be a shape no client can read.
+func toCustomerAddressResponses(list []contracts.CustomerAddress) []httpdto.OperatorAddressResponse {
+	out := make([]httpdto.OperatorAddressResponse, 0, len(list))
+	for _, address := range list {
+		out = append(out, httpdto.OperatorAddressResponse{
+			ID:             address.ID,
+			RecipientName:  address.RecipientName,
+			RecipientPhone: address.RecipientPhone,
+			ProvinceCode:   address.ProvinceCode,
+			ProvinceName:   address.ProvinceName,
+			WardCode:       address.WardCode,
+			WardName:       address.WardName,
+			StreetAddress:  address.StreetAddress,
+			IsDefault:      address.IsDefault,
+		})
+	}
+	return out
 }
