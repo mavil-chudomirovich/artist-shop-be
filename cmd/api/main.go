@@ -18,6 +18,8 @@ import (
 	authredis "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/redis"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	authhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/http"
+	useradministrative "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/administrative"
+	userhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/presentation/http"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/cache"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
@@ -104,6 +106,13 @@ func run() error {
 	})
 
 	authHandler := authhttp.New(authService, auditorAdapter, logger)
+	authHooks := authHandler.AuthHooks()
+
+	// Module 02 (user). The administrative reference data is served directly from
+	// the Divisions port: the dataset is embedded in the binary, so the answers
+	// need no use case and no account. The /users group joins this composition
+	// with the module's repositories, media store and use cases.
+	userDivisionsHandler := userhttp.NewDivisionsHandler(useradministrative.New(), logger)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Config:  cfg,
@@ -111,9 +120,10 @@ func run() error {
 		DB:      db,
 		Cache:   redisCache,
 		Version: runner.Version,
-		Auth:    authHandler.AuthHooks(),
+		Auth:    authHooks,
 		Mount: func(r chi.Router) {
 			r.Mount("/auth", authHandler.Router(cfg.Auth))
+			r.Mount("/divisions", userDivisionsHandler.Router(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)

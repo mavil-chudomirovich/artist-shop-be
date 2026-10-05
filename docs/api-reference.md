@@ -417,7 +417,78 @@ Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
 
 ---
 
-## 4. Bảng tổng hợp
+## 4. Module 02 - User (`/api/v1`)
+
+Module hồ sơ khách hàng. Feature `003-user-profile` đang triển khai dần theo từng
+user story; ở giai đoạn hiện tại mới có nhóm `/divisions` (dữ liệu hành chính tham
+chiếu, dùng chung cho module User, Order, Shipping và Commission).
+
+### 4.1 `GET /divisions/provinces`
+
+Danh sách tỉnh/thành phố từ dataset hành chính nhúng sẵn trong binary (ADR-002),
+sắp xếp theo tên, trùng tên thì theo mã.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` |
+
+Response:
+
+```json
+{
+  "data": [
+    { "code": "01", "name": "Hà Nội" },
+    { "code": "79", "name": "Thành phố Hồ Chí Minh" }
+  ],
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `UNAUTHENTICATED` 401
+
+Ghi chú:
+
+- Cố ý **không** phân trang: kết quả là dữ liệu tham chiếu bị chặn bởi bản thân dataset
+  (~35 tỉnh), nhỏ hơn mọi `pageSize` mà client hợp lý có thể yêu cầu. Xem
+  `specs/003-user-profile/plan.md` phần Complexity Tracking. Danh sách **địa chỉ** của
+  khách hàng thì có phân trang (FR-018).
+- Endpoint này không kiểm tra ADMIN: dữ liệu tham chiếu, không phải dữ liệu khách hàng.
+
+### 4.2 `GET /divisions/provinces/{provinceCode}/wards`
+
+Danh sách phường/xã của một tỉnh. `provinceCode` là mã tỉnh trong dataset (ví dụ `01`).
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` |
+
+Response:
+
+```json
+{
+  "data": [
+    { "code": "0001", "name": "Phường Hoàng Kiết", "provinceCode": "01" }
+  ],
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `UNAUTHENTICATED` 401 · `VALIDATION_ERROR` 400 · `USER_UNKNOWN_PROVINCE` 400
+
+Ghi chú:
+
+- Mã tỉnh không tồn tại trả `400 USER_UNKNOWN_PROVINCE`, **không** phải `404`: tham số
+  đường dẫn sai là lỗi input, khớp với `contracts/error-codes.md` và với các endpoint
+  địa chỉ dùng cùng mã lỗi này.
+- Endpoint cố ý không phân trang, cùng lý do như 4.1.
+
+---
+
+## 5. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -434,27 +505,30 @@ Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
 | GET | `/api/v1/auth/me` | Bearer | Thông tin tài khoản hiện tại |
 | POST | `/api/v1/auth/password/change` | Bearer | Đổi mật khẩu, thu hồi mọi phiên |
 | GET | `/api/v1/auth/admin/probe` | ADMIN | Kiểm tra RBAC |
+| GET | `/api/v1/divisions/provinces` | Bearer | Danh sách tỉnh/thành phố |
+| GET | `/api/v1/divisions/provinces/{provinceCode}/wards` | Bearer | Danh sách phường/xã của một tỉnh |
 
 ---
 
-## 5. Quy tắc cập nhật
+## 6. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 4.
-3. Thêm dòng vào Change log ở mục 6.
+2. Cập nhật bảng tổng hợp ở mục 5.
+3. Thêm dòng vào Change log ở mục 7.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
    `specs/<feature>/contracts/<module>-error-codes.md` của feature đó).
 
-## 6. Change log
+## 7. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-06 | Thêm nhóm `/api/v1/divisions/*` (module 02 User): `GET /divisions/provinces` và `GET /divisions/provinces/{provinceCode}/wards`, đọc dataset hành chính nhúng sẵn (ADR-002). Hai endpoint cố ý không phân trang và yêu cầu Bearer token. | `internal/modules/user/presentation/http/router.go` |
 | 2026-10-06 | `POST /password/change` thu hồi **toàn bộ** phiên của tài khoản và bắt buộc có `refreshToken`; thêm `VALIDATION_ERROR` 400 và `AUTH_TOKEN_INVALID` 401 vào danh sách lỗi của endpoint này. | `internal/modules/auth/application/implement/password.go` |
 | 2026-10-06 | `POST /refresh` phát hiện replay thì thu hồi **toàn bộ** phiên của user và ghi `audit_logs` (`AUTH_REFRESH_REUSED`), khớp với mục 1.6. | `internal/modules/auth/application/implement/session.go` |
 | 2026-10-06 | Gỡ `AUTH_EMAIL_TAKEN` khỏi bảng error code và khỏi `/register`: endpoint này luôn trả `202` chung nên không được tiết lộ email đã tồn tại (FR-011). | `internal/modules/auth/domain/constant/codes.go` |

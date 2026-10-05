@@ -153,3 +153,45 @@ func TestMediaConfigReadsTheMediaPrefix(t *testing.T) {
 		t.Fatal("expected partial credentials to report unconfigured")
 	}
 }
+
+func TestUserRateLimitsDefault(t *testing.T) {
+	setValidEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.User.AvatarUploadRatePerHour != 10 {
+		t.Fatalf("expected 10 avatar uploads per hour, got %d", cfg.User.AvatarUploadRatePerHour)
+	}
+	if cfg.User.AddressWriteRatePerMinute != 30 {
+		t.Fatalf("expected 30 address writes per minute, got %d", cfg.User.AddressWriteRatePerMinute)
+	}
+}
+
+func TestUserRateLimitsReadTheUserPrefix(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("USER_AVATAR_UPLOAD_RATE_PER_HOUR", "3")
+	t.Setenv("USER_ADDRESS_WRITE_RATE_PER_MINUTE", "7")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.User.AvatarUploadRatePerHour != 3 {
+		t.Fatalf("USER_AVATAR_UPLOAD_RATE_PER_HOUR was not read: %d", cfg.User.AvatarUploadRatePerHour)
+	}
+	if cfg.User.AddressWriteRatePerMinute != 7 {
+		t.Fatalf("USER_ADDRESS_WRITE_RATE_PER_MINUTE was not read: %d", cfg.User.AddressWriteRatePerMinute)
+	}
+}
+
+func TestValidateRejectsNonPositiveUserRateLimits(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("USER_AVATAR_UPLOAD_RATE_PER_HOUR", "0")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "USER rate-limit thresholds") {
+		t.Fatalf("expected a USER rate-limit error, got %v", err)
+	}
+}

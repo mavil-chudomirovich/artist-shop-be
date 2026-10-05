@@ -72,17 +72,16 @@ This is a Go web service inside a modular monolith. Paths follow `plan.md`:
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T013 [P] Declare repository interfaces in `internal/modules/user/domain/repository/user.go` and `internal/modules/user/domain/repository/address.go`, embedding `share/repository.Repository[T, ID]` where it applies and adding `SetDefault(ctx, id)` and `ClearDefault(ctx, userID)` for the invariant; per coding conventions a repository MUST NOT open a transaction
-- [ ] T014 [P] Define HTTP request/response payloads in `internal/modules/user/presentation/dto/dto.go`: update-profile, avatar (multipart), create/update address, address, province, ward and customer-lookup shapes, matching `contracts/openapi.yaml` and using the exact JSON field names from it. `avatar` is the only signal for "has a photo"; there is no `hasAvatar` field
-- [ ] T015 [P] Map errors to HTTP in `internal/modules/user/presentation/http/errors.go`: this module's sentinel errors plus the shared division errors from T004, using the status codes in `contracts/error-codes.md`, and attaching field-level `httpx.Detail` entries for phone, province, ward and street-address failures (FR-020)
-- [ ] T016 Define use-case input/output types in `internal/modules/user/application/dto/dto.go`
-- [ ] T017 Declare the use-case interface in `internal/modules/user/application/interface/ports.go`: `UserService` with profile read/update, avatar set/remove, address CRUD, set-default and the administrator lookup, plus a composition `Config` carrying the avatar size ceiling
-- [ ] T018 [P] Implement the single mapper in `internal/modules/user/application/mapper/mapper.go` (model ↔ dto, including the address `divisionNeedsReview` flag from research D10); this stays the only place types are converted
-- [ ] T019 [P] Implement the audit adapter in `internal/modules/user/infrastructure/implement/auditor/auditor.go`, delegating to the foundation `share/audit` writer
-- [ ] T020 [P] Implement the `Divisions` adapter in `internal/modules/user/infrastructure/implement/administrative/administrative.go`, delegating to `internal/share/administrative` and satisfying the T011 port, so `application` depends on an interface rather than on the shared package
-- [ ] T021 [P] Add module rate limits in `internal/share/config/config.go` (avatar uploads per hour, address writes per minute) wired under the `USER_` prefix, and apply them in T022 so FR-025 does not rely on the global limit alone
-- [ ] T022 Build the `/users` and `/divisions` route groups in `internal/modules/user/presentation/http/router.go` — no separate `/admin` prefix, because the administrator lookup is `GET /api/v1/users/{userId}` — enforcing authentication, ADMIN role and ownership, applying the T021 limits, and auditing privilege denials the way the auth module does. Note that chi resolves the static `/users/me` segment before `/users/{userId}`, and a `userId` that is not a UUID returns `400 VALIDATION_ERROR`
-- [ ] T023 Construct the module in `cmd/api/main.go`: repositories, the T020 divisions adapter, media adapter, auditor and the router mounted under `/api/v1`, then confirm `go build ./...` succeeds
+- [x] T013 [P] Declare repository interfaces in `internal/modules/user/domain/repository/user.go` and `internal/modules/user/domain/repository/address.go`, plus `SetDefault(ctx, id)` and `ClearDefault(ctx, userID)` for the invariant; per coding conventions a repository MUST NOT open a transaction. They are declared as **explicit method sets, not** `share/repository.Repository[T, ID]` embeds: the generic contract offers a paginated `FindAll` that would enumerate every customer's addresses, and a hard `Delete`, while ADR-004 requires soft delete. An adapter may still embed `share/repository.Base` with an explicit `Columns` projection matching its scan arity
+- [x] T014 [P] Define HTTP request/response payloads in `internal/modules/user/presentation/dto/dto.go`: update-profile, avatar (multipart), create/update address, address, province, ward and customer-lookup shapes, matching `contracts/openapi.yaml` and using the exact JSON field names from it. `avatar` is the only signal for "has a photo"; there is no `hasAvatar` field
+- [x] T015 [P] Map errors to HTTP in `internal/modules/user/presentation/http/errors.go`: this module's sentinel errors plus the shared division errors from T004, using the status codes in `contracts/error-codes.md`, and attaching field-level `httpx.Detail` entries for phone, province, ward and street-address failures (FR-020)
+- [x] T016 Define use-case input/output types in `internal/modules/user/application/dto/dto.go`
+- [x] T017 Declare the use-case interface in `internal/modules/user/application/interface/ports.go`: `UserService` with profile read/update, avatar set/remove, address CRUD, set-default and the administrator lookup, plus a composition `Config` carrying the avatar size ceiling. The `/divisions` listings are deliberately **not** part of `UserService`: they are served straight from the T011 `Divisions` port, because a read-only reference lookup with no business rules does not earn a use case (recorded in plan.md Complexity Tracking)
+- [x] T018 [P] Implement the single mapper in `internal/modules/user/application/mapper/mapper.go` (model ↔ dto, including the address `divisionNeedsReview` flag from research D10); this stays the only place types are converted
+- [x] T019 [P] Implement the audit adapter in `internal/modules/user/infrastructure/implement/auditor/auditor.go`, delegating to the foundation `share/audit` writer
+- [x] T020 [P] Implement the `Divisions` adapter in `internal/modules/user/infrastructure/implement/administrative/administrative.go`, delegating to `internal/share/administrative` and satisfying the T011 port, so `application` depends on an interface rather than on the shared package
+- [x] T021 [P] Add module rate limits in `internal/share/config/config.go` (avatar uploads per hour, address writes per minute) wired under the `USER_` prefix, and apply them in T022 so FR-025 does not rely on the global limit alone
+- [x] T022 Build the `/users` and `/divisions` route groups in `internal/modules/user/presentation/http/router.go` — no separate `/admin` prefix, because the administrator lookup is `GET /api/v1/users/{userId}` — enforcing authentication, ADMIN role and ownership, applying the T021 limits, and auditing privilege denials the way the auth module does. Note that chi resolves the static `/users/me` segment before `/users/{userId}`, and a `userId` that is not a UUID returns `400 VALIDATION_ERROR`
 
 **Checkpoint**: Foundation ready — user stories can now begin.
 
@@ -162,7 +161,7 @@ and a too-large file and see both rejected with the previous avatar intact, then
 - [ ] T047 [US3] Implement the avatar reference value object in `internal/modules/user/domain/model/avatar.go`
 - [ ] T048 [US3] Implement the Cloudinary adapter in `internal/modules/user/infrastructure/implement/media/cloudinary.go`, uploading the original bytes with a 512 px width transformation (ADR-005) and mapping provider failures to `ErrMediaUnavailable` without leaking provider detail
 - [ ] T049 [US3] Implement avatar set and remove use cases in `internal/modules/user/application/implement/profile.go`, recording `USER_AVATAR_SET` and `USER_AVATAR_REMOVED`, and releasing the previous reference when replacing
-- [ ] T050 [US3] Implement the multipart handlers in `internal/modules/user/presentation/http/handler.go` with a route-specific body ceiling above the global `MAX_BODY_BYTES`, sniffing the payload instead of trusting the filename or the client-declared content type, and reading with a hard ceiling
+- [ ] T050 [US3] Implement the multipart handlers in `internal/modules/user/presentation/http/handler.go` with a route-specific body ceiling above the global `MAX_BODY_BYTES`, sniffing the payload instead of trusting the filename or the client-declared content type, and reading with a hard ceiling. **Foundation prerequisite, discovered in Phase 2:** `internal/share/httpserver/routes.go` applies `middleware.JSONContentType` globally, and that middleware answers `415` to any request whose content type is not `application/json`, so `multipart/form-data` can never reach the route; the same global `middleware.BodyLimit` wraps the body in `MaxBytesReader(MAX_BODY_BYTES)` **before** the route runs, so a larger route-level ceiling cannot lift it. T050 therefore also has to scope the JSON content-type check to the routes that expect JSON and raise the global body ceiling to a value that still caps a malicious upload, keeping the precise FR-015 check at the avatar route
 - [ ] T051 [US3] Add the avatar integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: upload, replace, rejected upload keeps the old avatar, remove
 
 **Checkpoint**: US1–US3 work independently — the customer profile is complete.
@@ -192,10 +191,11 @@ contact details and address list; confirm an audit row exists for the read.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T056 [P] Update `docs/api-reference.md`: add the twelve new endpoints in the six-part format used by the existing entries (info table **including its rate limit** · Request · Response · Errors · notes), add the `USER_*` codes to §1.4, add the two new module limits from T021 to §1.5, extend the §4 summary table, add a change-log row, and correct the constitution version cited in its header. Required by Constitution VIII in the same change
+- [ ] T056 [P] Update `docs/api-reference.md`: add the twelve new endpoints in the six-part format used by the existing entries (info table **including its rate limit** · Request · Response · Errors · notes), add the `USER_*` codes to §1.4, add the two new module limits from T021 to §1.5, extend the §5 summary table, add a change-log row, and correct the constitution version cited in its header. The two `/divisions` endpoints are already documented in §4 from Phase 2, so only the ten `/users` endpoints remain. Required by Constitution VIII in the same change
 - [ ] T057 [P] Add the media and rate-limit variables to `.env.example` and document them in `docs/configuration.md`, including the failure mode that a missing media configuration disables avatar upload
 - [ ] T058 [P] Update `docs/modules/02-user.md` to mark the feature implemented, record the dataset refresh policy, and state the `users` ownership split: auth owns `id`, `email`, `password_hash`, `role`, `status` and timestamps; this module owns the six profile columns and is their only writer
 - [ ] T059 [P] Verify in `internal/share/logging/redact_test.go` that media credentials and provider responses cannot leak into logs
+- [ ] T023 Construct the whole module in `cmd/api/main.go`: the profile and address repositories, the T020 divisions adapter, the T048 media adapter, the user auditor and the router mounted under `/api/v1`, then confirm `go build ./...` succeeds. This task is deliberately last because it can only be wired once every use case exists; Phase 2 mounts only `/divisions`
 - [ ] T060 [P] Check that every new file is UTF-8 without BOM with LF endings per `.editorconfig` and `docs/development/code-hygiene.md`, including `internal/share/administrative/data/vn-divisions.json`
 - [ ] T061 [P] Write an ADR at `docs/decisions/NNN-<name>.md` for any long-lived decision taken during implementation that ADR-002 to ADR-005 does not already cover, following `docs/decisions/template.md`; skip this task only when nothing new came up
 - [ ] T062 Run the `quickstart.md` validation end-to-end (`make up-tools` plus the curl scenarios) **including the four mandatory checks from `docs/development/api-testing.md`**: 401 without a token, 403 plus an audit row for the wrong role, cross-account access refused with 404, and a correct response envelope
@@ -226,10 +226,13 @@ contact details and address list; confirm an audit row exists for the read.
 
 ### Critical Path
 
-T001 → T005 → T013 → T017 → T023 → T031 → T032 → (US1 complete) → T040 → T041 → T050 → T054
+T001 → T005 → T013 → T017 → T031 → T032 → (US1 complete) → T040 → T041 → T050 → T054 → T023
 
 The default-address invariant additionally requires T005 before T039, and its test T036
 is the one that must fail first.
+
+T023 comes last by construction: the composition in `cmd/api/main.go` needs every use
+case to exist before it can be wired.
 
 ### Within Each User Story
 

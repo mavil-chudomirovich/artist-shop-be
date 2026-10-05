@@ -363,8 +363,10 @@ paths:
                     $ref: "#/components/schemas/Meta"
         "401":
           $ref: "#/components/responses/Error"
-        "404":
-          description: Unknown province code (USER_UNKNOWN_PROVINCE).
+        "400":
+          description: Unknown province code (USER_UNKNOWN_PROVINCE). The code is
+            400 rather than 404 because the province path parameter is malformed
+            input, matching contracts/error-codes.md and the address routes.
           content:
             application/json:
               schema:

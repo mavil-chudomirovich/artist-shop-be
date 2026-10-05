@@ -228,6 +228,8 @@ single path is what the spec, contracts and research define. chi resolves the st
 a UUID returns `400 VALIDATION_ERROR`.
 
 ## Complexity Tracking
+| `GET /api/v1/divisions/*` handlers call the `Divisions` port (`application/interface`) directly from `presentation/http` instead of a `UserService` use case | Both endpoints are pure reference-data lookups: a province list and a ward list, with no business rule, no audit-worthy state change and no rate limit beyond the global one. A pass-through use case would forward arguments and return results unchanged | Putting them behind a use case would add a method, a DTO pair and an indirection that carries no decision, and would make the two reference endpoints depend on the customer-profile use case that T023 finally wires. The port still lives in the `application` layer, so the layering rule is respected: `presentation → application` |
+
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|

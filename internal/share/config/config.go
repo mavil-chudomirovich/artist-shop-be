@@ -33,6 +33,7 @@ type Config struct {
 	Migrations MigrationsConfig `envPrefix:"MIGRATIONS_"`
 	Auth       AuthConfig
 	Media      MediaConfig `envPrefix:"MEDIA_"`
+	User       UserConfig  `envPrefix:"USER_"`
 
 	MaxBodyBytes int64 `env:"MAX_BODY_BYTES" envDefault:"1048576"`
 }
@@ -136,6 +137,21 @@ func (m MediaConfig) IsConfigured() bool {
 	return m.CloudName != "" && m.APIKey != "" && m.APISecret != ""
 }
 
+// UserConfig controls the user module's own rate limits.
+//
+// The shared RateLimitConfig is a coarse, per-second safety net applied to every
+// /api/v1 route. The write-heavy routes of the user module need thresholds of a
+// different shape — an avatar upload is a media-service call, and repeating it is
+// the abuse case FR-025 names — so the module carries its own per-window limits
+// rather than relying on the global one.
+type UserConfig struct {
+	// AvatarUploadRatePerHour caps avatar uploads per client and hour.
+	AvatarUploadRatePerHour int `env:"AVATAR_UPLOAD_RATE_PER_HOUR" envDefault:"10"`
+	// AddressWriteRatePerMinute caps address creates, edits, hides and
+	// default-flag changes per client and minute.
+	AddressWriteRatePerMinute int `env:"ADDRESS_WRITE_RATE_PER_MINUTE" envDefault:"30"`
+}
+
 // LoadDotenv loads a local .env file when present for non-production
 // environments. It never overrides variables that are already set and is
 // intended to be called once, before Load.
@@ -224,6 +240,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.LoginMaxFailures <= 0 || c.Auth.LoginLockoutTTL <= 0 {
 		errs = append(errs, errors.New("AUTH lockout thresholds must be greater than zero"))
+	}
+	if c.User.AvatarUploadRatePerHour <= 0 || c.User.AddressWriteRatePerMinute <= 0 {
+		errs = append(errs, errors.New("USER rate-limit thresholds must be greater than zero"))
 	}
 
 	return errors.Join(errs...)

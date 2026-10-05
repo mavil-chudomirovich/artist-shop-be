@@ -2,7 +2,13 @@
 // external-service ports the application depends on, and UnitOfWork.
 package appinterface
 
-import "context"
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
+)
 
 // MediaStore stores binary media outside the service and hands back a reference
 // to keep in the database. It is named for the capability rather than the
@@ -59,4 +65,99 @@ type Ward struct {
 	Code         string
 	Name         string
 	ProvinceCode string
+}
+
+// Auditor records security-relevant and privacy-relevant events of the module:
+// every profile, avatar and address change, and every administrator read of a
+// customer's contact details (FR-019, FR-022a).
+type Auditor interface {
+	Record(ctx context.Context, action, outcome string, actorID *uuid.UUID, actorRole, targetType, targetID string, metadata map[string]any)
+}
+
+// UnitOfWork runs a function inside a single database transaction. The
+// application layer owns every transaction boundary; repositories never open
+// one themselves (Constitution I). The address default-flag transition needs it
+// to make clearing the previous default and setting the new one indivisible
+// (FR-010).
+type UnitOfWork interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// Avatar defaults used when the composition leaves the Config values at zero, so
+// a zero value still enforces the documented contract instead of accepting any
+// upload.
+const (
+	// DefaultAvatarMaxBytes is the 2 MB avatar ceiling of FR-014.
+	DefaultAvatarMaxBytes int64 = 2 << 20
+	// DefaultAvatarTargetWidth is the stored width ceiling of FR-015.
+	DefaultAvatarTargetWidth = 512
+)
+
+// Config carries the composition settings the use cases cannot derive
+// themselves. It is resolved once in the composition root.
+type Config struct {
+	// AvatarMaxBytes is the hard ceiling for an uploaded avatar (FR-014). Zero
+	// means DefaultAvatarMaxBytes.
+	AvatarMaxBytes int64
+	// AvatarTargetWidth is the width the media provider is asked to resize to
+	// during the upload; the provider is the system of record for the resulting
+	// dimensions (research D6). Zero means DefaultAvatarTargetWidth.
+	AvatarTargetWidth int
+}
+
+// AvatarMaxBytesOrDefault returns the configured ceiling, or the documented
+// default when the composition left it unset.
+func (c Config) AvatarMaxBytesOrDefault() int64 {
+	if c.AvatarMaxBytes <= 0 {
+		return DefaultAvatarMaxBytes
+	}
+	return c.AvatarMaxBytes
+}
+
+// AvatarTargetWidthOrDefault returns the configured target width, or the
+// documented default when the composition left it unset.
+func (c Config) AvatarTargetWidthOrDefault() int {
+	if c.AvatarTargetWidth <= 0 {
+		return DefaultAvatarTargetWidth
+	}
+	return c.AvatarTargetWidth
+}
+
+// UserService is the module's use-case surface. Every method takes the acting
+// account from its input, and presentation fills that input from the
+// authenticated session: no method accepts an owner identifier the client chose
+// (FR-006, research D5). The single exception is the administrator lookup,
+// where the account is the subject of the request rather than the actor.
+type UserService interface {
+	// GetProfile returns the signed-in customer's profile.
+	GetProfile(ctx context.Context, userID uuid.UUID) (dto.ProfileOutput, error)
+	// UpdateProfile changes the display name and/or the phone and returns the
+	// stored profile.
+	UpdateProfile(ctx context.Context, in dto.UpdateProfileInput) (dto.ProfileOutput, error)
+	// SetAvatar validates the uploaded bytes, stores them through the MediaStore
+	// and returns the profile carrying the new avatar. A rejected upload leaves
+	// the current avatar untouched (FR-017).
+	SetAvatar(ctx context.Context, in dto.SetAvatarInput) (dto.ProfileOutput, error)
+	// RemoveAvatar releases the stored reference and returns the profile without
+	// an avatar.
+	RemoveAvatar(ctx context.Context, userID uuid.UUID) (dto.ProfileOutput, error)
+
+	// ListAddresses returns one page of the account's non-hidden addresses,
+	// default address first.
+	ListAddresses(ctx context.Context, in dto.ListAddressesInput) (dto.AddressPageOutput, error)
+	// CreateAddress stores a new address and returns it. The first address of an
+	// account becomes its default (FR-009).
+	CreateAddress(ctx context.Context, in dto.CreateAddressInput) (dto.AddressOutput, error)
+	// UpdateAddress edits an address and returns it, preserving the default flag.
+	UpdateAddress(ctx context.Context, in dto.UpdateAddressInput) (dto.AddressOutput, error)
+	// DeleteAddress hides an address; the row survives for order history.
+	DeleteAddress(ctx context.Context, in dto.AddressRefInput) error
+	// SetDefaultAddress makes one address the account's single default.
+	SetDefaultAddress(ctx context.Context, in dto.AddressRefInput) (dto.AddressOutput, error)
+
+	// LookupCustomer returns a customer's contact details and addresses for an
+	// operator. It is read-only, reports domainerr.ErrUserNotFound for an unknown
+	// account and audits every successful read (FR-022, FR-022a). It is what
+	// makes the module satisfy internal/contracts.CustomerLookupService.
+	LookupCustomer(ctx context.Context, userID uuid.UUID) (dto.CustomerLookupOutput, error)
 }
