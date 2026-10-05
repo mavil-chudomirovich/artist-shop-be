@@ -97,19 +97,19 @@ field detail, and a second customer cannot read the first customer's profile.
 
 ### Tests for User Story 1 (write first — they MUST fail)
 
-- [ ] T024 [P] [US1] Phone normalisation tests in `internal/modules/user/domain/model/phone_test.go`: accepts `0912345678`, `0912 345 678`, `+84912345678`; rejects `12345`, letters, and 9 or 11 digits; asserts the stored form is always ten digits
-- [ ] T025 [P] [US1] Profile model tests in `internal/modules/user/domain/model/profile_test.go`: trimming, clearing display name and phone, rejecting an invalid phone, and the rule that avatar fields are all null or all populated
-- [ ] T026 [P] [US1] Use-case tests in `internal/modules/user/application/implement/profile_test.go` using in-memory fakes: read returns the profile, partial update leaves the omitted field untouched, an empty string clears the field, an invalid phone returns `ErrInvalidPhone` and persists nothing
-- [ ] T027 [P] [US1] HTTP tests in `internal/modules/user/presentation/http/http_test.go`: `401` with no token and `401` with an expired token, `200` for the owner, `400` with `details[].field == "phone"` for a bad phone, an audit event for every successful update, and — for FR-021 — a `200` response with a null avatar when the customer has no photo, proving a media outage cannot fail the read. There is deliberately no `404` case here: the profile is the `users` row and FR-024 removes account deletion, so the row cannot go missing
+- [x] T024 [P] [US1] Phone normalisation tests in `internal/modules/user/domain/model/phone_test.go`: accepts `0912345678`, `0912 345 678`, `+84912345678`; rejects `12345`, letters, and 9 or 11 digits; asserts the stored form is always ten digits
+- [x] T025 [P] [US1] Profile model tests in `internal/modules/user/domain/model/profile_test.go`: trimming, clearing display name and phone, rejecting an invalid phone, and the rule that avatar fields are all null or all populated
+- [x] T026 [P] [US1] Use-case tests in `internal/modules/user/application/implement/profile_test.go` using in-memory fakes: read returns the profile, partial update leaves the omitted field untouched, an empty string clears the field, an invalid phone returns `ErrInvalidPhone` and persists nothing
+- [x] T027 [P] [US1] HTTP tests in `internal/modules/user/presentation/http/http_test.go`: `401` with no token and `401` with an expired token, `200` for the owner, `400` with `details[].field == "phone"` for a bad phone, an audit event for every successful update, and — for FR-021 — a `200` response with a null avatar when the customer has no photo, proving a media outage cannot fail the read. There is deliberately no `404` case here: the profile is the `users` row and FR-024 removes account deletion, so the row cannot go missing
 
 ### Implementation for User Story 1
 
-- [ ] T028 [US1] Implement the phone value object in `internal/modules/user/domain/model/phone.go` (trim, strip separators, `+84` → `0`, require ten digits) as a pure domain function so CLI and future workers cannot bypass it
-- [ ] T029 [US1] Implement the profile entity and update rules in `internal/modules/user/domain/model/profile.go`, with no knowledge of the administrative dataset
-- [ ] T030 [US1] Implement the profile repository adapter in `internal/modules/user/infrastructure/implement/postgres/user.go`, embedding `share/repository.Base`, reading and writing only the six profile columns and binding every value as a query parameter
-- [ ] T031 [US1] Implement profile read and update use cases in `internal/modules/user/application/implement/profile.go`, taking the account from the session context and never from input (research D5), recording `USER_PROFILE_UPDATED`
-- [ ] T032 [US1] Implement the `GET` and `PATCH /api/v1/users/me` handlers in `internal/modules/user/presentation/http/handler.go`
-- [ ] T033 [US1] Add the profile integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: update → read back → confirm normalisation, confirm the audit row, and confirm the read still succeeds with a null avatar when no media is configured
+- [x] T028 [US1] Implement the phone value object in `internal/modules/user/domain/model/phone.go` (trim, strip separators, `+84` → `0`, require ten digits) as a pure domain function so CLI and future workers cannot bypass it
+- [x] T029 [US1] Implement the profile entity and update rules in `internal/modules/user/domain/model/profile.go`, with no knowledge of the administrative dataset
+- [x] T030 [US1] Implement the profile repository adapter in `internal/modules/user/infrastructure/implement/postgres/user.go`, embedding `share/repository.Base` with an explicit `Columns` projection, and binding every value as a query parameter. It **writes** exactly the six profile columns; its **read** projection is those six plus the primary key and the two auth-owned columns (`email`, `role`) that the profile response must carry, while the row timestamps stay unprojected
+- [x] T031 [US1] Implement profile read and update use cases in `internal/modules/user/application/implement/profile.go`, taking the account from the session context and never from input (research D5), recording `USER_PROFILE_UPDATED`
+- [x] T032 [US1] Implement the `GET` and `PATCH /api/v1/users/me` handlers in `internal/modules/user/presentation/http/handler.go`
+- [x] T033 [US1] Add the profile integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: update → read back → confirm normalisation, confirm the audit row, and confirm the read still succeeds with a null avatar when no media is configured
 
 **Checkpoint**: US1 works standalone — a customer has a maintained profile.
 

@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Artist Shop Backend â€” User Module
+  title: Artist Shop Backend — User Module
   version: 1.0.0
   description: >
     Customer profile and shipping addresses. All responses use the foundation
@@ -208,7 +208,7 @@ paths:
                     $ref: "#/components/schemas/Meta"
         "400":
           description: >
-            Validation failed â€” USER_UNKNOWN_PROVINCE, USER_UNKNOWN_WARD,
+            Validation failed — USER_UNKNOWN_PROVINCE, USER_UNKNOWN_WARD,
             USER_WARD_PROVINCE_MISMATCH, USER_INVALID_PHONE.
           content:
             application/json:
@@ -660,7 +660,7 @@ components:
       description: >
         Partial update. Every field is optional and an omitted field keeps its current
         value; sending an empty string clears a text field. The default flag is not
-        settable here â€” use the set-default endpoint.
+        settable here — use the set-default endpoint.
       properties:
         recipientName:
           type: string

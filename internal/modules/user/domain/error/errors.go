@@ -38,4 +38,11 @@ var (
 	// store the upload. The profile is left unchanged, so the client may retry
 	// (FR-017).
 	ErrMediaUnavailable = errors.New("media service unavailable")
+
+	// ErrIncompleteAvatar is returned when an avatar reference is missing one of
+	// the four values that are stored together. It is an internal consistency
+	// failure rather than a client mistake, so presentation keeps it on the
+	// shared INTERNAL_ERROR instead of adding a module code no client could act
+	// on (contracts/error-codes.md, "Codes deliberately not added").
+	ErrIncompleteAvatar = errors.New("incomplete avatar reference")
 )

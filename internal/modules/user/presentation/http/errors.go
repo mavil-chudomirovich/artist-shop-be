@@ -80,6 +80,12 @@ func mapError(err error) *httpx.AppError {
 		// try again unchanged (contracts/error-codes.md).
 		return coded(constant.CodeMediaUnavailable, http.StatusServiceUnavailable,
 			"The media service is unavailable; the profile was not changed")
+	case errors.Is(err, domainerr.ErrIncompleteAvatar):
+		// An incomplete reference is our own metadata problem, not a client one, so
+		// it stays on the shared INTERNAL_ERROR rather than adding a module code no
+		// client could act on (contracts/error-codes.md, "Codes deliberately not
+		// added"). The cause is logged with the correlation id.
+		return httpx.Wrap(err, httpx.CodeInternal)
 	default:
 		// Never leak provider or storage detail to a client; the cause is logged
 		// with the correlation id by httpx.WriteError.

@@ -170,7 +170,7 @@ timestamp (FR-019, FR-022a).
 | Action | Actor | Recorded when |
 |---|---|---|
 | `USER_PROFILE_UPDATED` | customer | Display name or phone changed, including cleared fields |
-| `USER_AVATASET` / `USER_AVATAR_REMOVED` | customer | Avatar attached/replaced or removed |
+| `USER_AVATAR_SET` / `USER_AVATAR_REMOVED` | customer | Avatar attached/replaced or removed |
 | `USER_ADDRESS_CREATED` | customer | Address created |
 | `USER_ADDRESS_UPDATED` | customer | Address edited |
 | `USER_ADDRESS_DELETED` | customer | Address hidden |
