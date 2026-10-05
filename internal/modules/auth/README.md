@@ -1,7 +1,7 @@
 # Auth Module
 
 Authentication and session management, organized with the project's Clean
-Architecture (see `doc/architecture.md`).
+Architecture (see `docs/architecture.md`).
 
 ## Structure
 

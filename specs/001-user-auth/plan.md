@@ -137,7 +137,7 @@ migrations/              # versioned migrations (NNNNN_<module>_<description>.sq
 ```
 
 **Structure Decision**: The auth module follows the finalized Clean Architecture
-(`doc/architecture.md`, constitution v1.3.0): `domain` holds model/constant/error
+(`docs/architecture.md`, constitution v1.3.0): `domain` holds model/constant/error
 and repository interfaces; `application` holds use-case interfaces, external
 service ports and UnitOfWork in `interface`, use cases in `implement`, plus `dto`
 and a single `mapper`; `infrastructure/implement` provides the PostgreSQL

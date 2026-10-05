@@ -158,7 +158,7 @@ change password → old access token rejected.
 
 - [X] T055 [P] Emit audit events for all security actions (sign-in success/failure, lockout, sign-out, email verification, password change/reset, privilege denial) and add tests in `internal/modules/auth/application/audit_test.go`
 - [X] T056 [P] Include Redis connectivity in the readiness check (Redis is required, so readiness is `not_ready` when Redis is down) and add coverage in `internal/share/health/health.go`
-- [X] T057 [P] Add auth module documentation in `internal/modules/auth/README.md` and update `doc/modules/01-auth.md`
+- [X] T057 [P] Add auth module documentation in `internal/modules/auth/README.md` and update `docs/modules/01-auth.md`
 - [X] T058 Run `gofmt`, `go vet`, linter, `go test ./...`, and `go test -tags integration ./...` and fix findings
 - [X] T059 Validate `quickstart.md` end-to-end with Docker (`db` + `redis`) and confirm Redis keys behave (3-strike OTP blacklist, 1-minute cooldown, 10-strike login lockout)
 - [X] T060 Review the Constitution Check and record any deviations in `plan.md` Complexity Tracking

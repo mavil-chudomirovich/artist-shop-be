@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Thực hiện module Cross-Cutting Foundation theo doc/modules/00-cross-cutting.md: cấu hình, kết nối dữ liệu, migration, định dạng phản hồi/lỗi, logging, middleware, audit, health, kiểm thử"
+**Input**: User description: "Thực hiện module Cross-Cutting Foundation theo docs/modules/00-cross-cutting.md: cấu hình, kết nối dữ liệu, migration, định dạng phản hồi/lỗi, logging, middleware, audit, health, kiểm thử"
 
 ## Clarifications
 
