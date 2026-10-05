@@ -1,6 +1,49 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.3.0 → 1.5.0 (MINOR)
+Bump rationale: Added the API Documentation principle, the container workflow
+section, documentation-location and decision-record rules, and Agent & Commit
+Governance. Endpoint drift and unreviewed history rewrites are the two failure
+modes this repository cannot detect on its own: Spec Kit keeps one OpenAPI file
+per feature, and an automated agent can silently rewrite history unless the rules
+forbid it explicitly.
+
+Added principles:
+- VIII. API Documentation as a Contract (NON-NEGOTIABLE)
+
+Added sections:
+- Container & Local Development Workflow (Dockerfiles, compose stacks, .env)
+- Documentation location rule (see Technology & Architecture Constraints)
+- Agent & Commit Governance (git authorization, commit format, precedence)
+- Decision records (ADR in docs/decisions/)
+
+Structural changes:
+- The former `doc/` directory was consolidated into `docs/`, split by role:
+  operational guides at the root of `docs/`, process guides in
+  `docs/development/`, design references in `docs/system-design/` and at the
+  root of `docs/`, decision records in `docs/decisions/`, and the original
+  requirement sources moved to `docs/product/`.
+- `AGENTS.md` at the repository root is the navigation and gate source of truth
+  for automated agents.
+
+Templates requiring updates:
+- ✅ .specify/memory/constitution.md (this file)
+- ✅ AGENTS.md (agent rules, gate tiers, git policy)
+- ✅ docs/README.md (documentation index and rules)
+- ✅ docs/api-reference.md (created as the authoritative reference)
+- ✅ docs/development/* (process guides)
+- ✅ docs/system-design/* (patterns, contract purity)
+- ✅ docs/decisions/* (ADR log seeded with 7 recorded decisions)
+- ⚠ .specify/templates/plan-template.md (no change required)
+- ⚠ .specify/templates/tasks-template.md (no change required)
+
+Follow-up TODOs: none.
+-->
+
+<!--
+Sync Impact Report
+==================
 Version change: 1.2.0 → 1.3.0 (MINOR)
 Bump rationale: Finalized the module layer names and internal layout agreed with
 the project: layers `presentation / application / infrastructure / domain` with
@@ -29,7 +72,7 @@ Removed sections: none
 
 Templates requiring updates:
 - ✅ .specify/memory/constitution.md (this file)
-- ✅ doc/architecture.md (authoritative architecture reference)
+- ✅ docs/architecture.md (authoritative architecture reference)
 - ✅ .specify/templates/plan-template.md (gate wording aligned)
 - ⚠ .specify/templates/tasks-template.md (no change required)
 
@@ -178,6 +221,30 @@ exactly what happened and who did it.
 
 Rationale: disciplined simplicity keeps a solo/small-team project shipping.
 
+### VIII. API Documentation as a Contract (NON-NEGOTIABLE)
+
+`docs/api-reference.md` is the authoritative, cross-module reference for every HTTP
+endpoint the service exposes. It is a deliverable, not an afterthought.
+
+- Adding, changing, or removing an endpoint MUST update `docs/api-reference.md` in
+  the same change. An endpoint whose documentation is missing or stale is an
+  incomplete implementation.
+- Each endpoint entry MUST state: method and path, authentication requirement,
+  rate limit, request body, response body with an example, and the error codes it
+  can return. The shared envelope, error catalogue, and conventions MUST be
+  documented once, not repeated per endpoint.
+- New machine-readable error codes MUST be added to the reference and to the
+  feature's `contracts/error-codes.md`.
+- Per-feature `specs/<feature>/contracts/openapi.yaml` files remain the
+  machine-readable artifacts; when they disagree with `docs/api-reference.md`, the
+  reference wins and the OpenAPI file MUST be corrected.
+- Breaking changes to an existing endpoint MUST be called out in the reference's
+  change log, in addition to the version bump required below.
+
+Rationale: the frontend team and future contributors integrate against this file
+rather than against the source. Silent drift between code and documentation costs
+more than the few minutes it takes to update a table.
+
 ## Technology & Architecture Constraints
 
 - **Language/Runtime**: Go (latest stable minor), PostgreSQL, REST API,
@@ -195,12 +262,20 @@ Rationale: disciplined simplicity keeps a solo/small-team project shipping.
 - **Payments**: providers (MoMo, VietQR) MUST be accessed only through the
   `PaymentService` abstraction; no provider-specific types leak into domain or
   HTTP layers.
-- **Module inventory**: `doc/modules.md` is the authoritative module list and
-  roadmap, with one detail file per module under `doc/modules/`. Each module is
+- **Module inventory**: `docs/modules.md` is the authoritative module list and
+  roadmap, with one detail file per module under `docs/modules/`. Each module is
   specified and delivered as an independent Spec Kit feature. Adding or removing
-  a module requires updating `doc/modules.md` and a constitution-compatible
-  plan note; `doc/backend-spec.md` and `doc/project_overview.md` remain the
+  a module requires updating `docs/modules.md` and a constitution-compatible
+  plan note; `docs/product/backend-spec.md` and `docs/product/project_overview.md` remain the
   original product sources.
+- **Documentation**: all project documentation lives under `docs/`; there is no
+  other documentation directory. Operational guides (`getting-started`,
+  `configuration`, `docker`, `makefile`, `testing`, `troubleshooting`) MUST be
+  updated in the same change as the behavior they describe. Design references
+  (`docs/api-reference.md`, `docs/architecture.md`, `docs/modules.md`) are
+  authoritative. `docs/product/` holds the original requirement sources and MUST
+  NOT be edited to make the code look compliant. Documentation MUST use relative
+  links so every file renders correctly in GitHub and in editors.
 - **Source layout**: executables live in `cmd/`; business modules in
   `internal/modules/<module>/{domain,application,infrastructure,presentation}`;
   cross-module interfaces in `internal/contracts`; cross-cutting code shared by
@@ -216,7 +291,28 @@ Rationale: disciplined simplicity keeps a solo/small-team project shipping.
   file names follow `NNNNN_<module>_<description>.sql`.
 - **Commands**: `cmd/*` are composition roots and MUST invoke application use
   cases for business behavior; they MUST NOT contain raw business SQL.
-  `doc/architecture.md` is the authoritative architecture reference.
+  `docs/architecture.md` is the authoritative architecture reference.
+
+## Container & Local Development Workflow
+
+- **Docker**: `Dockerfile` is multi-stage (build → minimal runtime), builds all
+  three commands (`api`, `migrate`, `seed`) into one image, and MUST NOT bake
+  secrets into layers. Commands run as a non-root user; `migrate` and `seed` run
+  by overriding the entrypoint of that same image.
+- **Compose**: `docker-compose.yml` is the minimal default stack (PostgreSQL,
+  Redis, API) and MUST NOT publish backing-service ports on the host, so it cannot
+  collide with a developer's local installs. `docker-compose.dev.yml` is an
+  optional override that publishes ports on `127.0.0.1` and adds Mailpit for
+  local email. One-shot jobs (`migrate`, `seed`) sit behind the `tools` profile
+  and are invoked explicitly.
+- **Configuration**: `.env` is the single source for local settings, git-ignored,
+  and generated from `.env.example` (`make env`). Inside containers the compose
+  file overrides host-oriented values (`DATABASE_URL`, `REDIS_ADDR`) to the
+  service names. Secrets MUST come from the environment; `.env` MUST NOT be
+  committed, and `.gitattributes` MUST keep LF endings so `gofmt`/`make
+  fmt-check` behave the same on every platform.
+- **Workflow entry point**: all common commands go through `make` targets so
+  Windows and Linux developers run identical commands.
 
 ## Development Workflow & Quality Gates
 
@@ -225,16 +321,52 @@ Rationale: disciplined simplicity keeps a solo/small-team project shipping.
   and plans MUST precede implementation.
 - **Definition of Done**: `gofmt`/`go vet` clean, linter clean, tests passing,
   critical-logic tests present, migrations included, and API/contract docs
-  updated for the change.
+  updated for the change — specifically `docs/api-reference.md` (Principle VIII)
+  whenever an endpoint was added, changed, or removed.
+- **Gates are tiered by change size**; the tiers in `AGENTS.md` §3 are the single
+  source of truth and MUST NOT be duplicated elsewhere. A typo does not require
+  the close-out gate, and a feature phase MUST NOT skip the integration suite.
+- **Commands**: work goes through `Makefile` targets rather than raw commands, so
+  Windows and Linux developers run the same thing.
 - **Gates before implementation**: the plan's Constitution Check MUST pass or
   violations MUST be justified in Complexity Tracking. `/speckit.analyze`
   SHOULD be run between `/speckit.tasks` and `/speckit.implement`.
 - **Review**: changes require at least one review against this constitution;
   reviewers MUST flag violations rather than silently accepting them.
-- **Runtime guidance**: `doc/modules.md` and `doc/modules/*.md` describe the
-  module scope and delivery order; `doc/backend-spec.md` and
-  `doc/project_overview.md` remain the original product sources. These MUST be
+- **Runtime guidance**: `docs/modules.md` and `docs/modules/*.md` describe the
+  module scope and delivery order; `docs/product/backend-spec.md` and
+  `docs/product/project_overview.md` remain the original product sources. These MUST be
   updated when behavior or module scope changes.
+- **Decision records**: an architecture decision with long-lived consequences MUST
+  be recorded as an ADR in `docs/decisions/`. Editing a decision after the fact
+  is not allowed; supersede it with a new ADR. Decisions scoped to one feature
+  belong in that feature's `research.md` instead.
+
+## Agent & Commit Governance
+
+Automation MUST behave as follows, because these rules protect history rather than
+describe code:
+
+- An agent MUST NOT mutate git history — no `commit`, `push`, `tag`, `branch`,
+  `checkout`, `merge`, `rebase`, `reset`, `amend`, `restore`, or `clean` — without
+  explicit human authorization for that specific action. Read-only git commands
+  are always allowed. Approving a plan that contains several commits does not
+  authorize any of them; the general-purpose skill MAY declare a standing
+  exception for a single run, but the skill's policy is what counts and it MUST
+  list the commits up front.
+- Commit messages MUST be written in English and follow Conventional Commits,
+  scoped to the narrowest meaningful unit; see `docs/development/git-workflow.md`.
+- An agent MUST stage only the files belonging to the current change.
+- When documents and code disagree, the document wins and the code MUST be
+  corrected. When two documents disagree, precedence is
+  `constitution > docs/system-design > docs/development > other docs > code`.
+- When a decision is missing, the agent MUST ask the human with concrete options
+  (marking the recommended one) instead of guessing, and MUST record the chosen
+  default in the feature's `Assumptions` when the ambiguity is low-risk.
+- Documentation and code MUST use **relative** paths; absolute machine paths such
+  as `file:///C:/...` are forbidden.
+- Code comments and `.env` files MUST be written in English; `docs/` content and
+  human conversation MAY be in Vietnamese.
 
 ## Governance
 
@@ -251,7 +383,7 @@ This constitution supersedes other development practices when conflicts arise.
 - **Compliance review**: every plan and PR MUST include a Constitution Check;
   complexity that violates a principle MUST be justified in the plan's
   Complexity Tracking table. Unjustified violations block merge.
-- **Precedence**: where `doc/` guidance and this constitution conflict, this
+- **Precedence**: where `docs/` guidance and this constitution conflict, this
   constitution wins, and the docs MUST be corrected.
 
-**Version**: 1.3.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-09-18
+**Version**: 1.5.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-05
