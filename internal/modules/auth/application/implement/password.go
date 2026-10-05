@@ -14,6 +14,7 @@ import (
 )
 
 // ForgotPassword emails a single-use reset token. Unknown emails return nil.
+// The open-request invalidation plus the insert run in one transaction.
 func (s *Service) ForgotPassword(ctx context.Context, in dto.EmailInput) error {
 	normalized := model.NormalizeEmail(in.Email)
 	account, err := s.Users.ByEmail(ctx, normalized)
@@ -34,7 +35,9 @@ func (s *Service) ForgotPassword(ctx context.Context, in dto.EmailInput) error {
 		TokenHash: tokenHash,
 		ExpiresAt: time.Now().UTC().Add(s.Config.PasswordResetTTL),
 	}
-	if err := s.Resets.Create(ctx, req); err != nil {
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		return s.Resets.Create(txCtx, req)
+	}); err != nil {
 		return err
 	}
 	if err := s.Email.Send(ctx, normalized, "Reset your password", "Use this token to reset your password: "+rawToken); err != nil {
@@ -45,7 +48,8 @@ func (s *Service) ForgotPassword(ctx context.Context, in dto.EmailInput) error {
 }
 
 // ResetPassword consumes a reset token, revokes all sessions, blacklists prior
-// access tokens, and issues a fresh token pair.
+// access tokens, and issues a fresh token pair. Every write runs in one
+// transaction so a partial failure cannot leave the account locked out.
 func (s *Service) ResetPassword(ctx context.Context, in dto.ResetPasswordInput) (dto.SessionOutput, error) {
 	if err := model.ValidatePasswordPolicy(in.NewPassword); err != nil {
 		return dto.SessionOutput{}, err
@@ -69,29 +73,39 @@ func (s *Service) ResetPassword(ctx context.Context, in dto.ResetPasswordInput) 
 	if err != nil {
 		return dto.SessionOutput{}, err
 	}
-	if err := s.Users.UpdatePassword(ctx, account.ID, newHash); err != nil {
-		return dto.SessionOutput{}, err
-	}
-	if err := s.Resets.Consume(ctx, req.ID); err != nil {
-		return dto.SessionOutput{}, err
-	}
-	if err := s.Sessions.RevokeAllForUser(ctx, account.ID); err != nil {
-		return dto.SessionOutput{}, err
-	}
+
 	now := time.Now().UTC()
-	if err := s.Blacklist.RevokeUserBefore(ctx, account.ID, now, s.Access.TTL()); err != nil {
-		return dto.SessionOutput{}, err
-	}
-	session, err := s.issueSession(ctx, account, now.Add(s.Config.RefreshTokenTTL), "", "")
+	var issued dto.SessionOutput
+	err = s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if err := s.Users.UpdatePassword(txCtx, account.ID, newHash); err != nil {
+			return err
+		}
+		if err := s.Resets.Consume(txCtx, req.ID); err != nil {
+			return err
+		}
+		if err := s.Sessions.RevokeAllForUser(txCtx, account.ID); err != nil {
+			return err
+		}
+		if err := s.Blacklist.RevokeUserBefore(txCtx, account.ID, now, s.Access.TTL()); err != nil {
+			return err
+		}
+		out, _, err := s.issueSession(txCtx, account, now.Add(s.Config.RefreshTokenTTL), "", "")
+		if err != nil {
+			return err
+		}
+		issued = out
+		return nil
+	})
 	if err != nil {
 		return dto.SessionOutput{}, err
 	}
 	s.Audit.Record(ctx, constant.AuditPasswordReset, constant.OutcomeSuccess, &account.ID, string(account.Role), "user", account.ID.String(), nil)
-	return session, nil
+	return issued, nil
 }
 
-// ChangePassword updates the password of a signed-in account, blacklisting prior
-// access tokens and keeping the replaced session's expiry when supplied.
+// ChangePassword updates the password of a signed-in account. The supplied
+// refresh token must be an active session of that account; afterwards every
+// session is revoked and a new token pair is issued.
 func (s *Service) ChangePassword(ctx context.Context, in dto.ChangePasswordInput) (dto.SessionOutput, error) {
 	account, err := s.Users.ByID(ctx, in.AccountID)
 	if err != nil {
@@ -108,52 +122,44 @@ func (s *Service) ChangePassword(ctx context.Context, in dto.ChangePasswordInput
 	if err != nil {
 		return dto.SessionOutput{}, err
 	}
-	if err := s.Users.UpdatePassword(ctx, account.ID, newHash); err != nil {
+	current, err := s.Sessions.ByTokenHash(ctx, s.RefreshTokens.Hash(in.CurrentRefreshToken))
+	if err != nil {
+		if errors.Is(err, domainerr.ErrSessionNotFound) {
+			return dto.SessionOutput{}, domainerr.ErrInvalidToken
+		}
 		return dto.SessionOutput{}, err
+	}
+	if current.UserID != account.ID || current.RevokedAt != nil {
+		return dto.SessionOutput{}, domainerr.ErrRefreshReused
 	}
 
 	now := time.Now().UTC()
-	if err := s.Blacklist.RevokeUserBefore(ctx, account.ID, now, s.Access.TTL()); err != nil {
-		return dto.SessionOutput{}, err
-	}
-	if in.CurrentAccessJTI != "" {
-		if err := s.Blacklist.RevokeJTI(ctx, in.CurrentAccessJTI, s.Access.TTL()); err != nil {
-			return dto.SessionOutput{}, err
+	var issued dto.SessionOutput
+	err = s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if err := s.Users.UpdatePassword(txCtx, account.ID, newHash); err != nil {
+			return err
 		}
-	}
-
-	expiresAt := now.Add(s.Config.RefreshTokenTTL)
-	var replace *model.Session
-	if in.CurrentRefreshToken != "" {
-		if existing, err := s.Sessions.ByTokenHash(ctx, s.RefreshTokens.Hash(in.CurrentRefreshToken)); err == nil && existing.RevokedAt == nil {
-			expiresAt = existing.ExpiresAt
-			replace = existing
+		if err := s.Sessions.RevokeAllForUser(txCtx, account.ID); err != nil {
+			return err
 		}
-	}
-
-	accessToken, _, err := s.Access.Issue(account.ID, account.Role)
+		if err := s.Blacklist.RevokeUserBefore(txCtx, account.ID, now, s.Access.TTL()); err != nil {
+			return err
+		}
+		if in.CurrentAccessJTI != "" {
+			if err := s.Blacklist.RevokeJTI(txCtx, in.CurrentAccessJTI, s.Access.TTL()); err != nil {
+				return err
+			}
+		}
+		out, _, err := s.issueSession(txCtx, account, now.Add(s.Config.RefreshTokenTTL), in.UserAgent, in.IP)
+		if err != nil {
+			return err
+		}
+		issued = out
+		return nil
+	})
 	if err != nil {
-		return dto.SessionOutput{}, err
-	}
-	rawRefresh, refreshHash, err := s.RefreshTokens.Generate()
-	if err != nil {
-		return dto.SessionOutput{}, err
-	}
-	next := &model.Session{
-		ID:               uuid.New(),
-		UserID:           account.ID,
-		RefreshTokenHash: refreshHash,
-		ExpiresAt:        expiresAt,
-		UserAgent:        in.UserAgent,
-		IP:               in.IP,
-	}
-	if replace != nil {
-		if err := s.Sessions.Rotate(ctx, replace.ID, next); err != nil {
-			return dto.SessionOutput{}, err
-		}
-	} else if err := s.Sessions.Create(ctx, next); err != nil {
 		return dto.SessionOutput{}, err
 	}
 	s.Audit.Record(ctx, constant.AuditPasswordChanged, constant.OutcomeSuccess, &account.ID, string(account.Role), "user", account.ID.String(), nil)
-	return dto.SessionOutput{AccessToken: accessToken, RefreshToken: rawRefresh, ExpiresIn: int(s.Access.TTL().Seconds())}, nil
+	return issued, nil
 }

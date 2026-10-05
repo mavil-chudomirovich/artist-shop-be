@@ -47,17 +47,20 @@ $AUTH = @{ Authorization = "Bearer $($resp.data.accessToken)" }
 
 ## 3. Bốn kiểm tra phải làm với **mọi** endpoint
 
+> Hiện mới có module 01, nên các ví dụ dùng `$BASE/auth/*`. Khi module 02 (`user`)
+> có rồi thì thay bằng `$BASE/users/me` cho đúng contract của module đó.
+
 ### a) Không token ⇒ `401`
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" $BASE/users/me     # 401
+curl -s -o /dev/null -w "%{http_code}\n" $BASE/auth/me     # 401
 ```
 
 ### b) Sai phân quyền ⇒ `403`, và phải có audit
 
 ```bash
 # token CUSTOMER gọi route ADMIN
-curl -s $BASE/admin/probe -H "$AUTH"
+curl -s $BASE/auth/admin/probe -H "$AUTH"
 ```
 
 Sau đó kiểm tra đã ghi audit:
@@ -86,7 +89,7 @@ tồn tại.
 Mọi response phải có `data`/`meta` hoặc `error`/`requestId`:
 
 ```bash
-curl -s $BASE/users/me -H "$AUTH" | python -m json.tool
+curl -s $BASE/auth/me -H "$AUTH" | python -m json.tool
 ```
 
 ## 4. Kiểm tra validation
@@ -117,7 +120,7 @@ Client phải bám `error.code`, **không** bám `error.message`.
 Sau mỗi thay đổi dữ liệu, hãy đọc lại và so với kỳ vọng — đừng chỉ tin mã `200`.
 
 ```bash
-curl -s $BASE/users/me -H "$AUTH"                       # profile đã lưu đúng chưa
+curl -s $BASE/auth/me -H "$AUTH"                       # account đúng chưa
 docker compose exec -T db psql -U app -d artist_shop \
   -c "SELECT user_id, count(*) FROM addresses
        WHERE is_default AND deleted_at IS NULL
@@ -144,8 +147,8 @@ Mỗi response trả header `X-Request-Id`, và giá trị đó xuất hiện tr
 `meta.requestId` / `error.requestId`:
 
 ```bash
-curl -si $BASE/users/me -H "$AUTH" | grep -i x-request-id
-curl -si $BASE/users/me -H 'X-Request-Id: 5c9f1a1e-6f0e-4a0e-9c3b-2f6a1b8c7d90' -H "$AUTH" \
+curl -si $BASE/auth/me -H "$AUTH" | grep -i x-request-id
+curl -si $BASE/auth/me -H 'X-Request-Id: 5c9f1a1e-6f0e-4a0e-9c3b-2f6a1b8c7d90' -H "$AUTH" \
   | grep -i x-request-id   # giữ nguyên giá trị hợp lệ
 ```
 

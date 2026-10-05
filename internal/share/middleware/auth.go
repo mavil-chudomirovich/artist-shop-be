@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
@@ -22,10 +23,14 @@ type Identity struct {
 type AuthHooks struct {
 	// Authenticate resolves the caller identity from the request. Returning a
 	// nil identity means the request is unauthenticated; returning an error is
-	// treated as an authentication failure.
+	// treated as an authentication failure. An *httpx.AppError is passed
+	// through unchanged so a module can expose its own token error codes.
 	Authenticate func(ctx context.Context, r *http.Request) (*Identity, error)
 	// Authorize authorizes an authenticated identity for the request.
 	Authorize func(ctx context.Context, id Identity, r *http.Request) error
+	// OnDenied is called before a role check answers FORBIDDEN, letting the
+	// providing module record the privilege denial (FR-014).
+	OnDenied func(ctx context.Context, id Identity, r *http.Request)
 }
 
 type identityKey struct{}
@@ -60,6 +65,11 @@ func RequireAuthentication(hooks AuthHooks) func(http.Handler) http.Handler {
 			if hooks.Authenticate != nil {
 				resolved, err := hooks.Authenticate(ctx, r)
 				if err != nil {
+					var appErr *httpx.AppError
+					if errors.As(err, &appErr) {
+						httpx.WriteError(w, r, appErr, nil)
+						return
+					}
 					httpx.WriteError(w, r, httpx.Wrap(err, httpx.CodeUnauthenticated), nil)
 					return
 				}
@@ -83,6 +93,9 @@ func RequireRole(hooks AuthHooks, role string) func(http.Handler) http.Handler {
 		return requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, _ := IdentityFromContext(r.Context())
 			if id.Role != role {
+				if hooks.OnDenied != nil {
+					hooks.OnDenied(r.Context(), id, r)
+				}
 				httpx.WriteError(w, r, httpx.New(httpx.CodeForbidden), nil)
 				return
 			}

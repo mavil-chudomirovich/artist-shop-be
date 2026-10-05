@@ -38,7 +38,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Use(middleware.BodyLimit(deps.Config.MaxBodyBytes))
 	r.Use(middleware.JSONContentType)
 	// Resolve the caller identity when possible. Enforcement is applied per
-	// route by business modules via RequireAuthentication / RequireAdmin.
+	// route by business modules via RequireAuthentication / RequireRole.
 	r.Use(middleware.Authentication(deps.Auth))
 
 	healthHandler := health.New(deps.DB, deps.Version).WithCache(deps.Cache)

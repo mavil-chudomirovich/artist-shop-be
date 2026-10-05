@@ -31,6 +31,7 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 		Pool:          pool,
 		Table:         "users",
 		IDColumn:      "id",
+		Columns:       []string{"id", "email", "password_hash", "role", "status", "created_at", "updated_at"},
 		OrderBy:       "created_at DESC",
 		InsertColumns: []string{"id", "email", "password_hash", "role", "status"},
 		InsertValues: func(a *model.Account) []any {

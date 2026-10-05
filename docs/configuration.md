@@ -161,6 +161,40 @@ cho phép đổi cấu hình stack mà không sửa file:
 > `POSTGRES_PASSWORD` mặc định là `app` và **không** dùng `REDIS_PASSWORD` cho
 > PostgreSQL. Với môi trường thật, hãy đặt lại cả hai.
 
+## Dataset hành chính (module user)
+
+Dữ liệu tỉnh/phường là **dữ liệu tham chiếu nhúng trong binary**, không phải cấu
+hình và không nằm trong PostgreSQL — xem
+[ADR 002](decisions/002-administrative-dataset-embedded.md). Vì vậy nó không có
+biến môi trường nào.
+
+| Mục | Giá trị |
+|---|---|
+| File | `internal/share/administrative/data/vn-divisions.json` |
+| Nguồn đã ghi | `https://github.com/open-admin-data/vietnam-administrative-divisions`, file `data/hierarchy.json` |
+| Giấy phép | CC-BY-4.0, ghi công `Open Admin Data` |
+| Kỳ hiệu lực | `2025-07-01`, chỉ **2 cấp** `tỉnh → phường/xã`; cấp huyện đã bị bãi bỏ toàn quốc |
+| Số lượng | 34 tỉnh, 3321 phường — ghi ở khối `counts` của chính file đó |
+
+Khối `_provenance` trong file lưu nguồn, giấy phép, ngày lấy và kỳ hiệu lực. Đó là
+nguồn sự thật cho quy trình dưới đây.
+
+### Quy trình làm mới dataset
+
+1. **Lấy lại dataset từ nguồn đã ghi trong `_provenance`** (mục trên), rồi cập nhật
+   `retrieved` và `effectiveFrom` cho đúng với bản mới.
+2. **Sinh lại toàn bộ file, không sửa tay.** File là ảnh chụp của nguồn; sửa tay một
+   dòng là mất khả năng đối chiếu với nguồn, và test kiểm tra số lượng sẽ không còn
+   ý nghĩa.
+3. Chạy `make test`. Test `internal/share/administrative/administrative_test.go`
+   khẳng định: số tỉnh/phường khớp khối `counts`, không mã tỉnh hay mã phường nào
+   trùng, mỗi phường thuộc **đúng một** tỉnh, và file là UTF-8 không BOM với xuống
+   dòng LF. Sai số lượng ⇒ test đỏ, không được merge.
+4. **Mỗi lần làm mới đi kèm một bản phát hành.** Dataset nằm trong binary, nên đổi
+   dataset mà không phát hành lại build là một thay đổi không có tác dụng.
+5. Địa chỉ đã lưu không cần migrate: nó giữ **mã** tỉnh/phường cùng **tên đã chụp**
+   khi lưu, nên vẫn hiển thị đúng sau khi tên đơn vị hành chính thay đổi.
+
 ## Secret
 
 | Quy tắc | Nơi kiểm tra |

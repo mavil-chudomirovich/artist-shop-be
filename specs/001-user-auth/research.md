@@ -137,7 +137,7 @@ decision records the choice, rationale, and alternatives considered.
 
 - **Decision**: The module implements `middleware.AuthHooks` (verify access token →
   `Identity{Subject, Role}`) and mounts `middleware.RequireAuthentication` /
-  `RequireAdmin` as needed. Privilege denials are emitted as audit events.
+  `RequireRole` as needed. Privilege denials are emitted as audit events.
 - **Rationale**: Uses the foundation's pipeline and satisfies FR-013/FR-014.
 - **Alternatives considered**: a separate auth middleware (duplicates the
   foundation).

@@ -36,6 +36,17 @@ type Base[T any, ID any] struct {
 	Table string
 	// IDColumn is the primary-key column.
 	IDColumn string
+	// Columns is the required projection used by the generic read paths
+	// (FindByID, FindAll). Each entry becomes one column in the generated
+	// SELECT list, so the order and length must match the destinations the Scan
+	// function reads. Leaving it empty is a configuration error: the read paths
+	// return it before touching the database instead of guessing a projection.
+	//
+	// Declaring the projection explicitly decouples the scan arity from the
+	// physical schema: a later `ALTER TABLE ... ADD COLUMN` does not break
+	// repositories embedding Base, and unread columns are not transferred at
+	// all.
+	Columns []string
 	// OrderBy is used by FindAll (e.g. "created_at DESC").
 	OrderBy string
 	// InsertColumns are the columns written by Create.
@@ -48,12 +59,29 @@ type Base[T any, ID any] struct {
 	UpdateValues func(*T) []any
 	// IDValue returns the primary-key value of an entity.
 	IDValue func(*T) any
-	// Scan reads one row into an entity.
+	// Scan reads one row into an entity. It is used both for the generic read
+	// paths and for adapter-specific queries, so the number of destinations it
+	// passes must equal the length of the projection the query selects — not the
+	// number of columns the table physically has. A mismatch is a configuration
+	// error: it is surfaced at query time, either as an empty-Columns error from
+	// the generic read paths or as a pgx arity error for adapter queries.
 	Scan func(Row) (*T, error)
 }
 
 func (b *Base[T, ID]) q(ctx context.Context) database.Querier {
 	return database.FromContext(ctx, b.Pool)
+}
+
+// selectList returns the projection for the generic read paths. Columns is
+// required: there is no `SELECT *` fallback, because a projection that follows
+// the physical table makes the scan arity silently depend on the schema and a
+// plain `ALTER TABLE ... ADD COLUMN` would break every repository embedding
+// Base.
+func (b *Base[T, ID]) selectList() (string, error) {
+	if len(b.Columns) == 0 {
+		return "", fmt.Errorf("repository %s: Columns is empty, it must list the projection matching Scan", b.Table)
+	}
+	return strings.Join(b.Columns, ", "), nil
 }
 
 // Create inserts the entity.
@@ -98,7 +126,11 @@ func (b *Base[T, ID]) Delete(ctx context.Context, id ID) error {
 
 // FindByID returns one entity by id.
 func (b *Base[T, ID]) FindByID(ctx context.Context, id ID) (*T, error) {
-	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = $1", b.Table, b.IDColumn)
+	list, err := b.selectList()
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = $1", list, b.Table, b.IDColumn)
 	return b.Scan(b.q(ctx).QueryRow(ctx, query, id))
 }
 
@@ -118,6 +150,10 @@ func (b *Base[T, ID]) Exists(ctx context.Context, id ID) (bool, error) {
 
 // FindAll returns a page of entities and the total count.
 func (b *Base[T, ID]) FindAll(ctx context.Context, page, size int) ([]T, int64, error) {
+	list, err := b.selectList()
+	if err != nil {
+		return nil, 0, err
+	}
 	if page < 1 {
 		page = 1
 	}
@@ -134,7 +170,7 @@ func (b *Base[T, ID]) FindAll(ctx context.Context, page, size int) ([]T, int64, 
 	if order == "" {
 		order = b.IDColumn
 	}
-	query := fmt.Sprintf("SELECT * FROM %s ORDER BY %s LIMIT $1 OFFSET $2", b.Table, order)
+	query := fmt.Sprintf("SELECT %s FROM %s ORDER BY %s LIMIT $1 OFFSET $2", list, b.Table, order)
 	rows, err := b.q(ctx).Query(ctx, query, size, (page-1)*size)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list %s: %w", b.Table, err)

@@ -53,10 +53,10 @@ func (s *Service) Login(ctx context.Context, in dto.LoginInput) (dto.SessionOutp
 		return dto.SessionOutput{}, err
 	}
 
-	session, err := s.issueSession(ctx, account, time.Now().UTC().Add(s.Config.RefreshTokenTTL), in.UserAgent, in.IP)
+	session, issued, err := s.issueSession(ctx, account, time.Now().UTC().Add(s.Config.RefreshTokenTTL), in.UserAgent, in.IP)
 	if err != nil {
 		return dto.SessionOutput{}, err
 	}
-	s.Audit.Record(ctx, constant.AuditSignInSucceeded, constant.OutcomeSuccess, &account.ID, string(account.Role), "session", "", nil)
+	s.Audit.Record(ctx, constant.AuditSignInSucceeded, constant.OutcomeSuccess, &account.ID, string(account.Role), "session", issued.ID.String(), nil)
 	return session, nil
 }

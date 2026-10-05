@@ -357,6 +357,28 @@ func (testRefresh) Generate() (string, string, error) {
 }
 func (testRefresh) Hash(raw string) string { return "hash:" + strings.TrimPrefix(raw, "refresh:") }
 
+type fakeTx struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *fakeTx) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	return fn(ctx)
+}
+
+func (f *fakeTx) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 type harness struct {
 	svc       *Service
 	users     *fakeUsers
@@ -367,6 +389,7 @@ type harness struct {
 	guard     *fakeGuard
 	email     *fakeEmail
 	audit     *fakeAuditor
+	tx        *fakeTx
 }
 
 func newHarness() *harness {
@@ -380,6 +403,7 @@ func newHarness() *harness {
 	h.guard = newFakeGuard(10)
 	h.email = &fakeEmail{}
 	h.audit = &fakeAuditor{}
+	h.tx = &fakeTx{}
 	h.svc = New(Service{
 		Users:         h.users,
 		Sessions:      h.sessions,
@@ -392,6 +416,7 @@ func newHarness() *harness {
 		RefreshTokens: testRefresh{},
 		Email:         h.email,
 		Audit:         h.audit,
+		Tx:            h.tx,
 		Config:        Config{RefreshTokenTTL: time.Hour, PasswordResetTTL: time.Hour},
 	})
 	return h

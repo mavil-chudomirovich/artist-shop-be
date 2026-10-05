@@ -26,6 +26,7 @@ var sensitiveKeys = map[string]struct{}{
 	"token":          {},
 	"access_token":   {},
 	"refresh_token":  {},
+	"reset_token":    {},
 	"authorization":  {},
 	"api_key":        {},
 	"apikey":         {},
@@ -34,6 +35,8 @@ var sensitiveKeys = map[string]struct{}{
 	"dsn":            {},
 	"database_url":   {},
 	"db_url":         {},
+	"otp":            {},
+	"body":           {},
 }
 
 // IsSensitiveKey reports whether the given attribute key must be redacted.

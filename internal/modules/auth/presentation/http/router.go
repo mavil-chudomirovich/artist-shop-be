@@ -14,12 +14,12 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
-	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
-// NewWithAuditor creates a handler with a privilege-denial auditor.
-func NewWithAuditor(svc appinterface.AuthService, auditor appinterface.Auditor, logger *slog.Logger) *Handler {
+// New creates the auth HTTP handler. The auditor is required: without it the
+// privilege-denial record required by FR-014 would be silently skipped.
+func New(svc appinterface.AuthService, auditor appinterface.Auditor, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, auditor: auditor, logger: logger}
 }
 
@@ -50,16 +50,17 @@ func (h *Handler) Router(cfg config.AuthConfig) http.Handler {
 		r.Post("/password/change", h.ChangePassword)
 	})
 	r.Group(func(r chi.Router) {
-		r.Use(h.requireAdmin(hooks))
+		r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
 		r.Get("/admin/probe", h.AdminProbe)
 	})
 
 	return r
 }
 
-// AuthHooks supplies the foundation's authentication hook.
+// AuthHooks supplies the foundation's authentication hook. Token failures are
+// mapped to the module's documented codes instead of a generic 401.
 func (h *Handler) AuthHooks() middleware.AuthHooks {
-	return middleware.AuthHooks{
+	hooks := middleware.AuthHooks{
 		Authenticate: func(ctx context.Context, r *http.Request) (*middleware.Identity, error) {
 			raw := bearerToken(r)
 			if raw == "" {
@@ -67,33 +68,21 @@ func (h *Handler) AuthHooks() middleware.AuthHooks {
 			}
 			claims, err := h.svc.VerifyAccessToken(ctx, raw)
 			if err != nil {
-				return nil, err
+				return nil, mapError(err)
 			}
 			return &middleware.Identity{Subject: claims.Subject.String(), Role: string(claims.Role), TokenID: claims.ID}, nil
 		},
 	}
-}
-
-// requireAdmin enforces the ADMIN role and records privilege denials (FR-014).
-func (h *Handler) requireAdmin(hooks middleware.AuthHooks) func(http.Handler) http.Handler {
-	authenticated := middleware.RequireAuthentication(hooks)
-	return func(next http.Handler) http.Handler {
-		return authenticated(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			identity, _ := middleware.IdentityFromContext(r.Context())
-			if identity.Role != string(access.RoleAdmin) {
-				if h.auditor != nil {
-					var actor *uuid.UUID
-					if id, err := uuid.Parse(identity.Subject); err == nil {
-						actor = &id
-					}
-					h.auditor.Record(r.Context(), constant.AuditPrivilegeDenied, constant.OutcomeFailure, actor, identity.Role, "route", r.URL.Path, nil)
-				}
-				httpx.WriteError(w, r, httpx.New(httpx.CodeForbidden), h.logger)
-				return
+	if h.auditor != nil {
+		hooks.OnDenied = func(ctx context.Context, id middleware.Identity, r *http.Request) {
+			var actor *uuid.UUID
+			if parsed, err := uuid.Parse(id.Subject); err == nil {
+				actor = &parsed
 			}
-			next.ServeHTTP(w, r)
-		}))
+			h.auditor.Record(ctx, constant.AuditPrivilegeDenied, constant.OutcomeFailure, actor, id.Role, "route", r.URL.Path, nil)
+		}
 	}
+	return hooks
 }
 
 func bearerToken(r *http.Request) string {

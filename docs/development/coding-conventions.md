@@ -29,7 +29,7 @@ infrastructure → domain, application/interface
 
 | Tầng | Chứa được | Không được |
 |---|---|---|
-| `domain` | `model`, `constant`, `error`, `repository` | Import framework, `database/sql`, `pgx`, `chi` |
+| `domain` | `model`, `constant`, `error`, `repository` | Import framework, `database/sql`, `pgx`, `chi`. Chỉ stdlib + `share/access` + `github.com/google/uuid` (ngoại lệ do hiến pháp I công nhận) |
 | `application` | `interface` (use case, port, UnitOfWork), `implement`, `dto`, `mapper` | Import `infrastructure`, `presentation` |
 | `infrastructure` | `implement` (adapter: postgres, redis, media, auditor, token) | Không chứa interface, không chứa nghiệp vụ |
 | `presentation` | `http`, `cli`, `worker`, `dto` | Chứa nghiệp vụ, chứa SQL |

@@ -13,8 +13,9 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/model"
 )
 
-// Refresh rotates a session using a valid refresh token. A rotated-out token is
-// rejected without revoking other sessions (FR-007).
+// Refresh rotates a session using a valid refresh token. Presenting a
+// rotated-out token is treated as a replay: every session of the account is
+// revoked and the event is audited.
 func (s *Service) Refresh(ctx context.Context, in dto.RefreshInput) (dto.SessionOutput, error) {
 	session, err := s.Sessions.ByTokenHash(ctx, s.RefreshTokens.Hash(in.RefreshToken))
 	if err != nil {
@@ -24,6 +25,10 @@ func (s *Service) Refresh(ctx context.Context, in dto.RefreshInput) (dto.Session
 		return dto.SessionOutput{}, err
 	}
 	if session.RevokedAt != nil {
+		if err := s.Sessions.RevokeAllForUser(ctx, session.UserID); err != nil {
+			return dto.SessionOutput{}, err
+		}
+		s.Audit.Record(ctx, constant.AuditRefreshReused, constant.OutcomeFailure, &session.UserID, "", "session", session.ID.String(), nil)
 		return dto.SessionOutput{}, domainerr.ErrRefreshReused
 	}
 	if time.Now().UTC().After(session.ExpiresAt) {

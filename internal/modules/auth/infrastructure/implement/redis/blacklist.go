@@ -4,6 +4,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"time"
 
@@ -47,7 +48,7 @@ func (s *BlacklistStore) RevokeUserBefore(ctx context.Context, userID uuid.UUID,
 func (s *BlacklistStore) IsIssuedBefore(ctx context.Context, userID uuid.UUID, iat time.Time) (bool, error) {
 	raw, err := s.cache.Get(ctx, userMinIATKey(userID))
 	if err != nil {
-		if err == cache.ErrNotFound {
+		if errors.Is(err, cache.ErrNotFound) {
 			return false, nil
 		}
 		return false, err

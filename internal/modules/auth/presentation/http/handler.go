@@ -24,11 +24,6 @@ type Handler struct {
 	logger  *slog.Logger
 }
 
-// New creates a handler.
-func New(svc appinterface.AuthService, logger *slog.Logger) *Handler {
-	return &Handler{svc: svc, logger: logger}
-}
-
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	httpx.WriteError(w, r, mapError(err), h.logger)
 }
@@ -189,6 +184,13 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
 		return
 	}
+	if req.RefreshToken == "" {
+		httpx.WriteError(w, r, httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{
+			Field: "refreshToken",
+			Issue: "the current refresh token is required",
+		}), h.logger)
+		return
+	}
 	session, err := h.svc.ChangePassword(r.Context(), appdto.ChangePasswordInput{
 		AccountID:           accountID,
 		CurrentPassword:     req.CurrentPassword,
@@ -212,13 +214,17 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, domainerr.ErrInvalidToken)
 		return
 	}
-	resp := httpdto.IdentityResponse{ID: identity.Subject, Role: identity.Role}
-	if accountID, err := uuid.Parse(identity.Subject); err == nil {
-		if out, err := h.svc.Identity(r.Context(), accountID); err == nil {
-			resp.Email = out.Email
-		}
+	accountID, err := uuid.Parse(identity.Subject)
+	if err != nil {
+		h.fail(w, r, domainerr.ErrInvalidToken)
+		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, resp)
+	out, err := h.svc.Identity(r.Context(), accountID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.IdentityResponse{ID: identity.Subject, Email: out.Email, Role: string(out.Role)})
 }
 
 // AdminProbe is an admin-only endpoint used to verify RBAC.

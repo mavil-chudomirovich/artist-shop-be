@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 )
 
@@ -163,6 +164,48 @@ func TestRequireRoleEnforcesRole(t *testing.T) {
 		ServeHTTP(custRec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if custRec.Code != http.StatusForbidden {
 		t.Fatalf("expected customer forbidden, got %d", custRec.Code)
+	}
+}
+
+func TestRequireRoleNotifiesOnDenial(t *testing.T) {
+	var denied []Identity
+	hooks := AuthHooks{
+		Authenticate: func(context.Context, *http.Request) (*Identity, error) {
+			return &Identity{Subject: "c", Role: "CUSTOMER"}, nil
+		},
+		OnDenied: func(_ context.Context, id Identity, _ *http.Request) {
+			denied = append(denied, id)
+		},
+	}
+
+	rec := httptest.NewRecorder()
+	RequireRole(hooks, "ADMIN")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+	if len(denied) != 1 || denied[0].Role != "CUSTOMER" {
+		t.Fatalf("expected the denied identity to be reported once, got %+v", denied)
+	}
+}
+
+func TestRequireAuthenticationKeepsModuleErrorCodes(t *testing.T) {
+	hooks := AuthHooks{Authenticate: func(context.Context, *http.Request) (*Identity, error) {
+		return nil, httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: "token", Issue: "expired"})
+	}}
+
+	rec := httptest.NewRecorder()
+	RequireAuthentication(hooks)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected the module code to be preserved (400), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "VALIDATION_ERROR") {
+		t.Fatalf("expected VALIDATION_ERROR in the body, got %s", rec.Body.String())
 	}
 }
 

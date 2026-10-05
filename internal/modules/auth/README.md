@@ -25,23 +25,23 @@ presentation/
 └── dto/          # HTTP request/response DTOs
 ```
 
-## Endpoints (`/api/v1/auth`)
+## Where the behavior is documented
 
-`register`, `verify-email`, `resend-verification`, `login`, `refresh`, `logout`,
-`password/forgot`, `password/reset`, `password/change`, `me`, `admin/probe`.
+Do not duplicate it here — these files are authoritative:
 
-## Security
-
-- Argon2id password hashing; 6-digit email OTP stored hashed in Redis with a
-  3-strike blacklist and 1-minute resend cooldown.
-- 15-minute HS256 JWT access tokens; 45-day opaque rotating refresh tokens.
-- Access-token blacklist (per-`jti` and per-user minimum-`iat`) in Redis.
-- Failed sign-in lockout (10 attempts / 15 minutes) and per-route rate limits.
+- Endpoints, error codes, rate limits, token lifecycle:
+  [`docs/api-reference.md`](../../../docs/api-reference.md) (§1 conventions, §3 auth)
+- Layer responsibilities and dependency rules: [`docs/architecture.md`](../../../docs/architecture.md)
+- Module scope and completion criteria: [`docs/modules/01-auth.md`](../../../docs/modules/01-auth.md)
+- Requirements and clarifications: [`specs/001-user-auth/spec.md`](../../../specs/001-user-auth/spec.md)
 
 ## Commands
 
+Use the Makefile targets rather than raw `go test`
+(see [`docs/makefile.md`](../../../docs/makefile.md)):
+
 ```sh
-go run ./cmd/seed                  # provision admin (ADMIN_EMAIL/ADMIN_PASSWORD)
-go test ./...                      # unit + HTTP tests
-go test -tags integration ./...    # repository tests (Docker)
+make seed        # provision the admin account (ADMIN_EMAIL/ADMIN_PASSWORD)
+make test        # unit + HTTP tests
+make test-integration  # repository/HTTP tests against Docker
 ```

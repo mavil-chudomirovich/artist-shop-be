@@ -23,6 +23,9 @@ func (s *Service) VerifyEmail(ctx context.Context, in dto.VerifyEmailInput) erro
 	if account.Status == constant.StatusActive {
 		return nil
 	}
+	if account.Status == constant.StatusDisabled {
+		return domainerr.ErrAccountDisabled
+	}
 	if err := s.OTP.Verify(ctx, normalized, in.OTP); err != nil {
 		return err
 	}
@@ -33,7 +36,9 @@ func (s *Service) VerifyEmail(ctx context.Context, in dto.VerifyEmailInput) erro
 	return nil
 }
 
-// ResendVerification re-issues an OTP subject to the resend cooldown.
+// ResendVerification re-issues an OTP subject to the resend cooldown. The
+// response stays generic, so accounts that no longer need a code are skipped
+// silently instead of reporting their status.
 func (s *Service) ResendVerification(ctx context.Context, in dto.EmailInput) error {
 	normalized := model.NormalizeEmail(in.Email)
 	account, err := s.Users.ByEmail(ctx, normalized)
@@ -43,7 +48,7 @@ func (s *Service) ResendVerification(ctx context.Context, in dto.EmailInput) err
 		}
 		return err
 	}
-	if account.Status == constant.StatusActive {
+	if account.Status != constant.StatusPending {
 		return nil
 	}
 	if err := s.OTP.CanResend(ctx, normalized); err != nil {

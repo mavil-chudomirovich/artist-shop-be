@@ -28,6 +28,7 @@ func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
 		Pool:          pool,
 		Table:         "sessions",
 		IDColumn:      "id",
+		Columns:       []string{"id", "user_id", "refresh_token_hash", "expires_at", "revoked_at", "rotated_from", "user_agent", "ip", "created_at"},
 		OrderBy:       "created_at DESC",
 		InsertColumns: []string{"id", "user_id", "refresh_token_hash", "expires_at", "user_agent", "ip"},
 		InsertValues: func(s *model.Session) []any {
@@ -67,7 +68,7 @@ func (r *SessionRepository) ByTokenHash(ctx context.Context, hash string) (*mode
 }
 
 // Rotate revokes the old session and inserts its replacement. It runs inside the
-// caller's transaction (application-owned via UnitOfWork).
+// caller's transaction when the use case opened one through the UnitOfWork port.
 func (r *SessionRepository) Rotate(ctx context.Context, oldID uuid.UUID, next *model.Session) error {
 	q := r.querier(ctx)
 	if _, err := q.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE id = $1`, oldID); err != nil {

@@ -44,6 +44,35 @@ Follow-up TODOs: none.
 <!--
 Sync Impact Report
 ==================
+Version change: 1.5.0 → 1.6.0 (MINOR)
+Bump rationale: Principle I's domain-import rule was unenforceable as written:
+`domain/model` and `domain/repository` must express the UUID primary-key type,
+and inventing a second ID type per module would duplicate the concept without
+any behavioural gain. The rule now names `github.com/google/uuid` as the one
+allowed value-type library and requires the owning feature to record the entry
+in Complexity Tracking instead of leaving it implicit.
+
+Modified principles:
+- I. Modular Monolith & Clean Architecture (domain import allowlist)
+
+Changed guidance:
+- `domain` may import stdlib, `share/access`, and `github.com/google/uuid`.
+
+Structural changes:
+- none
+
+Templates requiring updates:
+- ✅ .specify/memory/constitution.md (this file)
+- ✅ docs/architecture.md (§2 dependency rules)
+- ⚠ .specify/templates/plan-template.md (no change required)
+- ⚠ .specify/templates/tasks-template.md (no change required)
+
+Follow-up TODOs: none.
+-->
+
+<!--
+Sync Impact Report
+==================
 Version change: 1.2.0 → 1.3.0 (MINOR)
 Bump rationale: Finalized the module layer names and internal layout agreed with
 the project: layers `presentation / application / infrastructure / domain` with
@@ -95,8 +124,11 @@ review, wishlist, content, admin).
 - The dependency rule is strict and one-directional:
   `presentation → application → domain`; `infrastructure → domain` and
   `infrastructure → application/interface`. `domain` MUST NOT import another
-  layer or any framework/library other than the Go standard library and
-  dependency-free shared value packages (`share/access`).
+  layer or any framework/library other than the Go standard library,
+  dependency-free shared value packages (`share/access`), and the UUID value
+  type library `github.com/google/uuid` (primary keys are UUIDs, so the ID type
+  is part of the domain value objects; recorded as a Complexity Tracking entry
+  in the owning feature's plan).
 - `domain` MUST contain: `model` (entities/value objects), `constant` (business
   constants), `error` (business sentinel errors), and `repository` (repository
   interfaces).
@@ -386,4 +418,4 @@ This constitution supersedes other development practices when conflicts arise.
 - **Precedence**: where `docs/` guidance and this constitution conflict, this
   constitution wins, and the docs MUST be corrected.
 
-**Version**: 1.5.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-05
+**Version**: 1.6.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-06

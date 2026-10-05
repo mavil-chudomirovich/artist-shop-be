@@ -3,29 +3,31 @@ package email
 import (
 	"context"
 	"sync"
+
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/interface"
 )
 
-// FakeSender captures messages in memory for tests.
+// Message is a captured outbound email.
+type Message struct {
+	To      string
+	Subject string
+	Body    string
+}
+
+// FakeSender captures messages in memory for integration tests.
 type FakeSender struct {
 	mu   sync.Mutex
 	sent []Message
 }
 
-// Send records the message.
-func (f *FakeSender) Send(_ context.Context, m Message) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sent = append(f.sent, m)
-	return nil
-}
+var _ appinterface.EmailSender = (*FakeSender)(nil)
 
-// All returns a copy of all sent messages.
-func (f *FakeSender) All() []Message {
+// Send records the message.
+func (f *FakeSender) Send(_ context.Context, to, subject, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]Message, len(f.sent))
-	copy(out, f.sent)
-	return out
+	f.sent = append(f.sent, Message{To: to, Subject: subject, Body: body})
+	return nil
 }
 
 // Last returns the most recent message.
@@ -36,11 +38,4 @@ func (f *FakeSender) Last() (Message, bool) {
 		return Message{}, false
 	}
 	return f.sent[len(f.sent)-1], true
-}
-
-// Reset clears recorded messages.
-func (f *FakeSender) Reset() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sent = nil
 }

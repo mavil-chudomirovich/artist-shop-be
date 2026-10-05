@@ -10,15 +10,6 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/cache"
 )
 
-// OTP store errors, aliased to the domain sentinels.
-var (
-	ErrOTPInvalid         = domainerr.ErrOTPInvalid
-	ErrOTPExpired         = domainerr.ErrOTPExpired
-	ErrOTPTooManyAttempts = domainerr.ErrOTPTooManyAttempts
-	ErrOTPBlocked         = domainerr.ErrOTPBlocked
-	ErrResendCooldown     = domainerr.ErrResendCooldown
-)
-
 // OTPStore persists email-confirmation OTP challenges in Redis.
 type OTPStore struct {
 	cache       *cache.Cache

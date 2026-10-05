@@ -94,7 +94,7 @@ func run() error {
 		Hasher:        token.Hasher{},
 		Access:        token.NewAccessIssuer(cfg.Auth.JWTSecret, cfg.Auth.AccessTokenTTL),
 		RefreshTokens: token.Generator{},
-		Email:         email.NewPort(email.NewSender(cfg.Auth, logger)),
+		Email:         email.NewSender(cfg.Auth, logger),
 		Audit:         auditorAdapter,
 		Tx:            db,
 		Config: implement.Config{
@@ -103,7 +103,7 @@ func run() error {
 		},
 	})
 
-	authHandler := authhttp.NewWithAuditor(authService, auditorAdapter, logger)
+	authHandler := authhttp.New(authService, auditorAdapter, logger)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Config:  cfg,

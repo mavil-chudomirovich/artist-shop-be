@@ -12,7 +12,7 @@
 
 ### Session 2026-09-18
 
-- Q: Chính sách mật khẩu? → A: Tối thiểu 8 ký tự, phải có chữ cái, chữ số và ký tự đặc biệt.
+- Q: Chính sách mật khẩu? → A: Tối thiểu 8 ký tự, phải có chữ cáa, chữ số và ký tự đặc biệt.
 - Q: Cách tạo tài khoản admin? → A: Lệnh CLI seed admin, credential lấy từ biến môi trường (không qua đăng ký công khai).
 - Q: Thời hạn token/phiên? → A: JWT access token 15 phút; refresh token 45 ngày.
 - Q: Chuẩn hóa email & duy nhất? → A: Trim + lowercase trước khi lưu; duy nhất không phân biệt hoa/thường.
@@ -21,6 +21,18 @@
 - Q: Đăng ký có cần xác nhận email? → A: Có; gửi OTP xác nhận tới email đã đăng ký.
 - Q: Lưu OTP và access-token blacklist ở đâu? → A: Redis (OTP để đối chiếu; blacklist access token trong Redis).
 - Q: Xử lý nhập sai OTP? → A: Sai 3 lần → blacklist OTP; sau 1 phút mới được gửi lại OTP.
+
+### Session 2026-10-06
+
+Hai câu hỏi dưới đây được **thay đổi** so với session 2026-09-18 để khớp với
+`docs/api-reference.md` (mục 1.6 và 3.10) — tài liệu authoritative cho API:
+
+- Q: Phát hiện tái sử dụng refresh token? → A: Từ chối yêu cầu **và thu hồi toàn bộ phiên
+  của tài khoản**, ghi `audit_logs` (`AUTH_REFRESH_REUSED`). Lý do: refresh token bị
+  dùng lại nghĩa là token đã lộ ra ngoài thiết bị chủ sở hữu.
+- Q: Đổi mật khẩu ảnh hưởng token thế nào? → A: `POST /password/change` **bắt buộc** có
+  `refreshToken` hiện tại (thiếu → `VALIDATION_ERROR` 400); sau đó thu hồi toàn bộ phiên
+  của tài khoản, blacklist access token cũ và cấp cặp token mới.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -98,7 +110,7 @@ capabilities.
    device, **Then** only that device's session is invalidated and the other
    continues to work.
 3. **Given** a signed-out session, **When** it is reused, **Then** access is
-   denied.
+   denied and every session of that account is revoked.
 
 ---
 
@@ -124,10 +136,9 @@ with the emailed link, and sign in with the new password.
 3. **Given** an expired or already-used reset link, **When** the user submits a
    new password, **Then** the request is rejected.
 4. **Given** a successful password reset, **Then** previously issued sessions are
-   revoked and their access tokens are blacklisted and rejected; when the reset
-   replaces an active session the replacement refresh token keeps that session's
-   expiry, otherwise a fresh 45-day refresh token is issued. The same replacement
-   rule applies to a password change performed while signed in.
+   revoked and their access tokens are blacklisted and rejected; a fresh 45-day
+   refresh token is issued. The same rule applies to a password change performed
+   while signed in.
 
 ---
 
@@ -141,7 +152,8 @@ with the emailed link, and sign in with the new password.
 - A password reset is requested while the user is signed in: previously issued
   sessions are invalidated after the reset completes.
 - The same account is used concurrently on multiple devices: all remain valid
-  until explicitly signed out or globally revoked.
+  until explicitly signed out or globally revoked (password change, password
+  reset, or refresh-token replay detection).
 - An admin account cannot be created through public registration.
 - Email delivery fails during reset: the user can request again after the retry
   window; no account state changes until the new password is submitted.
@@ -149,11 +161,12 @@ with the emailed link, and sign in with the new password.
   and the account stays pending; after 3 wrong attempts the OTP is blacklisted and
   a fresh OTP can only be requested after a 1-minute cooldown.
 - A pending (unconfirmed) account attempts to sign in: sign-in is denied.
-- A rotated-out refresh token is reused: only that request is denied; other
-  devices' sessions remain valid.
+- A rotated-out refresh token is reused: the request is denied and every session
+  of that account is revoked, because reuse means the token leaked.
+- A password change while signed in omits the current refresh token, or supplies a
+  revoked token or a token belonging to another account: the request is rejected.
 - Access tokens issued before a password change are presented afterwards: they
-  are rejected (blacklisted); the newly issued refresh token keeps the original
-  expiry.
+  are rejected (blacklisted); a new token pair is issued.
 
 ## Requirements *(mandatory)*
 
@@ -176,7 +189,8 @@ with the emailed link, and sign in with the new password.
 - **FR-007**: The system MUST allow renewing a session using a valid refresh
   token without re-entering the password, and MUST rotate the refresh token on
   renewal. A rotated-out refresh token that is presented again MUST be rejected
-  (sign-in denied) without revoking other sessions.
+  (sign-in denied), MUST revoke every session of that account, and MUST be
+  recorded in `audit_logs`.
 - **FR-008**: Users MUST be able to sign out, which immediately invalidates the
   refresh token used.
 - **FR-009**: The system MUST support multiple concurrent sessions per account,
@@ -202,9 +216,9 @@ with the emailed link, and sign in with the new password.
 - **FR-016**: The system MUST record security-relevant events (sign-in success and
   failure, sign-out, password change, privilege denial) with actor, action, and
   time for auditing.
-- **FR-017**: A completed password change MUST issue a new refresh token whose
-  expiry equals that of the replaced refresh token and MUST blacklist previously
-  issued access tokens.
+- **FR-017**: A password change performed while signed in MUST require the current
+  refresh token in the request body, MUST revoke every session of the account,
+  MUST blacklist previously issued access tokens, and MUST issue a new token pair.
 - **FR-018**: Registration MUST NOT grant sign-in capability until the registered
   email is confirmed with a one-time passcode (OTP) sent to that address.
 - **FR-019**: The email-confirmation OTP MUST be stored in the shared cache

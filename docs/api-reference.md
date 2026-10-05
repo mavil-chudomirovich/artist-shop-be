@@ -87,7 +87,7 @@ nội bộ ra ngoài.
 | `VALIDATION_ERROR` | 400 | Dữ liệu không hợp lệ |
 | `MALFORMED_REQUEST` | 400 | Body không parse được, hoặc có field lạ (decoder dùng `DisallowUnknownFields`) |
 | `UNAUTHENTICATED` | 401 | Thiếu token / token không hợp lệ |
-| `FORBIDDEN` | 403 | Đã xác thực nhưng thiếu quyền (bị ghi `audit_logs` với action `auth.privilege_denied`) |
+| `FORBIDDEN` | 403 | Đã xác thực nhưng thiếu quyền (bị ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) |
 | `NOT_FOUND` | 404 | Không tồn tại route |
 | `METHOD_NOT_ALLOWED` | 405 | Sai HTTP method |
 | `CONFLICT` | 409 | Xung đột trạng thái hiện tại |
@@ -103,7 +103,6 @@ nội bộ ra ngoài.
 |------|------|-------|
 | `AUTH_WEAK_PASSWORD` | 400 | Mật khẩu không đạt chính sách |
 | `AUTH_INVALID_CREDENTIALS` | 401 | Sai email hoặc mật khẩu (không tiết lộ cái nào sai) |
-| `AUTH_EMAIL_TAKEN` | 409 | Email đã đăng ký |
 | `AUTH_ACCOUNT_PENDING` | 403 | Chưa xác nhận email |
 | `AUTH_ACCOUNT_DISABLED` | 403 | Tài khoản bị vô hiệu hoá |
 | `AUTH_OTP_INVALID` | 400 | Mã xác nhận sai |
@@ -133,9 +132,10 @@ khoá mã 60 giây (`OTP_MAX_ATTEMPTS`, `OTP_BLOCK_TTL`).
 - Access token: JWT HS256, **15 phút** (`ACCESS_TOKEN_TTL`).
 - Refresh token: opaque, xoay vòng mỗi lần dùng, **45 ngày** (`REFRESH_TOKEN_TTL`).
 - Dùng lại refresh token đã rotate ⇒ `AUTH_REFRESH_REUSED` **và** toàn bộ phiên của
-  user bị thu hồi (phát hiện replay).
+  user bị thu hồi (phát hiện replay), sự kiện được ghi `audit_logs` với action
+  `AUTH_REFRESH_REUSED`.
 - `POST /auth/logout` chỉ thu hồi **phiên của thiết bị đó**; các thiết bị khác vẫn
-  dùng được.
+  dùng được cho tới khi chính refresh token đã bị thu hồi được dùng lại.
 
 ---
 
@@ -203,7 +203,7 @@ Response `202`
 }
 ```
 
-Lỗi: `AUTH_WEAK_PASSWORD` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS`/`AUTH_RESEND_COOLDOWN` 429 · `RATE_LIMITED` 429
+Lỗi: `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429
 
 > Nếu `.env` để `SMTP_HOST` rỗng, email được ghi ra log (log sender). Bật Mailpit
 > bằng `make up-tools` rồi đặt `SMTP_HOST=mailpit`, `SMTP_PORT=1025` để xem OTP
@@ -227,7 +227,7 @@ Response `200`
 { "data": { "message": "Email confirmed." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
-Lỗi: `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `AUTH_ACCOUNT_DISABLED` 403
+Lỗi: `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `AUTH_ACCOUNT_DISABLED` 403 · `RATE_LIMITED` 429
 
 ### 3.3 `POST /resend-verification`
 
@@ -241,7 +241,7 @@ Gửi lại OTP khi mã hết hạn hoặc người dùng không nhận được
 
 Request `{ "email": "user@example.com" }` → response giống hệt `POST /register`.
 
-Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429
+Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `RATE_LIMITED` 429
 
 ### 3.4 `POST /login`
 
@@ -294,7 +294,8 @@ Lỗi: `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401 · `AUTH_REFRESH_REU
 
 ### 3.6 `POST /logout`
 
-Thu hồi phiên của thiết bị hiện tại.
+Thu hồi phiên của thiết bị hiện tại. Thao tác **idempotent**: refresh token lạ vẫn
+trả `204`.
 
 | | |
 |---|---|
@@ -303,7 +304,7 @@ Thu hồi phiên của thiết bị hiện tại.
 
 Request `{ "refreshToken": "<opaque>" }`
 
-Lỗi: `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401
+Lỗi: `MALFORMED_REQUEST` 400
 
 ### 3.7 `POST /password/forgot`
 
@@ -342,7 +343,7 @@ Request
 
 Response giống `POST /login` (`accessToken`, `refreshToken`, `expiresIn`).
 
-Lỗi: `AUTH_RESET_INVALID` 400 · `AUTH_WEAK_PASSWORD` 400
+Lỗi: `AUTH_RESET_INVALID` 400 · `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429
 
 ### 3.9 `GET /me`
 
@@ -366,13 +367,13 @@ Response
 }
 ```
 
-`role` là `CUSTOMER` hoặc `ADMIN` (`internal/share/access`). Lỗi: `UNAUTHENTICATED` 401 · `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401
+`role` là `CUSTOMER` hoặc `ADMIN` (`internal/share/access`). Lỗi: `UNAUTHENTICATED` 401 (thiếu token) · `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401
 
 ### 3.10 `POST /password/change`
 
 Đổi mật khẩu khi đã đăng nhập. Mọi phiên của tài khoản bị thu hồi, kể cả phiên
 đang dùng, rồi cấp lại cặp token mới — vì vậy body **bắt buộc** có
-`refreshToken` hiện tại.
+`refreshToken` hiện tại và access token cũ bị blacklist.
 
 | | |
 |---|---|
@@ -391,7 +392,7 @@ Request
 
 Response giống `POST /login`.
 
-Lỗi: `UNAUTHENTICATED` 401 · `AUTH_INVALID_CREDENTIALS` 401 · `AUTH_WEAK_PASSWORD` 400 · `AUTH_REFRESH_REUSED` 401
+Lỗi: `UNAUTHENTICATED` 401 · `AUTH_INVALID_CREDENTIALS` 401 · `AUTH_WEAK_PASSWORD` 400 · `VALIDATION_ERROR` 400 (thiếu `refreshToken`) · `AUTH_TOKEN_INVALID` 401 (refresh token không thuộc phiên nào) · `AUTH_REFRESH_REUSED` 401 (refresh token đã thu hồi hoặc thuộc tài khoản khác)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/password/change \
@@ -403,7 +404,7 @@ curl -X POST http://localhost:8080/api/v1/auth/password/change \
 
 Endpoint kiểm tra RBAC: chỉ `ADMIN` mới truy cập được. Khách không đăng nhập bị
 `401`; `CUSTOMER` đã đăng nhập bị `403` **và** bị ghi vào `audit_logs`
-(`auth.privilege_denied`).
+(`AUTH_PRIVILEGE_DENIED`).
 
 | | |
 |---|---|
@@ -448,10 +449,18 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
-   `specs/<feature>/contracts/error-codes.md` của feature đó).
+   `specs/<feature>/contracts/<module>-error-codes.md` của feature đó).
 
 ## 6. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-06 | `POST /password/change` thu hồi **toàn bộ** phiên của tài khoản và bắt buộc có `refreshToken`; thêm `VALIDATION_ERROR` 400 và `AUTH_TOKEN_INVALID` 401 vào danh sách lỗi của endpoint này. | `internal/modules/auth/application/implement/password.go` |
+| 2026-10-06 | `POST /refresh` phát hiện replay thì thu hồi **toàn bộ** phiên của user và ghi `audit_logs` (`AUTH_REFRESH_REUSED`), khớp với mục 1.6. | `internal/modules/auth/application/implement/session.go` |
+| 2026-10-06 | Gỡ `AUTH_EMAIL_TAKEN` khỏi bảng error code và khỏi `/register`: endpoint này luôn trả `202` chung nên không được tiết lộ email đã tồn tại (FR-011). | `internal/modules/auth/domain/constant/codes.go` |
+| 2026-10-06 | Gỡ `AUTH_RESEND_COOLDOWN`/`AUTH_OTP_TOO_MANY_ATTEMPTS` khỏi `/register` và `AUTH_RESEND_COOLDOWN` khỏi `/password/forgot` (cơ chế cooldown chỉ áp dụng cho OTP qua `/resend-verification`). | `internal/modules/auth/application/implement/register.go` |
+| 2026-10-06 | `POST /logout` chỉ trả `204` (idempotent); bỏ hai dòng lỗi 401 không xảy ra. | `internal/modules/auth/application/implement/session.go` |
+| 2026-10-06 | `GET /me` và `POST /password/change` trả `AUTH_TOKEN_INVALID`/`AUTH_TOKEN_EXPIRED` thay vì `UNAUTHENTICATED` khi token sai hoặc hết hạn. | `internal/share/middleware/auth.go` |
+| 2026-10-06 | `POST /verify-email` trả `AUTH_ACCOUNT_DISABLED` 403 cho tài khoản bị vô hiệu hoá (không kích hoạt lại được). | `internal/modules/auth/application/implement/verify_email.go` |
+| 2026-10-06 | Sửa action audit của `403`: `auth.privilege_denied` → `AUTH_PRIVILEGE_DENIED` cho khớp với các action khác của module. | `internal/modules/auth/domain/constant/audit.go` |
 | 2026-10-05 | Tạo tài liệu, ghi lại toàn bộ endpoint của foundation (2) và module 01 auth (11) | `internal/share/httpserver/routes.go`, `internal/modules/auth/presentation/http/router.go` |

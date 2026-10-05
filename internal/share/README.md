@@ -23,14 +23,14 @@ never depends on business modules.
 
 All business endpoints live under `/api/v1` and follow
 `specs/002-cross-cutting-foundation/contracts/http-conventions.md`. Errors use the
-stable codes in `contracts/error-codes.md`.
+stable codes in [`docs/api-reference.md`](../../docs/api-reference.md) (§1.4).
 
 ## Authentication boundary
 
-The foundation defines the `AuthHooks` interface and the `RequireAuthentication`
-/ `RequireAdmin` enforcement middleware, but does not implement credential or
-session logic. The auth module (module 01) supplies `AuthHooks` at the
-composition root.
+The foundation defines the `AuthHooks` struct and the `RequireAuthentication` /
+`RequireRole` enforcement middleware, but does not implement credential or
+session logic and does not define business roles. The auth module (module 01)
+supplies `AuthHooks` at the composition root.
 
 ## Running
 

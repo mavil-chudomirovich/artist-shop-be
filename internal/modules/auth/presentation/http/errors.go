@@ -19,8 +19,6 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeWeakPassword, http.StatusBadRequest, "Password does not meet the policy")
 	case errors.Is(err, domainerr.ErrInvalidCredentials):
 		return coded(constant.CodeInvalidCredentials, http.StatusUnauthorized, "Invalid email or password")
-	case errors.Is(err, domainerr.ErrEmailTaken):
-		return coded(constant.CodeEmailTaken, http.StatusConflict, "Email already registered")
 	case errors.Is(err, domainerr.ErrAccountPending):
 		return coded(constant.CodeAccountPending, http.StatusForbidden, "Email confirmation required")
 	case errors.Is(err, domainerr.ErrAccountDisabled):

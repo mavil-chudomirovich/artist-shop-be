@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ func TestGenericRepositoryCRUD(t *testing.T) {
 		Pool:          pool,
 		Table:         "repo_items",
 		IDColumn:      "id",
+		Columns:       []string{"id", "name"},
 		OrderBy:       "name",
 		InsertColumns: []string{"id", "name"},
 		InsertValues:  func(i *item) []any { return []any{i.ID, i.Name} },
@@ -104,5 +106,98 @@ func TestGenericRepositoryCRUD(t *testing.T) {
 	}
 	if ok, _ := base.Exists(ctx, first.ID); ok {
 		t.Fatal("expected item deleted")
+	}
+}
+
+// TestGenericRepositoryProjectionSurvivesExtraColumn pins the contract that the
+// projection configured through Columns, not the physical table, drives the
+// scan arity: adding an unrelated column must not break FindByID or FindAll.
+func TestGenericRepositoryProjectionSurvivesExtraColumn(t *testing.T) {
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	if _, err := pool.Exec(ctx, `CREATE TABLE repo_projection_items (
+		id uuid PRIMARY KEY,
+		name text NOT NULL,
+		note text
+	)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+
+	projected := &Base[item, uuid.UUID]{
+		Pool:          pool,
+		Table:         "repo_projection_items",
+		IDColumn:      "id",
+		Columns:       []string{"id", "name"},
+		OrderBy:       "name",
+		InsertColumns: []string{"id", "name"},
+		InsertValues:  func(i *item) []any { return []any{i.ID, i.Name} },
+		IDValue:       func(i *item) any { return i.ID },
+		Scan:          scanItem,
+	}
+
+	first := &item{ID: uuid.New(), Name: "alpha"}
+	second := &item{ID: uuid.New(), Name: "beta"}
+	for _, it := range []*item{first, second} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO repo_projection_items (id, name) VALUES ($1, $2)`, it.ID, it.Name); err != nil {
+			t.Fatalf("seed row: %v", err)
+		}
+	}
+
+	// A column nobody reads must not disturb a projected read.
+	if _, err := pool.Exec(ctx, `ALTER TABLE repo_projection_items ADD COLUMN extra int`); err != nil {
+		t.Fatalf("add column: %v", err)
+	}
+
+	got, err := projected.FindByID(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("FindByID after extra column: %v", err)
+	}
+	if got.Name != "alpha" {
+		t.Fatalf("expected projected name, got %q", got.Name)
+	}
+
+	list, total, err := projected.FindAll(ctx, 1, 10)
+	if err != nil || total != 2 || len(list) != 2 {
+		t.Fatalf("FindAll after extra column: total=%d len=%d err=%v", total, len(list), err)
+	}
+	if list[0].Name != "alpha" || list[1].Name != "beta" {
+		t.Fatalf("unexpected projection results: %+v", list)
+	}
+
+	// Without Columns there is no SELECT * fallback: the read paths fail with a
+	// configuration error naming the table instead of querying. The nil pool
+	// proves no query is issued — reaching it would panic.
+	unconfigured := &Base[item, uuid.UUID]{
+		Pool:     nil,
+		Table:    "repo_projection_items",
+		IDColumn: "id",
+		Columns:  nil,
+		Scan:     scanItem,
+	}
+
+	_, err = unconfigured.FindByID(ctx, first.ID)
+	if err == nil {
+		t.Fatal("expected a configuration error when Columns is empty")
+	}
+	if !strings.Contains(err.Error(), "repo_projection_items") ||
+		!strings.Contains(err.Error(), "Columns") {
+		t.Fatalf("error should name the table and Columns, got %v", err)
+	}
+
+	_, _, err = unconfigured.FindAll(ctx, 1, 10)
+	if err == nil {
+		t.Fatal("expected a configuration error from FindAll when Columns is empty")
+	}
+	if !strings.Contains(err.Error(), "repo_projection_items") ||
+		!strings.Contains(err.Error(), "Columns") {
+		t.Fatalf("error should name the table and Columns, got %v", err)
 	}
 }

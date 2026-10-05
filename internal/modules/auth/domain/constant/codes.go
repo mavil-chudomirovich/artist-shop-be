@@ -4,7 +4,6 @@ package constant
 const (
 	CodeWeakPassword       = "AUTH_WEAK_PASSWORD"
 	CodeInvalidCredentials = "AUTH_INVALID_CREDENTIALS"
-	CodeEmailTaken         = "AUTH_EMAIL_TAKEN"
 	CodeAccountPending     = "AUTH_ACCOUNT_PENDING"
 	CodeAccountDisabled    = "AUTH_ACCOUNT_DISABLED"
 	CodeOTPInvalid         = "AUTH_OTP_INVALID"
@@ -16,5 +15,4 @@ const (
 	CodeTokenExpired       = "AUTH_TOKEN_EXPIRED"
 	CodeRefreshReused      = "AUTH_REFRESH_REUSED"
 	CodeResetInvalid       = "AUTH_RESET_INVALID"
-	CodeForbidden          = "AUTH_FORBIDDEN"
 )

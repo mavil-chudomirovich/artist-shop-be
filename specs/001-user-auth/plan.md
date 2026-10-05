@@ -65,19 +65,27 @@ small; auth is the only module scope here.
 - [x] **Modular Monolith Boundaries**: module under `internal/modules/auth`; depends
       on `internal/share`; other modules use exported auth interfaces only. PASS.
 - [x] **Transactional Integrity**: registration, password change, and reset run in a
-      single transaction via `database.WithTx`; no money/inventory logic here. PASS.
+      single transaction through the `UnitOfWork` port (`appinterface.UnitOfWork`,
+      implemented by `share/database.DB.WithinTx`); no money/inventory logic here.
+      PASS. *(Corrected 2026-10-06: the port was declared and wired but never called,
+      so the password-change and reset writes ran outside a transaction until the
+      use cases were wrapped.)*
 - [x] **State Machines & Invariants**: account status (`pending → active →
       disabled`), email-verification (open → consumed/expired), and session
       (active → rotated/revoked/expired) transitions are explicit with positive
-      and negative tests. PASS.
+      and negative tests. PASS. *(Corrected 2026-10-06: the `expired` and
+      account-status arms had no tests; `domain/model/account_test.go` and the
+      session tests now cover them.)*
 - [x] **Test-First Critical Logic**: password verification, token issuance/rotation,
       OTP validation, and auth state transitions are built test-first. PASS.
 - [x] **Security & Least Privilege**: Argon2id, HS256 JWT with a strong secret,
       opaque rotating refresh tokens, generic anti-enumeration responses,
-      ownership/role checks, rate limiting, no secrets in logs. PASS.
+      ownership/role checks, rate limiting, no secrets in logs. PASS. *(Corrected
+      2026-10-06: the default log-sender wrote the OTP and reset token to the log;
+      it now logs only recipient and subject.)*
 - [x] **Observability**: security events (sign-in success/failure, sign-out,
-      password change, privilege denial) emitted through `audit.Emitter`; structured
-      logs via the foundation. PASS.
+      password change, privilege denial, refresh-token replay, admin provisioning)
+      emitted through `audit.Emitter`; structured logs via the foundation. PASS.
 - [x] **Simplicity (YAGNI)**: opaque refresh tokens instead of JWT refresh, in-process
       rate limiting, SMTP interface instead of a vendor SDK, hand-written SQL. PASS.
 
@@ -149,8 +157,6 @@ depend on, never the reverse.
 
 ## Complexity Tracking
 
-> No constitution violations. Table intentionally empty.
-
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| (none) | — | — |
+| `domain` imports `github.com/google/uuid` | `uuid.UUID` is the primary-key type of every table (constitution: primary keys MUST be stable and non-guessable UUIDs) and is part of the value types in `domain/model` and `domain/repository` signatures | Defining a second ID type in `domain` would duplicate the ID concept in every module for no behavioural gain; `share/access.ID` would only move the dependency. Recorded as an explicit allowance in constitution I (2026-10-06). |

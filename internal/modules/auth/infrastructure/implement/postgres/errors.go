@@ -1,4 +1,3 @@
-// Package postgres implements the auth module's domain repositories.
 package postgres
 
 import (

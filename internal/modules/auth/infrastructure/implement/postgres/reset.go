@@ -28,6 +28,7 @@ func NewResetRepository(pool *pgxpool.Pool) *ResetRepository {
 		Pool:          pool,
 		Table:         "password_reset_requests",
 		IDColumn:      "id",
+		Columns:       []string{"id", "user_id", "token_hash", "expires_at", "used_at", "created_at"},
 		OrderBy:       "created_at DESC",
 		InsertColumns: []string{"id", "user_id", "token_hash", "expires_at"},
 		InsertValues: func(r *model.ResetRequest) []any {
@@ -47,8 +48,8 @@ func (r *ResetRepository) querier(ctx context.Context) database.Querier {
 	return database.FromContext(ctx, r.pool)
 }
 
-// Create invalidates open requests and inserts a new one in the caller's
-// transaction (application-owned via UnitOfWork).
+// Create invalidates open requests and inserts a new one. It runs inside the
+// caller's transaction when the use case opened one through the UnitOfWork port.
 func (r *ResetRepository) Create(ctx context.Context, req *model.ResetRequest) error {
 	q := r.querier(ctx)
 	if _, err := q.Exec(ctx, `UPDATE password_reset_requests SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, req.UserID); err != nil {

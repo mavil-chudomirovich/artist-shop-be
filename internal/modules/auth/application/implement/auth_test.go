@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
@@ -133,17 +134,57 @@ func TestRefreshRotatesAndRejectsReuse(t *testing.T) {
 	}
 }
 
-func TestLogoutRevokes(t *testing.T) {
+func TestRefreshReuseRevokesEverySessionOfTheAccount(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
-	h.registerActive("o@example.com", "Str0ng!Pass")
-	session, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "o@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"})
+	h.registerActive("replay@example.com", "Str0ng!Pass")
 
-	if err := h.svc.Logout(ctx, appdto.RefreshInput{RefreshToken: session.RefreshToken}); err != nil {
+	deviceA, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "replay@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"})
+	deviceB, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "replay@example.com", Password: "Str0ng!Pass", Source: "2.2.2.2"})
+
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceA.RefreshToken}); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceA.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected ErrRefreshReused, got %v", err)
+	}
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceB.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected the other device to be revoked too, got %v", err)
+	}
+	if !h.audit.has(constant.AuditRefreshReused) {
+		t.Fatal("expected the replay to be audited")
+	}
+}
+
+func TestRefreshRejectsExpiredSession(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("exp@example.com", "Str0ng!Pass")
+
+	session, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "exp@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"})
+	stored, err := h.sessions.ByTokenHash(ctx, testRefresh{}.Hash(session.RefreshToken))
+	if err != nil {
+		t.Fatalf("load stored session: %v", err)
+	}
+	stored.ExpiresAt = time.Now().UTC().Add(-time.Minute)
+
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: session.RefreshToken}); !errors.Is(err, domainerr.ErrExpiredToken) {
+		t.Fatalf("expected ErrExpiredToken, got %v", err)
+	}
+}
+
+func TestLogoutRevokesOnlyItsOwnSession(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("multi@example.com", "Str0ng!Pass")
+	deviceA, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "multi@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"})
+	deviceB, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "multi@example.com", Password: "Str0ng!Pass", Source: "2.2.2.2"})
+
+	if err := h.svc.Logout(ctx, appdto.RefreshInput{RefreshToken: deviceA.RefreshToken}); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
-	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: session.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
-		t.Fatalf("expected ErrRefreshReused after logout, got %v", err)
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceB.RefreshToken}); err != nil {
+		t.Fatalf("expected the other device to stay valid, got %v", err)
 	}
 }
 
@@ -160,6 +201,9 @@ func TestResetPassword(t *testing.T) {
 	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: token, NewPassword: "New!Pass2"}); err != nil {
 		t.Fatalf("ResetPassword: %v", err)
 	}
+	if h.tx.count() == 0 {
+		t.Fatal("expected the reset to run inside a transaction")
+	}
 	if _, err := h.svc.Login(ctx, appdto.LoginInput{Email: "reset@example.com", Password: "Old!Pass1", Source: "2.2.2.2"}); !errors.Is(err, domainerr.ErrInvalidCredentials) {
 		t.Fatalf("old password should fail, got %v", err)
 	}
@@ -168,26 +212,146 @@ func TestResetPassword(t *testing.T) {
 	}
 }
 
-func TestChangePasswordBlacklistsJTI(t *testing.T) {
+func TestResetPasswordRevokesEverySession(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("resetall@example.com", "Old!Pass1")
+	deviceA, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "resetall@example.com", Password: "Old!Pass1", Source: "1.1.1.1"})
+	deviceB, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "resetall@example.com", Password: "Old!Pass1", Source: "2.2.2.2"})
+
+	if err := h.svc.ForgotPassword(ctx, appdto.EmailInput{Email: "resetall@example.com"}); err != nil {
+		t.Fatalf("ForgotPassword: %v", err)
+	}
+	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: lastField(h.email.lastBody), NewPassword: "New!Pass2"}); err != nil {
+		t.Fatalf("ResetPassword: %v", err)
+	}
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceA.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected device A to be revoked, got %v", err)
+	}
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceB.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected device B to be revoked, got %v", err)
+	}
+}
+
+func TestPasswordWritesAreAtomic(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("tx@example.com", "Old!Pass1")
+	session, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "tx@example.com", Password: "Old!Pass1", Source: "1.1.1.1"})
+	account, _ := h.users.ByEmail(ctx, "tx@example.com")
+	in := appdto.ChangePasswordInput{
+		AccountID:           account.ID,
+		CurrentPassword:     "Old!Pass1",
+		NewPassword:         "New!Pass2",
+		CurrentRefreshToken: session.RefreshToken,
+	}
+
+	h.tx.err = errors.New("commit failed")
+	if _, err := h.svc.ChangePassword(ctx, in); err == nil {
+		t.Fatal("expected the transaction failure to surface")
+	}
+	if h.audit.has(constant.AuditPasswordChanged) {
+		t.Fatal("a rolled back password change must not be audited as success")
+	}
+
+	if err := h.svc.ForgotPassword(ctx, appdto.EmailInput{Email: "tx@example.com"}); err == nil {
+		t.Fatal("expected the transaction failure to surface")
+	}
+	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: lastField(h.email.lastBody), NewPassword: "New!Pass3"}); err == nil {
+		t.Fatal("expected the transaction failure to surface")
+	}
+	if h.audit.has(constant.AuditPasswordReset) {
+		t.Fatal("a rolled back reset must not be audited as success")
+	}
+}
+
+func TestChangePasswordRequiresTheCurrentRefreshToken(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("owner@example.com", "Old!Pass1")
+	session, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "owner@example.com", Password: "Old!Pass1", Source: "1.1.1.1"})
+	account, _ := h.users.ByEmail(ctx, "owner@example.com")
+
+	_, err := h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
+		AccountID:       account.ID,
+		CurrentPassword: "Old!Pass1",
+		NewPassword:     "New!Pass2",
+	})
+	if !errors.Is(err, domainerr.ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken, got %v", err)
+	}
+
+	_, err = h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
+		AccountID:           account.ID,
+		CurrentPassword:     "Old!Pass1",
+		NewPassword:         "New!Pass2",
+		CurrentRefreshToken: "refresh:unknown",
+	})
+	if !errors.Is(err, domainerr.ErrInvalidToken) {
+		t.Fatalf("expected ErrInvalidToken for an unknown token, got %v", err)
+	}
+
+	if err := h.svc.Logout(ctx, appdto.RefreshInput{RefreshToken: session.RefreshToken}); err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+	_, err = h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
+		AccountID:           account.ID,
+		CurrentPassword:     "Old!Pass1",
+		NewPassword:         "New!Pass2",
+		CurrentRefreshToken: session.RefreshToken,
+	})
+	if !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected ErrRefreshReused for a revoked token, got %v", err)
+	}
+}
+
+func TestChangePasswordRevokesEverySession(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 	h.registerActive("change@example.com", "Old!Pass1")
 	session, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "change@example.com", Password: "Old!Pass1", Source: "3.3.3.3"})
+	other, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "change@example.com", Password: "Old!Pass1", Source: "4.4.4.4"})
 	account, _ := h.users.ByEmail(ctx, "change@example.com")
 
-	if _, err := h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
+	issued, err := h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
 		AccountID:           account.ID,
 		CurrentPassword:     "Old!Pass1",
 		NewPassword:         "New!Pass2",
 		CurrentRefreshToken: session.RefreshToken,
 		CurrentAccessJTI:    "jti-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ChangePassword: %v", err)
+	}
+	if issued.RefreshToken == "" {
+		t.Fatal("expected a fresh token pair")
 	}
 	if !h.blacklist.jtis["jti-1"] {
 		t.Fatal("expected jti blacklisted")
 	}
+	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: other.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected every session to be revoked, got %v", err)
+	}
 	if _, err := h.svc.Login(ctx, appdto.LoginInput{Email: "change@example.com", Password: "New!Pass2", Source: "3.3.3.3"}); err != nil {
 		t.Fatalf("new password should work, got %v", err)
+	}
+}
+
+func TestChangePasswordRejectsAnotherAccountsToken(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	h.registerActive("first@example.com", "Old!Pass1")
+	h.registerActive("second@example.com", "Old!Pass1")
+	first, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "first@example.com", Password: "Old!Pass1", Source: "1.1.1.1"})
+	second, _ := h.users.ByEmail(ctx, "second@example.com")
+
+	_, err := h.svc.ChangePassword(ctx, appdto.ChangePasswordInput{
+		AccountID:           second.ID,
+		CurrentPassword:     "Old!Pass1",
+		NewPassword:         "New!Pass2",
+		CurrentRefreshToken: first.RefreshToken,
+	})
+	if !errors.Is(err, domainerr.ErrRefreshReused) {
+		t.Fatalf("expected ErrRefreshReused, got %v", err)
 	}
 }

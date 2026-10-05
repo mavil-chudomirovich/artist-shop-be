@@ -17,16 +17,17 @@ phiên, đăng xuất, đặt lại mật khẩu, và phân quyền theo vai tr�
 
 Có:
 - Đăng ký bằng email + mật khẩu.
+- Bắt buộc xác minh email bằng OTP 6 chữ số trước khi đăng nhập được (OTP lưu ở
+  Redis, dùng một lần, 3 lần sai thì khoá 60 giây).
 - Đăng nhập, làm mới phiên, đăng xuất (nhiều thiết bị).
-- Đặt lại mật khẩu qua email (link dùng một lần, có hạn).
-- Vai trò CUSTOMER (mặc định) và ADMIN (cấp nội bộ).
+- Đặt lại mật khẩu qua email (token dùng một lần, có hạn).
+- Vai trò CUSTOMER (mặc định) và ADMIN (cấp nội bộ bằng `cmd/seed`).
 - Rate limiting cho các endpoint xác thực.
 - Ghi vết sự kiện bảo mật.
 
 Không (hoãn):
 - Đăng nhập mạng xã hội (Google/Facebook).
 - Xác thực hai yếu tố (2FA).
-- Bắt buộc xác minh email để đăng nhập.
 
 ## Thực thể dữ liệu
 
@@ -36,11 +37,14 @@ Không (hoãn):
 
 ## Luồng nghiệp vụ chính
 
-1. Đăng ký → tạo tài khoản vai trò CUSTOMER → đăng nhập được ngay.
+1. Đăng ký → tạo tài khoản vai trò CUSTOMER ở trạng thái `pending` → gửi OTP →
+   xác minh email → tài khoản `active` → đăng nhập được.
 2. Đăng nhập → cấp access credential ngắn hạn + session credential dài hạn.
 3. Hết hạn access → làm mới bằng session credential (có xoay vòng).
 4. Đăng xuất → thu hồi session của thiết bị đó.
-5. Quên mật khẩu → gửi link → đặt mật khẩu mới → thu hồi mọi phiên cũ.
+5. Dùng lại refresh token đã xoay vòng → từ chối và thu hồi **toàn bộ** phiên của
+   tài khoản (phát hiện replay), ghi `audit_logs`.
+6. Quên mật khẩu → gửi token → đặt mật khẩu mới → thu hồi mọi phiên cũ.
 
 ## Yêu cầu chức năng sơ bộ
 
@@ -48,11 +52,15 @@ Không (hoãn):
 - Phản hồi đăng ký/quên mật khẩu không tiết lộ email đã tồn tại.
 - Admin không thể tạo qua đăng ký công khai.
 - Endpoint riêng tư yêu cầu phiên hợp lệ; endpoint admin yêu cầu vai trò ADMIN.
+- Đổi mật khẩu khi đã đăng nhập phải kèm refresh token hiện tại và thu hồi mọi phiên
+  của tài khoản.
 
 ## Tiêu chí hoàn thành
 
-- Đăng ký + đăng nhập + làm mới + đăng xuất + đặt lại mật khẩu hoạt động và có test.
+- Đăng ký + xác minh email + đăng nhập + làm mới + đăng xuất + đặt lại mật khẩu hoạt
+  động và có test.
 - Test chuyển trạng thái phiên (hợp lệ/hết hạn/thu hồi) đạt.
+- Test state machine trạng thái tài khoản (pending/active/disabled) đạt.
 - Có test API cho biên xác thực/phân quyền.
 
 ## Ghi chú / câu hỏi mở

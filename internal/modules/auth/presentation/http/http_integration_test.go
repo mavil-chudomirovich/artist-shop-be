@@ -26,6 +26,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/cache"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
@@ -78,11 +79,12 @@ func integrationRouter(t *testing.T) (http.Handler, *email.FakeSender) {
 		Hasher:        token.Hasher{},
 		Access:        token.NewAccessIssuer("0123456789abcdef0123456789abcdef", 15*time.Minute),
 		RefreshTokens: token.Generator{},
-		Email:         email.NewPort(sender),
+		Email:         sender,
 		Audit:         noopAuditor{},
+		Tx:            &database.DB{Pool: pool},
 		Config:        implement.Config{RefreshTokenTTL: 45 * 24 * time.Hour, PasswordResetTTL: 30 * time.Minute},
 	})
-	h := New(svc, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	h := New(svc, noopAuditor{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
 	return h.Router(config.AuthConfig{LoginRatePerMinute: 100, FlowRatePerMinute: 100}), sender
 }
 
@@ -176,10 +178,50 @@ func TestMultiDeviceSignOutIsolation(t *testing.T) {
 	if rec := post(handler, "/logout", `{"refreshToken":"`+deviceA.RefreshToken+`"}`, ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("logout: expected 204, got %d", rec.Code)
 	}
-	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceA.RefreshToken+`"}`, ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("signed-out device should be rejected, got %d", rec.Code)
-	}
 	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceB.RefreshToken+`"}`, ""); rec.Code != http.StatusOK {
 		t.Fatalf("other device should still work, got %d", rec.Code)
+	}
+}
+
+func TestRefreshReplayRevokesEveryDevice(t *testing.T) {
+	handler, sender := integrationRouter(t)
+	const email = "replay@example.com"
+	const password = "Str0ng!Pass"
+
+	registerAndVerify(t, handler, sender, email, password)
+	deviceA := login(t, handler, email, password)
+	deviceB := login(t, handler, email, password)
+
+	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceA.RefreshToken+`"}`, ""); rec.Code != http.StatusOK {
+		t.Fatalf("first refresh: expected 200, got %d", rec.Code)
+	}
+	rec := post(handler, "/refresh", `{"refreshToken":"`+deviceA.RefreshToken+`"}`, "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("replay: expected 401, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "AUTH_REFRESH_REUSED") {
+		t.Fatalf("expected AUTH_REFRESH_REUSED, got %s", rec.Body.String())
+	}
+	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceB.RefreshToken+`"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("replay must revoke the other device too, got %d", rec.Code)
+	}
+}
+
+func TestChangePasswordRevokesEverySession(t *testing.T) {
+	handler, sender := integrationRouter(t)
+	const email = "change@example.com"
+	const password = "Str0ng!Pass"
+
+	registerAndVerify(t, handler, sender, email, password)
+	deviceA := login(t, handler, email, password)
+	deviceB := login(t, handler, email, password)
+
+	body := `{"currentPassword":"` + password + `","newPassword":"Even5tronger!","refreshToken":"` + deviceA.RefreshToken + `"}`
+	rec := post(handler, "/password/change", body, deviceA.AccessToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("change password: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceB.RefreshToken+`"}`, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected every session to be revoked, got %d", rec.Code)
 	}
 }

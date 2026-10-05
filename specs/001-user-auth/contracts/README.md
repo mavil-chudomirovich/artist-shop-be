@@ -21,8 +21,9 @@ foundation response envelope and error format.
 | POST | `/api/v1/auth/logout` | refresh token | Revoke the current session |
 | POST | `/api/v1/auth/password/forgot` | none | Request password reset link |
 | POST | `/api/v1/auth/password/reset` | none | Complete reset with token |
-| POST | `/api/v1/auth/password/change` | access token | Change password while signed in |
+| POST | `/api/v1/auth/password/change` | access token | Change password while signed in; revokes every session |
 | GET | `/api/v1/auth/me` | access token | Return the current identity |
+| GET | `/api/v1/auth/admin/probe` | ADMIN access token | RBAC probe; denies and audits non-admin |
 
 Anti-enumeration: `register`, `resend-verification`, and `password/forgot` return
 the same generic response whether or not the email exists.

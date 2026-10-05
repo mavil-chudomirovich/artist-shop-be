@@ -110,7 +110,7 @@ Rút gọn từ [hiến pháp](../.specify/memory/constitution.md):
 | Module | Trạng thái |
 |---|---|
 | 00 Cross-cutting foundation | ✔ Hoàn tất |
-| 01 Auth | ✔ Hoàn tất — 13 endpoint |
+| 01 Auth | ✔ Hoàn tất — 11 endpoint |
 | 02–16 | ⬜ Chưa bắt đầu |
 
 Chi tiết: [modules.md](modules.md).

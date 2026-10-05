@@ -49,14 +49,16 @@ var _ appinterface.AuthService = (*Service)(nil)
 // New creates the service.
 func New(deps Service) *Service { return &deps }
 
-func (s *Service) issueSession(ctx context.Context, account *model.Account, expiresAt time.Time, userAgent, ip string) (dto.SessionOutput, error) {
+// issueSession creates a session row and returns the token pair together with
+// the persisted session so callers can reference it in audit events.
+func (s *Service) issueSession(ctx context.Context, account *model.Account, expiresAt time.Time, userAgent, ip string) (dto.SessionOutput, *model.Session, error) {
 	accessToken, _, err := s.Access.Issue(account.ID, account.Role)
 	if err != nil {
-		return dto.SessionOutput{}, fmt.Errorf("issue access token: %w", err)
+		return dto.SessionOutput{}, nil, fmt.Errorf("issue access token: %w", err)
 	}
 	rawRefresh, refreshHash, err := s.RefreshTokens.Generate()
 	if err != nil {
-		return dto.SessionOutput{}, fmt.Errorf("generate refresh token: %w", err)
+		return dto.SessionOutput{}, nil, fmt.Errorf("generate refresh token: %w", err)
 	}
 	session := &model.Session{
 		ID:               uuid.New(),
@@ -67,13 +69,14 @@ func (s *Service) issueSession(ctx context.Context, account *model.Account, expi
 		IP:               ip,
 	}
 	if err := s.Sessions.Create(ctx, session); err != nil {
-		return dto.SessionOutput{}, err
+		return dto.SessionOutput{}, nil, err
 	}
-	return dto.SessionOutput{
+	out := dto.SessionOutput{
 		AccessToken:  accessToken,
 		RefreshToken: rawRefresh,
 		ExpiresIn:    int(s.Access.TTL().Seconds()),
-	}, nil
+	}
+	return out, session, nil
 }
 
 // VerifyAccessToken parses an access token and rejects revoked/blacklisted ones.
@@ -108,7 +111,8 @@ func (s *Service) Identity(ctx context.Context, id uuid.UUID) (dto.IdentityOutpu
 	return mapper.ToIdentity(account), nil
 }
 
-// ProvisionAdmin creates or updates the single admin account.
+// ProvisionAdmin creates or updates the single admin account. It is an
+// administrative mutation, so it is audited (Constitution VI).
 func (s *Service) ProvisionAdmin(ctx context.Context, in dto.ProvisionAdminInput) error {
 	if err := model.ValidatePasswordPolicy(in.Password); err != nil {
 		return err
@@ -124,7 +128,11 @@ func (s *Service) ProvisionAdmin(ctx context.Context, in dto.ProvisionAdminInput
 		Role:         access.RoleAdmin,
 		Status:       constant.StatusActive,
 	}
-	return s.Users.UpsertAdmin(ctx, account)
+	if err := s.Users.UpsertAdmin(ctx, account); err != nil {
+		return err
+	}
+	s.Audit.Record(ctx, constant.AuditAdminProvisioned, constant.OutcomeSuccess, nil, string(access.RoleAdmin), "user", account.Email, nil)
+	return nil
 }
 
 // generateOTP returns a random 6-digit code.

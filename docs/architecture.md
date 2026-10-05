@@ -47,7 +47,9 @@ migrations/               # TẬP TRUNG ở gốc: NNNNN_<module>_<desc>.sql
 
 - `presentation → application → domain`.
 - `infrastructure → domain` và `infrastructure → application/interface` (implements port).
-- `domain` không import tầng nào khác; chỉ dùng stdlib + `share/access` (gói giá trị thuần).
+- `domain` không import tầng nào khác; chỉ dùng stdlib + `share/access` (gói giá trị thuần)
+  + `github.com/google/uuid` (kiểu giá trị cho khoá chính UUID — ngoại lệ được hiến pháp I
+  công nhận, xem `specs/001-user-auth/plan.md` → Complexity Tracking).
 - `application` không import `infrastructure`; chỉ phụ thuộc port ở `application/interface` và
   `domain`.
 - Module không import internals của module khác; giao tiếp liên module qua `internal/contracts`.

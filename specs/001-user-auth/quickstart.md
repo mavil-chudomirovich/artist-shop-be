@@ -92,9 +92,9 @@ SC-008).
 
 ## 7. Authorization boundary
 
-- An admin identity reaches admin-only capabilities (`RequireAdmin`), while a
-  customer session is denied with `403`; denials are written to `audit_logs`
-  (SC-007).
+- An admin identity reaches admin-only capabilities (`middleware.RequireRole`),
+  while a customer session is denied with `403`; denials are written to
+  `audit_logs` (SC-007).
 
 ## 8. Tests
 
