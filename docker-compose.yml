@@ -1,31 +1,114 @@
+# Default stack: db + redis + api. No host ports are published for the backing
+# services, so nothing collides with a local PostgreSQL/Redis.
+#
+#   make up         -> docker compose up -d --build
+#   make up-tools   -> adds host ports + Mailpit (docker-compose.dev.yml)
+#
+# Secrets and app settings come from .env (see .env.example).
+
+name: artist-shop
+
+# Settings shared by every container that talks to the database. Values from
+# .env (env_file) are overridden by these, because inside the compose network
+# the host is the service name rather than localhost.
+x-db-url: &db-url postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@db:5432/${POSTGRES_DB:-artist_shop}?sslmode=disable
+
+x-common-env: &common-env
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    APP_ENV: ${APP_ENV:-development}
+    DATABASE_URL: *db-url
+
 services:
   db:
     image: postgres:16
-    container_name: artist-shop-db
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: artist_shop
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-artist_shop}
     volumes:
-      - artist_shop_pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d artist_shop"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-artist_shop}"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
 
   redis:
-    image: redis:7
-    container_name: artist-shop-redis
-    ports:
-      - "6379:6379"
+    image: redis:7-alpine
+    # requirepass matches REDIS_PASSWORD in .env; appendonly keeps OTP and
+    # blacklist state across restarts.
+    command:
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
+      # redis-cli reads REDISCLI_AUTH, so `docker compose exec redis redis-cli`
+      # authenticates without the password appearing on the host command line.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-redis-dev-password}
+    volumes:
+      - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
+    restart: unless-stopped
+
+  # Applies migrations, then exits. Behind the `tools` profile so a plain
+  # `up` does not run it; the API also self-applies on start
+  # (MIGRATIONS_AUTO_APPLY). Run explicitly with `make migrate-up-docker`.
+  migrate:
+    build:
+      context: .
+    entrypoint: ["/app/migrate"]
+    command: ["up"]
+    depends_on:
+      db:
+        condition: service_healthy
+    <<: *common-env
+    profiles: [tools]
+    restart: "no"
+
+  # Provisions the single admin account from ADMIN_EMAIL / ADMIN_PASSWORD.
+  # Behind the `tools` profile because it fails when those are unset.
+  # Run explicitly with `make seed-docker`.
+  seed:
+    build:
+      context: .
+    entrypoint: ["/app/seed"]
+    depends_on:
+      db:
+        condition: service_healthy
+    <<: *common-env
+    profiles: [tools]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    <<: *common-env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      HTTP_ADDR: ":8080"
+      HTTP_TRUSTED_PROXIES: ${HTTP_TRUSTED_PROXIES:-}
+      DATABASE_URL: *db-url
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis-dev-password}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    restart: unless-stopped
 
 volumes:
-  artist_shop_pgdata:
+  pgdata:
+  redisdata:

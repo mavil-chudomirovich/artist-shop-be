@@ -1,0 +1,29 @@
+# Developer overrides, layered on top of docker-compose.yml.
+#
+#   make up-tools
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Publishes the backing services on localhost so you can inspect them with a
+# GUI client or psql, and adds Mailpit as a local SMTP sink for OTP and
+# password-reset emails. Set SMTP_HOST=mailpit and SMTP_PORT=1025 in .env to
+# use it.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
+    restart: unless-stopped

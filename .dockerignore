@@ -1,0 +1,31 @@
+# Build context: only Go sources and embedded migrations are needed.
+
+.git
+.github
+.gitignore
+.gitattributes
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# Spec Kit + docs are not part of the build
+.specify
+.opencode
+specs
+doc
+
+# Build artifacts and local env
+bin
+dist
+coverage.out
+*.log
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
