@@ -1,0 +1,65 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend — Operational Endpoints
+  version: 1.0.0
+  description: >
+    Operational (liveness/readiness) endpoints for the Cross-Cutting Foundation.
+    Business endpoints under /api/v1 are added by later modules and follow the
+    conventions in contracts/http-conventions.md.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Returns 200 while the process is running. Does not check dependencies.
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: alive
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: >
+        Returns 200 when the database is reachable and the schema version is
+        current; otherwise 503.
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Service is ready to receive traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: Service is not ready (dependency or schema unavailable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+components:
+  schemas:
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, failed]
+          example:
+            database: ok
+            migrations: ok

@@ -1,0 +1,355 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend — Auth Module
+  version: 1.0.0
+  description: >
+    Authentication and session management. All responses use the foundation
+    envelope (data + meta, or error) and the X-Request-Id correlation header.
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/v1/auth/register:
+    post:
+      summary: Start registration and send an email OTP
+      description: >
+        Creates a pending account if the email is unused. Always returns the same
+        generic response to avoid revealing whether the email is registered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "202":
+          description: Registration accepted; an OTP was sent if applicable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericMessage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/verify-email:
+    post:
+      summary: Confirm the email OTP and activate the account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyEmailRequest"
+      responses:
+        "200":
+          description: Account activated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericMessage"
+        "400":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/resend-verification:
+    post:
+      summary: Resend the email confirmation OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOnly"
+      responses:
+        "202":
+          description: Generic response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericMessage"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/login:
+    post:
+      summary: Authenticate and issue tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/refresh:
+    post:
+      summary: Rotate the session and issue new tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Tokens rotated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/logout:
+    post:
+      summary: Revoke the current session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Session revoked (no body).
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/password/forgot:
+    post:
+      summary: Request a password reset link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailOnly"
+      responses:
+        "202":
+          description: Generic response; a link is emailed if the account exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericMessage"
+        "429":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/password/reset:
+    post:
+      summary: Complete a password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetRequest"
+      responses:
+        "200":
+          description: Password changed; all sessions revoked and new tokens issued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenEnvelope"
+        "400":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/password/change:
+    post:
+      summary: Change password while signed in
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: >
+            Password changed; prior access tokens blacklisted; replacement refresh
+            token keeps the replaced session's expiry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenEnvelope"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/me:
+    get:
+      summary: Return the current identity
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current identity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Error:
+      description: Standard error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    VerifyEmailRequest:
+      type: object
+      required: [email, otp]
+      properties:
+        email:
+          type: string
+          format: email
+        otp:
+          type: string
+          pattern: "^[0-9]{6}$"
+    EmailOnly:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+    ResetRequest:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+    Identity:
+      type: object
+      required: [id, email, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [CUSTOMER, ADMIN]
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds.
+    GenericMessage:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
+    TokenEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/TokenPair"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    IdentityEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/Identity"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    Meta:
+      type: object
+      properties:
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  issue:
+                    type: string
+            requestId:
+              type: string

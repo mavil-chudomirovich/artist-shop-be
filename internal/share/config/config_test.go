@@ -1,0 +1,114 @@
+package config
+
+import (
+	"strings"
+	"testing"
+)
+
+func setValidEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("HTTP_ADDR", ":8080")
+	t.Setenv("DATABASE_URL", "postgres://app:app@localhost:5432/artist_shop")
+	t.Setenv("DB_MAX_CONNS", "10")
+	t.Setenv("DB_MIN_CONNS", "1")
+	t.Setenv("LOG_LEVEL", "info")
+}
+
+func TestLoadValid(t *testing.T) {
+	setValidEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.AppEnv != EnvDevelopment {
+		t.Fatalf("expected development, got %s", cfg.AppEnv)
+	}
+	if cfg.Database.URL == "" || cfg.HTTP.Addr == "" {
+		t.Fatal("expected required fields to be populated")
+	}
+}
+
+func TestLoadMissingDatabaseURL(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("DATABASE_URL", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing DATABASE_URL")
+	}
+	if !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("error should name the offending field, got %q", err.Error())
+	}
+}
+
+func TestLoadInvalidAppEnv(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("APP_ENV", "staging-typo")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "APP_ENV") {
+		t.Fatalf("expected APP_ENV error, got %v", err)
+	}
+}
+
+func TestLoadInvalidLogLevel(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("LOG_LEVEL", "verbose")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "LOG_LEVEL") {
+		t.Fatalf("expected LOG_LEVEL error, got %v", err)
+	}
+}
+
+func TestValidateForAPI(t *testing.T) {
+	if err := (&Config{}).ValidateForAPI(); err == nil {
+		t.Fatal("expected missing Redis/JWT errors")
+	}
+
+	shortSecret := &Config{Redis: RedisConfig{Addr: "localhost:6379"}, Auth: AuthConfig{JWTSecret: "short"}}
+	if err := shortSecret.ValidateForAPI(); err == nil {
+		t.Fatal("expected JWT_SECRET length error")
+	}
+
+	noRedis := &Config{Auth: AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef"}}
+	if err := noRedis.ValidateForAPI(); err == nil {
+		t.Fatal("expected REDIS_ADDR error")
+	}
+
+	valid := &Config{Redis: RedisConfig{Addr: "localhost:6379"}, Auth: AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef"}}
+	if err := valid.ValidateForAPI(); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestAuthDefaults(t *testing.T) {
+	setValidEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.OTPMaxAttempts != 3 {
+		t.Fatalf("expected OTP attempts default 3, got %d", cfg.Auth.OTPMaxAttempts)
+	}
+	if cfg.Auth.LoginMaxFailures != 10 {
+		t.Fatalf("expected login max failures default 10, got %d", cfg.Auth.LoginMaxFailures)
+	}
+	if cfg.Auth.AccessTokenTTL.String() != "15m0s" {
+		t.Fatalf("expected access TTL 15m, got %s", cfg.Auth.AccessTokenTTL)
+	}
+}
+
+func TestLoadInvalidRange(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("DB_MIN_CONNS", "50")
+	t.Setenv("DB_MAX_CONNS", "10")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "DB_MIN_CONNS") {
+		t.Fatalf("expected DB_MIN_CONNS range error, got %v", err)
+	}
+}
