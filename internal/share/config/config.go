@@ -1,3 +1,4 @@
+// Package config loads and validates environment configuration.
 package config
 
 import (
@@ -74,6 +75,9 @@ type HTTPConfig struct {
 	WriteTimeout    time.Duration `env:"WRITE_TIMEOUT" envDefault:"15s"`
 	IdleTimeout     time.Duration `env:"IDLE_TIMEOUT" envDefault:"60s"`
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"10s"`
+	// TrustedProxies lists IPs or CIDRs allowed to set X-Forwarded-For. Empty
+	// (the default) means the header is ignored and the TCP peer address is used.
+	TrustedProxies []string `env:"TRUSTED_PROXIES" envSeparator:","`
 }
 
 // DatabaseConfig controls the PostgreSQL connection pool.

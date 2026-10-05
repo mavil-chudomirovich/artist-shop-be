@@ -11,7 +11,7 @@ import (
 
 func TestCorrelationGeneratesWhenMissing(t *testing.T) {
 	var captured string
-	handler := Correlation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Correlation(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = reqctx.CorrelationID(r.Context())
 	}))
 

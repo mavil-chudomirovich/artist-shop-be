@@ -1,3 +1,5 @@
+// Package redis implements the auth module's Redis-backed ports: OTP codes,
+// token blacklists and the failed-login guard.
 package redis
 
 import (

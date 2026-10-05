@@ -1,3 +1,4 @@
+// Package database wraps the PostgreSQL pool, readiness state and transactions.
 package database
 
 import (

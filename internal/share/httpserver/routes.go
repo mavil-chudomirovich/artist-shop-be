@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
@@ -31,7 +30,7 @@ type Dependencies struct {
 func NewRouter(deps Dependencies) http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(chimw.RealIP)
+	r.Use(middleware.RealIP(deps.Config.HTTP.TrustedProxies))
 	r.Use(middleware.Correlation)
 	r.Use(middleware.RequestLogger(deps.Logger))
 	r.Use(middleware.Recovery(deps.Logger))

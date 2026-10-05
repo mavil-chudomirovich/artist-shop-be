@@ -246,11 +246,11 @@ func (f *fakeBlacklist) RevokeUserBefore(_ context.Context, userID uuid.UUID, at
 }
 
 func (f *fakeBlacklist) IsIssuedBefore(_ context.Context, userID uuid.UUID, iat time.Time) (bool, error) {
-	min, ok := f.userMin[userID]
+	earliest, ok := f.userMin[userID]
 	if !ok {
 		return false, nil
 	}
-	return iat.UTC().Unix() < min, nil
+	return iat.UTC().Unix() < earliest, nil
 }
 
 type fakeGuard struct {
@@ -259,8 +259,8 @@ type fakeGuard struct {
 	max      int
 }
 
-func newFakeGuard(max int) *fakeGuard {
-	return &fakeGuard{failures: map[string]int{}, blocked: map[string]bool{}, max: max}
+func newFakeGuard(limit int) *fakeGuard {
+	return &fakeGuard{failures: map[string]int{}, blocked: map[string]bool{}, max: limit}
 }
 
 func (f *fakeGuard) Blocked(_ context.Context, source string) (bool, error) {

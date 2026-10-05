@@ -105,7 +105,8 @@ func (w *Writer) loop(ctx context.Context) {
 func (w *Writer) deliver(ctx context.Context, e Event) {
 	backoff := 50 * time.Millisecond
 	for attempt := 0; attempt <= w.maxRetries; attempt++ {
-		if err := w.store.Insert(ctx, e); err == nil {
+		err := w.store.Insert(ctx, e)
+		if err == nil {
 			if attempt > 0 {
 				w.logger.InfoContext(ctx, "audit event persisted after retry",
 					slog.String("event_id", e.EventID.String()),
@@ -113,13 +114,12 @@ func (w *Writer) deliver(ctx context.Context, e Event) {
 				)
 			}
 			return
-		} else {
-			w.logger.WarnContext(ctx, "audit write failed; will retry",
-				slog.String("event_id", e.EventID.String()),
-				slog.Int("attempt", attempt+1),
-				slog.String("error", err.Error()),
-			)
 		}
+		w.logger.WarnContext(ctx, "audit write failed; will retry",
+			slog.String("event_id", e.EventID.String()),
+			slog.Int("attempt", attempt+1),
+			slog.String("error", err.Error()),
+		)
 
 		select {
 		case <-ctx.Done():

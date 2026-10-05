@@ -80,7 +80,7 @@ func (r *UserRepository) UpsertAdmin(ctx context.Context, a *model.Account) erro
 
 // ByID loads an account by id.
 func (r *UserRepository) ByID(ctx context.Context, id uuid.UUID) (*model.Account, error) {
-	return r.Base.FindByID(ctx, id)
+	return r.FindByID(ctx, id)
 }
 
 // ByEmail loads an account by normalized email.

@@ -59,7 +59,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 
 	if cfg.Migrations.AutoApply {
 		if err := runner.Up(ctx); err != nil {

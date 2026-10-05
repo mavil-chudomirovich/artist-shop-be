@@ -32,7 +32,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 
 	ctx := context.Background()
 	switch os.Args[1] {

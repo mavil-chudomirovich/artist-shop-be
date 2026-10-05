@@ -3,7 +3,10 @@ package domainerr
 
 import "errors"
 
+// Business errors returned by the auth module.
 var (
+	// ErrInvalidCredentials is returned for both unknown email and wrong password
+	// so the API never reveals whether an account exists.
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrEmailTaken         = errors.New("email already registered")
 	ErrUserNotFound       = errors.New("user not found")

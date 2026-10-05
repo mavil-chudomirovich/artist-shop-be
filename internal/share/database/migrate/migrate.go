@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	// Registers the "pgx" driver with database/sql.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
@@ -99,7 +100,7 @@ func (r *Runner) withLock(ctx context.Context, fn func() error) error {
 	if err != nil {
 		return fmt.Errorf("reserve migration connection: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	if _, err := conn.ExecContext(lockCtx, "SELECT pg_advisory_lock($1)", advisoryLockKey); err != nil {
 		return fmt.Errorf("acquire migration lock: %w", err)
