@@ -60,5 +60,5 @@ Preview → Revision → Duyệt → Thanh toán cuối → Hoàn tất → Bàn
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Commission)
-- `doc/backend-spec.md` (Commission System)
+- `docs/product/project_overview.md` (Commission)
+- `docs/product/backend-spec.md` (Commission System)

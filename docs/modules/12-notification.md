@@ -51,4 +51,4 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (API, Database: notifications)
+- `docs/product/backend-spec.md` (API, Database: notifications)

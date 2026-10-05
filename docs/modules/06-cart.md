@@ -50,4 +50,4 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (API, Database)
+- `docs/product/backend-spec.md` (API, Database)

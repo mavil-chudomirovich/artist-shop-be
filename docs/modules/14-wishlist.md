@@ -35,5 +35,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Shop: Wishlist)
-- `doc/backend-spec.md` (Database: wishlists, wishlist_items)
+- `docs/product/project_overview.md` (Shop: Wishlist)
+- `docs/product/backend-spec.md` (Database: wishlists, wishlist_items)

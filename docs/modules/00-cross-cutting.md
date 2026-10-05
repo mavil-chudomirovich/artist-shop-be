@@ -58,5 +58,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (Architecture, API, Testing)
+- `docs/product/backend-spec.md` (Architecture, API, Testing)
 - `.specify/memory/constitution.md` (Technology & Architecture Constraints)

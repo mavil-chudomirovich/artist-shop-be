@@ -62,4 +62,4 @@ Không (hoãn):
 ## Tham chiếu
 
 - `specs/001-user-auth/spec.md`
-- `doc/backend-spec.md` (Authentication)
+- `docs/product/backend-spec.md` (Authentication)

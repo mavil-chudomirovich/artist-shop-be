@@ -49,5 +49,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Admin Workspace)
-- `doc/backend-spec.md` (Architecture)
+- `docs/product/project_overview.md` (Admin Workspace)
+- `docs/product/backend-spec.md` (Architecture)

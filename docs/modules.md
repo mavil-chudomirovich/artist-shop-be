@@ -1,8 +1,13 @@
 # Backend Modules & Delivery Roadmap
 
 Mục lục các module backend, tách từ `project_overview.md` và `backend-spec.md`.
-Mỗi module có một file riêng trong `doc/modules/` để làm nguồn cho quy trình
+Mỗi module có một file riêng trong `docs/modules/` để làm nguồn cho quy trình
 Spec Kit (`/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement`).
+
+Tài liệu tra cứu:
+- `docs/architecture.md` — kiến trúc chuẩn (authoritative).
+- `docs/api-reference.md` — **toàn bộ endpoint hiện có** (authoritative, phải cập
+  nhật khi thêm/sửa API theo Constitution VIII).
 
 ## Nguyên tắc
 
@@ -16,7 +21,7 @@ Spec Kit (`/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/spec
 |---|--------|------|-----------|-----------|------------|
 | 00 | Cross-cutting foundation | [00-cross-cutting.md](modules/00-cross-cutting.md) | 0 | — | ✔ `specs/002-cross-cutting-foundation` |
 | 01 | Auth | [01-auth.md](modules/01-auth.md) | 0 | cross-cutting | ✔ `specs/001-user-auth` |
-| 02 | User | [02-user.md](modules/02-user.md) | 0 | auth | ⬜ |
+| 02 | User | [02-user.md](modules/02-user.md) | 0 | auth | 🟩 `specs/003-user-profile` |
 | 03 | Category | [03-category.md](modules/03-category.md) | 0 | cross-cutting | ⬜ |
 | 04 | Product | [04-product.md](modules/04-product.md) | 1 | category | ⬜ |
 | 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | 1 | product | ⬜ |
@@ -52,4 +57,4 @@ Spec Kit (`/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/spec
 
 ## Tham chiếu gốc
 
-- `doc/project_overview.md`, `doc/backend-spec.md`, `.specify/memory/constitution.md`
+- `docs/product/project_overview.md`, `docs/product/backend-spec.md`, `.specify/memory/constitution.md`

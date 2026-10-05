@@ -46,4 +46,4 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (Database: categories)
+- `docs/product/backend-spec.md` (Database: categories)

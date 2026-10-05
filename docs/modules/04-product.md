@@ -55,5 +55,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Shop, product lifecycle)
-- `doc/backend-spec.md` (Database: products, product_images)
+- `docs/product/project_overview.md` (Shop, product lifecycle)
+- `docs/product/backend-spec.md` (Database: products, product_images)

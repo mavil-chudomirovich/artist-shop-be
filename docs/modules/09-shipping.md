@@ -48,5 +48,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Future roadmap)
-- `doc/backend-spec.md` (Database: shipments)
+- `docs/product/project_overview.md` (Future roadmap)
+- `docs/product/backend-spec.md` (Database: shipments)

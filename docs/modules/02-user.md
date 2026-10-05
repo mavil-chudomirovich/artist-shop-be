@@ -1,7 +1,8 @@
 # Module 02 — User
 
-- **Trạng thái Spec Kit**: Chưa specify
-- **Spec**: _(chưa có)_
+- **Trạng thái Spec Kit**: Đã specify — chờ trả lời 2 câu hỏi mở
+- **Spec**: [`specs/003-user-profile/`](../../specs/003-user-profile/) — đặc tả hồ sơ
+  khách hàng & địa chỉ giao hàng
 - **Ưu tiên / Giai đoạn**: Giai đoạn 0
 - **Phụ thuộc**: auth
 
@@ -24,7 +25,10 @@ Không (hoãn):
 ## Thực thể dữ liệu
 
 - `users` (phần hồ sơ): tên hiển thị, số điện thoại, avatar (public_id/secure_url).
-- `addresses`: người nhận, số điện thoại, tỉnh/thành, quận/huyện, địa chỉ chi tiết, cờ mặc định.
+- `addresses`: người nhận, số điện thoại, tỉnh/thành, phường/xã, địa chỉ chi
+  tiết, cờ mặc định. Tỉnh và phường/xã lấy từ kho dữ liệu hành chính Việt Nam
+  (2 cấp, không dùng cấp quận/huyện), người dùng chọn bằng select cascading.
+- Dữ liệu tham chiếu tỉnh/phường: chỉ đọc, đóng gói kèm bản phát hành.
 
 ## Luồng nghiệp vụ chính
 
@@ -47,8 +51,12 @@ Không (hoãn):
 
 ## Ghi chú / câu hỏi mở
 
-- Địa chỉ có cần đơn vị hành chính chuẩn (tỉnh/quận/phường) không?
+- ~~Địa chỉ có cần đơn vị hành chính chuẩn (tỉnh/quận/phường) không?~~ → Đã
+  chốt 2026-10-05: **2 cấp tỉnh → phường/xã**, lấy từ kho dữ liệu hành chính Việt
+  Nam, chọn bằng select cascading. Xem `specs/003-user-profile/spec.md`.
+- Một tài khoản có nhiều địa chỉ; người dùng chọn một địa chỉ khi đặt hàng, địa
+  chỉ mặc định được chọn sẵn nhưng không áp ép.
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (Database: users, addresses; Cloudinary)
+- `docs/product/backend-spec.md` (Database: users, addresses; Cloudinary)

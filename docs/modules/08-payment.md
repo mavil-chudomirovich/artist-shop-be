@@ -56,5 +56,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (Payment System)
+- `docs/product/backend-spec.md` (Payment System)
 - `.specify/memory/constitution.md` (Transactional Integrity, Security)

@@ -36,5 +36,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Shop: Reviews)
-- `doc/backend-spec.md` (Database: reviews)
+- `docs/product/project_overview.md` (Shop: Reviews)
+- `docs/product/backend-spec.md` (Database: reviews)

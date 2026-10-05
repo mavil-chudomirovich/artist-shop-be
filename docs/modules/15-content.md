@@ -36,5 +36,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Admin: Content)
-- `doc/backend-spec.md` (Database: content_blocks)
+- `docs/product/project_overview.md` (Admin: Content)
+- `docs/product/backend-spec.md` (Database: content_blocks)

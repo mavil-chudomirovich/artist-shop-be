@@ -52,5 +52,5 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/project_overview.md` (Shop, MVP)
-- `doc/backend-spec.md` (Database: orders, order_items; Inventory)
+- `docs/product/project_overview.md` (Shop, MVP)
+- `docs/product/backend-spec.md` (Database: orders, order_items; Inventory)

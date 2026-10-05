@@ -51,4 +51,4 @@ Không (hoãn):
 
 ## Tham chiếu
 
-- `doc/backend-spec.md` (Inventory)
+- `docs/product/backend-spec.md` (Inventory)
