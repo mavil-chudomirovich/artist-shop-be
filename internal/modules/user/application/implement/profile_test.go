@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -361,6 +362,80 @@ func TestUpdateProfileWithAnInvalidPhonePersistsNothing(t *testing.T) {
 	}
 	if h.audit.countOf(constant.AuditProfileUpdated) != 1 {
 		t.Fatal("only the successful seed update may be audited")
+	}
+}
+
+// A display name longer than the maxLength the contract declares for it must be
+// refused the whole way through, exactly as an invalid phone is: nothing is
+// persisted, nothing is audited, and the stored row keeps the name it had. This is
+// the check that keeps the advertised maxLength from being a limit the server
+// quietly ignores (FR-020).
+func TestUpdateProfileWithAnOverLongDisplayNamePersistsNothing(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.UpdateProfile(ctx, appdto.UpdateProfileInput{
+		UserID:      h.owner,
+		DisplayName: stringPtr("Named"),
+		Phone:       phone("0912345678"),
+	}); err != nil {
+		t.Fatalf("seed the profile: %v", err)
+	}
+	before := h.stored(t, h.owner)
+	savesBefore := h.repo.saves
+
+	// The phone is valid, so only the name can be the reason the update is refused.
+	out, err := h.svc.UpdateProfile(ctx, appdto.UpdateProfileInput{
+		UserID:      h.owner,
+		DisplayName: stringPtr(strings.Repeat("a", 121)),
+		Phone:       phone("0987654321"),
+	})
+
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected the module's field-error sentinel, got %v", err)
+	}
+	var carrier *domainerr.AddressFieldError
+	if !errors.As(err, &carrier) {
+		t.Fatalf("expected a named field error, got %v", err)
+	}
+	if carrier.Field != model.FieldDisplayName {
+		t.Fatalf("expected the rejection to name %q, got %q", model.FieldDisplayName, carrier.Field)
+	}
+	if out.ID != uuid.Nil {
+		t.Fatalf("expected no profile in the result, got %+v", out)
+	}
+	if after := h.stored(t, h.owner); !sameProfile(after, before) {
+		t.Fatalf("a rejected name changed the row: %+v", after)
+	}
+	if h.repo.saves != savesBefore {
+		t.Fatalf("a rejected name must not be persisted, saves went from %d to %d", savesBefore, h.repo.saves)
+	}
+	if h.audit.countOf(constant.AuditProfileUpdated) != 1 {
+		t.Fatal("only the successful seed update may be audited")
+	}
+}
+
+// The ceiling is inclusive and the value that gets stored is the trimmed one, so a
+// name of exactly the advertised length is accepted through the use case.
+func TestUpdateProfileStoresADisplayNameAtTheContractCeiling(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	for _, name := range []string{strings.Repeat("a", 120), strings.Repeat("Ữ", 120)} {
+		out, err := h.svc.UpdateProfile(ctx, appdto.UpdateProfileInput{
+			UserID:      h.owner,
+			DisplayName: stringPtr("  " + name + "  "),
+		})
+
+		if err != nil {
+			t.Fatalf("a name of %d characters must be accepted, got %v", len([]rune(name)), err)
+		}
+		if out.DisplayName != name {
+			t.Fatalf("expected the trimmed name of %d characters, got %d",
+				len([]rune(name)), len([]rune(out.DisplayName)))
+		}
+		if stored := h.stored(t, h.owner); stored.DisplayName != name {
+			t.Fatalf("expected the name to be stored, got %d characters", len([]rune(stored.DisplayName)))
+		}
 	}
 }
 

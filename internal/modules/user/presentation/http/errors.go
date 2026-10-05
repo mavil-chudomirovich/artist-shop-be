@@ -6,6 +6,7 @@ import (
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/administrative"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 )
@@ -40,11 +41,18 @@ func fieldError(field, issue string) *httpx.AppError {
 // import a module's domain errors (Constitution I); mapping them here is what
 // keeps `application` free of that dependency (research D1).
 func mapError(err error) *httpx.AppError {
+	var invalidAddress *domainerr.AddressFieldError
 	switch {
 	case errors.Is(err, domainerr.ErrUserNotFound):
 		return coded(constant.CodeUserNotFound, http.StatusNotFound, "No account carries that identifier")
 	case errors.Is(err, domainerr.ErrAddressNotFound):
 		return coded(constant.CodeAddressNotFound, http.StatusNotFound, "Address not found")
+	case errors.As(err, &invalidAddress):
+		// A structurally invalid address member is a request-shape problem the
+		// client fixes on the form, so it stays on the shared VALIDATION_ERROR and
+		// adds no module code (contracts/error-codes.md, "Codes deliberately not
+		// added"). The entity already names the member, which is what FR-020 needs.
+		return fieldError(invalidAddress.Field, invalidAddress.Issue)
 	case errors.Is(err, domainerr.ErrInvalidPhone):
 		return withField(
 			coded(constant.CodeInvalidPhone, http.StatusBadRequest, "Not a valid Vietnamese mobile number"),
@@ -108,13 +116,18 @@ func mapAddressError(err error) *httpx.AppError {
 
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its form.
+//
+// The domain entity members are taken from the domain constants rather than
+// repeated as literals, because the entities already report these exact names in
+// their rejections and two lists could drift apart.
 const (
 	fieldPhone         = "phone"
-	fieldRecipientName = "recipientName"
-	fieldRecipient     = "recipientPhone"
-	fieldProvinceCode  = "provinceCode"
-	fieldWardCode      = "wardCode"
-	fieldStreet        = "streetAddress"
+	fieldDisplayName   = model.FieldDisplayName
+	fieldRecipientName = model.FieldRecipientName
+	fieldRecipient     = model.FieldRecipientPhone
+	fieldProvinceCode  = model.FieldProvinceCode
+	fieldWardCode      = model.FieldWardCode
+	fieldStreet        = model.FieldStreetAddress
 	fieldFile          = "file"
 	fieldPage          = "page"
 	fieldPageSize      = "pageSize"

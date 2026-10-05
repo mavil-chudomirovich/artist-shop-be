@@ -48,13 +48,51 @@ type Profile struct {
 	UpdatedAt time.Time
 }
 
+// FieldDisplayName is the contract member name of the profile's display name, used
+// when a rejection has to say which input is wrong.
+//
+// It is the exact member name of contracts/openapi.yaml, so presentation can put
+// one straight into the response detail without a second vocabulary that could
+// drift away from the contract (FR-020).
+const FieldDisplayName = "displayName"
+
+// maxDisplayNameRunes is the ceiling the contract declares as maxLength on
+// UpdateProfileRequest.displayName.
+//
+// It is enforced here, inside the entity, rather than in the handler: the entity
+// is the one place every entry point passes through, so a limit enforced only in
+// presentation could be bypassed by any caller that is not HTTP, and the contract
+// would be advertising a limit the server does not actually apply.
+//
+// The column stays unconstrained on purpose (migrations/00004_user.sql keeps
+// display_name as text): a row saved before the rule existed may be longer than the
+// contract allows, and narrowing the column would refuse to load it. The rule is
+// therefore an application rule, and this is where it lives.
+const maxDisplayNameRunes = 120
+
 // SetDisplayName stores the trimmed display name.
 //
 // An empty name is a valid outcome rather than a rejection: a customer who has
 // not set a name yet has none, and one who clears it must end up with an empty
-// name instead of keeping the old value (FR-002, FR-004).
-func (p *Profile) SetDisplayName(name string) {
-	p.DisplayName = strings.TrimSpace(name)
+// name instead of keeping the old value (FR-002, FR-004). So there is no blank
+// check here, only the ceiling the contract declares.
+//
+// A name longer than the ceiling is refused outright rather than truncated, with
+// the module's existing field-error carrier naming the member — the same mechanism
+// the address entity already uses, and the same checkRuneLimit helper, so
+// presentation has one rejection to map and one to test rather than a second,
+// parallel vocabulary. The check runs on the trimmed value, which is the value that
+// would be stored, and it counts runes rather than bytes: the API serves Vietnamese
+// text, so a name of 120 multi-byte characters has to pass. The rejection leaves the
+// stored name exactly as it was, so a refused update can never lose a value the
+// customer did not touch (FR-020).
+func (p *Profile) SetDisplayName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if err := checkRuneLimit(FieldDisplayName, trimmed, maxDisplayNameRunes); err != nil {
+		return err
+	}
+	p.DisplayName = trimmed
+	return nil
 }
 
 // SetPhone normalises and stores the phone number. An empty value clears it.

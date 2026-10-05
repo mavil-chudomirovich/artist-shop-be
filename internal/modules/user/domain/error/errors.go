@@ -20,8 +20,23 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrAddressNotFound is returned for an unknown, hidden, or not-owned
 	// address. All three cases share one error so the response never confirms
-	// that another customer's address exists (FR-006, FR-013).
+	// that another customer's address exists (FR-006, FR-013). It is also what the
+	// address entity reports when a transition is refused on a hidden address: a
+	// hidden row has left the account's visible set, so it is genuinely not an
+	// address of that account any more.
 	ErrAddressNotFound = errors.New("address not found")
+	// ErrAddressInvalid is returned when a member of an address is structurally
+	// unacceptable — a blank recipient name, province code, ward code or street
+	// address, which the row declares NOT NULL and the specification declares
+	// non-empty, or a recipient name or street address longer than the maxLength
+	// the contract declares for it.
+	//
+	// It carries no new client-facing code: presentation maps it to the shared
+	// VALIDATION_ERROR, the same code request-shape problems already use
+	// (contracts/error-codes.md, "Codes deliberately not added"). What it does
+	// carry is the offending member, because FR-020 requires the response to name
+	// the field a client has to fix.
+	ErrAddressInvalid = errors.New("invalid address")
 
 	// ErrInvalidPhone is returned when a phone number is not a Vietnamese
 	// mobile number after normalisation (FR-003).
@@ -46,3 +61,33 @@ var (
 	// on (contracts/error-codes.md, "Codes deliberately not added").
 	ErrIncompleteAvatar = errors.New("incomplete avatar reference")
 )
+
+// AddressFieldError reports which member of an address is not acceptable. It is
+// one typed carrier for ErrAddressInvalid rather than a family of per-member
+// sentinels, so the module keeps a single error to map and a single one to test.
+//
+// Field holds the contract's member name, which is what FR-020 puts into the
+// response detail; Issue is a short, non-sensitive explanation.
+type AddressFieldError struct {
+	// Field is the contract member name, such as "streetAddress".
+	Field string
+	// Issue explains what is wrong with it.
+	Issue string
+}
+
+// Error implements the error interface.
+func (e *AddressFieldError) Error() string {
+	return ErrAddressInvalid.Error() + ": " + e.Field + " " + e.Issue
+}
+
+// Is makes errors.Is(err, ErrAddressInvalid) match this error, so a caller can
+// branch on the single sentinel without knowing the carrier type.
+func (e *AddressFieldError) Is(target error) bool { return target == ErrAddressInvalid }
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *AddressFieldError) Unwrap() error { return ErrAddressInvalid }
+
+// InvalidAddressField builds the typed rejection for one member.
+func InvalidAddressField(field, issue string) error {
+	return &AddressFieldError{Field: field, Issue: issue}
+}

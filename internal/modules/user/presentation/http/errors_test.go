@@ -7,6 +7,7 @@ import (
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/administrative"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 )
@@ -38,6 +39,31 @@ func TestMapErrorCoversEveryDocumentedCode(t *testing.T) {
 			code:    constant.CodeInvalidPhone,
 			status:  http.StatusBadRequest,
 			field:   fieldPhone,
+			details: true,
+		},
+		{
+			name: "an invalid address member names itself",
+			err: &domainerr.AddressFieldError{
+				Field: fieldStreet, Issue: "is required",
+			},
+			code:    string(httpx.CodeValidation),
+			status:  http.StatusBadRequest,
+			field:   fieldStreet,
+			details: true,
+		},
+		{
+			// A member over the maxLength the contract declares is the same kind of
+			// client-fixable problem as a blank one, so it must not grow a module
+			// code of its own and must reach the client as 400 VALIDATION_ERROR
+			// naming the member (contracts/error-codes.md, "Codes deliberately not
+			// added").
+			name: "an address member over the contract length ceiling names itself",
+			err: domainerr.InvalidAddressField(
+				model.FieldRecipientName, "must be at most 120 characters",
+			),
+			code:    string(httpx.CodeValidation),
+			status:  http.StatusBadRequest,
+			field:   model.FieldRecipientName,
 			details: true,
 		},
 		{
@@ -162,5 +188,42 @@ func TestFieldErrorNamesTheOffendingMember(t *testing.T) {
 	}
 	if len(appErr.Details) != 1 || appErr.Details[0].Field != fieldPageSize {
 		t.Fatalf("expected the detail to name %q, got %+v", fieldPageSize, appErr.Details)
+	}
+}
+
+// The entity reports the contract's member names, and presentation puts them into
+// the detail untouched. This test is what stops the two lists from drifting apart.
+func TestTheAddressFieldDetailsAreTheContractMemberNames(t *testing.T) {
+	cases := map[string]string{
+		fieldRecipientName: "recipientName",
+		fieldRecipient:     "recipientPhone",
+		fieldProvinceCode:  "provinceCode",
+		fieldWardCode:      "wardCode",
+		fieldStreet:        "streetAddress",
+	}
+	for got, want := range cases {
+		if got != want {
+			t.Errorf("field detail %q does not match the contract member name %q", got, want)
+		}
+	}
+}
+
+// The address error keeps ONE sentinel, so a caller can branch on it without
+// knowing the carrier, and the field detail never leaks internal state.
+func TestTheAddressFieldErrorIsFoundThroughItsSentinel(t *testing.T) {
+	err := domainerr.InvalidAddressField(fieldWardCode, "is required")
+
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected the sentinel to match, got %v", err)
+	}
+	var carrier *domainerr.AddressFieldError
+	if !errors.As(err, &carrier) {
+		t.Fatalf("expected the typed carrier, got %v", err)
+	}
+	if carrier.Field != fieldWardCode || carrier.Issue == "" {
+		t.Fatalf("unexpected carrier: %+v", carrier)
+	}
+	if errors.Is(err, domainerr.ErrAddressNotFound) {
+		t.Fatal("an invalid member must not be reported as a missing address")
 	}
 }

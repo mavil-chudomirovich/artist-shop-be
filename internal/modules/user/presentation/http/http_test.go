@@ -421,6 +421,72 @@ func TestInvalidPhoneIsRejectedWithTheFieldNamed(t *testing.T) {
 	}
 }
 
+// A display name over the maxLength the contract declares for it must be refused
+// the same way an invalid phone is: 400 VALIDATION_ERROR with a detail naming the
+// member the customer has to shorten. Nothing is persisted and nothing is audited,
+// because nothing changed. This is the check that keeps the advertised maxLength
+// from being a limit the server quietly ignores (FR-020).
+func TestADisplayNameOverTheContractLengthCeilingIsRefused(t *testing.T) {
+	fixture := newProfileFixture(t)
+	if rec := fixture.patch(`{"displayName":"Nguyen Van A","phone":"0912345678"}`, liveToken); rec.Code != http.StatusOK {
+		t.Fatalf("seed the profile: %d (%s)", rec.Code, rec.Body.String())
+	}
+	before, _ := fixture.repo.stored(fixture.customer)
+	savesBefore := fixture.repo.saveCount()
+
+	rec := fixture.patch(`{"displayName":`+mustJSONString(t, strings.Repeat("a", 121))+`}`, liveToken)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != string(httpx.CodeValidation) {
+		t.Fatalf("expected VALIDATION_ERROR, got %s", got)
+	}
+	if got := detailField(t, rec); got != fieldDisplayName {
+		t.Fatalf("expected the detail to name %q, got %q", fieldDisplayName, got)
+	}
+	if after, _ := fixture.repo.stored(fixture.customer); !sameProfile(after, before) {
+		t.Fatalf("a refused name changed the stored profile: %+v", after)
+	}
+	if fixture.repo.saveCount() != savesBefore {
+		t.Fatal("a refused name must not be written")
+	}
+	if got := fixture.audit.countOf(constant.AuditProfileUpdated); got != 1 {
+		t.Fatalf("only the successful seed update may be audited, got %d", got)
+	}
+}
+
+// A name at exactly the advertised length is accepted through the wire, and so is
+// a multi-byte one: the ceiling counts characters, so a Vietnamese name of 120
+// characters passes even though it is 360 bytes.
+func TestADisplayNameAtTheContractLengthCeilingIsAccepted(t *testing.T) {
+	cases := map[string]string{
+		"ascii at the limit":        strings.Repeat("a", 120),
+		"multi-byte at the limit":   strings.Repeat("Ữ", 120),
+		"the limit plus whitespace": strings.Repeat("a", 120) + "   ",
+	}
+
+	for name, displayName := range cases {
+		t.Run(name, func(t *testing.T) {
+			fixture := newProfileFixture(t)
+
+			rec := fixture.patch(`{"displayName":`+mustJSONString(t, displayName)+`}`, liveToken)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("a name at the advertised limit must be accepted, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			want := strings.TrimSpace(displayName)
+			if got := decodeProfile(t, rec).Data.DisplayName; got != want {
+				t.Fatalf("expected the trimmed name of %d characters, got %d",
+					len([]rune(want)), len([]rune(got)))
+			}
+			if stored, _ := fixture.repo.stored(fixture.customer); stored.DisplayName != want {
+				t.Fatalf("expected the trimmed name to be stored, got %d characters", len([]rune(stored.DisplayName)))
+			}
+		})
+	}
+}
+
 func TestEverySuccessfulUpdateIsAudited(t *testing.T) {
 	fixture := newProfileFixture(t)
 

@@ -30,7 +30,7 @@ by that table's `users.id`.
 
 | Column | Type | Null | Rules |
 |---|---|---|---|
-| `display_name` | `text` | yes | Trimmed; may be empty (a new account has none) |
+| `display_name` | `text` | yes | Trimmed; may be empty (a new account has none); at most 120 characters, counted as runes on the trimmed value, rejected rather than truncated |
 | `phone` | `varchar(20)` | yes | Normalised to 10 digits starting with `0` (research D9) |
 | `avatar_public_id` | `text` | yes | Opaque media identifier; null means no avatar |
 | `avatar_secure_url` | `text` | yes | Displayable link; null means no avatar |
@@ -83,13 +83,13 @@ partially applies (FR-017).
 |---|---|---|---|
 | `id` | `uuid` | no | Primary key |
 | `user_id` | `uuid` | no | Owning account; every query filters on it |
-| `recipient_name` | `text` | no | Trimmed, non-empty |
+| `recipient_name` | `text` | no | Trimmed, non-empty; at most 120 characters, counted as runes on the trimmed value, rejected rather than truncated |
 | `recipient_phone` | `varchar(20)` | no | Normalised like `phone` (research D9) |
 | `province_code` | `varchar(10)` | no | Must exist in the dataset |
 | `province_name` | `text` | no | Captured at save time so history stays truthful (research D10) |
 | `ward_code` | `varchar(15)` | no | Must exist **and belong to** `province_code` |
 | `ward_name` | `text` | no | Captured at save time |
-| `street_address` | `text` | no | Trimmed, non-empty, free text (house number, street) |
+| `street_address` | `text` | no | Trimmed, non-empty, free text (house number, street); at most 255 characters, counted as runes on the trimmed value, rejected rather than truncated |
 | `is_default` | `boolean` | no | Defaults to `false` |
 | `deleted_at` | `timestamptz` | yes | Non-null means hidden (research D4) |
 | `created_at` | `timestamptz` | no | UTC |
@@ -102,7 +102,7 @@ partially applies (FR-017).
 | **At most one default per account** | `CREATE UNIQUE INDEX addresses_one_default_per_user ON addresses (user_id) WHERE is_default AND deleted_at IS NULL` | FR-008, SC-004, research D3 |
 | A hidden address can never be the default | The index predicate excludes hidden rows; the domain transition refuses it | FR-008 |
 | Ward belongs to the chosen province | Use-case check in `application/implement` via the `Divisions` port, because `domain` may not import `share/administrative` (Constitution I) | FR-007b, SC-011 |
-| Province and ward exist in the dataset | Use-case check through the same port; the shared package's own sentinel errors map to `USER_UNKNOWN_PROVINCE` / `USER_UNKNOWN_WARD` in presentation | FR-007a |
+| Province and ward exist in the dataset | Use-case check through the same port; the shared package's own sentinel errors map to `USER_UNKNOWN_PROVINCE` / `USER_UNKNOWN_WARD` / `USER_WARD_PROVINCE_MISMATCH` in presentation | FR-007a, FR-007c |
 | An address belongs to exactly one account | `user_id` taken from the session | FR-006 |
 
 ### Lifecycle

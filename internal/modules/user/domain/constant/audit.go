@@ -21,8 +21,14 @@ const (
 	AuditAddressUpdated = "USER_ADDRESS_UPDATED"
 	// AuditAddressDeleted is recorded when a shipping address is hidden.
 	AuditAddressDeleted = "USER_ADDRESS_DELETED"
-	// AuditAddressDefaultSet is recorded when the default address changes,
-	// including when it changes as a side effect of another operation.
+	// AuditAddressDefaultSet is recorded when an address becomes the account's
+	// default: on an explicit set-default call, and on a create when the account had
+	// no default yet and the address created becomes its first one.
+	//
+	// It is not recorded when the default is merely dropped — hiding the current
+	// default leaves the account with no default rather than moving it, so no
+	// address became the default and this event would claim a change that did not
+	// happen. That case is already covered by AuditAddressDeleted.
 	AuditAddressDefaultSet = "USER_ADDRESS_DEFAULT_SET"
 	// AuditProfileViewedByAdmin is recorded when an administrator reads a
 	// customer's contact details. Customer contact data leaves the customer's

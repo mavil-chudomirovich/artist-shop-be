@@ -42,4 +42,5 @@ the previous avatar was not touched.
 | Missing or invalid session | `UNAUTHENTICATED` (shared) | Already defined by the foundation for every module |
 | Signed-in customer calling the administrator lookup | `FORBIDDEN` (shared) | The rule is role-based, not user-specific; the auth module already established `FORBIDDEN` for role denial |
 | Address list page out of range | `VALIDATION_ERROR` (shared) | Pagination validation is a foundation concern |
+| A structurally invalid address member, such as an empty `recipientName` on `PATCH` | `VALIDATION_ERROR` (shared) with `details[].field` naming the member | The rule is request shape, not a user-domain rule; the detail carries the member name, which is what the client needs (FR-020) |
 | Media adapter returned an unmapped failure | `INTERNAL_ERROR` (shared) | Never leak provider detail to clients; the cause is logged with the correlation id |

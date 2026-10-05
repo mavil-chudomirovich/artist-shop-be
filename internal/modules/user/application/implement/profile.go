@@ -2,6 +2,7 @@ package implement
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -13,20 +14,41 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 )
 
-// targetTypeProfile is the audit_logs target type of every event this module
-// records. The target is always the account the row belongs to.
+// targetTypeProfile is the audit_logs target type of the profile events. The
+// target is the account the profile columns belong to.
 const targetTypeProfile = "user"
+
+// targetTypeAddress is the audit_logs target type of the address events. The
+// target of an address mutation is the address, so the audit index on
+// (target_type, target_id, occurred_at) can reconstruct what happened to one
+// address without scanning every customer event (Constitution VI). The acting
+// account is carried separately as the actor.
+const targetTypeAddress = "address"
 
 // Service implements the user module's use cases. It is constructed once in the
 // composition root and injected wherever the module is used.
 //
-// It implements appinterface.UserService in full once the avatar and address
-// use cases land (T049, T040); until then only the profile methods exist, and the
+// It implements appinterface.UserService in full once the avatar use cases land
+// (T049); until then only the profile and address methods exist, and the
 // compile-time assertion waits with them rather than being weakened.
 type Service struct {
 	// Profiles persists the six profile columns this module owns. It never opens
 	// a transaction: the application layer owns every boundary (Constitution I).
 	Profiles repository.ProfileRepository
+	// Addresses persists the shipping addresses. It never opens a transaction
+	// either; the default-flag transition joins the one this layer opens through
+	// Tx (FR-010).
+	Addresses repository.AddressRepository
+	// Divisions is the only way the application layer reaches the official
+	// administrative dataset. The domain may not import it at all, which is why
+	// province and ward existence is a use-case concern (Constitution I,
+	// research D1).
+	Divisions appinterface.Divisions
+	// Tx owns every transaction boundary. Clearing the previous default and
+	// setting the new one must be a single indivisible outcome, and only the
+	// application layer may decide where a transaction starts and ends
+	// (Constitution I, FR-010).
+	Tx appinterface.UnitOfWork
 	// Audit records every change a customer makes and every operator read of
 	// customer contact details (FR-019, FR-022a).
 	Audit appinterface.Auditor
@@ -37,6 +59,11 @@ type Service struct {
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }
+
+// now reads the wall clock. Every use case that stamps a row goes through it, so
+// the domain stays a pure function of its arguments and the clock is injected at
+// exactly one place.
+func now() time.Time { return time.Now().UTC() }
 
 // New creates the user use-case service.
 func New(deps Service) *Service { return &deps }
@@ -63,8 +90,9 @@ func (s *Service) GetProfile(ctx context.Context, userID uuid.UUID) (dto.Profile
 //
 // The two fields are independent: a nil pointer keeps the current value and a
 // pointer to an empty string clears it (FR-002, FR-004). The domain normalises
-// and validates before anything is written, so a rejected phone persists nothing
-// at all and leaves the stored profile untouched (FR-003).
+// and validates before anything is written, so a rejected phone or an over-long
+// display name persists nothing at all and leaves the stored profile untouched
+// (FR-003, FR-020).
 //
 // Every successful change records USER_PROFILE_UPDATED (FR-019).
 func (s *Service) UpdateProfile(ctx context.Context, in dto.UpdateProfileInput) (dto.ProfileOutput, error) {
@@ -81,7 +109,12 @@ func (s *Service) UpdateProfile(ctx context.Context, in dto.UpdateProfileInput) 
 
 	changed := make([]string, 0, 2)
 	if in.DisplayName != nil {
-		profile.SetDisplayName(*in.DisplayName)
+		// The entity validates before it mutates, so a name over the contract's
+		// maxLength leaves the stored profile untouched and the whole update is
+		// refused below, exactly as an invalid phone is (FR-020).
+		if err := profile.SetDisplayName(*in.DisplayName); err != nil {
+			return dto.ProfileOutput{}, err
+		}
 		changed = append(changed, "displayName")
 	}
 	if in.Phone != nil {
