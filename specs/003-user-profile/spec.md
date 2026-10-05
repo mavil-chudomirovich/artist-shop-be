@@ -14,6 +14,9 @@
 
 - Q: Cỡ ảnh avatar tối đa và định dạng nào? → A: Tối đa 2 MB; chỉ nhận JPEG, PNG, WebP; hệ thống tự thu nhỏ về bề rộng 512 px trước khi lưu.
 - Q: Avatar upload trực tiếp lên dịch vụ media hay qua máy chủ? → A: Qua máy chủ, để máy chủ kiểm tra loại/kích thước và giữ bí mật không ghi ra ngoài.
+- Q: Có hạn mức riêng cho endpoint ghi của module không? → A: Có. Avatar upload và các
+  thao tác ghi phải có rate limit riêng, không chỉ dựa vào hạn mức toàn cục, để một
+  tài khoản không thể chiếm dung lượng media.
 - Q: Cấu trúc địa chỉ và nguồn dữ liệu hành chính? → A: 2 cấp theo mô hình hành
   chính hiện hành (tỉnh/thành → phường/xã), **lấy từ kho dữ liệu hành chính Việt
   Nam** chứ không tự do nhập; người dùng chọn bằng **ô select dạng cascading**
@@ -266,6 +269,9 @@ is not offered.
   disabled, so historical orders remain reconstructable.
 - **FR-024**: System MUST NOT provide account deletion, loyalty points, membership
   tiers or referral features; those are out of scope.
+- **FR-025**: System MUST rate-limit the write-heavy endpoints of this feature,
+  especially avatar upload, so a single account cannot monopolise storage or the
+  media service by uploading repeatedly.
 
 ### Key Entities
 
@@ -316,6 +322,8 @@ is not offered.
   that does not contain it.
 - **SC-012**: A customer with several saved addresses can choose one of them at
   checkout in a single step, without re-typing any address details.
+- **SC-013**: A single account that exceeds the avatar upload rate is refused
+  further uploads with a clear retry hint, while its existing avatar keeps working.
 
 ## Assumptions
 
