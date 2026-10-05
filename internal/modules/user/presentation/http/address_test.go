@@ -580,6 +580,37 @@ func TestTheAddressListWindowIsValidatedAndEchoed(t *testing.T) {
 	}
 }
 
+// An account with no address must answer an empty array, never null: the contract
+// declares the list as an array, so `"data":null` is a shape no client can read and
+// a nil slice from the conversion would put it on the wire. The operator lookup's
+// own list already allocates for exactly this reason.
+//
+// The member is read as raw JSON on purpose. Decoding into a slice would hide the
+// difference — a null decodes to a nil slice, which reads the same as an empty one —
+// so only the raw bytes can tell [] apart from null.
+func TestAnAccountWithNoAddressAnswersAnEmptyArrayAndNeverNull(t *testing.T) {
+	fixture := newAddressFixture(t)
+
+	rec := do(fixture.router, http.MethodGet, "/me/addresses", liveToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode address list %q: %v", rec.Body.String(), err)
+	}
+	if got := string(envelope.Data); got != "[]" {
+		t.Fatalf(`expected "data":[] for an account with no address, got %s`, got)
+	}
+	listed := fixture.list(t, liveToken, "")
+	if listed.Meta.Total != 0 || len(listed.Data) != 0 {
+		t.Fatalf("expected an empty list, got %+v", listed)
+	}
+}
+
 // SC-003, FR-013: another customer's address is answered exactly like an unknown
 // id, so the response can never confirm that it exists.
 func TestAnotherCustomersAddressIsAnsweredAsNotFound(t *testing.T) {

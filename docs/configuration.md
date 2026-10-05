@@ -80,10 +80,22 @@ xem `internal/share/logging/redact.go`).
 | `RATE_LIMIT_RPS` | `20` | ✅ > 0 | Request/giây mỗi client, theo nhóm `read`/`write`/`auth` |
 | `RATE_LIMIT_BURST` | `40` | ✅ > 0 | Burst cho phép |
 
+### User — rate limit riêng của module — tiền tố `USER_`
+| Biến | Mặc định | Bắt buộc | Ý nghĩa |
+|---|---|---|---|
+| `USER_AVATAR_UPLOAD_RATE_PER_HOUR` | `10` | ✅ > 0 | Hạn mức `POST /users/me/avatar`, tính theo IP |
+| `USER_ADDRESS_WRITE_RATE_PER_MINUTE` | `30` | ✅ > 0 | Hạn mức ghi địa chỉ (`POST`/`PATCH`/`DELETE /users/me/addresses*`), tính theo IP |
+
+Hai biến này tạo **hai bucket riêng**, không dùng chung bộ đếm với nhau và không dùng
+chung với `RATE_LIMIT_RPS`; cả hai vẫn cộng dồn trên hạn mức toàn cục. Mục đích là
+ngăn một endpoint ghi nặng chiếm hết tài nguyên: lặp lại upload avatar chính là
+dịch vụ media bị tấn công, và lặp lại ghi địa chỉ là bảng địa chỉ bị tấn công
+(FR-025). Các endpoint đọc của module không có hạn mức riêng.
+
 ### Request & audit
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `MAX_BODY_BYTES` | `4194304` | ✅ > 0 | Trần thô cho mọi body. Route avatar áp trần chính xác 2 MB (FR-015); giá trị này chỉ chặn sớm một body quá lớn, không phải trần nghiệp vụ |
+| `MAX_BODY_BYTES` | `4194304` | ✅ > 0 | Trần thô cho mọi body, chạy **trước routing** nên route không nâng được; phải lớn hơn mọi trần riêng của route. Route avatar áp trần chính xác 2 MB + 64 KB đệm `multipart` (FR-014); giá trị này chỉ chặn sớm một body quá lớn, không phải trần nghiệp vụ. **Đừng đặt ≤ 2 MB** — một upload hợp lệ sẽ bị chặn trước khi route kịp áp luật của nó |
 | `AUDIT_QUEUE_SIZE` | `1024` | ✅ > 0 | Hàng đợi ghi `audit_logs` |
 | `AUDIT_MAX_RETRIES` | `5` | | Số lần thử lại khi ghi audit thất bại |
 
@@ -140,6 +152,31 @@ xem `internal/share/logging/redact.go`).
 | `ADMIN_EMAIL` | *(rỗng)* | ✅ cho seed | |
 | `ADMIN_PASSWORD` | *(rỗng)* | ✅ cho seed | Phải đạt chính sách mật khẩu |
 
+### Media — tiền tố `MEDIA_`
+| Biến | Mặc định | Bắt buộc | Ý nghĩa |
+|---|---|---|---|
+| `MEDIA_CLOUD_NAME` | *(rỗng)* | | Tên cloud trên Cloudinary |
+| `MEDIA_API_KEY` | *(rỗng)* | | API key của cloud |
+| `MEDIA_API_SECRET` | *(rỗng)* | | API secret |
+| `MEDIA_FOLDER` | `artist-shop` | | Folder trong cloud nhận avatar tải lên |
+
+Cả bốn biến đều **không** nằm trong `Validate()` hay `ValidateForAPI()`: `migrate` và
+`seed` phải chạy được mà không cần credential của nhà cung cấp media, và API cũng phải
+khởi động được khi thiếu chúng. Vì vậy cấu hình thiếu là **fail-closed ở adapter** chứ
+không phải lỗi khởi động:
+
+| Tình huống | Kết quả |
+|---|---|
+| Đủ cả ba khoá (`CLOUD_NAME` + `API_KEY` + `API_SECRET`) | Avatar tải lên và xoá bình thường |
+| Thiếu bất kỳ khoá nào | `POST /api/v1/users/me/avatar` trả `503 USER_MEDIA_UNAVAILABLE`, **hồ sơ không bị đổi** nên khách thử lại được |
+
+**Một cấu hình media thiếu chỉ tắt đúng việc upload avatar.** Đọc hồ sơ
+(`GET /users/me`) không bao giờ gọi nhà cung cấp media, nên vẫn trả `200` với tham chiếu
+ảnh đã lưu; `PATCH /users/me`, `DELETE /users/me/avatar` và toàn bộ nhóm
+`/users/me/addresses` cũng không gọi, nên tất cả vẫn hoạt động. Service cũng ghi một
+dòng cảnh báo lúc khởi động, chỉ nêu **tên biến** chứ không nêu giá trị. Xem
+[api-reference.md](api-reference.md) mục `POST /users/me/avatar`.
+
 ### Migrations — tiền tố `MIGRATIONS_`
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
@@ -194,6 +231,9 @@ nguồn sự thật cho quy trình dưới đây.
    dataset mà không phát hành lại build là một thay đổi không có tác dụng.
 5. Địa chỉ đã lưu không cần migrate: nó giữ **mã** tỉnh/phường cùng **tên đã chụp**
    khi lưu, nên vẫn hiển thị đúng sau khi tên đơn vị hành chính thay đổi.
+
+Quy trình này là chính sách làm mới dataset của module; tóm tắt và lý do ghi ở
+[modules/02-user.md](modules/02-user.md).
 
 ## Secret
 

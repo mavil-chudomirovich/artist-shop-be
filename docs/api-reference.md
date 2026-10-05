@@ -2,7 +2,7 @@
 
 Tài liệu API chính thức của `artist-shop-be`. Đây là **nguồn tra cứu duy nhất** cho
 toàn bộ endpoint đang tồn tại: khi thêm, sửa hoặc xoá endpoint, file này **phải**
-được cập nhật trong cùng thay đổi đó (hiến pháp v1.4.0, mục *API Documentation*).
+được cập nhật trong cùng thay đổi đó (hiến pháp v1.6.0, mục *API Documentation*).
 
 | Mục | Nội dung |
 |-----|----------|
@@ -115,13 +115,50 @@ nội bộ ra ngoài.
 | `AUTH_REFRESH_REUSED` | 401 | Refresh token đã được dùng (rotation phát hiện replay) |
 | `AUTH_RESET_INVALID` | 400 | Token đặt lại mật khẩu sai hoặc hết hạn |
 
+**Riêng module user** (`internal/modules/user/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `USER_NOT_FOUND` | 404 | Không có tài khoản nào mang identifier đó (chỉ dùng ở endpoint tra cứu của admin) |
+| `USER_ADDRESS_NOT_FOUND` | 404 | Địa chỉ không tồn tại **đối với tài khoản đang gọi** |
+| `USER_INVALID_PHONE` | 400 | Không phải số di động Việt Nam hợp lệ (10 chữ số, bắt đầu bằng `0`) |
+| `USER_UNKNOWN_PROVINCE` | 400 | Mã tỉnh không có trong dataset hành chính |
+| `USER_UNKNOWN_WARD` | 400 | Mã phường/xã không có trong dataset hành chính |
+| `USER_WARD_PROVINCE_MISMATCH` | 400 | Phường/xã không thuộc tỉnh đã chọn |
+| `USER_AVATAR_TYPE_UNSUPPORTED` | 400 | Byte tải lên không phải JPEG, PNG hoặc WebP |
+| `USER_AVATAR_TOO_LARGE` | 413 | Ảnh vượt trần 2 MB |
+| `USER_MEDIA_UNAVAILABLE` | 503 | Dịch vụ media từ chối hoặc không lưu được; **hồ sơ không bị đổi** nên thử lại được |
+
+Các **mã lỗi** `USER_*` chỉ xuất hiện ở `/api/v1/users/*` và `/api/v1/divisions/*`. Những
+tình huống dưới đây cố ý **không** sinh mã riêng của module (xem
+`specs/003-user-profile/contracts/error-codes.md`): thiếu hoặc sai phiên →
+`UNAUTHENTICATED`; `CUSTOMER` gọi endpoint của admin → `FORBIDDEN` 403; tham số
+phân trang sai → `VALIDATION_ERROR` 400; một member của địa chỉ sai cấu trúc (ví dụ
+`recipientName` rỗng khi `PATCH`) → `VALIDATION_ERROR` 400 với
+`error.details[].field` chỉ đúng tên member.
+
+> Action `audit_logs` của module dùng cùng tiền tố `USER_` nhưng **không** phải mã
+> lỗi: `USER_PROFILE_UPDATED`, `USER_AVATAR_SET`, `USER_AVATAR_REMOVED`,
+> `USER_ADDRESS_CREATED`, `USER_ADDRESS_UPDATED`, `USER_ADDRESS_DELETED`,
+> `USER_ADDRESS_DEFAULT_SET`, `USER_PROFILE_VIEWED_BY_ADMIN` — xem
+> `internal/modules/user/domain/constant/audit.go`. Không có `USER_PROFILE_VIEWED_BY_ADMIN`
+> cho lần đọc trả `404`, vì không có dữ liệu nào rời khỏi tầm kiểm soát của khách.
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
 |---|---|---|
 | Nhóm *flow* của auth (đăng ký, xác nhận, gửi lại, quên/đặt lại mật khẩu) | 5 req/phút / IP | `AUTH_FLOW_RATE_PER_MINUTE` |
 | `POST /auth/login` | 10 req/phút / IP | `AUTH_LOGIN_RATE_PER_MINUTE` |
+| `POST /users/me/avatar` | 10 req/giờ / IP | `USER_AVATAR_UPLOAD_RATE_PER_HOUR` |
+| Ghi địa chỉ (`POST`/`PATCH`/`DELETE /users/me/addresses*`) | 30 req/phút / IP | `USER_ADDRESS_WRITE_RATE_PER_MINUTE` |
 | Toàn bộ `/api/v1`, theo nhóm `read` / `write` / `auth` | 20 req/s, burst 40 | `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST` |
+
+Hai hạn mức của module user là **hai bucket riêng**, không dùng chung bộ đếm với
+nhau và không dùng chung với hạn mức toàn cục: một tài khoản gõ bão nút upload avatar
+không thể dùng hết hạn mức ghi địa chỉ. Cả hai vẫn cộng dồn trên hạn mức toàn cục
+(`RATE_LIMIT_RPS`), vốn là lưới an toàn thô áp cho mọi route dưới `/api/v1`. Các
+endpoint đọc của module user không có hạn mức riêng.
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -419,11 +456,474 @@ Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
 
 ## 4. Module 02 - User (`/api/v1`)
 
-Module hồ sơ khách hàng. Feature `003-user-profile` đang triển khai dần theo từng
-user story; ở giai đoạn hiện tại mới có nhóm `/divisions` (dữ liệu hành chính tham
-chiếu, dùng chung cho module User, Order, Shipping và Commission).
+Module hồ sơ khách hàng: hồ sơ, avatar, sổ địa chỉ giao hàng và tra cứu khách hàng
+của admin, cùng nhóm dữ liệu tham chiếu `/divisions`.
 
-### 4.1 `GET /divisions/provinces`
+Quy tắc chung của nhóm `/users`:
+
+- **Chủ tài khoản luôn lấy từ session**, không bao giờ từ body hay query của client.
+  Không route tự phục vụ nào nhận tham số định danh chủ sở hữu, nên truy cập chéo
+  tài khoản là bất khả thi *theo cấu trúc*, không phải nhờ một kiểm tra có thể quên.
+  Ngoại lệ duy nhất là `GET /users/{userId}` (`4.10`), ở đó `userId` là **đối tượng
+  của** request chứ không phải tác nhân, và route có guard `ADMIN`.
+- `chi` phân giải đoạn tĩnh `/me` trước tham số `/{userId}`, nên nhóm tự phục vụ giữ
+  handler riêng và `/{userId}` vẫn trống cho endpoint tra cứu.
+
+### 4.1 `GET /users/me`
+
+Hồ sơ của chính access token đang dùng. Trả về đúng hình dạng hồ sơ mà mọi route
+ghi của module đều trả, nên client chỉ cần một kiểu dữ liệu cho cả nhóm.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` |
+
+Response
+
+```json
+{
+  "data": {
+    "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+    "email": "an.nguyen@example.com",
+    "role": "CUSTOMER",
+    "displayName": "Nguyễn Thị An",
+    "phone": "0912345678",
+    "avatar": {
+      "publicId": "artist-shop/avatars/8f2c1d4e6a",
+      "url": "https://res.cloudinary.com/demo/image/upload/artist-shop/avatars/8f2c1d4e6a.jpg",
+      "width": 512,
+      "height": 512
+    }
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Endpoint này **không** gọi dịch vụ media: nó đọc từ các cột đã lưu. Vì vậy hồ sơ vẫn
+  đọc được khi dịch vụ media hỏng hoặc khi chưa cấu hình `MEDIA_*` — cũng nghĩa là
+  `avatar.url` là ảnh đã lưu, không phải kiểm tra sống của provider.
+- `avatar` là `null` khi khách chưa có ảnh. Không có cờ `hasAvatar`: `null` là tín
+  hiệu **duy nhất** cho "chưa có ảnh".
+- `phone` luôn ở dạng chuẩn hoá **10 chữ số bắt đầu bằng `0`** và là `null` khi chưa
+  đặt, bất kể client đã gửi `+84 912 345 678`, `0912.345.678` hay `0912345678`.
+- `displayName` là chuỗi, có thể rỗng khi khách chưa từng đặt; nó không bao giờ `null`.
+- `role` là `CUSTOMER` hoặc `ADMIN` (`internal/share/access`).
+
+### 4.2 `PATCH /users/me`
+
+Cập nhật tên hiển thị và/hoặc số điện thoại. **Cập nhật một phần**: hai thành viên
+độc lập nhau, gửi một thành viên không đụng tới thành viên kia.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` — trả lại **hồ sơ sau khi cập nhật** |
+
+Request
+
+```json
+{ "displayName": "Nguyễn Thị An", "phone": "+84 912 345 678" }
+```
+
+Response `200` giống hệt `GET /users/me`, với `phone` đã chuẩn hoá thành
+`"0912345678"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`displayName` quá 120 ký tự; `details[].field` là
+`"displayName"`) · `USER_INVALID_PHONE` 400 · `MALFORMED_REQUEST` 400 (body không
+parse được, hoặc có member lạ) · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- **Bỏ trống một thành viên = giữ nguyên. Chuỗi rỗng = xoá.**
+  `{ "phone": "" }` và `{ "phone": null }` đều xoá số điện thoại; `{ "displayName": "" }`
+  xoá tên hiển thị. `displayName` trong contract là chuỗi thuần nên không gửi `null`.
+- Một body **không nêu thành viên nào** (`{}`) là thao tác rỗng: trả `200` với hồ sơ
+  hiện tại và **không** ghi dòng audit, vì không có gì thay đổi để truy vết.
+- Mỗi thay đổi thành công ghi `audit_logs` với action `USER_PROFILE_UPDATED`, thuộc
+  tính `changedFields` (`["displayName", "phone"]`) — **không** ghi giá trị, để dữ liệu
+  liên hệ không bị nhân bản vào nhật ký.
+- Validate ở tầng domain trước khi ghi: tên quá dài hoặc số điện thoại sai ⇒ **không
+  cột nào** bị ghi, hồ sơ đã lưu giữ nguyên, kể cả thành viên hợp lệ đi kèm.
+  `displayName` được đếm theo **ký tự** (rune) không phải byte, nên tiếng Việt có dấu vẫn
+  tính đúng 120 ký tự.
+
+### 4.3 `POST /users/me/avatar`
+
+Tải ảnh đại diện lên, hoặc thay ảnh hiện tại. Body là `multipart/form-data` với đúng
+một part `file`.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | 10/giờ / IP (`USER_AVATAR_UPLOAD_RATE_PER_HOUR`) |
+| Trả về | `200 OK` — trả lại hồ sơ đã gắn avatar mới |
+
+Request
+
+```bash
+curl -X POST http://localhost:8080/api/v1/users/me/avatar \
+  -H "Authorization: Bearer $ACCESS" \
+  -F "file=@avatar.jpg"
+```
+
+```json
+{
+  "data": {
+    "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+    "email": "an.nguyen@example.com",
+    "role": "CUSTOMER",
+    "displayName": "Nguyễn Thị An",
+    "phone": "0912345678",
+    "avatar": {
+      "publicId": "artist-shop/avatars/8f2c1d4e6a",
+      "url": "https://res.cloudinary.com/demo/image/upload/artist-shop/avatars/8f2c1d4e6a.jpg",
+      "width": 512,
+      "height": 512
+    }
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (thiếu part `file`, hoặc body không phải
+`multipart/form-data`) · `USER_AVATAR_TYPE_UNSUPPORTED` 400 · `USER_AVATAR_TOO_LARGE`
+413 · `PAYLOAD_TOO_LARGE` 413 · `USER_MEDIA_UNAVAILABLE` 503 · `MALFORMED_REQUEST` 400 ·
+`UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Loại ảnh được nhận diện từ **byte tải lên** (chữ ký định dạng), không tin tên file
+  cũng không tin `Content-Type` mà client khai. Chỉ nhận JPEG, PNG và WebP.
+- **Trần 2 MB nằm trên route này**, không phải trên hạn mức toàn cục:
+  - route đặt `BodyLimit(2 MB + 64 KB)` — 64 KB là chỗ dành cho phần đệm của
+    `multipart` (header part, boundary, tên field). Middleware này chạy **trước**
+    handler nên một body khai sai độ dài bị chặn sớm mà không bị đệm hết vào bộ nhớ;
+  - handler còn chặn lần nữa khi đọc part bằng `LimitReader`, vì một `Content-Length`
+    không đáng tin. Cả hai đường đều trả cùng một lỗi `413 USER_AVATAR_TOO_LARGE`;
+  - `MAX_BODY_BYTES` (mặc định 4 MiB) chỉ là **chặn sớm thô** của cả pipeline, chạy
+    trước routing nên route không nâng được; nó phải lớn hơn mọi trần riêng của route,
+    nếu không một upload hợp lệ sẽ bị chặn trước khi route kịp áp luật thật. Vì vậy
+    **đừng đặt `MAX_BODY_BYTES` ≤ 2 MB**: xem `docs/configuration.md`.
+- Ảnh lưu ở bề rộng **tối đa 512 px**; provider là nguồn sự thật cho kích thước kết quả
+  (ADR-005), dịch vụ này không đụng vào ảnh.
+- Thứ tự thao tác được chốt: kiểm tra byte trước → tải lên → dựng tham chiếu → **ghi
+  dòng** → mới giải phóng ảnh cũ. Nên ảnh bị từ chối **không** chạm vào dòng dữ liệu
+  và avatar hiện tại giữ nguyên; lỗi dọn ảnh cũ không biến một thay đổi đã thành công
+  thành request thất bại.
+- **Thiếu cấu hình `MEDIA_*` chỉ tắt đúng endpoint này.** Adapter fail-closed: mọi lệnh
+  gọi provider mà không có credential trả `503 USER_MEDIA_UNAVAILABLE`, hồ sơ không bị
+  đổi nên khách thử lại được. `GET /users/me`, `PATCH /users/me`,
+  `DELETE /users/me/avatar` và toàn bộ nhóm `/addresses` vẫn hoạt động bình thường —
+  vì chúng không gọi provider (xem `4.4`).
+- Mỗi lần gắn/thay ảnh ghi `audit_logs` với action `USER_AVATAR_SET`, kèm kích thước
+  và cờ `replaced` — không ghi đường dẫn ảnh.
+
+### 4.4 `DELETE /users/me/avatar`
+
+Gỡ ảnh đại diện. **Idempotent**: khách vốn đã không có ảnh thì không có gì để ghi,
+không audit, và không gọi media service.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` — trả lại hồ sơ sau khi gỡ |
+
+Request: không có body.
+
+Response `200` giống `GET /users/me`, với `avatar` là `null`.
+
+Lỗi: `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Tham chiếu ảnh được xoá khỏi dòng **trước**, tài nguyên ở provider mới được giải phóng
+  sau, và lỗi giải phóng bị bỏ qua. Dòng dữ liệu là điều khách và mọi lần đọc sau đó thấy;
+  một ảnh mà provider không xoá được chỉ là dung lượng rác, còn báo lỗi sau khi đã ghi
+  dòng sẽ nói với khách rằng ảnh vẫn còn trong khi nó đã mất.
+- Vì lỗi giải phóng bị bỏ qua, endpoint này **vẫn trả `200`** kể cả khi thiếu cấu hình
+  `MEDIA_*`. `503` chỉ xảy ra ở `4.3`.
+- Gỡ ảnh thật sự ghi `audit_logs` với action `USER_AVATAR_REMOVED`, kèm kích thước ảnh
+  và không ghi đường dẫn. Lần gọi mà không có ảnh để gỡ thì **không** ghi dòng nào.
+
+### 4.5 `GET /users/me/addresses`
+
+Trang địa chỉ giao hàng của chính khách: chỉ địa chỉ chưa ẩn, địa chỉ mặc định đứng
+trước, sau đó tới địa chỉ cập nhật gần nhất nhất.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`).
+
+Response
+
+```json
+{
+  "data": [
+    {
+      "id": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+      "recipientName": "Nguyễn Thị An",
+      "recipientPhone": "0912345678",
+      "provinceCode": "01",
+      "provinceName": "Hà Nội",
+      "wardCode": "00004",
+      "wardName": "Ba Đình",
+      "streetAddress": "12 Ngõ 129 Dịch Vọng",
+      "isDefault": true,
+      "divisionNeedsReview": false
+    }
+  ],
+  "meta": { "requestId": "...", "timestamp": "...", "page": 1, "pageSize": 20, "total": 1 }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng;
+`details[].field` là `"page"` hoặc `"pageSize"`) · `UNAUTHENTICATED` 401 ·
+`RATE_LIMITED` 429
+
+Ghi chú:
+
+- `divisionNeedsReview` **luôn có mặt**, kể cả khi là `false`: danh sách của chính khách
+  biết câu trả lời vì use case kiểm tra từng mã đã lưu với dataset. Bỏ mất `false` đã
+  biết sẽ khiến client đọc "vắng mặt" thành "không biết" — trong JavaScript đó là
+  `undefined`, không phải `false`.
+  `divisionNeedsReview: true` nghĩa là mã tỉnh/phường đã lưu không còn trong dataset
+  hiện hành; tên đã chụp vẫn được trả về để khách thấy đúng thứ đã lưu.
+- `recipientPhone` cũng được chuẩn hoá 10 chữ số, giống `phone` của hồ sơ.
+- Khi tài khoản chưa có địa chỉ nào, `data` là **`null`**, không phải `[]`. Ngược lại,
+  `addresses` trong tra cứu của admin (`4.10`) là `[]` — hai hình dạng khác nhau này là
+  cố ý, nên client phải xử lý `null` ở đây.
+
+### 4.6 `POST /users/me/addresses`
+
+Tạo địa chỉ giao hàng. Địa chỉ đầu tiên của một tài khoản tự động trở thành địa chỉ
+mặc định.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | 30/phút / IP (`USER_ADDRESS_WRITE_RATE_PER_MINUTE`) |
+| Trả về | `201 Created` |
+
+Request
+
+```json
+{
+  "recipientName": "Nguyễn Thị An",
+  "recipientPhone": "0912345678",
+  "provinceCode": "01",
+  "wardCode": "00004",
+  "streetAddress": "12 Ngõ 129 Dịch Vọng"
+}
+```
+
+Response `201` là một phần tử `data` của `GET /users/me/addresses`, cùng hình dạng.
+
+Lỗi: `VALIDATION_ERROR` 400 (thiếu `recipientName` / `recipientPhone` /
+`provinceCode` / `wardCode` / `streetAddress`, hoặc member vượt giới hạn 120 / 255 ký
+tự; `details[].field` chỉ đúng tên member) · `USER_INVALID_PHONE` 400 ·
+`USER_UNKNOWN_PROVINCE` 400 · `USER_UNKNOWN_WARD` 400 ·
+`USER_WARD_PROVINCE_MISMATCH` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 ·
+`RATE_LIMITED` 429
+
+Ghi chú:
+
+- `provinceName` và `wardName` là **tuỳ chọn**: client gửi lên thì dùng, không gửi thì
+  tên được chụp từ dataset. Tên đã chụp là thứ hiển thị về sau, nên đổi tên đơn vị hành
+  chính sau này không xoá được thứ khách đã nhìn thấy.
+- Tỉnh và phường phải đến từ dataset hành chính, và phường phải thuộc tỉnh đã chọn —
+  cả hai được kiểm tra **trước khi** ghi bất kỳ thứ gì, nên một lần lưu sai không để lại
+  dòng nào.
+- `recipientPhone` trả `400 USER_INVALID_PHONE` với `details[].field` là
+  `"recipientPhone"` — cùng một luật domain bảo vệ hai member khác nhau, nên tên field
+  trong `details` mới là thứ client dùng để báo lỗi cạnh đúng ô nhập.
+- Ghi `audit_logs` với action `USER_ADDRESS_CREATED`. Khi địa chỉ vừa tạo trở thành
+  địa chỉ mặc định đầu tiên của tài khoản, nó ghi **thêm** một dòng
+  `USER_ADDRESS_DEFAULT_SET`: trở thành mặc định vốn là một thay đổi mặc định, dù khách
+  chỉ xin lưu một địa chỉ. Quyết định "có thành mặc định không" và lệnh insert nằm
+  trong **một** transaction.
+
+### 4.7 `PATCH /users/me/addresses/{addressId}`
+
+Sửa một địa chỉ. Mọi member đều tuỳ chọn; cờ mặc định **được giữ nguyên**, dùng
+`4.9` để đổi.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | 30/phút / IP (`USER_ADDRESS_WRITE_RATE_PER_MINUTE`) |
+| Trả về | `200 OK` |
+
+Request
+
+```json
+{ "streetAddress": "12 Ngõ 129 Dịch Vọng, căn hộ 5", "wardCode": "00008" }
+```
+
+Response `200` là một phần tử `data` của `GET /users/me/addresses`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc member sai cấu trúc;
+`details[].field` chỉ đúng tên member) · `USER_INVALID_PHONE` 400 ·
+`USER_UNKNOWN_PROVINCE` 400 · `USER_UNKNOWN_WARD` 400 ·
+`USER_WARD_PROVINCE_MISMATCH` 400 · `USER_ADDRESS_NOT_FOUND` 404 ·
+`MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Member bị bỏ trống thì giữ nguyên. **Khác `PATCH /users/me`, một chuỗi rỗng ở đây bị
+  từ chối chứ không phải "xoá"**: `recipientName` và `streetAddress` rỗng trả
+  `400 VALIDATION_ERROR` (`details[].field` là tên member), và `recipientPhone` rỗng trả
+  `400 USER_INVALID_PHONE` — vì cột tương ứng trong `addresses` là `NOT NULL` và một
+  địa chỉ không có người nhận hoặc không có địa chỉ chi tiết là dữ liệu không dùng
+  được. Muốn bỏ một địa chỉ thì dùng `4.8`.
+- Toàn bộ thay đổi được validate **trước** khi ghi, và trần độ dài của contract được
+  kiểm tra lại cho *mọi* thành viên kể cả thành viên request không nêu — nên một lần
+  sửa không thể để lại một giá trị quá dài đang tồn tại, và ngược lại một dòng dữ liệu
+  cũ đã quá dài buộc phải được rút ngắn chứ không chỉ chạm vào.
+- Tỉnh/phường chỉ được kiểm tra lại với dataset **khi request chạm vào chúng**. Một
+  địa chỉ có mã phường đã rút khỏi dataset vẫn phải sửa được các member còn hợp lệ —
+  một mã đã nghỉ không được đóng băng cả dòng.
+- Tên đơn vị hành chính được chụp lại mỗi khi **mã** của nó dịch chuyển, nên tên không
+  bao giờ mô tả một đơn vị khác với mã đang lưu.
+- Chỉ ghi `audit_logs` (`USER_ADDRESS_UPDATED`) khi có member **thực sự đổi**; một
+  `PATCH` không đổi gì thì không ghi dòng.
+
+### 4.8 `DELETE /users/me/addresses/{addressId}`
+
+Ẩn một địa chỉ. Dòng dữ liệu **được giữ lại** để các đơn hàng cũ vẫn giữ đúng địa chỉ
+đã dùng (ADR-004).
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | 30/phút / IP (`USER_ADDRESS_WRITE_RATE_PER_MINUTE`) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID) ·
+`USER_ADDRESS_NOT_FOUND` 404 · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Địa chỉ bị ẩn rời khỏi `4.5` và không thể là địa chỉ mặc định nữa. Ẩn địa chỉ mặc
+  định **duy nhất** để tài khoản không còn mặc định nào; địa chỉ tạo tiếp theo sẽ thành
+  mặc định.
+- Không ghi `USER_ADDRESS_DEFAULT_SET`: không có địa chỉ nào *trở thành* mặc định, nên
+  ghi sự kiện đó sẽ mô tả sai điều đã xảy ra. Trường hợp này đã được
+  `USER_ADDRESS_DELETED` bao phủ.
+
+### 4.9 `POST /users/me/addresses/{addressId}/default`
+
+Đặt một địa chỉ làm mặc định. Xoá mặc định cũ và đặt mặc định mới trong **một** thao
+tác không chia nhỏ được.
+
+| | |
+|---|---|
+| Auth | Bearer access token |
+| Rate limit | 30/phút / IP (`USER_ADDRESS_WRITE_RATE_PER_MINUTE`) |
+| Trả về | `200 OK` |
+
+Request: không có body.
+
+Response `200` là một phần tử `data` của `GET /users/me/addresses`, với
+`isDefault: true`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID) ·
+`USER_ADDRESS_NOT_FOUND` 404 · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Cả hai lệnh ghi nằm trong **một transaction**, và thứ tự là xoá mặc định cũ **rồi mới**
+  đặt mới: đó là điều partial unique index trên `(user_id) WHERE is_default AND
+  deleted_at IS NULL` đòi hỏi. Nếu lỗi giữa hai lệnh, tài khoản sẽ mất hẳn địa chỉ mặc
+  định.
+- Ràng buộc "tối đa một địa chỉ mặc định" nằm ở **tầng lưu trữ**, không chỉ ở tầng ứng
+  dụng (ADR-003).
+
+### 4.10 `GET /users/{userId}`
+
+Tra cứu chỉ đọc cho **admin**, phục vụ xử lý đơn hàng và commission.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (không có limit riêng cho endpoint này) |
+| Trả về | `200 OK` |
+
+Response
+
+```json
+{
+  "data": {
+    "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+    "email": "an.nguyen@example.com",
+    "role": "CUSTOMER",
+    "displayName": "Nguyễn Thị An",
+    "phone": "0912345678",
+    "addresses": [
+      {
+        "id": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+        "recipientName": "Nguyễn Thị An",
+        "recipientPhone": "0912345678",
+        "provinceCode": "01",
+        "provinceName": "Hà Nội",
+        "wardCode": "00004",
+        "wardName": "Ba Đình",
+        "streetAddress": "12 Ngõ 129 Dịch Vọng",
+        "isDefault": true
+      }
+    ]
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với action
+`AUTH_PRIVILEGE_DENIED`) · `VALIDATION_ERROR` 400 (`userId` không phải UUID) ·
+`USER_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- **Đường dẫn là `GET /api/v1/users/{userId}`, không có tiền tố `/admin`.** Ở đây tài
+  khoản trong đường dẫn là **đối tượng** của request chứ không phải tác nhân; tác nhân
+  đến từ session và vai trò `ADMIN` do middleware quyết định.
+- Module này **không** có đường ghi cho admin. Không phải là từ chối 403 — endpoint đó
+  đơn giản là không tồn tại.
+- `addresses` **không có** `divisionNeedsReview`, và đó là cố ý chứ không phải bỏ sót:
+  DTO hợp đồng liên module mà lookup dựng từ đó không mang cờ này, và trên đường đi này
+  không có bước nào kiểm tra mã đã lưu với dataset. Trả `false` sẽ khẳng định mọi mã đều
+  còn hiệu lực khi không có gì xác nhận điều đó; vắng mặt nghĩa là "góc nhìn này không
+  trả lời được", còn danh sách của chính khách thì biết nên phải nói ra. Tài khoản
+  không có địa chỉ trả `[]` chứ không phải `null`.
+- Danh sách địa chỉ ở đây **không phân trang** và được đặt trần ở 100 phần tử: hợp
+  đồng liên module mang kèm thứ tự *mặc định trước, rồi cập nhật gần nhất nhất*, nên
+  module đơn vị có thể dựa vào thứ tự đó để đưa địa chỉ mặc định lên đầu.
+- **Mỗi lần đọc thành công đều bị ghi** `audit_logs` với action
+  `USER_PROFILE_VIEWED_BY_ADMIN` và `addressCount` — không ghi dữ liệu liên hệ. Một lần
+  đọc trả `404` thì **không** ghi: không có dữ liệu nào rời khỏi tầm kiểm soát của khách.
+- `403` cho khách đã đăng nhập được ghi bởi **module auth** với action
+  `AUTH_PRIVILEGE_DENIED` (`internal/modules/auth/domain/constant/audit.go`), không phải
+  action của module user — cùng cơ chế như `GET /auth/admin/probe`.
+
+> **Địa chỉ của người khác trả về cùng một lỗi.** `4.7`, `4.8` và `4.9` đọc địa chỉ
+> qua truy vấn có điều kiện sở hữu, nên một `addressId` không tồn tại, một địa chỉ đã ẩn
+> và một địa chỉ thuộc tài khoản khác đều cho ra **cùng** `404
+> USER_ADDRESS_NOT_FOUND`. Nếu có mã riêng cho trường hợp "tồn tại nhưng của người
+> khác", bất kỳ khách đã đăng nhập nào cũng dò được một địa chỉ có thật trong hệ thống.
+
+### 4.11 `GET /divisions/provinces`
 
 Danh sách tỉnh/thành phố từ dataset hành chính nhúng sẵn trong binary (ADR-002),
 sắp xếp theo tên, trùng tên thì theo mã.
@@ -440,7 +940,7 @@ Response:
 {
   "data": [
     { "code": "01", "name": "Hà Nội" },
-    { "code": "79", "name": "Thành phố Hồ Chí Minh" }
+    { "code": "79", "name": "Hồ Chí Minh" }
   ],
   "meta": { "requestId": "...", "timestamp": "..." }
 }
@@ -453,10 +953,10 @@ Ghi chú:
 - Cố ý **không** phân trang: kết quả là dữ liệu tham chiếu bị chặn bởi bản thân dataset
   (~35 tỉnh), nhỏ hơn mọi `pageSize` mà client hợp lý có thể yêu cầu. Xem
   `specs/003-user-profile/plan.md` phần Complexity Tracking. Danh sách **địa chỉ** của
-  khách hàng thì có phân trang (FR-018).
+  khách hàng thì có phân trang (FR-018, xem `4.5`).
 - Endpoint này không kiểm tra ADMIN: dữ liệu tham chiếu, không phải dữ liệu khách hàng.
 
-### 4.2 `GET /divisions/provinces/{provinceCode}/wards`
+### 4.12 `GET /divisions/provinces/{provinceCode}/wards`
 
 Danh sách phường/xã của một tỉnh. `provinceCode` là mã tỉnh trong dataset (ví dụ `01`).
 
@@ -471,11 +971,15 @@ Response:
 ```json
 {
   "data": [
-    { "code": "0001", "name": "Phường Hoàng Kiết", "provinceCode": "01" }
+    { "code": "00004", "name": "Ba Đình", "provinceCode": "01" }
   ],
   "meta": { "requestId": "...", "timestamp": "..." }
 }
 ```
+
+> Mã phường trong dataset là chuỗi **5 chữ số** và tên là tên đơn vị **không kèm tiền
+> tố** `Phường`/`Xã` (`00004` = `Ba Đình`, `00008` = `Ngọc Hà` cùng thuộc `01`). Mọi ví dụ
+> trong mục này lấy từ chính dataset.
 
 Lỗi: `UNAUTHENTICATED` 401 · `VALIDATION_ERROR` 400 · `USER_UNKNOWN_PROVINCE` 400
 
@@ -484,7 +988,7 @@ Ghi chú:
 - Mã tỉnh không tồn tại trả `400 USER_UNKNOWN_PROVINCE`, **không** phải `404`: tham số
   đường dẫn sai là lỗi input, khớp với `contracts/error-codes.md` và với các endpoint
   địa chỉ dùng cùng mã lỗi này.
-- Endpoint cố ý không phân trang, cùng lý do như 4.1.
+- Endpoint cố ý không phân trang, cùng lý do như 4.11.
 
 ---
 
@@ -505,6 +1009,16 @@ Ghi chú:
 | GET | `/api/v1/auth/me` | Bearer | Thông tin tài khoản hiện tại |
 | POST | `/api/v1/auth/password/change` | Bearer | Đổi mật khẩu, thu hồi mọi phiên |
 | GET | `/api/v1/auth/admin/probe` | ADMIN | Kiểm tra RBAC |
+| GET | `/api/v1/users/me` | Bearer | Hồ sơ của chính mình |
+| PATCH | `/api/v1/users/me` | Bearer | Cập nhật tên hiển thị / số điện thoại |
+| POST | `/api/v1/users/me/avatar` | Bearer | Tải hoặc thay avatar (multipart, trần 2 MB) |
+| DELETE | `/api/v1/users/me/avatar` | Bearer | Gỡ avatar |
+| GET | `/api/v1/users/me/addresses` | Bearer | Địa chỉ của chính mình (có phân trang) |
+| POST | `/api/v1/users/me/addresses` | Bearer | Tạo địa chỉ (201) |
+| PATCH | `/api/v1/users/me/addresses/{addressId}` | Bearer | Sửa địa chỉ, giữ cờ mặc định |
+| DELETE | `/api/v1/users/me/addresses/{addressId}` | Bearer | Ẩn địa chỉ (204) |
+| POST | `/api/v1/users/me/addresses/{addressId}/default` | Bearer | Đặt địa chỉ mặc định |
+| GET | `/api/v1/users/{userId}` | ADMIN | Tra cứu khách hàng (chỉ đọc, có audit) |
 | GET | `/api/v1/divisions/provinces` | Bearer | Danh sách tỉnh/thành phố |
 | GET | `/api/v1/divisions/provinces/{provinceCode}/wards` | Bearer | Danh sách phường/xã của một tỉnh |
 
@@ -528,6 +1042,8 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-06 | Sửa hai giá trị **ví dụ** đã sai trong mục `/divisions`: tên tỉnh `79` là `Hồ Chí Minh` (không phải `Thành phố Hồ Chí Minh`), và mã phường ví dụ `0001` / `Phường Hoàng Kiết` **không tồn tại** trong dataset. Thay bằng `00004` / `Ba Đình`. Mã phường trong dataset là 5 chữ số và tên không kèm tiền tố `Phường`/`Xã`. | `internal/share/administrative/data/vn-divisions.json` |
+| 2026-10-06 | Thêm nhóm `/api/v1/users/*` (module 02 User): hồ sơ (`GET`/`PATCH /me`), avatar (`POST`/`DELETE /me/avatar`), sổ địa chỉ (5 route `/me/addresses*`) và tra cứu khách hàng cho admin (`GET /{userId}`, không có tiền tố `/admin`). Chủ tài khoản luôn lấy từ session; địa chỉ của người khác trả cùng `404 USER_ADDRESS_NOT_FOUND`; `divisionNeedsReview` có mặt trên địa chỉ của chính khách và vắng mặt trên tra cứu của admin. Bổ sung `USER_*` vào mục 1.4 và hai hạn mức của module vào mục 1.5. Sửa phiên bản hiến pháp trích ở đầu file: `v1.4.0` → `v1.6.0`. | `internal/modules/user/presentation/http/router.go` |
 | 2026-10-06 | Thêm nhóm `/api/v1/divisions/*` (module 02 User): `GET /divisions/provinces` và `GET /divisions/provinces/{provinceCode}/wards`, đọc dataset hành chính nhúng sẵn (ADR-002). Hai endpoint cố ý không phân trang và yêu cầu Bearer token. | `internal/modules/user/presentation/http/router.go` |
 | 2026-10-06 | `POST /password/change` thu hồi **toàn bộ** phiên của tài khoản và bắt buộc có `refreshToken`; thêm `VALIDATION_ERROR` 400 và `AUTH_TOKEN_INVALID` 401 vào danh sách lỗi của endpoint này. | `internal/modules/auth/application/implement/password.go` |
 | 2026-10-06 | `POST /refresh` phát hiện replay thì thu hồi **toàn bộ** phiên của user và ghi `audit_logs` (`AUTH_REFRESH_REUSED`), khớp với mục 1.6. | `internal/modules/auth/application/implement/session.go` |

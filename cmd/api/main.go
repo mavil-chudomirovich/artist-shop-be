@@ -18,7 +18,13 @@ import (
 	authredis "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/redis"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	authhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/http"
+	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
+	userappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
+	usermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/mapper"
 	useradministrative "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/administrative"
+	userauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/auditor"
+	usermedia "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/media"
+	userpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/postgres"
 	userhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/presentation/http"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/cache"
@@ -112,7 +118,67 @@ func run() error {
 	// the Divisions port: the dataset is embedded in the binary, so the answers
 	// need no use case and no account. The /users group joins this composition
 	// with the module's repositories, media store and use cases.
-	userDivisionsHandler := userhttp.NewDivisionsHandler(useradministrative.New(), logger)
+	//
+	// One Divisions adapter serves both consumers. The reference-data handler reads
+	// it directly and the use cases reach it through the port, so there is a single
+	// place that knows how the embedded dataset is ordered and validated.
+	userDivisions := useradministrative.New()
+	userDivisionsHandler := userhttp.NewDivisionsHandler(userDivisions, logger)
+
+	// The media store is the real adapter in every configuration, never a nil
+	// stand-in and never a reject-all placeholder. MediaConfig is deliberately kept
+	// out of ValidateForAPI so migrate and seed stay runnable without provider
+	// credentials, which means this service can legitimately start with none — and
+	// it must still start. The fail-closed behaviour therefore lives in the adapter
+	// (media.requireCredentials, reached through its named NewWithDefaults
+	// constructor): without credentials every provider call is refused with the
+	// module's retryable media error, so avatar upload answers UNAVAILABLE and
+	// nothing else is affected.
+	//
+	// The two alternatives were rejected deliberately. A nil store would survive
+	// the profile reads, which never call the provider, and panic on the first
+	// upload instead of answering it; a second "media disabled" implementation in
+	// the composition would be a second answer to keep in step with the real one and
+	// would need its own tests to prove it says the same thing. Refusing inside the
+	// adapter keeps one implementation, one error and one place that knows the rule.
+	//
+	// The logger is the composition's own, so a provider failure carries the request
+	// correlation the rest of the service logs with.
+	userMediaStore := usermedia.NewWithDefaults(cfg.Media, logger)
+	if !cfg.Media.IsConfigured() {
+		// Named, never valued: the keys are safe to log, the secrets behind them are
+		// not (Constitution V, VI).
+		logger.Warn("media credentials are absent: avatar upload answers USER_MEDIA_UNAVAILABLE, every other endpoint is unaffected",
+			slog.String("mediaConfigKeys", "MEDIA_CLOUD_NAME, MEDIA_API_KEY, MEDIA_API_SECRET"))
+	}
+
+	// The avatar ceilings are the domain's own (FR-014, FR-015). No environment
+	// setting overrides them, so the composition leaves the zero value and
+	// appinterface.Config falls back to the documented contract ceilings rather than
+	// widening or narrowing them from here. The same value is handed to the service
+	// and to the handler, because the handler sizes the route's body limit from the
+	// very ceiling the use case enforces.
+	userConfig := userappinterface.Config{}
+
+	// The module reuses the foundation audit writer the auth module already writes
+	// through: one queue, one retry policy, one shutdown. A second writer would be a
+	// second queue competing for the same rows.
+	userService := userimplement.New(userimplement.Service{
+		Profiles:  userpostgres.NewProfileRepository(db.Pool),
+		Addresses: userpostgres.NewAddressRepository(db.Pool),
+		Divisions: userDivisions,
+		Tx:        db,
+		Audit:     userauditor.New(auditWriter),
+		Media:     userMediaStore,
+		Config:    userConfig,
+		Mapper:    usermapper.New(userDivisions),
+	})
+
+	// *userimplement.Service satisfies internal/contracts.CustomerLookupService
+	// directly, so the same instance is what another module would be handed here —
+	// no adapter, and no second lookup that could answer differently from the route
+	// (docs/system-design/contract-purity.md, research D8).
+	userHandler := userhttp.New(userService, userConfig, logger)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Config:  cfg,
@@ -124,6 +190,10 @@ func run() error {
 		Mount: func(r chi.Router) {
 			r.Mount("/auth", authHandler.Router(cfg.Auth))
 			r.Mount("/divisions", userDivisionsHandler.Router(authHooks))
+			// The /users group carries the module's own rate limits and the session
+			// guard its routes need; the static /me segment is resolved by chi ahead
+			// of the /{userId} parameter inside it.
+			r.Mount("/users", userHandler.Router(cfg.User, authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)

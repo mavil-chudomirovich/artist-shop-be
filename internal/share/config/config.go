@@ -160,10 +160,10 @@ func (m MediaConfig) IsConfigured() bool {
 // the abuse case FR-025 names — so the module carries its own per-window limits
 // rather than relying on the global one.
 type UserConfig struct {
-	// AvatarUploadRatePerHour caps avatar uploads per client and hour.
+	// AvatarUploadRatePerHour caps avatar uploads per client IP and hour.
 	AvatarUploadRatePerHour int `env:"AVATAR_UPLOAD_RATE_PER_HOUR" envDefault:"10"`
 	// AddressWriteRatePerMinute caps address creates, edits, hides and
-	// default-flag changes per client and minute.
+	// default-flag changes per client IP and minute.
 	AddressWriteRatePerMinute int `env:"ADDRESS_WRITE_RATE_PER_MINUTE" envDefault:"30"`
 }
 

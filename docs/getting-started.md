@@ -83,7 +83,7 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 curl http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer $ACCESS_TOKEN"
 ```
 
-Mọi chi tiết về 13 endpoint: [api-reference.md](../docs/api-reference.md).
+Mọi chi tiết về 25 endpoint: [api-reference.md](../docs/api-reference.md).
 
 ## Bước 4 — Tài khoản admin
 

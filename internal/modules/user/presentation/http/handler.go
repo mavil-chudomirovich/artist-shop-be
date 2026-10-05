@@ -497,10 +497,13 @@ func toAddressResponse(address appdto.AddressOutput) httpdto.AddressResponse {
 	}
 }
 
+// toAddressResponses maps the customer's own address list.
+//
+// It is the single conversion point for that view, and it always allocates: an
+// account with no address answers with an empty array rather than null. The
+// contract declares the list as an array, so a null would be a shape no client can
+// read — the same reason the operator lookup's list allocates.
 func toAddressResponses(list []appdto.AddressOutput) []httpdto.AddressResponse {
-	if len(list) == 0 {
-		return nil
-	}
 	out := make([]httpdto.AddressResponse, 0, len(list))
 	for _, address := range list {
 		out = append(out, toAddressResponse(address))

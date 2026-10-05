@@ -104,7 +104,11 @@ paths:
                   meta:
                     $ref: "#/components/schemas/Meta"
         "400":
-          description: Unsupported image type (USER_AVATAR_TYPE_UNSUPPORTED).
+          description: >
+            Unsupported image type (USER_AVATAR_TYPE_UNSUPPORTED), or a request the
+            route cannot read as an upload - a body that is not multipart, or a missing
+            `file` part - which answers the shared VALIDATION_ERROR. A body that is
+            multipart but sent on a JSON route answers 415 instead.
           content:
             application/json:
               schema:
@@ -701,8 +705,10 @@ components:
       type: object
       description: >
         Partial update. Every field is optional and an omitted field keeps its current
-        value; sending an empty string clears a text field. The default flag is not
-        settable here — use the set-default endpoint.
+        value; no field can be cleared, because recipientName, recipientPhone,
+        provinceCode and streetAddress are NOT NULL and an empty value is refused
+        with VALIDATION_ERROR naming the member. The default flag is not settable
+        here - use the set-default endpoint.
       properties:
         recipientName:
           type: string

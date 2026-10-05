@@ -13,14 +13,16 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 )
 
-// RateLimit enforces an in-process, per-client token-bucket limit with the
-// configured requests-per-second and burst (FR-021). No external store is used.
+// RateLimit enforces an in-process token bucket per client IP and route class,
+// with the configured requests-per-second and burst (FR-021). No external store is
+// used.
 func RateLimit(rps, burst int, logger *slog.Logger) func(http.Handler) http.Handler {
 	return rateLimit(rate.Limit(rps), burst, logger)
 }
 
-// RateLimitWindow limits each client to a number of requests per time window.
-// It is a convenience wrapper over RateLimit for per-minute style thresholds.
+// RateLimitWindow limits one client IP and route class to a number of requests per
+// time window. It is a convenience wrapper over RateLimit for per-minute style
+// thresholds.
 func RateLimitWindow(requests int, window time.Duration, logger *slog.Logger) func(http.Handler) http.Handler {
 	if window <= 0 {
 		window = time.Minute
@@ -42,7 +44,7 @@ func rateLimit(limit rate.Limit, burst int, logger *slog.Logger) func(http.Handl
 		visitors = make(map[string]*visitor)
 	)
 
-	// Evict idle clients to bound memory.
+	// Evict idle limiter keys to bound memory.
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -92,7 +94,7 @@ func clientIP(r *http.Request) string {
 }
 
 // routeClass buckets requests so reads and writes (and authentication traffic)
-// are limited independently per client (FR-021).
+// are limited independently per client IP (FR-021).
 func routeClass(r *http.Request) string {
 	if strings.HasPrefix(r.URL.Path, "/api/v1/auth/") {
 		return "auth"
