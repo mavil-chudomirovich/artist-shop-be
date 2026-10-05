@@ -112,3 +112,44 @@ func TestLoadInvalidRange(t *testing.T) {
 		t.Fatalf("expected DB_MIN_CONNS range error, got %v", err)
 	}
 }
+
+func TestMediaConfigIsOptionalForEveryCommand(t *testing.T) {
+	setValidEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load without media credentials: %v", err)
+	}
+	if cfg.Media.IsConfigured() {
+		t.Fatal("expected media to be unconfigured when MEDIA_* is absent")
+	}
+	if cfg.Media.Folder != "artist-shop" {
+		t.Fatalf("expected the default upload folder, got %q", cfg.Media.Folder)
+	}
+}
+
+func TestMediaConfigReadsTheMediaPrefix(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("MEDIA_CLOUD_NAME", "artist-shop")
+	t.Setenv("MEDIA_API_KEY", "key")
+	t.Setenv("MEDIA_API_SECRET", "secret")
+	t.Setenv("MEDIA_FOLDER", "avatars")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Media.CloudName != "artist-shop" || cfg.Media.APIKey != "key" || cfg.Media.APISecret != "secret" {
+		t.Fatalf("MEDIA_* was not read: %+v", cfg.Media)
+	}
+	if cfg.Media.Folder != "avatars" {
+		t.Fatalf("expected the configured folder, got %q", cfg.Media.Folder)
+	}
+	if !cfg.Media.IsConfigured() {
+		t.Fatal("expected media to be configured")
+	}
+	partial := MediaConfig{CloudName: "artist-shop"}
+	if partial.IsConfigured() {
+		t.Fatal("expected partial credentials to report unconfigured")
+	}
+}

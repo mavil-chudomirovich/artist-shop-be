@@ -67,9 +67,9 @@ existing rows keep working with nulls.
 | Transition | Trigger | Result |
 |---|---|---|
 | *no profile* → *profile with details* | first successful update | Row exists; avatar still null |
-| *profile* → *avatar attached* | successful upload | All five avatar columns populated together |
-| *avatar attached* → *avatar replaced* | successful upload | All five columns overwritten atomically; old reference released |
-| *avatar attached* → *no avatar* | explicit removal | All five columns cleared atomically |
+| *profile* → *avatar attached* | successful upload | All four avatar columns populated together, enforced by a CHECK constraint |
+| *avatar attached* → *avatar replaced* | successful upload | All four columns overwritten atomically; old reference released |
+| *avatar attached* → *no avatar* | explicit removal | All four columns cleared atomically |
 | *any* → *email or role changed* | auth module | **Not this module's transition**; those columns are not writable here |
 
 Rejections leave the profile untouched — a failed upload or invalid phone never

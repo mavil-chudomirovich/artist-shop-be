@@ -32,6 +32,7 @@ type Config struct {
 	Audit      AuditConfig      `envPrefix:"AUDIT_"`
 	Migrations MigrationsConfig `envPrefix:"MIGRATIONS_"`
 	Auth       AuthConfig
+	Media      MediaConfig `envPrefix:"MEDIA_"`
 
 	MaxBodyBytes int64 `env:"MAX_BODY_BYTES" envDefault:"1048576"`
 }
@@ -114,6 +115,25 @@ type AuditConfig struct {
 type MigrationsConfig struct {
 	AutoApply   bool          `env:"AUTO_APPLY" envDefault:"true"`
 	LockTimeout time.Duration `env:"LOCK_TIMEOUT" envDefault:"30s"`
+}
+
+// MediaConfig controls the external media store used for profile avatars.
+//
+// It is intentionally absent from Validate and ValidateForAPI: the user module's
+// composition validates it, because one-off commands (migrate, seed) must stay
+// runnable without media credentials. A missing configuration disables avatar
+// upload and nothing else — every other endpoint keeps working.
+type MediaConfig struct {
+	CloudName string `env:"CLOUD_NAME"`
+	APIKey    string `env:"API_KEY"`
+	APISecret string `env:"API_SECRET"`
+	Folder    string `env:"FOLDER" envDefault:"artist-shop"`
+}
+
+// IsConfigured reports whether media credentials are present. Secrets are never
+// echoed: callers only branch on the boolean.
+func (m MediaConfig) IsConfigured() bool {
+	return m.CloudName != "" && m.APIKey != "" && m.APISecret != ""
 }
 
 // LoadDotenv loads a local .env file when present for non-production
