@@ -204,7 +204,10 @@ Bộ test quan trọng nhất nằm ở:
 | Nhóm | File |
 |---|---|
 | Ràng buộc 1 địa chỉ mặc định (kể cả ghi thẳng cột) | `infrastructure/implement/postgres/address_integration_test.go` |
-| Chuẩn hoá số điện thoại, quy tắc tỉnh/phường | `domain/model/phone_test.go`, `domain/model/address_test.go` |
+| Chuẩn hoá số điện thoại | `domain/model/phone_test.go` |
+| Quy tắc cấu trúc địa chỉ, cờ mặc định | `domain/model/address_test.go` |
+| Quy tắc tỉnh/phường hợp lệ | `application/implement/address_test.go` (use case gọi port `Divisions`) |
+| Giới hạn loại/kích thước avatar, hạn mức 429 | `domain/model/avatar_test.go`, `presentation/http/avatar_test.go` |
 | Quyền sở hữu và phân quyền admin | `presentation/http/http_test.go` |
 | Luồng HTTP end-to-end | `presentation/http/http_integration_test.go` |
 

@@ -11,24 +11,24 @@ Every decision below was resolved during planning; the plan contains no remainin
 
 **Decision**: Bundle the dataset as a JSON file embedded into the binary with
 `//go:embed`, load it into memory once at startup, and validate province/ward
-references against it in the domain layer. Do **not** create `provinces` /
-`wards` tables in PostgreSQL.
+references against it **from the use case, through the `Divisions` port** declared in
+`application/interface`. Do **not** create `provinces` / `wards` tables in
+PostgreSQL.
 
 **Rationale**: The dataset is small (~35 provinces, ~700 wards, well under 100 KB
 of JSON), changes a few times per year, and is needed by several modules for
-reading. Keeping it in memory makes province/ward validation a pure domain
-function with no database round trip, which also means validation cannot be
-bypassed by a code path that forgets a foreign key. No synchronisation job, no
-staleness window, no migration whenever a ward is renamed. A database table would
-add a seed step, a refresh procedure and an extra failure mode for zero read
-benefit at this scale.
+reading. Keeping it in memory makes the existence check an in-process call with no
+database round trip, so validation cannot be bypassed by a code path that forgets a
+foreign key. No synchronisation job, no staleness window, no migration whenever a ward
+is renamed. A database table would add a seed step, a refresh procedure and an extra
+failure mode for zero read benefit at this scale.
 
 **Alternatives considered**:
 - *Reference tables in PostgreSQL with a seed migration.* Rejected: a ~700-row
   seed inside a SQL migration is large, reviewable-diff-hostile, and every dataset
   update becomes a new migration. Referential integrity would also live in the
-  database while the business rule ("ward belongs to province") is a domain
-  concern anyway.
+  database, while the business rule ("ward belongs to province") is an application
+  concern enforced once through the port.
 - *Fetching from a public administrative API at runtime.* Rejected: introduces an
   external runtime dependency on the request path, makes profile saves fail when a
   third party is down, and contradicts the assumption recorded in the spec that the
@@ -40,6 +40,18 @@ benefit at this scale.
 alongside the display names it was created with, so a historical address still
 renders if the dataset later renames a unit. `internal/share/administrative`
 exposes `Provinces()` and `Wards(provinceCode)` for the cascading selects.
+
+**Layering constraint discovered while planning** (this is why the decision needed a
+correction): Constitution I lets `domain` import only the standard library and
+`share/access`, so `domain/model/address.go` cannot call `share/administrative`
+directly, and the shared package cannot import this module's `domain/error` because
+order, shipping and commission will read the same dataset. The dataset therefore stays
+where it is, and access goes through a `Divisions` port declared in
+`application/interface` and adapted by `infrastructure/implement/administrative`.
+`domain` keeps validating structure only; the existence check is a use-case
+responsibility. The shared package owns its own sentinel errors, which
+`presentation/http/errors.go` maps to the `USER_UNKNOWN_PROVINCE`,
+`USER_UNKNOWN_WARD` and `USER_WARD_PROVINCE_MISMATCH` codes.
 
 ---
 
@@ -61,11 +73,11 @@ the migration stays additive.
 - *Generic key-value settings table.* Rejected: loses type safety, cannot express
   "at most one avatar", and makes the avatar lookup ambiguous.
 
-**Consequence**: the module owns `users` alongside the auth module. This is the
-documented exception already used by the platform (the auth feature created the
-table and the constitution's "a module owns its data" rule is satisfied by the user
-module owning the profile columns of its own customer). Ownership is documented in
-`docs/modules/02-user.md`.
+**Consequence**: the `users` table is **co-owned** by two modules: module 01 auth
+owns `id`, `email`, `password_hash`, `role`, `status` and the timestamps; module 02
+user owns the six profile columns and is the only writer of those. That split is not
+yet written down in `docs/modules/02-user.md`, so T058 adds it there as part of this
+change — until then the claim "ownership is documented" would be false.
 
 ---
 
@@ -202,7 +214,7 @@ pipeline applies globally.
 
 ## D8. What does an administrator get, and how is it reused?
 
-**Decision**: Ship a read-only route `GET /api/v1/users/{id}` in this module,
+**Decision**: Ship a read-only route `GET /api/v1/users/{userId}` in this module,
 restricted to the `ADMIN` role, audited on every call, and expose the same
 capability as an interface in `internal/contracts` so later modules depend on the
 contract rather than on this module's tables.

@@ -9,7 +9,7 @@ shared response envelope (`data` + `meta`) and error format from
 | File | Purpose |
 |------|---------|
 | [openapi.yaml](./openapi.yaml) | Endpoint definitions, request/response schemas |
-| [user-error-codes.md](./user-error-codes.md) | Module-specific error codes added to the catalogue |
+| [error-codes.md](./error-codes.md) | Module-specific error codes added to the catalogue |
 
 ## Endpoint summary
 
@@ -38,7 +38,9 @@ shared response envelope (`data` + `meta`) and error format from
   so a client can highlight the exact input (FR-020).
 - **Pagination** uses `?page=&pageSize=` with `page` starting at 1, a default
   `pageSize` of 20 and a maximum of 100. The response carries
-  `meta.page`, `meta.pageSize` and `meta.total`.
+  `meta.page`, `meta.pageSize` and `meta.total`. The two `/divisions` endpoints are the
+  documented exception: they return bounded reference data and are not paginated (see
+  Complexity Tracking in `plan.md`).
 - **Every request needs `Content-Type: application/json`** except the avatar upload,
   which uses `multipart/form-data`.
 - **Address writes never accept an owner id**, and the default flag is set through

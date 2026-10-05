@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Artist Shop Backend — User Module
+  title: Artist Shop Backend â€” User Module
   version: 1.0.0
   description: >
     Customer profile and shipping addresses. All responses use the foundation
@@ -67,6 +67,8 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/users/me/avatar:
     post:
       tags: [profile]
@@ -121,6 +123,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
     delete:
       tags: [profile]
       summary: Remove the avatar
@@ -154,6 +158,8 @@ paths:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PageSize"
       responses:
+        "400":
+          $ref: "#/components/responses/Error"
         "200":
           description: A page of addresses.
           content:
@@ -170,6 +176,8 @@ paths:
                     $ref: "#/components/schemas/PagedMeta"
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
     post:
       tags: [address]
       summary: Create an address
@@ -200,7 +208,7 @@ paths:
                     $ref: "#/components/schemas/Meta"
         "400":
           description: >
-            Validation failed — USER_UNKNOWN_PROVINCE, USER_UNKNOWN_WARD,
+            Validation failed â€” USER_UNKNOWN_PROVINCE, USER_UNKNOWN_WARD,
             USER_WARD_PROVINCE_MISMATCH, USER_INVALID_PHONE.
           content:
             application/json:
@@ -208,6 +216,8 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/users/me/addresses/{addressId}:
     parameters:
       - $ref: "#/components/parameters/AddressId"
@@ -240,6 +250,8 @@ paths:
           $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "404":
           description: No such address for this account (USER_ADDRESS_NOT_FOUND).
           content:
@@ -259,6 +271,8 @@ paths:
           description: Hidden; no body.
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "404":
           description: No such address for this account (USER_ADDRESS_NOT_FOUND).
           content:
@@ -291,6 +305,8 @@ paths:
                     $ref: "#/components/schemas/Meta"
         "401":
           $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "404":
           $ref: "#/components/responses/Error"
   /api/v1/divisions/provinces:
@@ -383,6 +399,8 @@ paths:
                     $ref: "#/components/schemas/CustomerLookup"
                   meta:
                     $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Error"
         "403":
@@ -431,6 +449,20 @@ components:
   responses:
     Error:
       description: Error using the standard error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: >
+        Rate limit exceeded (RATE_LIMITED). The response carries a Retry-After header
+        in seconds. The caller's existing state is unchanged, so the request is safe
+        to retry after the indicated delay.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
       content:
         application/json:
           schema:
@@ -486,8 +518,11 @@ components:
               format: uuid
     Avatar:
       type: object
-      nullable: true
-      description: Reference to the stored avatar; null when the customer has none.
+      description: >
+        Reference to the stored avatar. It is null when the customer has no photo,
+        which is the single source of truth for "has an avatar". The profile still
+        reads successfully when the media service is unavailable; the stored
+        reference is returned as saved (FR-021).
       required: [publicId, url, width, height]
       properties:
         publicId:
@@ -503,7 +538,7 @@ components:
           type: integer
     Profile:
       type: object
-      required: [id, email, role, displayName, phone, hasAvatar, avatar]
+      required: [id, email, role, displayName, phone, avatar]
       properties:
         id:
           type: string
@@ -518,13 +553,13 @@ components:
           type: string
           description: May be empty when the customer has not set one.
         phone:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Ten digits starting with 0, or null when unset.
-        hasAvatar:
-          type: boolean
         avatar:
-          $ref: "#/components/schemas/Avatar"
+          oneOf:
+            - $ref: "#/components/schemas/Avatar"
+            - type: "null"
+          description: Null when the customer has no photo.
     UpdateProfileRequest:
       type: object
       properties:
@@ -533,8 +568,7 @@ components:
           maxLength: 120
           description: Send an empty string to clear the current value.
         phone:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Ten digits starting with 0; send empty or null to clear.
       additionalProperties: false
     Province:
@@ -620,9 +654,36 @@ components:
           maxLength: 255
       additionalProperties: false
     UpdateAddressRequest:
-      allOf:
-        - $ref: "#/components/schemas/CreateAddressRequest"
-      description: Every field is optional; omitted fields keep their value.
+      type: object
+      description: >
+        Partial update. Every field is optional and an omitted field keeps its current
+        value; sending an empty string clears a text field. The default flag is not
+        settable here â€” use the set-default endpoint.
+      properties:
+        recipientName:
+          type: string
+          maxLength: 120
+          description: Omitted keeps the current recipient name.
+        recipientPhone:
+          type: string
+          description: Omitted keeps the current recipient phone.
+        provinceCode:
+          type: string
+          description: Omitted keeps the current province. Changing it requires a ward from that province.
+        provinceName:
+          type: string
+          description: Optional; recaptured when the province changes.
+        wardCode:
+          type: string
+          description: Omitted keeps the current ward.
+        wardName:
+          type: string
+          description: Optional; recaptured when the ward changes.
+        streetAddress:
+          type: string
+          maxLength: 255
+          description: Omitted keeps the current street address.
+      additionalProperties: false
     CustomerLookup:
       type: object
       required: [id, email, role, displayName, phone, addresses]
@@ -639,9 +700,12 @@ components:
         displayName:
           type: string
         phone:
-          type: string
-          nullable: true
+          type: [string, "null"]
         addresses:
           type: array
+          description: >
+            The customer's addresses, default address first, then most recently
+            updated. Hidden addresses are never included. Consumers such as the order
+            module may rely on that ordering to offer the default first (FR-007d).
           items:
             $ref: "#/components/schemas/Address"

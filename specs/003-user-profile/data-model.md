@@ -22,20 +22,34 @@ external media service, the database keeps only the reference.
 
 ## 2. Entity: Profile
 
-The profile is the customer-facing part of an account. It is **not a separate
-entity**: it is the profile portion of `users`, keyed by the same account id.
+The profile is the customer-facing part of an account. It is **not a separate table**:
+it is a column group on the existing `users` table created by the auth module, keyed
+by that table's `users.id`.
 
-| Field | Type | Null | Rules |
+**Columns added by this feature** (all nullable, so existing accounts stay valid):
+
+| Column | Type | Null | Rules |
 |---|---|---|---|
-| `user_id` | `uuid` | no | Primary key, references `users(id)`. One profile per account |
 | `display_name` | `text` | yes | Trimmed; may be empty (a new account has none) |
 | `phone` | `varchar(20)` | yes | Normalised to 10 digits starting with `0` (research D9) |
 | `avatar_public_id` | `text` | yes | Opaque media identifier; null means no avatar |
-| `avatar_url` | `text` | yes | Displayable link; null means no avatar |
+| `avatar_secure_url` | `text` | yes | Displayable link; null means no avatar |
 | `avatar_width` | `int` | yes | Pixel width of the stored image |
 | `avatar_height` | `int` | yes | Pixel height of the stored image |
-| `created_at` | `timestamptz` | no | UTC |
-| `updated_at` | `timestamptz` | no | UTC, maintained on every write |
+
+**Columns already present and NOT writable by this module** (owned by module 01 auth):
+
+| Column | Type | Owner |
+|---|---|---|
+| `id` | `uuid` | auth — primary key |
+| `email` | `text` | auth |
+| `password_hash` | `text` | auth |
+| `role` | `text` | auth |
+| `status` | `text` | auth |
+| `created_at`, `updated_at` | `timestamptz` | auth — `updated_at` is maintained by every write to the row |
+
+No backfill is required: a profile is optional by design, and the auth module's
+existing rows keep working with nulls.
 
 ### Validation rules
 
@@ -87,8 +101,8 @@ partially applies (FR-017).
 |---|---|---|
 | **At most one default per account** | `CREATE UNIQUE INDEX addresses_one_default_per_user ON addresses (user_id) WHERE is_default AND deleted_at IS NULL` | FR-008, SC-004, research D3 |
 | A hidden address can never be the default | The index predicate excludes hidden rows; the domain transition refuses it | FR-008 |
-| Ward belongs to the chosen province | Domain check against the embedded dataset | FR-007b, SC-011 |
-| Province and ward exist in the dataset | Domain check; `404`-style field error, never a silent accept | FR-007a |
+| Ward belongs to the chosen province | Use-case check in `application/implement` via the `Divisions` port, because `domain` may not import `share/administrative` (Constitution I) | FR-007b, SC-011 |
+| Province and ward exist in the dataset | Use-case check through the same port; the shared package's own sentinel errors map to `USER_UNKNOWN_PROVINCE` / `USER_UNKNOWN_WARD` in presentation | FR-007a |
 | An address belongs to exactly one account | `user_id` taken from the session | FR-006 |
 
 ### Lifecycle
@@ -186,6 +200,7 @@ the customer's control only with a trace.
 | 12 | Administrator read is refused for customers and audited for admins | HTTP + integration |
 | 13 | Address list is paginated and returns a stable order plus total | integration |
 | 14 | A stored code missing from the dataset still renders the saved names | unit |
+| 15 | The stored avatar reference reports a width of at most 512 px | unit + integration |
 
 ---
 

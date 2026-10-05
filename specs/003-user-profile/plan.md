@@ -65,10 +65,14 @@ reference dataset.
       with exactly `domain`, `application`, `infrastructure`, `presentation`.
       Dependencies stay `presentation → application → domain` and
       `infrastructure → domain` + `application/interface`. `domain` imports only
-      the standard library and `share/access`. Repository interfaces live in
-      `domain/repository`; external media port in `application/interface`; one
-      mapper in `application/mapper`; shared administrative data in
-      `internal/share/administrative`. Cross-module exposure is a read-only
+      the standard library and `share/access`, so it holds **no** knowledge of the
+      administrative dataset: `domain/model/address.go` validates structure only
+      (codes non-empty, names captured) and the province/ward existence check runs in
+      `application` through a `Divisions` port. Repository interfaces live in
+      `domain/repository`; the `Divisions` and `MediaStore` ports live in
+      `application/interface`; one mapper in `application/mapper`; the dataset itself in
+      `internal/share/administrative`, whose sentinel errors it owns rather than
+      importing any module's `domain/error`. Cross-module exposure is a read-only
       contract in `internal/contracts`, not a table shared with other modules.
 - [x] **II. Transactional Integrity for Money & Inventory**: not applicable — this
       feature touches no stock, payment, order total or commission stage. No money
@@ -96,13 +100,15 @@ reference dataset.
       WebSocket, no message broker, no caching layer. The administrative dataset is
       embedded rather than synchronised from an external API at runtime.
 - [x] **VIII. API Documentation as a Contract**: `docs/api-reference.md` is updated
-      in this same change with the eleven new endpoints, the summary table and a
-      change-log row.
+      in this same change with the twelve new endpoints, each in the six-part format
+      including its rate limit, the §1.5 rate-limit table rows for the two new module
+      limits, the summary table and a change-log row.
 - [x] **Container & Local Development Workflow**: no new Dockerfile or compose
       service. The dataset ships inside the binary via `go:embed`, so no volume
       mount and no new environment variable is required for local development.
 
-**Gate result**: PASS. No violations, no Complexity Tracking entries required.
+**Gate result**: PASS. The only deviation from the API constraint on pagination is
+recorded in Complexity Tracking below.
 
 ## Project Structure
 
@@ -118,7 +124,7 @@ specs/003-user-profile/
 ├── contracts/
 │   ├── README.md        # endpoint summary and conventions
 │   ├── openapi.yaml     # endpoint definitions and schemas
-│   └── user-error-codes.md  # module error codes added to the catalogue
+│   └── error-codes.md   # module error codes added to the catalogue
 ├── checklists/
 │   └── requirements.md  # specification quality checklist
 └── tasks.md             # Phase 2 output (/speckit.tasks — not created here)
@@ -146,7 +152,7 @@ internal/
 │   │       └── address.go              #   address repository interface
 │   ├── application/
 │   │   ├── interface/
-│   │   │   └── ports.go                #   use cases, MediaStore port, UnitOfWork
+│   │   │   └── ports.go                #   use cases, Divisions + MediaStore ports, UnitOfWork
 │   │   ├── implement/
 │   │   │   ├── service.go              #   composition of use cases
 │   │   │   ├── profile.go              #   get/update profile, avatar add/remove
@@ -158,18 +164,20 @@ internal/
 │   │       └── mapper.go               #   model ↔ dto
 │   ├── infrastructure/
 │   │   └── implement/
+│   │       ├── administrative/
+│   │       │   └── administrative.go    #   Divisions adapter over share/administrative
 │   │       ├── postgres/
 │   │       │   ├── user.go              #   profile adapter (embeds share/repository.Base)
 │   │       │   └── address.go           #   address adapter, default-flag transaction
 │   │       ├── media/
-│   │       │   └── cloudinary.go       #   MediaStore adapter
+│   │       │   └── cloudinary.go        #   MediaStore adapter
 │   │       └── auditor/
 │   │           └── auditor.go           #   audit adapter over share/audit
 │   └── presentation/
 │       ├── http/
 │       │   ├── handler.go
-│       │   ├── router.go               #   mounted at /users, /admin, /divisions
-│       │   ├── errors.go               #   domain error → HTTP mapping
+│       │   ├── router.go               #   mounted at /users and /divisions only
+│       │   ├── errors.go               #   domain + administrative error → HTTP mapping
 │       │   └── *_test.go
 │       ├── dto/
 │       │   └── dto.go                  #   HTTP request/response payloads
@@ -202,6 +210,36 @@ research.md D1). `internal/contracts/user.go` carries the read-only administrato
 lookup so later modules depend on an interface rather than on the user module's
 tables.
 
+**Why the dataset is not validated in `domain`**: Constitution I allows `domain` to
+import only the standard library and `share/access`, so `domain/model/address.go`
+cannot depend on `share/administrative`. The dataset package also cannot import this
+module's `domain/error`, because order, shipping and commission will read the same
+dataset without knowing anything about the user module. The split that satisfies
+both rules: `domain` validates structure only, `application/implement` calls the
+`Divisions` port declared in `application/interface`, `infrastructure/implement/
+administrative` adapts `share/administrative` to that port, and the shared package
+owns its own sentinel errors which `presentation/http/errors.go` maps to the
+`USER_UNKNOWN_PROVINCE` / `USER_UNKNOWN_WARD` / `USER_WARD_PROVINCE_MISMATCH` codes.
+
+**Routing note**: the module mounts only `/users` and `/divisions`. The administrator
+lookup is `GET /api/v1/users/{userId}`, not a separate `/admin` prefix, because that
+single path is what the spec, contracts and research define. chi resolves the static
+`/users/me` segment before the `/users/{userId}` parameter, and a `userId` that is not
+a UUID returns `400 VALIDATION_ERROR`.
+
 ## Complexity Tracking
 
-> No constitution violations. No entries required.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| `GET /api/v1/divisions/provinces` and `GET /api/v1/divisions/provinces/{provinceCode}/wards` return an unpaginated array, while the API constraint says every list endpoint supports pagination | Both are read-only **reference data** bounded by the administrative dataset: roughly 35 provinces and at most a few hundred wards per province, embedded in the binary. The whole set is already in memory and one request returns it in single-digit milliseconds | Paginating it would add `page`/`pageSize` parameters and a `meta` block to two endpoints whose full result is smaller than any page size a client would request. The address list, which **is** customer-generated and unbounded, is paginated per FR-018 |
+| Avatar width limit is verified through the media provider's returned dimensions rather than by decoding the image in Go | Adds no dependency, and the provider is already the system of record for the stored asset | Decoding in Go would add an imaging dependency to the binary for a dimension the provider already reports (ADR-005) |
+
+**Performance goals** (`p95 < 200 ms` for profile and address reads, `< 3 s` for a 2 MB
+avatar upload) are informational targets recorded in Technical Context, not buildable
+acceptance criteria; this feature ships no benchmark harness. The buildable criteria are
+SC-004, SC-007, SC-009, SC-011 and SC-013, which assert invariant correctness rather
+than timing, each mapped to a task. Three criteria are verified manually or after
+launch instead: SC-001 and SC-010 are human-time outcomes exercised through
+`quickstart.md`, and SC-006 ("no more than 5% of valid updates are rejected for reasons
+other than the customer's own input") is a post-launch operational metric with no
+buildable work attached to it.

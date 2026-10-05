@@ -22,6 +22,12 @@ changes follow `docs/development/migration.md`; cross-module exposure follows
 `docs/system-design/contract-purity.md`. Decisions already taken are recorded as ADRs
 in `docs/decisions/` — task text cites them instead of re-arguing them.
 
+**Layering rule that shapes this list**: Constitution I allows `domain` to import only
+the standard library and `share/access`. So `domain` knows nothing about the
+administrative dataset. Existence of a province or ward is checked by the use case
+through the `Divisions` port, and `internal/share/administrative` owns its own sentinel
+errors so it never imports a module's `domain/error`.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
@@ -43,16 +49,18 @@ This is a Go web service inside a modular monolith. Paths follow `plan.md`:
 
 **Purpose**: Module skeleton, shared reference data and ports that every story needs.
 
-- [ ] T001 Create the `internal/modules/user/` skeleton with the four layers from plan.md — `domain/{constant,error,model,repository}`, `application/{interface,implement,dto,mapper}`, `infrastructure/implement/{postgres,media,auditor}`, `presentation/{http,cli,worker,dto}` — each package with a `// Package …` comment (revive enforces this) and English comments throughout
+- [ ] T001 Create the `internal/modules/user/` skeleton with the four layers from plan.md — `domain/{constant,error,model,repository}`, `application/{interface,implement,dto,mapper}`, `infrastructure/implement/{administrative,postgres,media,auditor}`, `presentation/{http,cli,worker,dto}` — each package with a `// Package …` comment (revive enforces this) and English comments throughout
 - [ ] T002 Define audit action constants (`USER_PROFILE_UPDATED`, `USER_AVATAR_SET`, `USER_AVATAR_REMOVED`, `USER_ADDRESS_CREATED`, `USER_ADDRESS_UPDATED`, `USER_ADDRESS_DELETED`, `USER_ADDRESS_DEFAULT_SET`, `USER_PROFILE_VIEWED_BY_ADMIN`) in `internal/modules/user/domain/constant/audit.go`, with a comment per constant
-- [ ] T003 Define sentinel errors matching `contracts/user-error-codes.md` (`ErrUserNotFound`, `ErrAddressNotFound`, `ErrInvalidPhone`, `ErrUnknownProvince`, `ErrUnknownWard`, `ErrWardProvinceMismatch`, `ErrAvatarTypeUnsupported`, `ErrAvatarTooLarge`, `ErrMediaUnavailable`) in `internal/modules/user/domain/error/errors.go`; no error may be compared by string
-- [ ] T004 Write migration `migrations/00004_user.sql` following `docs/development/migration.md`: additive only, so `ALTER TABLE users ADD COLUMN display_name, phone, avatar_public_id, avatar_url, avatar_width, avatar_height` all nullable; `CREATE TABLE addresses` with FK to `users(id)`; index `addresses (user_id) WHERE deleted_at IS NULL` for list queries; partial unique index `addresses_one_default_per_user ON addresses (user_id) WHERE is_default AND deleted_at IS NULL` per ADR-003; `COMMENT ON COLUMN` for the non-obvious columns; and both `-- +goose Up` and `-- +goose Down` sections, because the runner rejects a one-way migration
-- [ ] T005 [P] Add the official Vietnamese administrative dataset at `internal/share/administrative/data/vn-divisions.json` per ADR-002 and research D1: every province with its wards, each carrying a stable `code` and a display `name`, two levels only (no district), UTF-8 without BOM and LF line endings per `.editorconfig`
-- [ ] T006 [P] Record the dataset's provenance in `internal/share/administrative/data/vn-divisions.json` — source, publication or effective date, and total counts — so a future refresh is traceable and a truncated copy is detectable; state in `docs/configuration.md` that refreshes ship with a release
-- [ ] T007 [P] Implement `internal/share/administrative/administrative.go` with a `// Package administrative` comment: embed the JSON, load it once, expose `Provinces()` and `Wards(provinceCode)`, plus `ValidateProvince(code)` / `ValidateWard(provinceCode, wardCode)` returning the unknown and mismatch errors; add `internal/share/administrative/administrative_test.go` covering an unknown province, an unknown ward, a ward from another province, and a dataset integrity check that no code is duplicated and every ward belongs to exactly one province
-- [ ] T008 Add the read-only cross-module lookup contract in `internal/contracts/user.go` per `docs/system-design/contract-purity.md`: a `CustomerLookupService` interface plus its **own** DTOs (id, email, role, display name, phone, addresses) — never reusing a `domain/model` type, so a storage change cannot silently break the contract
-- [ ] T009 Define the `MediaStore` port in `internal/modules/user/application/interface/ports.go`: `Upload(ctx, bytes, targetWidth) (reference, error)` and `Remove(ctx, reference) error`, where the reference carries public id, URL, width and height (ADR-005). Name it for the capability, not the vendor
-- [ ] T010 Add media configuration to `internal/share/config/config.go` — a `MediaConfig` with Cloudinary cloud name, API key, API secret and upload folder, wired under `Config` with the `MEDIA_` prefix; validate only in the user module's composition so `cmd/migrate` and `cmd/seed` stay runnable without it
+- [ ] T003 Define sentinel errors in `internal/modules/user/domain/error/errors.go` (`ErrUserNotFound`, `ErrAddressNotFound`, `ErrInvalidPhone`, `ErrAvatarTypeUnsupported`, `ErrAvatarTooLarge`, `ErrMediaUnavailable`) matching `contracts/error-codes.md`. The three division errors (`ErrUnknownProvince`, `ErrUnknownWard`, `ErrWardProvinceMismatch`) belong to `internal/share/administrative`, **not** here, because that package is shared with order, shipping and commission and must not import a module's domain errors
+- [ ] T004 Define the shared package's own sentinel errors `ErrUnknownProvince`, `ErrUnknownWard` and `ErrWardProvinceMismatch` in `internal/share/administrative/errors.go`, with no import of any module
+- [ ] T005 Write migration `migrations/00004_user.sql` following `docs/development/migration.md`: additive only, so `ALTER TABLE users ADD COLUMN display_name, phone, avatar_public_id, avatar_secure_url, avatar_width, avatar_height` are all nullable; `CREATE TABLE addresses` with FK to `users(id)`; index `addresses (user_id) WHERE deleted_at IS NULL` for list queries; partial unique index `addresses_one_default_per_user ON addresses (user_id) WHERE is_default AND deleted_at IS NULL` per ADR-003; `COMMENT ON COLUMN` for the non-obvious columns; and both `-- +goose Up` and `-- +goose Down` sections, because the runner rejects a one-way migration
+- [ ] T006 [P] Add the official Vietnamese administrative dataset at `internal/share/administrative/data/vn-divisions.json` per ADR-002 and research D1: every province with its wards, each carrying a stable `code` and a display `name`, two levels only (no district), UTF-8 without BOM and LF line endings per `.editorconfig`
+- [ ] T007 [P] Record the dataset's provenance in `internal/share/administrative/data/vn-divisions.json` — source, publication or effective date, and total counts — so a future refresh is traceable and a truncated copy is detectable; state in `docs/configuration.md` that refreshes ship with a release
+- [ ] T008 [P] Implement `internal/share/administrative/administrative.go` with a `// Package administrative` comment: embed the JSON, load it once, expose `Provinces()` and `Wards(provinceCode)`, and return the T004 errors; add `internal/share/administrative/administrative_test.go` covering an unknown province, an unknown ward, a ward from another province, and a dataset integrity check that no code is duplicated and every ward belongs to exactly one province
+- [ ] T009 Add the read-only cross-module lookup contract in `internal/contracts/user.go` per `docs/system-design/contract-purity.md`: a `CustomerLookupService` interface plus its **own** DTOs (id, email, role, display name, phone, addresses ordered default-first) — never reusing a `domain/model` type, so a storage change cannot silently break the contract
+- [ ] T010 Define the `MediaStore` port in `internal/modules/user/application/interface/ports.go`: `Upload(ctx, bytes, targetWidth) (reference, error)` and `Remove(ctx, reference) error`, where the reference carries public id, URL, width and height (ADR-005). Name it for the capability, not the vendor
+- [ ] T011 Define the `Divisions` port in `internal/modules/user/application/interface/ports.go`: `Provinces(ctx)`, `Wards(ctx, provinceCode)` and `ValidateAddressDivisions(ctx, provinceCode, wardCode)` returning the shared errors from T004. This port is how `application` reaches the dataset without `domain` importing it
+- [ ] T012 Add media configuration to `internal/share/config/config.go` — a `MediaConfig` with Cloudinary cloud name, API key, API secret and upload folder, wired under `Config` with the `MEDIA_` prefix; validate only in the user module's composition so `cmd/migrate` and `cmd/seed` stay runnable without it
 
 **Checkpoint**: Module skeleton, dataset, ports and schema exist; no behaviour yet.
 
@@ -64,16 +72,17 @@ This is a Go web service inside a modular monolith. Paths follow `plan.md`:
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T011 [P] Declare repository interfaces in `internal/modules/user/domain/repository/user.go` and `internal/modules/user/domain/repository/address.go`, embedding `share/repository.Repository[T, ID]` where it applies and adding `SetDefault(ctx, id)` and `ClearDefault(ctx, userID)` for the invariant; per coding conventions a repository MUST NOT open a transaction
-- [ ] T012 [P] Define HTTP request/response payloads in `internal/modules/user/presentation/dto/dto.go`: update-profile, avatar (multipart), create/update address, address, province, ward and customer-lookup shapes, matching `contracts/openapi.yaml` and using the exact JSON field names from it
-- [ ] T013 [P] Map domain errors to HTTP in `internal/modules/user/presentation/http/errors.go` using the status codes from `contracts/user-error-codes.md`, and attach field-level `httpx.Detail` entries for phone, province, ward and street-address failures (FR-020)
-- [ ] T014 Define use-case input/output types in `internal/modules/user/application/dto/dto.go`
-- [ ] T015 Declare the use-case interface in `internal/modules/user/application/interface/ports.go`: `UserService` with profile read/update, avatar set/remove, address CRUD, set-default and the administrator lookup, plus a composition `Config` carrying the avatar size ceiling
-- [ ] T016 [P] Implement the single mapper in `internal/modules/user/application/mapper/mapper.go` (model ↔ dto, including the address `divisionNeedsReview` flag from research D10); this stays the only place types are converted
-- [ ] T017 [P] Implement the audit adapter in `internal/modules/user/infrastructure/implement/auditor/auditor.go`, delegating to the foundation `share/audit` writer
-- [ ] T018 [P] Add module rate limits in `internal/share/config/config.go` (avatar uploads per hour, address writes per minute) wired under the `USER_` prefix, and expose them through the router in T019 so FR-025 does not rely on the global limit alone
-- [ ] T019 Build the `/users`, `/divisions` and administrator route groups in `internal/modules/user/presentation/http/router.go`, enforcing authentication, ADMIN role and ownership, applying the T018 limits, and auditing privilege denials the way the auth module does
-- [ ] T020 Construct the module in `cmd/api/main.go`: repositories, media adapter, auditor and the router mounted under `/api/v1`, then confirm `go build ./...` succeeds
+- [ ] T013 [P] Declare repository interfaces in `internal/modules/user/domain/repository/user.go` and `internal/modules/user/domain/repository/address.go`, embedding `share/repository.Repository[T, ID]` where it applies and adding `SetDefault(ctx, id)` and `ClearDefault(ctx, userID)` for the invariant; per coding conventions a repository MUST NOT open a transaction
+- [ ] T014 [P] Define HTTP request/response payloads in `internal/modules/user/presentation/dto/dto.go`: update-profile, avatar (multipart), create/update address, address, province, ward and customer-lookup shapes, matching `contracts/openapi.yaml` and using the exact JSON field names from it. `avatar` is the only signal for "has a photo"; there is no `hasAvatar` field
+- [ ] T015 [P] Map errors to HTTP in `internal/modules/user/presentation/http/errors.go`: this module's sentinel errors plus the shared division errors from T004, using the status codes in `contracts/error-codes.md`, and attaching field-level `httpx.Detail` entries for phone, province, ward and street-address failures (FR-020)
+- [ ] T016 Define use-case input/output types in `internal/modules/user/application/dto/dto.go`
+- [ ] T017 Declare the use-case interface in `internal/modules/user/application/interface/ports.go`: `UserService` with profile read/update, avatar set/remove, address CRUD, set-default and the administrator lookup, plus a composition `Config` carrying the avatar size ceiling
+- [ ] T018 [P] Implement the single mapper in `internal/modules/user/application/mapper/mapper.go` (model ↔ dto, including the address `divisionNeedsReview` flag from research D10); this stays the only place types are converted
+- [ ] T019 [P] Implement the audit adapter in `internal/modules/user/infrastructure/implement/auditor/auditor.go`, delegating to the foundation `share/audit` writer
+- [ ] T020 [P] Implement the `Divisions` adapter in `internal/modules/user/infrastructure/implement/administrative/administrative.go`, delegating to `internal/share/administrative` and satisfying the T011 port, so `application` depends on an interface rather than on the shared package
+- [ ] T021 [P] Add module rate limits in `internal/share/config/config.go` (avatar uploads per hour, address writes per minute) wired under the `USER_` prefix, and apply them in T022 so FR-025 does not rely on the global limit alone
+- [ ] T022 Build the `/users` and `/divisions` route groups in `internal/modules/user/presentation/http/router.go` — no separate `/admin` prefix, because the administrator lookup is `GET /api/v1/users/{userId}` — enforcing authentication, ADMIN role and ownership, applying the T021 limits, and auditing privilege denials the way the auth module does. Note that chi resolves the static `/users/me` segment before `/users/{userId}`, and a `userId` that is not a UUID returns `400 VALIDATION_ERROR`
+- [ ] T023 Construct the module in `cmd/api/main.go`: repositories, the T020 divisions adapter, media adapter, auditor and the router mounted under `/api/v1`, then confirm `go build ./...` succeeds
 
 **Checkpoint**: Foundation ready — user stories can now begin.
 
@@ -89,19 +98,19 @@ field detail, and a second customer cannot read the first customer's profile.
 
 ### Tests for User Story 1 (write first — they MUST fail)
 
-- [ ] T021 [P] [US1] Phone normalisation tests in `internal/modules/user/domain/model/phone_test.go`: accepts `0912345678`, `0912 345 678`, `+84912345678`; rejects `12345`, letters, and 9 or 11 digits; asserts the stored form is always ten digits
-- [ ] T022 [P] [US1] Profile model tests in `internal/modules/user/domain/model/profile_test.go`: trimming, clearing display name and phone, rejecting an invalid phone, and the rule that avatar fields are all null or all populated
-- [ ] T023 [P] [US1] Use-case tests in `internal/modules/user/application/implement/profile_test.go` using in-memory fakes: read returns the profile, partial update leaves the omitted field untouched, an empty string clears the field, an invalid phone returns `ErrInvalidPhone` and persists nothing
-- [ ] T024 [P] [US1] HTTP tests in `internal/modules/user/presentation/http/http_test.go`: `401` without a token, `200` for the owner, `404` for a non-existent profile, `400` with `details[].field == "phone"` for a bad phone, and an audit event for every successful update
+- [ ] T024 [P] [US1] Phone normalisation tests in `internal/modules/user/domain/model/phone_test.go`: accepts `0912345678`, `0912 345 678`, `+84912345678`; rejects `12345`, letters, and 9 or 11 digits; asserts the stored form is always ten digits
+- [ ] T025 [P] [US1] Profile model tests in `internal/modules/user/domain/model/profile_test.go`: trimming, clearing display name and phone, rejecting an invalid phone, and the rule that avatar fields are all null or all populated
+- [ ] T026 [P] [US1] Use-case tests in `internal/modules/user/application/implement/profile_test.go` using in-memory fakes: read returns the profile, partial update leaves the omitted field untouched, an empty string clears the field, an invalid phone returns `ErrInvalidPhone` and persists nothing
+- [ ] T027 [P] [US1] HTTP tests in `internal/modules/user/presentation/http/http_test.go`: `401` with no token and `401` with an expired token, `200` for the owner, `400` with `details[].field == "phone"` for a bad phone, an audit event for every successful update, and — for FR-021 — a `200` response with a null avatar when the customer has no photo, proving a media outage cannot fail the read. There is deliberately no `404` case here: the profile is the `users` row and FR-024 removes account deletion, so the row cannot go missing
 
 ### Implementation for User Story 1
 
-- [ ] T025 [US1] Implement the phone value object in `internal/modules/user/domain/model/phone.go` (trim, strip separators, `+84` → `0`, require ten digits) as a pure domain function so CLI and future workers cannot bypass it
-- [ ] T026 [US1] Implement the profile entity and update rules in `internal/modules/user/domain/model/profile.go`
-- [ ] T027 [US1] Implement the profile repository adapter in `internal/modules/user/infrastructure/implement/postgres/user.go`, embedding `share/repository.Base`, reading only the profile columns and binding every value as a query parameter
-- [ ] T028 [US1] Implement profile read and update use cases in `internal/modules/user/application/implement/profile.go`, taking the account from the session context and never from input (research D5), recording `USER_PROFILE_UPDATED`
-- [ ] T029 [US1] Implement the `GET` and `PATCH /api/v1/users/me` handlers in `internal/modules/user/presentation/http/handler.go`
-- [ ] T030 [US1] Add the profile integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: update → read back → confirm normalisation and the audit row
+- [ ] T028 [US1] Implement the phone value object in `internal/modules/user/domain/model/phone.go` (trim, strip separators, `+84` → `0`, require ten digits) as a pure domain function so CLI and future workers cannot bypass it
+- [ ] T029 [US1] Implement the profile entity and update rules in `internal/modules/user/domain/model/profile.go`, with no knowledge of the administrative dataset
+- [ ] T030 [US1] Implement the profile repository adapter in `internal/modules/user/infrastructure/implement/postgres/user.go`, embedding `share/repository.Base`, reading and writing only the six profile columns and binding every value as a query parameter
+- [ ] T031 [US1] Implement profile read and update use cases in `internal/modules/user/application/implement/profile.go`, taking the account from the session context and never from input (research D5), recording `USER_PROFILE_UPDATED`
+- [ ] T032 [US1] Implement the `GET` and `PATCH /api/v1/users/me` handlers in `internal/modules/user/presentation/http/handler.go`
+- [ ] T033 [US1] Add the profile integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: update → read back → confirm normalisation, confirm the audit row, and confirm the read still succeeds with a null avatar when no media is configured
 
 **Checkpoint**: US1 works standalone — a customer has a maintained profile.
 
@@ -117,19 +126,19 @@ single-default invariant.
 
 ### Tests for User Story 2 (write first — they MUST fail)
 
-- [ ] T031 [P] [US2] Address model tests in `internal/modules/user/domain/model/address_test.go`: create, edit preserving `isDefault`, mark default, hide, reject a ward from another province, and reject a hidden address becoming default
-- [ ] T032 [P] [US2] Use-case tests in `internal/modules/user/application/implement/address_test.go`: first address becomes default, a second address does not, setting a default clears the previous one atomically, hiding the last default leaves zero defaults, and every operation is scoped to the session account
-- [ ] T033 [P] [US2] Repository invariant test in `internal/modules/user/infrastructure/implement/postgres/address_integration_test.go`: writing a second default row directly, bypassing the use case, is rejected by the partial unique index (ADR-003), and paginated listing returns a stable order with a total
-- [ ] T034 [P] [US2] HTTP tests in `internal/modules/user/presentation/http/address_test.go`: `404 USER_ADDRESS_NOT_FOUND` for another customer's address id, `400 USER_WARD_PROVINCE_MISMATCH`, `400 USER_UNKNOWN_PROVINCE`, `204` on hide, and `404` when touching a hidden address
+- [ ] T034 [P] [US2] Address model tests in `internal/modules/user/domain/model/address_test.go`: create, edit preserving `isDefault`, mark default, hide, reject structurally invalid input, and reject a hidden address becoming default. A rejected edit must leave the previous default in place
+- [ ] T035 [P] [US2] Use-case tests in `internal/modules/user/application/implement/address_test.go` with a fake `Divisions` port: first address becomes default, a second address does not, setting a default clears the previous one atomically, hiding the last default leaves zero defaults, an unknown province or ward is rejected without persisting, a ward from another province is rejected, every operation is scoped to the session account, and a stored ward code that has left the dataset still reads back with `divisionNeedsReview: true` and its captured names (research D10)
+- [ ] T036 [P] [US2] Repository invariant test in `internal/modules/user/infrastructure/implement/postgres/address_integration_test.go`: writing a second default row directly, bypassing the use case, is rejected by the partial unique index (ADR-003), and paginated listing returns a stable order with a total
+- [ ] T037 [P] [US2] HTTP tests in `internal/modules/user/presentation/http/address_test.go`: `404 USER_ADDRESS_NOT_FOUND` for another customer's address id, `400 USER_WARD_PROVINCE_MISMATCH`, `400 USER_UNKNOWN_PROVINCE`, `204` on hide, and `404` when touching a hidden address
 
 ### Implementation for User Story 2
 
-- [ ] T035 [US2] Implement the address entity and default-flag transitions in `internal/modules/user/domain/model/address.go`, with an explicit transition function rather than an ad-hoc flag write
-- [ ] T036 [US2] Implement the address repository adapter in `internal/modules/user/infrastructure/implement/postgres/address.go`, including `SetDefault` as a single transaction through the `UnitOfWork` port, filters for `deleted_at IS NULL` (ADR-004), and captured province/ward names for history
-- [ ] T037 [US2] Implement address use cases in `internal/modules/user/application/implement/address.go`, wiring domain validation to `share/administrative` and recording the four address audit actions
-- [ ] T038 [US2] Implement the address handlers in `internal/modules/user/presentation/http/handler.go`: list with pagination (page ≥ 1, pageSize ≤ 100), create, edit, hide, set default
-- [ ] T039 [US2] Implement the cascading-select endpoints in `internal/modules/user/presentation/http/handler.go`: `GET /api/v1/divisions/provinces` and `GET /api/v1/divisions/provinces/{provinceCode}/wards`, where the ward list is scoped to one province
-- [ ] T040 [US2] Add the address integration test in `internal/modules/user/presentation/http/http_integration_test.go`: create two, flip the default, hide one, confirm one default remains and the audit trail exists
+- [ ] T038 [US2] Implement the address entity and default-flag transitions in `internal/modules/user/domain/model/address.go`, with an explicit transition function rather than an ad-hoc flag write, validating structure only
+- [ ] T039 [US2] Implement the address repository adapter in `internal/modules/user/infrastructure/implement/postgres/address.go`, including `SetDefault` as a single transaction through the `UnitOfWork` port, filters for `deleted_at IS NULL` (ADR-004), and captured province/ward names for history
+- [ ] T040 [US2] Implement address use cases in `internal/modules/user/application/implement/address.go`, validating divisions through the T011 `Divisions` port and recording the four address audit actions
+- [ ] T041 [US2] Implement the address handlers in `internal/modules/user/presentation/http/handler.go`: list with pagination (page ≥ 1, pageSize ≤ 100), create, edit, hide, set default
+- [ ] T042 [US2] Implement the cascading-select endpoints in `internal/modules/user/presentation/http/handler.go`: `GET /api/v1/divisions/provinces` and `GET /api/v1/divisions/provinces/{provinceCode}/wards`, both unpaginated per the Complexity Tracking entry, ward list scoped to one province
+- [ ] T043 [US2] Add the address integration test in `internal/modules/user/presentation/http/http_integration_test.go`: create two, flip the default, hide one, confirm one default remains and the audit trail exists, — for SC-007 — confirm the hidden row and its captured province/ward/street text survive unchanged, and — for FR-023 — confirm that a disabled account keeps its addresses retrievable and no longer accepts new ones
 
 **Checkpoint**: US1 and US2 both work independently; a customer can prepare delivery for an order.
 
@@ -144,17 +153,17 @@ and a too-large file and see both rejected with the previous avatar intact, then
 
 ### Tests for User Story 3 (write first — they MUST fail)
 
-- [ ] T041 [P] [US3] Avatar validation tests in `internal/modules/user/domain/model/avatar_test.go`: only JPEG, PNG and WebP accepted by content sniffing, the 2 MB ceiling enforced, and the all-or-nothing field rule
-- [ ] T042 [P] [US3] Use-case tests in `internal/modules/user/application/implement/avatar_test.go` with a fake `MediaStore`: successful upload stores the reference, a rejected upload leaves the previous avatar untouched, and a media failure returns `ErrMediaUnavailable` without changing the profile
-- [ ] T043 [P] [US3] Rate-limit test in `internal/modules/user/presentation/http/avatar_test.go`: exceeding the configured upload rate returns `429` with a retry hint while the existing avatar keeps working (FR-025, SC-013)
+- [ ] T044 [P] [US3] Avatar validation tests in `internal/modules/user/domain/model/avatar_test.go`: only JPEG, PNG and WebP accepted by content sniffing, the 2 MB ceiling enforced, the all-or-nothing field rule, and a stored reference whose reported width never exceeds 512 px (FR-015)
+- [ ] T045 [P] [US3] Use-case tests in `internal/modules/user/application/implement/avatar_test.go` with a fake `MediaStore`: successful upload stores the reference, a rejected upload leaves the previous avatar untouched, and a media failure returns `ErrMediaUnavailable` without changing the profile
+- [ ] T046 [P] [US3] Rate-limit test in `internal/modules/user/presentation/http/avatar_test.go`: exceeding the configured upload rate returns `429` with `Retry-After` while the existing avatar keeps working (FR-025, SC-013)
 
 ### Implementation for User Story 3
 
-- [ ] T044 [US3] Implement the avatar reference value object in `internal/modules/user/domain/model/avatar.go`
-- [ ] T045 [US3] Implement the Cloudinary adapter in `internal/modules/user/infrastructure/implement/media/cloudinary.go`, uploading the original bytes with a 512 px width transformation (ADR-005) and mapping provider failures to `ErrMediaUnavailable` without leaking provider detail
-- [ ] T046 [US3] Implement avatar set and remove use cases in `internal/modules/user/application/implement/profile.go`, recording `USER_AVATAR_SET` and `USER_AVATAR_REMOVED`, and releasing the previous reference when replacing
-- [ ] T047 [US3] Implement the multipart handlers in `internal/modules/user/presentation/http/handler.go` with a route-specific body ceiling above the global `MAX_BODY_BYTES`, sniffing the payload instead of trusting the filename or the client-declared content type, and reading with a hard ceiling
-- [ ] T048 [US3] Add the avatar integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: upload, replace, rejected upload keeps the old avatar, remove
+- [ ] T047 [US3] Implement the avatar reference value object in `internal/modules/user/domain/model/avatar.go`
+- [ ] T048 [US3] Implement the Cloudinary adapter in `internal/modules/user/infrastructure/implement/media/cloudinary.go`, uploading the original bytes with a 512 px width transformation (ADR-005) and mapping provider failures to `ErrMediaUnavailable` without leaking provider detail
+- [ ] T049 [US3] Implement avatar set and remove use cases in `internal/modules/user/application/implement/profile.go`, recording `USER_AVATAR_SET` and `USER_AVATAR_REMOVED`, and releasing the previous reference when replacing
+- [ ] T050 [US3] Implement the multipart handlers in `internal/modules/user/presentation/http/handler.go` with a route-specific body ceiling above the global `MAX_BODY_BYTES`, sniffing the payload instead of trusting the filename or the client-declared content type, and reading with a hard ceiling
+- [ ] T051 [US3] Add the avatar integration test in `internal/modules/user/presentation/http/http_integration_test.go` behind the `integration` tag: upload, replace, rejected upload keeps the old avatar, remove
 
 **Checkpoint**: US1–US3 work independently — the customer profile is complete.
 
@@ -169,13 +178,13 @@ contact details and address list; confirm an audit row exists for the read.
 
 ### Tests for User Story 4 (write first — they MUST fail)
 
-- [ ] T049 [P] [US4] HTTP authorization tests in `internal/modules/user/presentation/http/admin_test.go`: customer token → `403`, admin token → `200`, unknown account → `404 USER_NOT_FOUND`, and the audit action recorded for each successful read
+- [ ] T052 [P] [US4] HTTP authorization tests in `internal/modules/user/presentation/http/admin_test.go`: customer token → `403`, admin token → `200`, unknown account → `404 USER_NOT_FOUND`, a non-UUID `userId` → `400 VALIDATION_ERROR`, and the audit action recorded for each successful read
 
 ### Implementation for User Story 4
 
-- [ ] T050 [US4] Implement the lookup use case in `internal/modules/user/application/implement/admin_lookup.go` and make the module satisfy `internal/contracts.CustomerLookupService`
-- [ ] T051 [US4] Implement the ADMIN-guarded route in `internal/modules/user/presentation/http/handler.go`, offering no write path for customer data
-- [ ] T052 [US4] Add the audit assertion to the integration test in `internal/modules/user/presentation/http/http_integration_test.go`: an admin read writes `USER_PROFILE_VIEWED_BY_ADMIN`
+- [ ] T053 [US4] Implement the lookup use case in `internal/modules/user/application/implement/admin_lookup.go` and make the module satisfy `internal/contracts.CustomerLookupService`, returning addresses default-first per FR-007d
+- [ ] T054 [US4] Implement the ADMIN-guarded `GET /api/v1/users/{userId}` route in `internal/modules/user/presentation/http/handler.go`, offering no write path for customer data
+- [ ] T055 [US4] Add the audit assertion to the integration test in `internal/modules/user/presentation/http/http_integration_test.go`: an admin read writes `USER_PROFILE_VIEWED_BY_ADMIN`
 
 **Checkpoint**: All four stories work; later modules have a stable contract to reuse.
 
@@ -183,15 +192,15 @@ contact details and address list; confirm an audit row exists for the read.
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T053 [P] Update `docs/api-reference.md` with the twelve new endpoints, the summary table row, the new error codes in §1.4 and a change-log entry — required by Constitution VIII in the same change
-- [ ] T054 [P] Add the media and rate-limit variables to `.env.example` and document them in `docs/configuration.md`, including the failure mode that a missing media configuration disables avatar upload
-- [ ] T055 [P] Update `docs/modules/02-user.md` to mark the feature implemented and record the dataset refresh policy
-- [ ] T056 [P] Verify in `internal/share/logging/redact_test.go` that media credentials and provider responses cannot leak into logs
-- [ ] T057 [P] Check that every new file is UTF-8 without BOM with LF endings per `.editorconfig` and `docs/development/code-hygiene.md`, including `internal/share/administrative/data/vn-divisions.json`
-- [ ] T058 [P] Write an ADR at `docs/decisions/NNN-<name>.md` for any long-lived decision taken during implementation that ADR-002 to ADR-005 does not already cover, following `docs/decisions/template.md`; skip this task only when nothing new came up
-- [ ] T059 Run the `quickstart.md` validation end-to-end (`make up-tools` plus the curl scenarios) **including the four mandatory checks from `docs/development/api-testing.md`**: 401 without a token, 403 plus an audit row for the wrong role, cross-account access refused with 404, and a correct response envelope
-- [ ] T060 Run `make check` — the close-out gate — and clear every finding across `internal/modules/user/`, `internal/share/administrative/`, `internal/contracts/` and `migrations/00004_user.sql`; confirm `git status` shows no stray files before staging
-- [ ] T061 Security review pass over `internal/modules/user/presentation/http/handler.go`, `internal/modules/user/presentation/http/router.go` and `internal/modules/user/infrastructure/implement/media/cloudinary.go`: confirm no route accepts an owner id, uploads are validated by content, the default-address invariant holds under concurrent writes, and no media credential is logged
+- [ ] T056 [P] Update `docs/api-reference.md`: add the twelve new endpoints in the six-part format used by the existing entries (info table **including its rate limit** · Request · Response · Errors · notes), add the `USER_*` codes to §1.4, add the two new module limits from T021 to §1.5, extend the §4 summary table, add a change-log row, and correct the constitution version cited in its header. Required by Constitution VIII in the same change
+- [ ] T057 [P] Add the media and rate-limit variables to `.env.example` and document them in `docs/configuration.md`, including the failure mode that a missing media configuration disables avatar upload
+- [ ] T058 [P] Update `docs/modules/02-user.md` to mark the feature implemented, record the dataset refresh policy, and state the `users` ownership split: auth owns `id`, `email`, `password_hash`, `role`, `status` and timestamps; this module owns the six profile columns and is their only writer
+- [ ] T059 [P] Verify in `internal/share/logging/redact_test.go` that media credentials and provider responses cannot leak into logs
+- [ ] T060 [P] Check that every new file is UTF-8 without BOM with LF endings per `.editorconfig` and `docs/development/code-hygiene.md`, including `internal/share/administrative/data/vn-divisions.json`
+- [ ] T061 [P] Write an ADR at `docs/decisions/NNN-<name>.md` for any long-lived decision taken during implementation that ADR-002 to ADR-005 does not already cover, following `docs/decisions/template.md`; skip this task only when nothing new came up
+- [ ] T062 Run the `quickstart.md` validation end-to-end (`make up-tools` plus the curl scenarios) **including the four mandatory checks from `docs/development/api-testing.md`**: 401 without a token, 403 plus an audit row for the wrong role, cross-account access refused with 404, and a correct response envelope
+- [ ] T063 Run `make check` — the close-out gate — and clear every finding across `internal/modules/user/`, `internal/share/administrative/`, `internal/contracts/` and `migrations/00004_user.sql`; confirm `git status` shows no stray files before staging
+- [ ] T064 Security review pass over `internal/modules/user/presentation/http/handler.go`, `internal/modules/user/presentation/http/router.go` and `internal/modules/user/infrastructure/implement/media/cloudinary.go`: confirm no route accepts an owner id, uploads are validated by content, the default-address invariant holds under concurrent writes, and no media credential is logged
 
 ---
 
@@ -208,8 +217,8 @@ contact details and address list; confirm an audit row exists for the read.
 ### User Story Dependencies
 
 - **US1 (P1)**: needs only the foundation. Delivers the MVP.
-- **US2 (P2)**: needs the foundation; reuses the session and audit wiring from US1 but
-  is independently testable.
+- **US2 (P2)**: needs the foundation plus the `Divisions` port; reuses the session and
+  audit wiring from US1 but is independently testable.
 - **US3 (P3)**: needs the profile entity from US1 (it attaches a reference to it) and
   the `MediaStore` port from Phase 1.
 - **US4 (P4)**: needs the foundation plus both profile and address readers; delivers no
@@ -217,9 +226,9 @@ contact details and address list; confirm an audit row exists for the read.
 
 ### Critical Path
 
-T001 → T004 → T011 → T015 → T020 → T028 → T029 → (US1 complete) → T037 → T038 → T047 → T051
+T001 → T005 → T013 → T017 → T023 → T031 → T032 → (US1 complete) → T040 → T041 → T050 → T054
 
-The default-address invariant additionally requires T004 before T036, and its test T033
+The default-address invariant additionally requires T005 before T039, and its test T036
 is the one that must fail first.
 
 ### Within Each User Story
@@ -230,13 +239,14 @@ is the one that must fail first.
 
 ### Parallel Opportunities
 
-- Phase 1: T005/T006 (dataset and its provenance) and T002/T003 (constants and errors)
+- Phase 1: T006/T007 (dataset and its provenance), T002/T003/T004 (constants and errors)
   can run together
-- Phase 2: T011, T012, T013, T016, T017, T018 touch separate files and can run together
-- Phase 3: T021–T024 (four test files) can run together, then T025/T026 together
-- Phase 4: T031–T034 can run together
-- Phase 5: T041–T043 can run together
-- Phase 7: T053–T058 are documentation and verification and can run in parallel
+- Phase 2: T013, T014, T015, T018, T019, T020, T021 touch separate files and can run
+  together
+- Phase 3: T024–T027 (four test files) can run together, then T028/T029 together
+- Phase 4: T034–T037 can run together
+- Phase 5: T044–T046 can run together
+- Phase 7: T056–T061 are documentation and verification and can run in parallel
 
 ### Parallel Example: Phase 4
 
@@ -289,8 +299,11 @@ developers: one on US1+US3 (same aggregate), one on US2, one on US4.
 - Do not start US2 or later before Phase 2 is complete
 - Gates come from `AGENTS.md` §3: a single task needs `make lint` + `make test`; an
   endpoint change additionally needs `make test-integration`; before pushing or opening a
-  PR run the close-out gate `make check` (T060)
+  PR run the close-out gate `make check` (T063)
+- SC-001 and SC-010 are human-time outcomes and are verified manually through
+  `quickstart.md` (T062); the p95 figures in `plan.md` are informational targets, not
+  buildable criteria
 - Commit after each task or logical group using Conventional Commits, and only stage the
   files belonging to that change
-- Decisions that outlive this feature belong in `docs/decisions/` (T058); decisions scoped
+- Decisions that outlive this feature belong in `docs/decisions/` (T061); decisions scoped
   to this feature belong in `research.md`
