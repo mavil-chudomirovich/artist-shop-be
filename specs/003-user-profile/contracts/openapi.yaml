@@ -1,0 +1,647 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend — User Module
+  version: 1.0.0
+  description: >
+    Customer profile and shipping addresses. All responses use the foundation
+    envelope (data + meta, or error) and the X-Request-Id correlation header.
+    Self-service routes derive the account from the access token; no route accepts
+    an owner identifier from the client.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: profile
+  - name: address
+  - name: divisions
+  - name: admin
+paths:
+  /api/v1/users/me:
+    get:
+      tags: [profile]
+      summary: Read own profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The signed-in customer's profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Profile"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+    patch:
+      tags: [profile]
+      summary: Update display name and/or phone
+      description: >
+        Partial update. A field sent as an empty string is cleared, not ignored.
+        Both fields are independent; sending only one leaves the other unchanged.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: The updated profile.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Profile"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/users/me/avatar:
+    post:
+      tags: [profile]
+      summary: Upload or replace the avatar
+      description: >
+        Accepts JPEG, PNG or WebP up to 2 MB, validated from the uploaded bytes
+        rather than the file name. The stored image is 512 px wide at most. A
+        rejected upload leaves the current avatar untouched.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: The profile carrying the new avatar.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Profile"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: Unsupported image type (USER_AVATAR_TYPE_UNSUPPORTED).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "413":
+          description: Image larger than the limit (USER_AVATAR_TOO_LARGE).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "503":
+          description: Media service unavailable (USER_MEDIA_UNAVAILABLE).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    delete:
+      tags: [profile]
+      summary: Remove the avatar
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The profile without an avatar.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Profile"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/users/me/addresses:
+    get:
+      tags: [address]
+      summary: List own addresses
+      description: >
+        Non-hidden addresses only, default address first, then most recently
+        updated. Paginated.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Address"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [address]
+      summary: Create an address
+      description: >
+        The first address of an account becomes its default automatically. Province
+        and ward must come from the official dataset and the ward must belong to the
+        chosen province.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAddressRequest"
+      responses:
+        "201":
+          description: The created address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Address"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            Validation failed — USER_UNKNOWN_PROVINCE, USER_UNKNOWN_WARD,
+            USER_WARD_PROVINCE_MISMATCH, USER_INVALID_PHONE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/users/me/addresses/{addressId}:
+    parameters:
+      - $ref: "#/components/parameters/AddressId"
+    patch:
+      tags: [address]
+      summary: Edit an address
+      description: The default flag is preserved; use the default route to change it.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAddressRequest"
+      responses:
+        "200":
+          description: The updated address.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Address"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No such address for this account (USER_ADDRESS_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+    delete:
+      tags: [address]
+      summary: Hide an address
+      description: >
+        The row is kept so past orders keep their own address text; the address
+        disappears from the list and can no longer be the default.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Hidden; no body.
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No such address for this account (USER_ADDRESS_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/users/me/addresses/{addressId}/default:
+    post:
+      tags: [address]
+      summary: Mark an address as default
+      description: >
+        Clears the previous default and sets this one as the single default in one
+        indivisible operation.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressId"
+      responses:
+        "200":
+          description: The address now marked as default.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Address"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/divisions/provinces:
+    get:
+      tags: [divisions]
+      summary: List provinces
+      description: Reference data for the first cascading select. Ordered by name.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All provinces.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Province"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/divisions/provinces/{provinceCode}/wards:
+    get:
+      tags: [divisions]
+      summary: List wards of one province
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: provinceCode
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Province code as returned by the provinces listing.
+      responses:
+        "200":
+          description: Wards belonging to the province.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Ward"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown province code (USER_UNKNOWN_PROVINCE).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/users/{userId}:
+    get:
+      tags: [admin]
+      summary: Read a customer's contact details and addresses
+      description: >
+        Read-only operator lookup for order and commission handling. Every call is
+        audited. Administrator attempts to change customer data are not offered by
+        this module.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The customer's contact details and addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CustomerLookup"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          description: Caller is not an administrator (FORBIDDEN).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: No such account (USER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    AddressId:
+      name: addressId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    Error:
+      description: Error using the standard error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+    PagedMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          properties:
+            page:
+              type: integer
+            pageSize:
+              type: integer
+            total:
+              type: integer
+              format: int64
+    Detail:
+      type: object
+      properties:
+        field:
+          type: string
+        issue:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/Detail"
+            requestId:
+              type: string
+              format: uuid
+    Avatar:
+      type: object
+      nullable: true
+      description: Reference to the stored avatar; null when the customer has none.
+      required: [publicId, url, width, height]
+      properties:
+        publicId:
+          type: string
+          description: Opaque media identifier.
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+          description: Always 512 at most.
+        height:
+          type: integer
+    Profile:
+      type: object
+      required: [id, email, role, displayName, phone, hasAvatar, avatar]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [CUSTOMER, ADMIN]
+        displayName:
+          type: string
+          description: May be empty when the customer has not set one.
+        phone:
+          type: string
+          nullable: true
+          description: Ten digits starting with 0, or null when unset.
+        hasAvatar:
+          type: boolean
+        avatar:
+          $ref: "#/components/schemas/Avatar"
+    UpdateProfileRequest:
+      type: object
+      properties:
+        displayName:
+          type: string
+          maxLength: 120
+          description: Send an empty string to clear the current value.
+        phone:
+          type: string
+          nullable: true
+          description: Ten digits starting with 0; send empty or null to clear.
+      additionalProperties: false
+    Province:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+    Ward:
+      type: object
+      required: [code, name, provinceCode]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        provinceCode:
+          type: string
+    Address:
+      type: object
+      required:
+        [
+          id,
+          recipientName,
+          recipientPhone,
+          provinceCode,
+          provinceName,
+          wardCode,
+          wardName,
+          streetAddress,
+          isDefault,
+        ]
+      properties:
+        id:
+          type: string
+          format: uuid
+        recipientName:
+          type: string
+        recipientPhone:
+          type: string
+        provinceCode:
+          type: string
+        provinceName:
+          type: string
+        wardCode:
+          type: string
+        wardName:
+          type: string
+        streetAddress:
+          type: string
+        isDefault:
+          type: boolean
+        divisionNeedsReview:
+          type: boolean
+          description: >
+            True when the stored province or ward code is no longer in the current
+            official dataset. The captured names are still returned so the customer
+            can see what was saved.
+    CreateAddressRequest:
+      type: object
+      required:
+        [recipientName, recipientPhone, provinceCode, wardCode, streetAddress]
+      properties:
+        recipientName:
+          type: string
+          maxLength: 120
+        recipientPhone:
+          type: string
+        provinceCode:
+          type: string
+        provinceName:
+          type: string
+          description: Optional; captured when omitted.
+        wardCode:
+          type: string
+        wardName:
+          type: string
+          description: Optional; captured when omitted.
+        streetAddress:
+          type: string
+          maxLength: 255
+      additionalProperties: false
+    UpdateAddressRequest:
+      allOf:
+        - $ref: "#/components/schemas/CreateAddressRequest"
+      description: Every field is optional; omitted fields keep their value.
+    CustomerLookup:
+      type: object
+      required: [id, email, role, displayName, phone, addresses]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [CUSTOMER, ADMIN]
+        displayName:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Address"
