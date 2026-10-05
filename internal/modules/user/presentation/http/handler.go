@@ -199,6 +199,13 @@ func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
 // buffer more than the configured ceiling. Reading with a ceiling is what makes
 // the size rule enforceable: a post-hoc check on an already buffered body cannot
 // stop a memory-exhaustion upload.
+//
+// The ceiling is applied twice, on purpose. The route's middleware refuses a body
+// whose declared length is already over the limit, and the LimitReader below stops
+// a body that lies about its length or arrives in chunks. The second case is the
+// one that matters for an attacker: a declared length cannot be trusted, and the
+// route-level wrapper would otherwise surface as a parse failure rather than as the
+// size rule it actually is.
 func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppError) {
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -211,6 +218,12 @@ func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppErr
 			break
 		}
 		if err != nil {
+			// The route's own body ceiling cuts the stream here when the declared
+			// length was absent or understated.
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return nil, "", avatarTooLarge()
+			}
 			return nil, "", httpx.New(httpx.CodeMalformedRequest)
 		}
 		if part.FormName() != fieldFile {
@@ -221,17 +234,29 @@ func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppErr
 		content, err := io.ReadAll(io.LimitReader(part, ceiling+1))
 		_ = part.Close()
 		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return nil, "", avatarTooLarge()
+			}
 			return nil, "", httpx.New(httpx.CodeMalformedRequest)
 		}
 		if int64(len(content)) > ceiling {
-			return nil, "", withField(
-				coded(constant.CodeAvatarTooLarge, http.StatusRequestEntityTooLarge, "Image exceeds the size limit"),
-				fieldFile, "compress the image before uploading",
-			)
+			return nil, "", avatarTooLarge()
 		}
 		return content, part.FileName(), nil
 	}
 	return nil, "", fieldError(fieldFile, "a file part is required")
+}
+
+// avatarTooLarge is the one refusal for an upload over the ceiling, wherever the
+// ceiling was reached: while reading the part, or by the route's own body limit.
+// Naming the file in the detail is what lets a client point at the right input
+// (FR-020).
+func avatarTooLarge() *httpx.AppError {
+	return withField(
+		coded(constant.CodeAvatarTooLarge, http.StatusRequestEntityTooLarge, "Image exceeds the size limit"),
+		fieldFile, "compress the image before uploading",
+	)
 }
 
 // RemoveAvatar releases the stored avatar reference.

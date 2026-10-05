@@ -36,7 +36,14 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Use(middleware.Recovery(deps.Logger))
 	r.Use(middleware.CORS(deps.Config.CORS.AllowedOrigins))
 	r.Use(middleware.BodyLimit(deps.Config.MaxBodyBytes))
-	r.Use(middleware.JSONContentType)
+	// The pipeline guard lists every media type this service accepts as a request
+	// body, not the type every route happens to take: JSON plus the multipart
+	// uploads. Enforcing JSON alone here answered 415 to every multipart avatar
+	// upload before the route that handles it could run. The JSON-only check now
+	// sits on the routes that decode JSON (middleware.JSONContentType), so a JSON
+	// route is still refused with 415 when it is sent another type, while an upload
+	// route gets its request.
+	r.Use(middleware.AllowedContentTypes(middleware.MediaTypeJSON, middleware.MediaTypeMultipart))
 	// Resolve the caller identity when possible. Enforcement is applied per
 	// route by business modules via RequireAuthentication / RequireRole.
 	r.Use(middleware.Authentication(deps.Auth))

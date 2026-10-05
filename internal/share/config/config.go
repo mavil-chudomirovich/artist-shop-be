@@ -35,7 +35,22 @@ type Config struct {
 	Media      MediaConfig `envPrefix:"MEDIA_"`
 	User       UserConfig  `envPrefix:"USER_"`
 
-	MaxBodyBytes int64 `env:"MAX_BODY_BYTES" envDefault:"1048576"`
+	// MaxBodyBytes is the pipeline's own ceiling on any request body. It is a
+	// coarse early refusal: the wrapper runs before routing, so a route cannot lift
+	// it, and it must therefore stay above every module's route-specific limit or a
+	// legitimate upload would be refused before its own route could apply the real
+	// rule.
+	//
+	// The default is 4 MiB, twice the 2 MB avatar ceiling FR-014 declares plus the
+	// multipart envelope. A module route that accepts a body larger than that — the
+	// avatar upload is the one today — raises the limit for its own handler and
+	// enforces its precise rule there; raising the pipeline ceiling further would
+	// only widen what every other endpoint would accept.
+	//
+	// The rate limiter, the read ceilings and the per-field rules remain the real
+	// protections against an abusive request; this value exists so one oversized
+	// body is refused early rather than buffered.
+	MaxBodyBytes int64 `env:"MAX_BODY_BYTES" envDefault:"4194304"`
 }
 
 // RedisConfig controls the shared cache connection (OTP + blacklist).

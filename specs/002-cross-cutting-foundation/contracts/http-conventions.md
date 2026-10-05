@@ -77,7 +77,11 @@ An error response body is returned for every non-2xx status that carries a body;
 ## Content type
 
 - Requests and responses are `application/json; charset=utf-8`.
-- Only JSON request bodies are accepted; other media types yield `415`.
+- A request body must be `application/json`, except where a route declares another
+  media type: an avatar upload is `multipart/form-data`. The pipeline therefore accepts
+  JSON and multipart, while the JSON content-type check is applied **per route**, so a
+  JSON route still answers `415` to any other media type and a multipart route answers
+  `415` to a body that is not multipart.
 
 ## Versioning
 

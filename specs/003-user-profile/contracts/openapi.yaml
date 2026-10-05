@@ -535,6 +535,7 @@ components:
           format: uri
         width:
           type: integer
+          maximum: 512
           description: Always 512 at most.
         height:
           type: integer

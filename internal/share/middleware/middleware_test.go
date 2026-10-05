@@ -278,6 +278,84 @@ func TestJSONContentTypeAllowsBodylessRequests(t *testing.T) {
 	}
 }
 
+// The pipeline-level guard exists because a global JSON-only check answered 415 to
+// every multipart upload, so an upload route could never be reached.
+func TestAllowedContentTypesAdmitsMultipartAndStillRefusesTheRest(t *testing.T) {
+	called := 0
+	handler := AllowedContentTypes(MediaTypeJSON, MediaTypeMultipart)(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called++
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	accepted := map[string]string{
+		"json":                "application/json",
+		"json with a charset": "application/json; charset=utf-8",
+		"multipart":           `multipart/form-data; boundary=abc`,
+	}
+	for name, contentType := range accepted {
+		t.Run(name, func(t *testing.T) {
+			called = 0
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
+			req.Header.Set("Content-Type", contentType)
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200 for %q, got %d", contentType, rec.Code)
+			}
+			if called != 1 {
+				t.Fatalf("expected the handler to run for %q", contentType)
+			}
+		})
+	}
+
+	refused := map[string]string{
+		"text":       "text/plain",
+		"xml":        "application/xml",
+		"form":       "application/x-www-form-urlencoded",
+		"unparsable": "not a media type at all",
+	}
+	for name, contentType := range refused {
+		t.Run(name, func(t *testing.T) {
+			called = 0
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
+			req.Header.Set("Content-Type", contentType)
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("expected 415 for %q, got %d", contentType, rec.Code)
+			}
+			if statusOf(rec) != "UNSUPPORTED_MEDIA_TYPE" {
+				t.Fatalf("expected UNSUPPORTED_MEDIA_TYPE, got %q", statusOf(rec))
+			}
+			if called != 0 {
+				t.Fatalf("the handler must not run for %q", contentType)
+			}
+		})
+	}
+}
+
+// The per-route check is JSON-only on purpose: a multipart body sent to a route
+// that decodes JSON is a client mistake, not an upload.
+func TestJSONContentTypeStillRefusesMultipart(t *testing.T) {
+	called := false
+	handler := JSONContentType(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("payload"))
+	req.Header.Set("Content-Type", `multipart/form-data; boundary=abc`)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415, got %d", rec.Code)
+	}
+	if called {
+		t.Fatal("a JSON route must not run for a multipart body")
+	}
+}
+
 func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {
 	handler := CORS([]string{"http://localhost:3000"})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 

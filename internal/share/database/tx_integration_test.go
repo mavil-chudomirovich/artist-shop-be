@@ -166,7 +166,10 @@ func TestNewRejectsUnreachableDatabase(t *testing.T) {
 	}
 }
 
-func TestQuerierImplementations(t *testing.T) {
+// TestQuerierImplementations is a compile-time check that the pool and a
+// transaction both satisfy Querier, which is why it takes no *testing.T: there is
+// nothing to assert at run time and the failure would be a build failure.
+func TestQuerierImplementations(_ *testing.T) {
 	var _ Querier = (*pgxpool.Pool)(nil)
 	var _ Querier = (pgx.Tx)(nil)
 }

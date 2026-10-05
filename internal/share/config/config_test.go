@@ -30,6 +30,28 @@ func TestLoadValid(t *testing.T) {
 	}
 }
 
+// The pipeline body ceiling must stay above every route-level ceiling a module
+// declares for itself, because the pipeline wraps the body before routing and a
+// route cannot lift it. The avatar upload is the one route that raises its own
+// limit: the 2 MB image ceiling of FR-014 plus room for the multipart envelope.
+func TestTheDefaultBodyCeilingLeavesRoomForAnUploadRoute(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("MAX_BODY_BYTES", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected the defaults to resolve, got %v", err)
+	}
+	const (
+		avatarImageCeiling = int64(2 << 20)
+		multipartOverhead  = int64(64 << 10)
+	)
+	if cfg.MaxBodyBytes <= avatarImageCeiling+multipartOverhead {
+		t.Fatalf("the default body ceiling %d must stay above the avatar route limit %d",
+			cfg.MaxBodyBytes, avatarImageCeiling+multipartOverhead)
+	}
+}
+
 func TestLoadMissingDatabaseURL(t *testing.T) {
 	setValidEnv(t)
 	t.Setenv("DATABASE_URL", "")

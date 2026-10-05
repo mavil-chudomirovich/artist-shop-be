@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
 )
 
 // MediaStore stores binary media outside the service and hands back a reference
@@ -86,11 +87,15 @@ type UnitOfWork interface {
 // Avatar defaults used when the composition leaves the Config values at zero, so
 // a zero value still enforces the documented contract instead of accepting any
 // upload.
+//
+// They are the domain's own ceilings rather than a second copy of the numbers:
+// the domain is where FR-014 and FR-015 are enforced, and a literal repeated here
+// could drift away from it without anything failing.
 const (
 	// DefaultAvatarMaxBytes is the 2 MB avatar ceiling of FR-014.
-	DefaultAvatarMaxBytes int64 = 2 << 20
+	DefaultAvatarMaxBytes int64 = model.MaxAvatarBytes
 	// DefaultAvatarTargetWidth is the stored width ceiling of FR-015.
-	DefaultAvatarTargetWidth = 512
+	DefaultAvatarTargetWidth = model.MaxAvatarWidth
 )
 
 // Config carries the composition settings the use cases cannot derive

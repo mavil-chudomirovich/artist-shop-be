@@ -206,9 +206,12 @@ a memory-exhaustion upload, which a post-hoc size check cannot do.
 - *Virus scanning.* Deferred (YAGNI): no requirement for it, and it would add an
   external dependency to every upload.
 
-**Consequence**: the avatar route declares its own body limit, because the global
-`MAX_BODY_BYTES` (1 MiB by default) is below the 2 MB avatar ceiling and the shared
-pipeline applies globally.
+**Consequence**: the avatar route declares its own body limit, and the shared pipeline
+accepts `multipart/form-data` as well as JSON. `MAX_BODY_BYTES` now defaults to 4 MiB —
+twice the image ceiling plus the multipart envelope — so the effective cap on an upload is
+the route's own 2 MB ceiling, with the global value acting as a coarse early refusal at
+twice the ceiling rather than as a blocker below it. The JSON content-type check is
+per-route, not global, because a global check answers `415` to every multipart upload.
 
 ---
 

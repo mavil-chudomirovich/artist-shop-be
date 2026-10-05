@@ -34,8 +34,8 @@ Hệ quả trực tiếp:
 
 | Điều kiện vi phạm | HTTP | Error code |
 |---|------|-----------|
-| Body vượt `MAX_BODY_BYTES` (mặc định 1 MiB) | 413 | `PAYLOAD_TOO_LARGE` |
-| `Content-Type` khác `application/json` (khi có body) | 415 | `UNSUPPORTED_MEDIA_TYPE` |
+| Body vượt `MAX_BODY_BYTES` (mặc định 4 MiB) hoặc vượt trần riêng của route (avatar: 2 MB) | 413 | `PAYLOAD_TOO_LARGE` |
+| `Content-Type` không khớp với loại body mà route khai báo (route JSON nhận `multipart/form-data`, route avatar nhận `text/plain`) | 415 | `UNSUPPORTED_MEDIA_TYPE` |
 | Vượt rate limit | 429 + header `Retry-After: 1` | `RATE_LIMITED` |
 | Origin không nằm trong `CORS_ALLOWED_ORIGINS` | CORS bị chặn ở preflight | — |
 
@@ -92,7 +92,7 @@ nội bộ ra ngoài.
 | `METHOD_NOT_ALLOWED` | 405 | Sai HTTP method |
 | `CONFLICT` | 409 | Xung đột trạng thái hiện tại |
 | `PAYLOAD_TOO_LARGE` | 413 | Body quá lớn |
-| `UNSUPPORTED_MEDIA_TYPE` | 415 | `Content-Type` không phải JSON |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | `Content-Type` không khớp loại body của route |
 | `RATE_LIMITED` | 429 | Quá hạn mức |
 | `INTERNAL_ERROR` | 500 | Lỗi ngoài dự kiến |
 | `SERVICE_UNAVAILABLE` | 503 | Chưa sẵn sàng phục vụ |

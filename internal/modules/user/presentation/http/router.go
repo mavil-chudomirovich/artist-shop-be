@@ -18,7 +18,9 @@ import (
 // avatarUploadOverhead is the room the router leaves for the multipart envelope —
 // part headers, boundaries and the form field name — on top of the image ceiling.
 // The image itself is capped again while it is read, so this only has to be
-// generous, never exact.
+// generous, never exact. It also has to stay under the shared pipeline ceiling,
+// which wraps the body before routing and therefore cannot be lifted here;
+// config.MaxBodyBytes ships at twice the image ceiling for that reason.
 const avatarUploadOverhead = 64 << 10
 
 // Router builds the `/users` group. Mount it under `/api/v1`.
@@ -46,19 +48,27 @@ func (h *Handler) Router(limits config.UserConfig, hooks middleware.AuthHooks) h
 	// Self-service routes: the account comes from the session, the path carries
 	// no owner identifier.
 	r.With(authenticated).Get("/me", h.GetProfile)
-	r.With(authenticated).Patch("/me", h.UpdateProfile)
+	// The routes that decode a JSON body carry the JSON-only content-type check, so
+	// a request that sends another media type is refused with 415 here rather than
+	// failing later as a parse error (FR-014 in spirit: the media type is checked
+	// where the route knows what it expects).
+	r.With(authenticated, middleware.JSONContentType).Patch("/me", h.UpdateProfile)
 	r.With(authenticated).Delete("/me/avatar", h.RemoveAvatar)
-	// The image ceiling is above the shared global body limit, so the route raises
-	// the limit for its own handler. Two foundation limits still run ahead of it
-	// and must be reconciled by the avatar phase (T050, research D7): the global
-	// body limit wraps the body first, and the shared JSON content-type check
-	// rejects multipart/form-data outright.
+	// The upload route raises the body limit for its own handler: the image ceiling
+	// is above the shared pipeline ceiling, which wraps the body before routing and
+	// so cannot be lifted by a route. The pipeline ceiling still caps the request
+	// early at twice the avatar ceiling, and this route keeps the precise FR-015
+	// check — the multipart envelope is allowed for on top of the image, and the
+	// image itself is capped again while it is read, so a body that is over the
+	// limit is refused without being buffered whole (research D7).
 	r.With(authenticated, avatarLimit, middleware.BodyLimit(h.cfg.AvatarMaxBytesOrDefault()+avatarUploadOverhead)).
 		Post("/me/avatar", h.SetAvatar)
 
 	r.With(authenticated).Get("/me/addresses", h.ListAddresses)
-	r.With(authenticated, addressWriteLimit).Post("/me/addresses", h.CreateAddress)
-	r.With(authenticated, addressWriteLimit).Patch("/me/addresses/{addressId}", h.UpdateAddress)
+	r.With(authenticated, middleware.JSONContentType, addressWriteLimit).
+		Post("/me/addresses", h.CreateAddress)
+	r.With(authenticated, middleware.JSONContentType, addressWriteLimit).
+		Patch("/me/addresses/{addressId}", h.UpdateAddress)
 	r.With(authenticated, addressWriteLimit).Delete("/me/addresses/{addressId}", h.DeleteAddress)
 	r.With(authenticated, addressWriteLimit).Post("/me/addresses/{addressId}/default", h.SetDefaultAddress)
 

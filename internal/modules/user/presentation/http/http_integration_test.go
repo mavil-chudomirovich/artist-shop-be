@@ -3,11 +3,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +37,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpserver"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
@@ -66,6 +69,13 @@ type integrationFixture struct {
 	// mediaConfigured reports whether media credentials are present. The profile
 	// story must work with none of them (FR-021).
 	mediaConfigured bool
+	// media is the fail-closed stand-in for the provider: it answers with a
+	// reference and never touches a network, so no Cloudinary credential belongs in
+	// this test. err makes it behave like an outage.
+	media *stubMedia
+	// fullStack is the module mounted behind the real shared pipeline, so the
+	// multipart body travels through the same middleware every deployment applies.
+	fullStack http.Handler
 }
 
 func newIntegrationFixture(t *testing.T) *integrationFixture {
@@ -96,20 +106,25 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 		writer.Stop(stopCtx)
 	})
 
-	// No media store is wired: the media credentials are absent, which is exactly
-	// the FR-021 case this test has to survive.
+	// The media settings are absent from Validate so migrate and seed stay
+	// runnable without them, which means the real adapter fails closed here. This
+	// test therefore wires a stand-in that answers with a reference, so the story
+	// can be exercised against a real database without a real provider account;
+	// the fail-closed behaviour itself is asserted by the adapter's own tests.
 	//
 	// The real divisions adapter serves the bundled dataset, so the address tests
 	// validate against the same codes a client would have picked, and the shared
 	// DB is the module's UnitOfWork, so the default-flag transition runs inside a
 	// real transaction.
 	divisions := adminadapter.New()
+	media := newStubMedia()
 	profiles := implement.New(implement.Service{
 		Profiles:  userpostgres.NewProfileRepository(pool),
 		Addresses: userpostgres.NewAddressRepository(pool),
 		Divisions: divisions,
 		Tx:        &database.DB{Pool: pool},
 		Audit:     auditor.New(writer),
+		Media:     media,
 		Mapper:    mapper.New(divisions),
 	})
 
@@ -127,31 +142,64 @@ func newIntegrationFixture(t *testing.T) *integrationFixture {
 		appinterface.Config{},
 		discardLogger(),
 	)
-	root := chi.NewRouter()
-	root.Mount("/api/v1/users", handler.Router(
+	usersRouter := handler.Router(
 		config.UserConfig{AvatarUploadRatePerHour: 100, AddressWriteRatePerMinute: 100},
 		integrationAuthHooks(t),
-	))
+	)
+	root := chi.NewRouter()
+	root.Mount("/api/v1/users", usersRouter)
 
 	return &integrationFixture{
 		handler:         root,
+		fullStack:       integrationPipeline(t, usersRouter, pool),
 		pool:            pool,
 		auditWriter:     writer,
 		owner:           owner,
 		other:           other,
 		token:           token,
 		mediaConfigured: config.MediaConfig{}.IsConfigured(),
+		media:           media,
 	}
+}
+
+// integrationPipeline mounts the module behind the real shared pipeline.
+//
+// The module's own router is built without the foundation middleware, so this is
+// the only place an avatar upload is exercised against the whole chain: the global
+// body ceiling, the pipeline content-type guard and the per-route limit. The two
+// foundation bugs this story found — a pipeline that answered 415 to every
+// multipart body, and a body wrapped in a ceiling the route could not lift — were
+// both invisible from a module-level test, so the composed pipeline is the thing
+// that has to keep working.
+func integrationPipeline(t *testing.T, usersRouter http.Handler, pool *pgxpool.Pool) http.Handler {
+	t.Helper()
+	return httpserver.NewRouter(httpserver.Dependencies{
+		Config: &config.Config{
+			AppEnv:       config.EnvDevelopment,
+			HTTP:         config.HTTPConfig{Addr: ":0"},
+			CORS:         config.CORSConfig{AllowedOrigins: []string{"http://localhost:3000"}},
+			RateLimit:    config.RateLimitConfig{RequestsPerSecond: 100, Burst: 200},
+			MaxBodyBytes: 4 << 20,
+			Log:          config.LogConfig{Level: "error"},
+		},
+		Logger:  discardLogger(),
+		DB:      &database.DB{Pool: pool},
+		Auth:    integrationAuthHooks(t),
+		Version: func(context.Context) (int64, error) { return 1, nil },
+		Mount: func(r chi.Router) {
+			r.Mount("/users", usersRouter)
+		},
+	})
 }
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
 }
 
-// integrationService binds the real profile and address use cases to the module's
-// full use-case surface. The avatar and administrator-lookup methods still come
-// from the stub, whose routes these tests never reach; this adapter disappears once
-// every story has landed and T023 wires *implement.Service directly.
+// integrationService binds the real profile, avatar and address use cases to the
+// module's full use-case surface. The administrator-lookup method still comes from
+// the stub, whose route these tests never reach; this adapter disappears once every
+// story has landed and T023 wires *implement.Service directly.
 type integrationService struct {
 	*stubService
 	user *implement.Service
@@ -163,6 +211,14 @@ func (s integrationService) GetProfile(ctx context.Context, id uuid.UUID) (appdt
 
 func (s integrationService) UpdateProfile(ctx context.Context, in appdto.UpdateProfileInput) (appdto.ProfileOutput, error) {
 	return s.user.UpdateProfile(ctx, in)
+}
+
+func (s integrationService) SetAvatar(ctx context.Context, in appdto.SetAvatarInput) (appdto.ProfileOutput, error) {
+	return s.user.SetAvatar(ctx, in)
+}
+
+func (s integrationService) RemoveAvatar(ctx context.Context, id uuid.UUID) (appdto.ProfileOutput, error) {
+	return s.user.RemoveAvatar(ctx, id)
 }
 
 func (s integrationService) ListAddresses(ctx context.Context, in appdto.ListAddressesInput) (appdto.AddressPageOutput, error) {
@@ -360,6 +416,28 @@ func (f *integrationFixture) drainAuditAction(t *testing.T, action string) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the audit writer never persisted a %s event", action)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// waitForAuditRows waits until the given action has the expected number of
+// persisted rows.
+//
+// drainAuditAction only waits for "at least one", which is right for a test that
+// performs one audited operation and wrong for a test that performs several: the
+// second operation's event may still be in the writer's queue when the check runs,
+// and the assertion would then fail on a race rather than on a defect.
+func (f *integrationFixture) waitForAuditRows(t *testing.T, action string, want int) []audit.Event {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		events := f.auditRows(t, action)
+		if len(events) == want {
+			return events
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d %s rows, got %d", want, action, len(events))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -1188,5 +1266,284 @@ func TestTheAddressListIsPaginatedAgainstPostgres(t *testing.T) {
 	beyond := f.listAddresses(t, f.token, "?page=9&pageSize=2")
 	if len(beyond.Data) != 0 || beyond.Meta.Total != 3 {
 		t.Fatalf("expected an empty page past the end with the total intact, got %+v", beyond)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// US3 against real infrastructure.
+//
+// The media service is a stand-in: no Cloudinary credential belongs in a test, and
+// the adapter's own tests cover the provider contract, the signature and the
+// fail-closed behaviour. What these tests pin is the part that only a real database
+// can show — the four avatar columns moving as one unit, the audit trail, and a
+// rejected upload leaving the row exactly as it was.
+// ---------------------------------------------------------------------------
+
+const avatarPath = profilePath + "/avatar"
+
+// uploadAvatar sends a real multipart request with one file part carrying content.
+func (f *integrationFixture) uploadAvatar(t *testing.T, filename string, content []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	return postAvatarAt(f.handler, avatarPath, filename, content, f.token)
+}
+
+func (f *integrationFixture) removeAvatar(t *testing.T) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := f.call(http.MethodDelete, avatarPath, "", f.token)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove the avatar: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	return rec
+}
+
+// avatarColumns are the four stored avatar values, read straight from the row so
+// no response mapping can hide what was persisted.
+func (f *integrationFixture) avatarColumns(t *testing.T, id uuid.UUID) profileRows {
+	t.Helper()
+	return f.storedRow(t, id)
+}
+
+// FR-016, FR-017 and SC-005: an accepted upload stores the whole reference, a
+// replacement stores the new one and releases the old asset, and a rejected upload
+// leaves the stored reference exactly as it was.
+func TestAvatarUploadReplaceAndRejectedUploadAgainstPostgres(t *testing.T) {
+	f := newIntegrationFixture(t)
+
+	rec := f.uploadAvatar(t, "avatar.png", pngPayload())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if avatar := decodeAvatar(t, rec).Data.Avatar; avatar == nil ||
+		avatar.PublicID != "artist-shop/avatars/one" || avatar.Width != 512 || avatar.Height != 512 {
+		t.Fatalf("expected the stored reference in the response, got %+v", avatar)
+	}
+
+	// The four columns move together, so all four are populated (FR-016).
+	stored := f.avatarColumns(t, f.owner)
+	if stored.PublicID == nil || stored.SecureURL == nil || stored.Width == nil || stored.Height == nil {
+		t.Fatalf("expected a complete reference in the row, got %+v", stored)
+	}
+	if *stored.PublicID != "artist-shop/avatars/one" || *stored.Width != 512 || *stored.Height != 512 {
+		t.Fatalf("unexpected stored reference: %+v", stored)
+	}
+	if !strings.HasPrefix(*stored.SecureURL, "https://") {
+		t.Fatalf("expected an absolute https link in the row, got %q", *stored.SecureURL)
+	}
+
+	// A rejected upload changes nothing: not the row, not the audit trail.
+	setBefore := f.waitForAuditRows(t, constant.AuditAvatarSet, 1)
+	rowBefore := f.storedRow(t, f.owner)
+
+	rec = f.uploadAvatar(t, "avatar.png", []byte("GIF89a not an image at all"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unsupported image, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != constant.CodeAvatarTypeUnsupported {
+		t.Fatalf("expected %s, got %s", constant.CodeAvatarTypeUnsupported, got)
+	}
+	if got := detailField(t, rec); got != fieldFile {
+		t.Fatalf("expected the detail to name %q, got %q", fieldFile, got)
+	}
+	if after := f.storedRow(t, f.owner); !sameStoredReference(after, rowBefore) {
+		t.Fatalf("a rejected upload changed the stored reference:\n before %+v\n after  %+v", rowBefore, after)
+	}
+	if got := len(f.auditRows(t, constant.AuditAvatarSet)); got != len(setBefore) {
+		t.Fatalf("a rejected upload must not be audited, got %d events", got)
+	}
+	if f.media.uploads != 1 {
+		t.Fatalf("a rejected upload must not reach the media service, got %d calls", f.media.uploads)
+	}
+
+	// Replacing the photo stores the new reference and releases the previous asset.
+	f.media.reference = appinterface.MediaReference{
+		PublicID: "artist-shop/avatars/two",
+		URL:      "https://res.cloudinary.com/demo/image/upload/artist-shop/avatars/two.jpg",
+		Width:    512,
+		Height:   640,
+	}
+	rec = f.uploadAvatar(t, "avatar.png", pngPayload())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replace: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	replaced := f.storedRow(t, f.owner)
+	if replaced.PublicID == nil || *replaced.PublicID != "artist-shop/avatars/two" {
+		t.Fatalf("expected the new reference in the row, got %+v", replaced)
+	}
+	if replaced.Width == nil || *replaced.Width != 512 || replaced.Height == nil || *replaced.Height != 640 {
+		t.Fatalf("expected the provider's dimensions in the row, got %+v", replaced)
+	}
+	if f.media.removed != 1 {
+		t.Fatalf("expected the replaced asset to be released once, got %d", f.media.removed)
+	}
+
+	// SC-008: every accepted upload is traceable to the account, an action and a
+	// point in time.
+	events := f.waitForAuditRows(t, constant.AuditAvatarSet, 2)
+	for _, event := range events {
+		if event.ActorID == nil || *event.ActorID != f.owner {
+			t.Fatalf("expected the account %s as the actor, got %v", f.owner, event.ActorID)
+		}
+		if event.ActorRole != string(access.RoleCustomer) {
+			t.Fatalf("expected the actor role, got %q", event.ActorRole)
+		}
+		if event.TargetType != "user" || event.TargetID != f.owner.String() {
+			t.Fatalf("expected the account as the target, got %q/%q", event.TargetType, event.TargetID)
+		}
+		if event.Outcome != audit.OutcomeSuccess {
+			t.Fatalf("expected a SUCCESS outcome, got %q", event.Outcome)
+		}
+		if event.OccurredAt.IsZero() {
+			t.Fatal("expected a point in time on the event")
+		}
+	}
+
+	// Another customer's row never gained a photo.
+	if other := f.storedRow(t, f.other); other.PublicID != nil || other.SecureURL != nil {
+		t.Fatalf("another customer gained an avatar: %+v", other)
+	}
+}
+
+// FR-017: removing the photo clears all four columns in one write and releases the
+// asset, and the removal is audited.
+func TestAvatarRemovalAgainstPostgres(t *testing.T) {
+	f := newIntegrationFixture(t)
+	if rec := f.uploadAvatar(t, "avatar.png", pngPayload()); rec.Code != http.StatusOK {
+		t.Fatalf("seed the avatar: %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec := f.removeAvatar(t)
+
+	if avatar := decodeAvatar(t, rec).Data.Avatar; avatar != nil {
+		t.Fatalf("expected no avatar in the response, got %+v", avatar)
+	}
+	cleared := f.storedRow(t, f.owner)
+	if cleared.PublicID != nil || cleared.SecureURL != nil || cleared.Width != nil || cleared.Height != nil {
+		t.Fatalf("expected all four columns to be NULL, got %+v", cleared)
+	}
+	if f.media.removed != 1 {
+		t.Fatalf("expected the asset to be released once, got %d", f.media.removed)
+	}
+
+	// The next read answers from the database, not from the removal's answer.
+	if body := f.readProfile(t); body.Data.Avatar != nil {
+		t.Fatalf("expected a null avatar on the next read, got %s", string(*body.Data.Avatar))
+	}
+
+	events := f.waitForAuditRows(t, constant.AuditAvatarRemoved, 1)
+	if events[0].ActorID == nil || *events[0].ActorID != f.owner {
+		t.Fatalf("expected the account as the actor, got %v", events[0].ActorID)
+	}
+	if events[0].TargetID != f.owner.String() {
+		t.Fatalf("expected the account as the target, got %q", events[0].TargetID)
+	}
+
+	// Removing again is a no-op: nothing changed, so nothing is audited and no
+	// provider call is made.
+	f.removeAvatar(t)
+	if got := len(f.auditRows(t, constant.AuditAvatarRemoved)); got != 1 {
+		t.Fatalf("removing nothing must not be audited, got %d rows", got)
+	}
+	if f.media.removed != 1 {
+		t.Fatalf("removing nothing must not call the media service, got %d releases", f.media.removed)
+	}
+}
+
+// FR-017 and FR-021: a provider outage is retryable, the row keeps the photo the
+// customer already had, and the profile still reads.
+func TestAMediaOutageChangesNothingAgainstPostgres(t *testing.T) {
+	f := newIntegrationFixture(t)
+	if rec := f.uploadAvatar(t, "avatar.png", pngPayload()); rec.Code != http.StatusOK {
+		t.Fatalf("seed the avatar: %d (%s)", rec.Code, rec.Body.String())
+	}
+	before := f.storedRow(t, f.owner)
+	f.media.err = errors.New("provider unreachable")
+
+	rec := f.uploadAvatar(t, "avatar.png", pngPayload())
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != constant.CodeMediaUnavailable {
+		t.Fatalf("expected %s, got %s", constant.CodeMediaUnavailable, got)
+	}
+	if strings.Contains(rec.Body.String(), "provider unreachable") {
+		t.Fatalf("the provider's own words leaked to the client: %s", rec.Body.String())
+	}
+	if after := f.storedRow(t, f.owner); !sameStoredReference(after, before) {
+		t.Fatalf("a media outage changed the stored reference:\n before %+v\n after  %+v", before, after)
+	}
+	if avatar := decodeAvatar(t, f.call(http.MethodGet, profilePath, "", f.token)).Data.Avatar; avatar == nil {
+		t.Fatal("the profile must still read with the photo it already had")
+	}
+}
+
+// sameStoredReference compares the four avatar columns of two rows by value, so a
+// refused or failed operation can be shown to have changed nothing.
+func sameStoredReference(a, b profileRows) bool {
+	switch {
+	case (a.PublicID == nil) != (b.PublicID == nil):
+		return false
+	case (a.SecureURL == nil) != (b.SecureURL == nil):
+		return false
+	case (a.Width == nil) != (b.Width == nil):
+		return false
+	case (a.Height == nil) != (b.Height == nil):
+		return false
+	}
+	if a.PublicID != nil && (*a.PublicID != *b.PublicID ||
+		*a.SecureURL != *b.SecureURL || *a.Width != *b.Width || *a.Height != *b.Height) {
+		return false
+	}
+	return true
+}
+
+// The composed pipeline is the thing that has to keep working: a module's own
+// router is built without the foundation middleware, so this is the only place the
+// avatar body is exercised against the global body ceiling, the pipeline
+// content-type guard and the route-level limit together. Both of those foundation
+// steps used to refuse a multipart upload of exactly this size before the route
+// could apply its own rule.
+func TestAnAvatarSizedUploadReachesTheRouteThroughTheSharedPipeline(t *testing.T) {
+	f := newIntegrationFixture(t)
+	content := make([]byte, appinterface.DefaultAvatarMaxBytes)
+	copy(content, pngPayload())
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "avatar.png")
+	if err != nil {
+		t.Fatalf("create the file part: %v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("write the file part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close the multipart writer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	rec := httptest.NewRecorder()
+	f.fullStack.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a %d byte upload must survive the shared pipeline, got %d (%s)",
+			appinterface.DefaultAvatarMaxBytes, rec.Code, rec.Body.String())
+	}
+	stored := f.storedRow(t, f.owner)
+	if stored.PublicID == nil || stored.SecureURL == nil || stored.Width == nil || stored.Height == nil {
+		t.Fatalf("expected a complete reference in the row, got %+v", stored)
+	}
+
+	// The JSON routes still refuse another media type, now from the route that
+	// decodes JSON rather than from a check on the whole mux.
+	plain := httptest.NewRequest(http.MethodPatch, "/api/v1/users/me", strings.NewReader(`{"displayName":"A"}`))
+	plain.Header.Set("Content-Type", "text/plain")
+	plain.Header.Set("Authorization", "Bearer "+f.token)
+	plainRec := httptest.NewRecorder()
+	f.fullStack.ServeHTTP(plainRec, plain)
+	if plainRec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415 for a JSON route sent text/plain, got %d (%s)",
+			plainRec.Code, plainRec.Body.String())
 	}
 }

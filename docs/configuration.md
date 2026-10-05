@@ -83,7 +83,7 @@ xem `internal/share/logging/redact.go`).
 ### Request & audit
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `MAX_BODY_BYTES` | `1048576` | ✅ > 0 | Giới hạn kích thước body |
+| `MAX_BODY_BYTES` | `4194304` | ✅ > 0 | Trần thô cho mọi body. Route avatar áp trần chính xác 2 MB (FR-015); giá trị này chỉ chặn sớm một body quá lớn, không phải trần nghiệp vụ |
 | `AUDIT_QUEUE_SIZE` | `1024` | ✅ > 0 | Hàng đợi ghi `audit_logs` |
 | `AUDIT_MAX_RETRIES` | `5` | | Số lần thử lại khi ghi audit thất bại |
 

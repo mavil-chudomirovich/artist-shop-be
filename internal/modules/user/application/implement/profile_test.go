@@ -104,6 +104,19 @@ func (a *recordingAudit) countOf(action string) int {
 	return total
 }
 
+// eventsByAction returns the recorded events of one action, so a test can assert
+// on the actor, the target and the metadata of the event that matters rather
+// than only on how many there were.
+func (a *recordingAudit) eventsByAction(action string) []recordedEvent {
+	var out []recordedEvent
+	for _, e := range a.events {
+		if e.action == action {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 var _ appinterface.Auditor = (*recordingAudit)(nil)
 
 type harness struct {
