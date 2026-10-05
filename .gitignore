@@ -1,0 +1,38 @@
+# Binaries and build output
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/dist/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Vendor (not used; dependencies resolved from module cache)
+vendor/
+
+# Test/coverage
+coverage.out
+*.cover
+*.prof
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.tmp
+
+# Logs
+*.log
