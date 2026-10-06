@@ -135,13 +135,13 @@ ceiling; the service starts. `quickstart.md` scenario 7.
 > **NOTE: Write these tests FIRST.** The equal-boundary case matters as much as the failing
 > one: a guard that refuses an equal ceiling would block a configuration that works.
 
-- [ ] T016 [P] [US3] Guard tests, covering FR-019, in `internal/modules/user/presentation/http/router_test.go` or a dedicated file beside it: strictly below the avatar ceiling is refused, exactly equal starts, above starts — pinning the boundary in both directions
-- [ ] T017 [P] [US3] Message test (FR-020) in `internal/modules/user/presentation/http/startup_guard_test.go`, beside the function T018 puts the guard in, asserting the refusal names the setting and both values so an operator can correct it without reading source, and contains no credential value. **Not** in `cmd/api`: `run()` opens the database and runs migrations before it reaches the guard, so a test there would need real infrastructure
+- [x] T016 [P] [US3] Guard tests, covering FR-019, in `internal/modules/user/presentation/http/router_test.go` or a dedicated file beside it: strictly below the avatar ceiling is refused, exactly equal starts, above starts — pinning the boundary in both directions
+- [x] T017 [P] [US3] Message test (FR-020) in `internal/modules/user/presentation/http/startup_guard_test.go`, beside the function T018 puts the guard in, asserting the refusal names the setting and both values so an operator can correct it without reading source, and contains no credential value. **Not** in `cmd/api`: `run()` opens the database and runs migrations before it reaches the guard, so a test there would need real infrastructure
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] Export the single figure and the guard function (FR-019) an avatar route needs from `internal/modules/user/presentation/http/router.go`, and add a pure exported guard function beside it taking only the two ceiling values and media-configured state, so `cmd/api` can call it and a unit test can exercise every branch without a database. The route and the guard must read the same figure so they cannot drift
-- [ ] T019 [US3] Apply the guard (FR-019, FR-013) in `cmd/api/main.go`, refusing to start only when media upload is configured and the shared ceiling is strictly lower, and logging rather than refusing when media is absent
+- [x] T018 [US3] Export the single figure and the guard function (FR-019) an avatar route needs from `internal/modules/user/presentation/http/router.go`, and add a pure exported guard function beside it taking only the two ceiling values and media-configured state, so `cmd/api` can call it and a unit test can exercise every branch without a database. The route and the guard must read the same figure so they cannot drift
+- [x] T019 [US3] Apply the guard (FR-019, FR-013) in `cmd/api/main.go`, refusing to start only when media upload is configured and the shared ceiling is strictly lower, and logging rather than refusing when media is absent
 
 **Checkpoint**: All three user stories are independently functional.
 

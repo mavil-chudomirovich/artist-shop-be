@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -21,7 +22,54 @@ import (
 // generous, never exact. It also has to stay under the shared pipeline ceiling,
 // which wraps the body before routing and therefore cannot be lifted here;
 // config.MaxBodyBytes ships at twice the image ceiling for that reason.
+// RequireAvatarUploadCeiling below is what refuses a startup that breaks that
+// relation, so the coupling documented here is enforced rather than described.
 const avatarUploadOverhead = 64 << 10
+
+// AvatarUploadCeiling is the body ceiling the avatar route installs: the image
+// ceiling plus the room the multipart envelope needs.
+//
+// It is exported because the composition root has to compare the shared pipeline
+// ceiling against it before it wires anything, and the two must be the same
+// number. The route below and the startup guard both read this function, so the
+// check cannot drift away from the limit the route really applies (FR-019,
+// research D2).
+func AvatarUploadCeiling(imageCeilingBytes int64) int64 {
+	return imageCeilingBytes + avatarUploadOverhead
+}
+
+// RequireAvatarUploadCeiling refuses a startup whose shared pipeline ceiling is
+// below the ceiling the avatar route installs, and returns nil otherwise.
+//
+// The shared wrapper runs before routing, so a ceiling under the avatar route's
+// own means every avatar upload is refused by the pipeline first, with a reason
+// that does not point at the setting an operator has to change. Refusing to start
+// turns that into one message that does (FR-019, FR-020).
+//
+// The boundary is deliberate: strictly below refuses, equal starts. Equal is safe
+// because the route's own ceiling is the binding constraint at that point, and
+// refusing it would block a configuration that works (research D2).
+//
+// mediaConfigured reports whether the provider credentials are present. Without
+// them no upload can be served at all, so the ceiling is irrelevant and the
+// startup is allowed: the composition logs that consequence instead (FR-021).
+//
+// The function is pure - it reads no configuration and touches no infrastructure -
+// so the composition root can call it before it opens anything and a unit test can
+// cover every branch without a database.
+func RequireAvatarUploadCeiling(sharedBodyCeilingBytes, avatarCeilingBytes int64, mediaConfigured bool) error {
+	if !mediaConfigured || sharedBodyCeilingBytes >= avatarCeilingBytes {
+		return nil
+	}
+	// The message carries no credential: it receives only two byte counts and a
+	// boolean, so there is nothing secret for it to leak (Constitution V, VI).
+	return fmt.Errorf(
+		"MAX_BODY_BYTES is %d bytes but an avatar upload needs at least %d bytes: "+
+			"the shared request-size ceiling wraps the body before routing, so every avatar upload would be "+
+			"refused before the avatar route could apply its own limit. "+
+			"Raise MAX_BODY_BYTES to at least %d bytes, or start without media credentials",
+		sharedBodyCeilingBytes, avatarCeilingBytes, avatarCeilingBytes)
+}
 
 // Router builds the `/users` group. Mount it under `/api/v1`.
 //
@@ -68,7 +116,7 @@ func (h *Handler) Router(limits config.UserConfig, hooks middleware.AuthHooks) h
 	// answer independent of whether the client declared its length (FR-001,
 	// research D1).
 	r.With(authenticated, avatarLimit,
-		middleware.BodyLimitWithRefusal(h.cfg.AvatarMaxBytesOrDefault()+avatarUploadOverhead, avatarTooLarge())).
+		middleware.BodyLimitWithRefusal(AvatarUploadCeiling(h.cfg.AvatarMaxBytesOrDefault()), avatarTooLarge())).
 		Post("/me/avatar", h.SetAvatar)
 
 	r.With(authenticated).Get("/me/addresses", h.ListAddresses)

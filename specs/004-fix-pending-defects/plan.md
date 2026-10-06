@@ -112,7 +112,7 @@ specs/004-fix-pending-defects/
 ```text
 internal/
 ├── share/
-│   ├── httpserver/routes.go          # startup guard: pipeline ceiling vs avatar ceiling
+│   ├── httpserver/routes.go          # unchanged: keeps the coarse shared ceiling only
 │   ├── middleware/bodylimit.go       # refusal reason for the avatar route
 │   └── config/config.go              # unchanged; MAX_BODY_BYTES already exists
 └── modules/

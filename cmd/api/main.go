@@ -54,6 +54,34 @@ func run() error {
 	}
 	logger := logging.New(cfg.Log.Level, os.Stdout)
 
+	// The avatar ceilings are the domain's own (FR-014, FR-015). No environment
+	// setting overrides them, so the composition leaves the zero value and
+	// appinterface.Config falls back to the documented contract ceilings rather than
+	// widening or narrowing them from here. The same value is handed to the service
+	// and to the handler, because the handler sizes the route's body limit from the
+	// very ceiling the use case enforces.
+	userConfig := userappinterface.Config{}
+
+	// The shared request-size ceiling wraps the body before routing, so a route
+	// cannot lift it: if it sits below what an avatar upload needs, every upload is
+	// refused by the pipeline first and the operator is told nothing about the
+	// setting to change. The composition root is the only place that sees both
+	// numbers, so it refuses to start here — before it opens a database, runs a
+	// migration or binds a port (FR-019, FR-020).
+	//
+	// The figure comes from the module that owns the route, so there is one owner of
+	// the number rather than a literal copied into the shared layer, which
+	// Constitution I forbids from importing a module (research D2, plan.md
+	// Complexity Tracking). The guard is pure, so it runs before any wiring without
+	// a cost and each of its branches is unit tested in the module's own package.
+	if err := userhttp.RequireAvatarUploadCeiling(
+		cfg.MaxBodyBytes,
+		userhttp.AvatarUploadCeiling(userConfig.AvatarMaxBytesOrDefault()),
+		cfg.Media.IsConfigured(),
+	); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -152,17 +180,14 @@ func run() error {
 	if !cfg.Media.IsConfigured() {
 		// Named, never valued: the keys are safe to log, the secrets behind them are
 		// not (Constitution V, VI).
-		logger.Warn("media credentials are absent: avatar upload answers USER_MEDIA_UNAVAILABLE, every other endpoint is unaffected",
+		//
+		// The ceiling guard above stayed silent in this mode on purpose, so this line
+		// carries the consequence an operator would otherwise have to work out: with
+		// no upload possible, MAX_BODY_BYTES cannot make an avatar upload fail
+		// (FR-021). Logged once, at startup.
+		logger.Warn("media credentials are absent: avatar upload answers USER_MEDIA_UNAVAILABLE, every other endpoint is unaffected, and MAX_BODY_BYTES is not checked against the avatar ceiling",
 			slog.String("mediaConfigKeys", "MEDIA_CLOUD_NAME, MEDIA_API_KEY, MEDIA_API_SECRET"))
 	}
-
-	// The avatar ceilings are the domain's own (FR-014, FR-015). No environment
-	// setting overrides them, so the composition leaves the zero value and
-	// appinterface.Config falls back to the documented contract ceilings rather than
-	// widening or narrowing them from here. The same value is handed to the service
-	// and to the handler, because the handler sizes the route's body limit from the
-	// very ceiling the use case enforces.
-	userConfig := userappinterface.Config{}
 
 	// The module reuses the foundation audit writer the auth module already writes
 	// through: one queue, one retry policy, one shutdown. A second writer would be a
