@@ -29,6 +29,9 @@ curl -s -X POST $BASE/auth/register -H 'Content-Type: application/json' \
   -d '{"email":"shopper@example.com","password":"Str0ng!Pass"}'
 ```
 
+> [!NOTE]
+> `.env.example` để `SMTP_HOST` rỗng, nên mail sẽ nằm trong log API chứ không vào Mailpit.
+> Muốn đọc OTP trong Mailpit thì đặt `SMTP_HOST=mailpit` và `SMTP_PORT=1025` trước khi chạy API.
 OTP nằm trong hộp thư Mailpit (`http://localhost:8025`) hoặc trong log API nếu
 `SMTP_HOST` rỗng. Lấy `otp` rồi xác nhận và đăng nhập:
 
@@ -179,6 +182,8 @@ curl -s -X PATCH $BASE/users/me/addresses/<ADDRESS_ID_OF_OTHER> \
 # Tài khoản khách -> 403
 curl -s -o /dev/null -w "%{http_code}\n" $BASE/users/<USER_ID> -H "$AUTH"
 
+# Cần tài khoản admin trước: `make seed` tạo tài khoản theo ADMIN_EMAIL/ADMIN_PASSWORD trong .env.
+# Trên database trống, bỏ qua bước này thì ADMIN_ACCESS sẽ rỗng và curl sẽ gửi body rỗng.
 # Tài khoản admin -> 200, chỉ đọc
 ADMIN_ACCESS=$(curl -s -X POST $BASE/auth/login -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
@@ -189,6 +194,10 @@ curl -s $BASE/users/<USER_ID> -H "Authorization: Bearer $ADMIN_ACCESS"
 # Mỗi lần xem đều được audit
 docker compose exec -T db psql -U app -d artist_shop \
   -c "SELECT action, actor_id, target_id FROM audit_logs WHERE action = 'USER_PROFILE_VIEWED_BY_ADMIN' ORDER BY created_at DESC LIMIT 3;"
+
+# 403 o tren duoc ghi lai boi module Auth, khong phai boi module User:
+docker compose exec -T db psql -U app -d artist_shop \
+  -c "SELECT action, actor_id, target_type, outcome FROM audit_logs WHERE action = 'AUTH_PRIVILEGE_DENIED' ORDER BY created_at DESC LIMIT 3;"
 ```
 
 ## 8. Test tự động
@@ -219,7 +228,7 @@ make db-shell
 
 ```sql
 -- Profile đã đồng bộ
-SELECT user_id, display_name, phone, avatar_public_id FROM users
+SELECT id, display_name, phone, avatar_public_id FROM users
  WHERE display_name IS NOT NULL;
 
 -- Không thể có 2 địa chỉ mặc định: index chặn ở tầng lưu trữ

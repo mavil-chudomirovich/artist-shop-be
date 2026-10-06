@@ -123,6 +123,16 @@ func TestNewAddressRefusesStructurallyInvalidInput(t *testing.T) {
 			FieldRecipientName,
 		},
 		{
+			"a province name one character over the contract limit",
+			func(d *AddressDraft) { d.ProvinceName = repeat("a", maxProvinceNameRunes+1) },
+			FieldProvinceName,
+		},
+		{
+			"a ward name one character over the contract limit",
+			func(d *AddressDraft) { d.WardName = repeat("a", maxWardNameRunes+1) },
+			FieldWardName,
+		},
+		{
 			"a street address one character over the contract limit",
 			func(d *AddressDraft) { d.StreetAddress = repeat("a", maxStreetAddressRunes+1) },
 			FieldStreetAddress,
@@ -178,6 +188,26 @@ func TestAMemberAtTheContractLengthCeilingIsAccepted(t *testing.T) {
 			check: func(a *Address) {
 				if n := utf8.RuneCountInString(a.StreetAddress); n != maxStreetAddressRunes {
 					t.Errorf("expected the stored address to keep all %d characters, got %d", maxStreetAddressRunes, n)
+				}
+			},
+		},
+		{
+			name:  "province name of exactly the limit",
+			alter: func(d *AddressDraft) { d.ProvinceName = repeat("a", maxProvinceNameRunes) },
+			check: func(a *Address) {
+				if n := utf8.RuneCountInString(a.ProvinceName); n != maxProvinceNameRunes {
+					t.Errorf("expected the stored province name to keep all %d characters, got %d",
+						maxProvinceNameRunes, n)
+				}
+			},
+		},
+		{
+			name:  "ward name of exactly the limit",
+			alter: func(d *AddressDraft) { d.WardName = repeat("a", maxWardNameRunes) },
+			check: func(a *Address) {
+				if n := utf8.RuneCountInString(a.WardName); n != maxWardNameRunes {
+					t.Errorf("expected the stored ward name to keep all %d characters, got %d",
+						maxWardNameRunes, n)
 				}
 			},
 		},
@@ -581,7 +611,7 @@ func TestNewAddressTrimsTheCapturedDivisionNames(t *testing.T) {
 }
 
 // The ceilings are the exact numbers contracts/openapi.yaml advertises as maxLength
-// on recipientName and streetAddress.
+// on recipientName, provinceName, wardName and streetAddress.
 //
 // This test exists because every other test in this file measures against the
 // constants rather than against literals: a constant changed to the wrong number
@@ -592,9 +622,148 @@ func TestTheContractLengthCeilingsMatchTheAdvertisedMaxLength(t *testing.T) {
 		t.Errorf("recipientName: the contract advertises maxLength 120, the entity enforces %d",
 			maxRecipientNameRunes)
 	}
+	if maxProvinceNameRunes != 120 {
+		t.Errorf("provinceName: the contract advertises maxLength 120, the entity enforces %d",
+			maxProvinceNameRunes)
+	}
+	if maxWardNameRunes != 120 {
+		t.Errorf("wardName: the contract advertises maxLength 120, the entity enforces %d",
+			maxWardNameRunes)
+	}
 	if maxStreetAddressRunes != 255 {
 		t.Errorf("streetAddress: the contract advertises maxLength 255, the entity enforces %d",
 			maxStreetAddressRunes)
+	}
+}
+
+// The captured division names are client-supplied text like the recipient name, so they
+// carry the same ceiling. Without it any authenticated customer could store unbounded
+// text — markup included — that an operator later receives verbatim in the customer
+// lookup, and the contract's maxLength on the two members would be a promise the server
+// never kept.
+//
+// The four cases are the whole rule: at the limit is accepted, one character over is
+// rejected outright, the count is in characters so a Vietnamese name of 120 fits even at
+// 360 bytes, and a blank name is not a violation — it is the way a client says "capture
+// it from the dataset" (research D10). Both transitions are covered, because an edit
+// that did not re-check the staged draft would be a way around the ceiling on create.
+func TestTheCapturedDivisionNamesCarryTheContractLengthCeiling(t *testing.T) {
+	const vietnamese = "Ữ" // three bytes in UTF-8
+
+	values := []struct {
+		name string
+		// value is the captured name a client sends.
+		value string
+		// field is the member the entity must name in its refusal, empty when the
+		// input has to be accepted.
+		field string
+		// multiByte marks a value whose byte length is well past the ceiling, so a
+		// byte count could not have produced the same outcome.
+		multiByte bool
+	}{
+		{"the limit", repeat("a", maxProvinceNameRunes), "", false},
+		{"one character over the limit", repeat("a", maxProvinceNameRunes+1), FieldProvinceName, false},
+		{"the limit plus surrounding whitespace", "  " + repeat("a", maxProvinceNameRunes) + "\n", "", false},
+		{"the limit in multi-byte characters", repeat(vietnamese, maxProvinceNameRunes), "", true},
+		{"one multi-byte character over the limit", repeat(vietnamese, maxProvinceNameRunes+1), FieldProvinceName, true},
+		{"blank", "   ", "", false},
+	}
+
+	// The province name and the ward name are two members with one ceiling, and the
+	// refusal has to name whichever one was sent — so both are exercised.
+	members := []struct {
+		name   string
+		field  string
+		apply  func(*AddressDraft, string)
+		edit   func(string) AddressEdit
+		stored func(*Address) string
+	}{
+		{
+			name:   "provinceName",
+			field:  FieldProvinceName,
+			apply:  func(d *AddressDraft, value string) { d.ProvinceName = value },
+			edit:   func(value string) AddressEdit { return AddressEdit{ProvinceName: editPtr(value)} },
+			stored: func(a *Address) string { return a.ProvinceName },
+		},
+		{
+			name:   "wardName",
+			field:  FieldWardName,
+			apply:  func(d *AddressDraft, value string) { d.WardName = value },
+			edit:   func(value string) AddressEdit { return AddressEdit{WardName: editPtr(value)} },
+			stored: func(a *Address) string { return a.WardName },
+		},
+	}
+
+	for _, member := range members {
+		for _, tc := range values {
+			wantField := tc.field
+			if tc.field == FieldProvinceName {
+				wantField = member.field
+			}
+			if tc.multiByte && len(tc.value) <= maxProvinceNameRunes {
+				t.Fatalf("%s/%s: expected a multi-byte fixture, got %d bytes for %d characters",
+					member.name, tc.name, len(tc.value), utf8.RuneCountInString(tc.value))
+			}
+
+			t.Run(member.name+"/"+tc.name, func(t *testing.T) {
+				t.Run("create", func(t *testing.T) {
+					draft := validDraft()
+					member.apply(&draft, tc.value)
+
+					address, err := NewAddress(uuid.New(), draft, fixedNow)
+
+					assertAddressFieldOutcome(t, err, wantField)
+					if wantField != "" && address != nil {
+						t.Fatalf("a refused draft must yield no address, got %+v", address)
+					}
+					if err == nil && member.stored(address) != strings.TrimSpace(tc.value) {
+						t.Errorf("expected the stored name to keep the trimmed input of %d characters, got %d",
+							utf8.RuneCountInString(strings.TrimSpace(tc.value)),
+							utf8.RuneCountInString(member.stored(address)))
+					}
+				})
+
+				t.Run("edit", func(t *testing.T) {
+					address := mustAddress(t, uuid.New())
+					before := *address
+
+					err := address.Apply(member.edit(tc.value), fixedNow.Add(time.Hour))
+
+					assertAddressFieldOutcome(t, err, wantField)
+					if err != nil && *address != before {
+						t.Errorf("a refused edit changed the entity:\n before %+v\n after  %+v", before, *address)
+					}
+					if err == nil && member.stored(address) != strings.TrimSpace(tc.value) {
+						t.Errorf("expected the stored name to keep the trimmed input of %d characters, got %d",
+							utf8.RuneCountInString(strings.TrimSpace(tc.value)),
+							utf8.RuneCountInString(member.stored(address)))
+					}
+				})
+			})
+		}
+	}
+}
+
+// assertAddressFieldOutcome states one case of the ceiling rule: an empty field means
+// the input must be accepted, and a named field means it must be refused as an invalid
+// address member naming exactly that member and stating the ceiling in characters.
+func assertAddressFieldOutcome(t *testing.T, err error, field string) {
+	t.Helper()
+	if field == "" {
+		if err != nil {
+			t.Fatalf("the input must be accepted, got %v", err)
+		}
+		return
+	}
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected ErrAddressInvalid, got %v", err)
+	}
+	var invalid *domainerr.AddressFieldError
+	if !errors.As(err, &invalid) || invalid.Field != field {
+		t.Fatalf("expected the error to name %q, got %v", field, err)
+	}
+	if want := limitIssue(maxProvinceNameRunes); invalid.Issue != want {
+		t.Fatalf("expected the issue %q, got %q", want, invalid.Issue)
 	}
 }
 
@@ -606,7 +775,9 @@ func TestAddressFieldKeysMatchTheContractMemberNames(t *testing.T) {
 		FieldRecipientName:  "recipientName",
 		FieldRecipientPhone: "recipientPhone",
 		FieldProvinceCode:   "provinceCode",
+		FieldProvinceName:   "provinceName",
 		FieldWardCode:       "wardCode",
+		FieldWardName:       "wardName",
 		FieldStreetAddress:  "streetAddress",
 	}
 	for got, expected := range want {

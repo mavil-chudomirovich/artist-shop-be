@@ -80,9 +80,11 @@ func (a *AvatarReference) IsComplete() bool {
 //     contract says cannot exist. The bound is inclusive and the value is
 //     refused, never clamped: clamping would store a dimension the image does not
 //     have and a client sizing a layout from it would reserve the wrong space.
-//   - the stored link must be an absolute http or https URL, because the contract
-//     declares `Avatar.url` as `format: uri` and the column is plain text, so
-//     nothing downstream would refuse a value a client cannot render.
+//   - the stored link must be an absolute HTTPS URL, because the contract declares
+//     `Avatar.url` as `format: uri` and the column is plain text, so nothing
+//     downstream would refuse a value a client cannot render, and because a
+//     cleartext link handed to a browser is a tracking beacon and an in-flight
+//     tampering opportunity (see isDisplayableURL).
 //
 // A rejection carries domainerr.ErrIncompleteAvatar in every case. The reference is
 // provider metadata this service asked for and then failed to store, which is an
@@ -112,13 +114,23 @@ func NewAvatar(publicID, link string, width, height int) (*AvatarReference, erro
 }
 
 // isDisplayableURL reports whether a stored link is one a client can actually
-// fetch.
+// fetch over a channel that cannot be tampered with in flight.
 //
-// It has to be absolute and it has to speak HTTP: a relative path, a scheme-
-// relative reference or a foreign scheme would all parse as a URL and still be
-// useless in an <img> tag or a fetch. The check is on the parsed shape rather
-// than on a prefix, so an uppercase scheme and an explicit default port are
-// accepted on the same grounds as the plain form.
+// It has to be absolute and it has to speak HTTPS. A relative path, a
+// scheme-relative reference or a foreign scheme would all parse as a URL and still
+// be useless in an <img> tag or a fetch.
+//
+// Plain HTTP is refused even though it would fetch: the value is served to every
+// client that reads the profile, and a cleartext link is a beacon for whoever can
+// influence the provider's answer — it names a third-party host and discloses the
+// viewer, and on a hostile network the bytes that come back are the attacker's,
+// not the photo. Requiring TLS removes that channel rather than documenting it as
+// acceptable, and the reference is refused outright instead of being silently
+// dropped: a link the entity will not vouch for must not be stored, because the
+// alternative is a row that claims to hold a photo and renders something else.
+//
+// The check is on the parsed shape rather than on a prefix, so an uppercase scheme
+// and an explicit default port are accepted on the same grounds as the plain form.
 func isDisplayableURL(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -128,7 +140,7 @@ func isDisplayableURL(raw string) bool {
 		return false
 	}
 	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
+	case "https":
 		return true
 	default:
 		return false

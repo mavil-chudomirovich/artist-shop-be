@@ -75,8 +75,12 @@ const (
 	FieldRecipientPhone = "recipientPhone"
 	// FieldProvinceCode is the first-level administrative unit.
 	FieldProvinceCode = "provinceCode"
+	// FieldProvinceName is the captured province display name.
+	FieldProvinceName = "provinceName"
 	// FieldWardCode is the second-level administrative unit.
 	FieldWardCode = "wardCode"
+	// FieldWardName is the captured ward display name.
+	FieldWardName = "wardName"
 	// FieldStreetAddress is the free-text house number and street.
 	FieldStreetAddress = "streetAddress"
 )
@@ -84,14 +88,22 @@ const (
 // requiredIssue is the explanation attached to every blank required member.
 const requiredIssue = "is required"
 
-// The ceilings the contract declares for the two free-text members of an address,
-// as maxLength on recipientName and streetAddress in contracts/openapi.yaml.
+// The ceilings the contract declares for the four free-text members of an address,
+// as maxLength on recipientName, provinceName, wardName and streetAddress in
+// contracts/openapi.yaml.
 //
 // They are checked here, beside the blank checks, and not in the handler: the
 // entity is the one place every entry point passes through — create, edit and any
 // later transition — so a limit enforced only in presentation could be bypassed by
 // any caller that is not HTTP, and the contract would be advertising a limit the
 // server does not actually apply.
+//
+// The division names are bounded for the same reason the other two are, and the
+// reason matters most for them: a client may send the display name instead of
+// letting the dataset supply it, so without a ceiling any authenticated customer
+// could store unbounded text that an operator later receives verbatim in the
+// customer lookup. The bound is on the name the entity writes, which is the client's
+// word whenever it sends one.
 //
 // The columns stay unconstrained on purpose (migrations/00004_user.sql keeps
 // street_address as text): a row saved before the rule existed may be longer than
@@ -100,6 +112,10 @@ const requiredIssue = "is required"
 const (
 	// maxRecipientNameRunes is the ceiling on RecipientName.
 	maxRecipientNameRunes = 120
+	// maxProvinceNameRunes is the ceiling on ProvinceName.
+	maxProvinceNameRunes = 120
+	// maxWardNameRunes is the ceiling on WardName.
+	maxWardNameRunes = 120
 	// maxStreetAddressRunes is the ceiling on StreetAddress.
 	maxStreetAddressRunes = 255
 )
@@ -127,6 +143,10 @@ func limitIssue(limit int) string {
 //     accepted, and one character more is rejected outright rather than truncated.
 //     Truncating would silently store something the customer never typed and would
 //     break the "no half of an address is persisted" promise of a rejected draft.
+//   - A blank member is not a length violation, so this accepts it. That matters
+//     for the optional division names, where blank is a meaningful state — "capture
+//     it from the dataset" — and must not become a rejection the customer cannot
+//     act on. The required members carry their own blank rule.
 func checkRuneLimit(field, value string, limit int) error {
 	if utf8.RuneCountInString(value) > limit {
 		return domainerr.InvalidAddressField(field, limitIssue(limit))
@@ -148,12 +168,16 @@ type AddressDraft struct {
 	// ProvinceCode is the chosen first-level administrative unit. Whether it
 	// exists in the dataset is a use-case concern; it must not be blank.
 	ProvinceCode string
-	// ProvinceName is the captured province display name.
+	// ProvinceName is the captured province display name. It may be blank, which
+	// means the caller left the capture to the application layer; when it is not
+	// blank it must fit maxProvinceNameRunes.
 	ProvinceName string
 	// WardCode is the chosen second-level administrative unit. Whether it belongs
 	// to ProvinceCode is a use-case concern; it must not be blank.
 	WardCode string
-	// WardName is the captured ward display name.
+	// WardName is the captured ward display name. It may be blank, which means the
+	// caller left the capture to the application layer; when it is not blank it
+	// must fit maxWardNameRunes.
 	WardName string
 	// StreetAddress is the free-text house number and street. It must not be blank.
 	StreetAddress string
@@ -194,13 +218,13 @@ type AddressEdit struct {
 // (FR-009, Constitution III).
 //
 // It validates structure only: the recipient name, the province and ward codes and
-// the street address must not be blank, the recipient name and the street address
-// must fit the ceilings the contract declares for them (see checkRuneLimit), and
-// the recipient phone must normalise to a Vietnamese mobile number. Whether a
-// province or ward code exists in the official dataset is deliberately not checked
-// here — the domain may not import internal/share/administrative, so the use case
-// resolves it through the Divisions port before calling this (Constitution I,
-// research D1).
+// the street address must not be blank, the recipient name, both captured division
+// names and the street address must fit the ceilings the contract declares for them
+// (see checkRuneLimit), and the recipient phone must normalise to a Vietnamese
+// mobile number. Whether a province or ward code exists in the official dataset is
+// deliberately not checked here — the domain may not import
+// internal/share/administrative, so the use case resolves it through the Divisions
+// port before calling this (Constitution I, research D1).
 //
 // A rejected draft yields no address at all, so a caller cannot persist half of one.
 func NewAddress(userID uuid.UUID, draft AddressDraft, now time.Time) (*Address, error) {
@@ -218,6 +242,18 @@ func NewAddress(userID uuid.UUID, draft AddressDraft, now time.Time) (*Address, 
 	wardCode := strings.TrimSpace(draft.WardCode)
 	if wardCode == "" {
 		return nil, domainerr.InvalidAddressField(FieldWardCode, requiredIssue)
+	}
+	// The captured division names are bounded like every other free-text member. They
+	// are checked next to the codes they describe so a rejection names the member the
+	// customer actually sent, and a blank one still passes: blank means the
+	// application layer captures it from the dataset instead (research D10).
+	provinceName := strings.TrimSpace(draft.ProvinceName)
+	if err := checkRuneLimit(FieldProvinceName, provinceName, maxProvinceNameRunes); err != nil {
+		return nil, err
+	}
+	wardName := strings.TrimSpace(draft.WardName)
+	if err := checkRuneLimit(FieldWardName, wardName, maxWardNameRunes); err != nil {
+		return nil, err
 	}
 	streetAddress := strings.TrimSpace(draft.StreetAddress)
 	if streetAddress == "" {
@@ -237,9 +273,9 @@ func NewAddress(userID uuid.UUID, draft AddressDraft, now time.Time) (*Address, 
 		RecipientName:  recipientName,
 		RecipientPhone: recipientPhone,
 		ProvinceCode:   provinceCode,
-		ProvinceName:   strings.TrimSpace(draft.ProvinceName),
+		ProvinceName:   provinceName,
 		WardCode:       wardCode,
-		WardName:       strings.TrimSpace(draft.WardName),
+		WardName:       wardName,
 		StreetAddress:  streetAddress,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -314,6 +350,18 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 	if wardCode == "" {
 		return domainerr.InvalidAddressField(FieldWardCode, requiredIssue)
 	}
+	// Re-checked on every edit, exactly like the members above: a client may supply
+	// the division display name, so without this an edit would be the way to put an
+	// unbounded word into the row. An empty name is still accepted — it is the way
+	// a client asks for the dataset's current one (research D10).
+	provinceName := strings.TrimSpace(draft.ProvinceName)
+	if err := checkRuneLimit(FieldProvinceName, provinceName, maxProvinceNameRunes); err != nil {
+		return err
+	}
+	wardName := strings.TrimSpace(draft.WardName)
+	if err := checkRuneLimit(FieldWardName, wardName, maxWardNameRunes); err != nil {
+		return err
+	}
 	streetAddress := strings.TrimSpace(draft.StreetAddress)
 	if streetAddress == "" {
 		return domainerr.InvalidAddressField(FieldStreetAddress, requiredIssue)
@@ -329,9 +377,9 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 	a.RecipientName = recipientName
 	a.RecipientPhone = recipientPhone
 	a.ProvinceCode = provinceCode
-	a.ProvinceName = strings.TrimSpace(draft.ProvinceName)
+	a.ProvinceName = provinceName
 	a.WardCode = wardCode
-	a.WardName = strings.TrimSpace(draft.WardName)
+	a.WardName = wardName
 	a.StreetAddress = streetAddress
 	a.UpdatedAt = now
 	return nil

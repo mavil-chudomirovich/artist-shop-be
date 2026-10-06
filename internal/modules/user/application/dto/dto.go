@@ -56,15 +56,13 @@ type UpdateProfileInput struct {
 }
 
 // SetAvatarInput carries an uploaded avatar to the media service. The bytes are
-// validated by the domain from their content, never from Filename.
+// validated by the domain from their content, never from the client-declared file
+// name, which is why no name is carried here at all (FR-014, research D7).
 type SetAvatarInput struct {
 	// UserID is the acting account, taken from the session.
 	UserID uuid.UUID
 	// Content is the uploaded payload, already capped at the configured ceiling.
 	Content []byte
-	// Filename is the client-declared name. It is kept for diagnostics only and
-	// MUST NOT be trusted to decide the image type (FR-014).
-	Filename string
 }
 
 // AddressOutput is one shipping address.

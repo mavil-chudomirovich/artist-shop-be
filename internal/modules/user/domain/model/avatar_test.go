@@ -253,10 +253,16 @@ func TestTheStoredHeightMustBePositive(t *testing.T) {
 // column is plain text, so nothing else would refuse a value a client cannot
 // render, and a stored link that is not a link breaks the one screen the photo
 // exists for.
-func TestTheStoredURLMustBeAnAbsoluteHTTPLink(t *testing.T) {
+//
+// HTTPS only. A cleartext link would fetch, so shape alone cannot tell it apart
+// from the real thing, but it is a beacon naming a third-party host to whoever
+// reads the profile and it hands the bytes of the response to the network in
+// between. The refusal is deliberate and the asset is released by the caller, so
+// a provider answer this service will not vouch for never reaches the row.
+func TestTheStoredURLMustBeAnAbsoluteHTTPSLink(t *testing.T) {
 	accepted := []string{
 		"https://res.cloudinary.com/demo/image/upload/artist-shop/avatars/one.jpg",
-		"http://res.cloudinary.com/demo/image/upload/artist-shop/avatars/one.jpg",
+		"HTTPS://res.cloudinary.com/demo/image/upload/artist-shop/avatars/one.jpg",
 		"https://res.cloudinary.com:443/image/upload/a.png?v=1#top",
 	}
 	for _, url := range accepted {
@@ -268,6 +274,9 @@ func TestTheStoredURLMustBeAnAbsoluteHTTPLink(t *testing.T) {
 	refused := map[string]string{
 		"empty":             "",
 		"blank":             "   ",
+		"plain http":        "http://res.cloudinary.com/demo/image/upload/artist-shop/avatars/one.jpg",
+		"uppercase http":    "HTTP://res.cloudinary.com/demo/image/upload/artist-shop/avatars/one.jpg",
+		"http on any host":  "http://attacker.example/beacon.png",
 		"not a url":         "res.cloudinary.com/demo/one.jpg",
 		"relative path":     "/image/upload/one.jpg",
 		"scheme relative":   "//res.cloudinary.com/demo/one.jpg",

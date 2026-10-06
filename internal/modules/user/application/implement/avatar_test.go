@@ -214,7 +214,7 @@ func TestARejectedUploadLeavesThePreviousAvatarUntouched(t *testing.T) {
 			savesBefore := h.repo.saves
 
 			out, err := h.svc.SetAvatar(context.Background(), appdto.SetAvatarInput{
-				UserID: h.owner, Content: tc.content, Filename: "avatar.png",
+				UserID: h.owner, Content: tc.content,
 			})
 
 			if !errors.Is(err, tc.want) {

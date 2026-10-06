@@ -26,7 +26,7 @@ Documented variables (values are examples):
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origin allowlist. |
 | `RATE_LIMIT_RPS` | `20` | Default requests/second per client. |
 | `RATE_LIMIT_BURST` | `40` | Burst allowance. |
-| `MAX_BODY_BYTES` | `1048576` | Maximum request body size. |
+| `MAX_BODY_BYTES` | `4194304` | Maximum request body size (coarse; routes apply their own ceiling). |
 
 ## 1. Start a local database
 

@@ -58,6 +58,11 @@ func (s *Service) ListAddresses(ctx context.Context, in dto.ListAddressesInput) 
 // explicit transition rather than by writing the column. The decision reads the
 // listing's first row, which the repository orders default-first, so it does not
 // depend on a second query shape.
+//
+// The audit role is read inside the transaction, before the insert, for the reason
+// given on actorRole: a role read that failed after the commit would report a
+// durably stored address as a failed request, and the natural client answer to a
+// failed POST is a retry — which is how one request becomes two addresses.
 func (s *Service) CreateAddress(ctx context.Context, in dto.CreateAddressInput) (dto.AddressOutput, error) {
 	draft := model.AddressDraft{
 		RecipientName:  in.RecipientName,
@@ -68,7 +73,16 @@ func (s *Service) CreateAddress(ctx context.Context, in dto.CreateAddressInput) 
 	}
 
 	var stored model.Address
+	var role string
 	err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		// First, before anything is written, so a failed role read leaves nothing
+		// behind and the client's answer about the address stays true.
+		actorRole, err := s.actorRole(txCtx, in.UserID)
+		if err != nil {
+			return err
+		}
+		role = actorRole
+
 		names, err := s.captureDivisions(txCtx, in.ProvinceCode, in.WardCode,
 			optional(in.ProvinceName), optional(in.WardName))
 		if err != nil {
@@ -104,10 +118,6 @@ func (s *Service) CreateAddress(ctx context.Context, in dto.CreateAddressInput) 
 		return dto.AddressOutput{}, err
 	}
 
-	role, err := s.actorRole(ctx, in.UserID)
-	if err != nil {
-		return dto.AddressOutput{}, err
-	}
 	s.Audit.Record(ctx, constant.AuditAddressCreated, string(audit.OutcomeSuccess),
 		&in.UserID, role, targetTypeAddress, stored.ID.String(),
 		map[string]any{"addressId": stored.ID.String(), "becameDefault": stored.IsDefault},
@@ -184,11 +194,15 @@ func (s *Service) UpdateAddress(ctx context.Context, in dto.UpdateAddressInput) 
 
 	changed := changedAddressFields(before, *address)
 	if len(changed) > 0 {
-		if err := s.Addresses.Update(ctx, address); err != nil {
-			return dto.AddressOutput{}, err
-		}
+		// The audit role is read before the write, for the reason given on
+		// actorRole: a role read that failed after the update would report an
+		// applied edit as a failed request, and the client cannot tell the two apart
+		// from the answer alone.
 		role, err := s.actorRole(ctx, in.UserID)
 		if err != nil {
+			return dto.AddressOutput{}, err
+		}
+		if err := s.Addresses.Update(ctx, address); err != nil {
 			return dto.AddressOutput{}, err
 		}
 		s.Audit.Record(ctx, constant.AuditAddressUpdated, string(audit.OutcomeSuccess),
@@ -209,8 +223,18 @@ func (s *Service) UpdateAddress(ctx context.Context, in dto.UpdateAddressInput) 
 // Every change records USER_ADDRESS_DELETED (FR-019). It does not record a default
 // change: nothing became the default, so claiming one in the audit trail would
 // misdescribe what happened.
+//
+// The audit role is read inside the transaction, before the row is hidden, for the
+// reason given on actorRole.
 func (s *Service) DeleteAddress(ctx context.Context, in dto.AddressRefInput) error {
+	var role string
 	err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		actorRole, err := s.actorRole(txCtx, in.UserID)
+		if err != nil {
+			return err
+		}
+		role = actorRole
+
 		address, err := s.Addresses.FindByOwner(txCtx, in.UserID, in.AddressID)
 		if err != nil {
 			return err
@@ -225,10 +249,6 @@ func (s *Service) DeleteAddress(ctx context.Context, in dto.AddressRefInput) err
 		return err
 	}
 
-	role, err := s.actorRole(ctx, in.UserID)
-	if err != nil {
-		return err
-	}
 	s.Audit.Record(ctx, constant.AuditAddressDeleted, string(audit.OutcomeSuccess),
 		&in.UserID, role, targetTypeAddress, in.AddressID.String(),
 		map[string]any{"addressId": in.AddressID.String()},
@@ -248,9 +268,19 @@ func (s *Service) DeleteAddress(ctx context.Context, in dto.AddressRefInput) err
 // no default at all (FR-010, ADR-003, Constitution I).
 //
 // Every change records USER_ADDRESS_DEFAULT_SET (FR-019).
+//
+// The audit role is read inside the transaction, before either write, for the reason
+// given on actorRole.
 func (s *Service) SetDefaultAddress(ctx context.Context, in dto.AddressRefInput) (dto.AddressOutput, error) {
 	var stored model.Address
+	var role string
 	err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		actorRole, err := s.actorRole(txCtx, in.UserID)
+		if err != nil {
+			return err
+		}
+		role = actorRole
+
 		address, err := s.Addresses.FindByOwner(txCtx, in.UserID, in.AddressID)
 		if err != nil {
 			return err
@@ -271,10 +301,6 @@ func (s *Service) SetDefaultAddress(ctx context.Context, in dto.AddressRefInput)
 		return dto.AddressOutput{}, err
 	}
 
-	role, err := s.actorRole(ctx, in.UserID)
-	if err != nil {
-		return dto.AddressOutput{}, err
-	}
 	s.Audit.Record(ctx, constant.AuditAddressDefaultSet, string(audit.OutcomeSuccess),
 		&in.UserID, role, targetTypeAddress, in.AddressID.String(),
 		map[string]any{"addressId": in.AddressID.String()},
@@ -423,6 +449,21 @@ func changedAddressFields(before, after model.Address) []string {
 //
 // The role comes from the stored row rather than from the request, exactly as the
 // profile use cases do, so an audit event can never name a role the client chose.
+// It is read through Profiles, which never opens a transaction of its own, so inside
+// a transaction it simply joins the one the application layer opened.
+//
+// Every address path calls it before its durable write — inside the transaction
+// where there is one, and before the statement where there is not — for a reason
+// that has nothing to do with the audit trail's own integrity. A read that failed
+// after the commit was returned to the handler as a failure, so a change that was
+// durably stored was reported to the client as one that had not happened. That is
+// not a cosmetic difference: POST /users/me/addresses answers a failure with the
+// obvious client behaviour, a retry, and the retry is a second stored address.
+//
+// Reading it first removes the window entirely. There is no ordering in these four
+// paths that needs a residual read after the write, so none is left, and the audit
+// event therefore cannot be lost either: the role is in hand before the commit, not
+// after it.
 func (s *Service) actorRole(ctx context.Context, userID uuid.UUID) (string, error) {
 	profile, err := s.Profiles.ByID(ctx, userID)
 	if err != nil {

@@ -28,7 +28,13 @@ toàn bộ endpoint đang tồn tại: khi thêm, sửa hoặc xoá endpoint, fi
 Mọi request đi qua đúng thứ tự này (`internal/share/httpserver/routes.go`):
 
 `RealIP` → `Correlation` → `RequestLogger` → `Recovery` → `CORS` → `BodyLimit`
-→ `JSONContentType` → `Authentication` → *(rate limit, chỉ dưới `/api/v1`)* → handler
+→ `AllowedContentTypes(JSON, multipart)` → `Authentication` → *(rate limit, chỉ dưới
+`/api/v1`)* → handler
+
+`AllowedContentTypes` ở tầng pipeline chỉ kiểm tra `Content-Type` có nằm trong danh sách
+media type được phép hay không. Kiểm tra **JSON thuần** nằm ở từng route, áp bằng
+`JSONContentType`, vì một kiểm tra JSON toàn cục sẽ trả `415` cho mọi request
+`multipart/form-data`. Xem `docs/decisions/008-per-route-content-type-and-body-ceiling.md`.
 
 Hệ quả trực tiếp:
 
@@ -701,9 +707,9 @@ Ghi chú:
   `divisionNeedsReview: true` nghĩa là mã tỉnh/phường đã lưu không còn trong dataset
   hiện hành; tên đã chụp vẫn được trả về để khách thấy đúng thứ đã lưu.
 - `recipientPhone` cũng được chuẩn hoá 10 chữ số, giống `phone` của hồ sơ.
-- Khi tài khoản chưa có địa chỉ nào, `data` là **`null`**, không phải `[]`. Ngược lại,
-  `addresses` trong tra cứu của admin (`4.10`) là `[]` — hai hình dạng khác nhau này là
-  cố ý, nên client phải xử lý `null` ở đây.
+  - Khi tài khoản chưa có địa chỉ nào, `data` là **`[]`**, không phải `null`. Trường
+    `addresses` trong truy vấn của admin (`4.10`) cũng là `[]`: cả hai khớp với
+    `type: array` trong contract, nên client không phải xử lý `null`.
 
 ### 4.6 `POST /users/me/addresses`
 

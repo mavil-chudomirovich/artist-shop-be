@@ -690,11 +690,13 @@ components:
         provinceCode:
           type: string
         provinceName:
+          maxLength: 120
           type: string
           description: Optional; captured when omitted.
         wardCode:
           type: string
         wardName:
+          maxLength: 120
           type: string
           description: Optional; captured when omitted.
         streetAddress:
@@ -721,12 +723,14 @@ components:
           type: string
           description: Omitted keeps the current province. Changing it requires a ward from that province.
         provinceName:
+          maxLength: 120
           type: string
           description: Optional; recaptured when the province changes.
         wardCode:
           type: string
           description: Omitted keeps the current ward.
         wardName:
+          maxLength: 120
           type: string
           description: Optional; recaptured when the ward changes.
         streetAddress:

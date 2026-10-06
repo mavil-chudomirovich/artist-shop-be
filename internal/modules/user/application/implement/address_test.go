@@ -332,6 +332,10 @@ type addressHarness struct {
 	divisions *fakeDivisions
 	owner     uuid.UUID
 	others    uuid.UUID
+	// first and second are the identifiers of the two rows the ordering tests need as
+	// a target, seeded by seedPair before the use case under test runs.
+	first  uuid.UUID
+	second uuid.UUID
 }
 
 // clock is the fixed instant the harness stores, so the listing order and the
@@ -420,7 +424,7 @@ func (h *addressHarness) create(t *testing.T, userID uuid.UUID) appdto.AddressOu
 }
 
 // list pages through the acting account's addresses, always naming the account the
-// session identified — exactly as presentation fills the input.
+// session identified â€” exactly as presentation fills the input.
 func (h *addressHarness) list(t *testing.T, page, pageSize int) appdto.AddressPageOutput {
 	t.Helper()
 	out, err := h.svc.ListAddresses(context.Background(), appdto.ListAddressesInput{
@@ -496,7 +500,7 @@ func TestCreateCapturesTheDivisionNamesFromTheDataset(t *testing.T) {
 // FR-010: clearing the previous default and setting the new one is a single
 // indivisible outcome. Both writes must happen inside one transaction opened by
 // the application layer, and the new default must be set only after the old one is
-// cleared — setting it first is what the partial unique index would reject.
+// cleared â€” setting it first is what the partial unique index would reject.
 func TestSettingADefaultClearsThePreviousOneInsideOneTransaction(t *testing.T) {
 	h := newAddressHarness(t)
 	first := h.create(t, h.owner)
@@ -679,7 +683,7 @@ func TestDivisionsOutsideTheDatasetAreRejectedWithoutPersisting(t *testing.T) {
 }
 
 // The same rule guards an edit, and an edit that fails leaves the stored address
-// — including its default flag — exactly as it was (spec edge case: a customer's
+// â€” including its default flag â€” exactly as it was (spec edge case: a customer's
 // default address edited to become invalid).
 func TestAnEditToDivisionsOutsideTheDatasetIsRejectedAndChangesNothing(t *testing.T) {
 	h := newAddressHarness(t)
@@ -846,7 +850,7 @@ func TestListAddressesClampsAnUnusableWindow(t *testing.T) {
 }
 
 // FR-006, FR-013, SC-003: the acting account comes from the session, so another
-// customer's address is simply not found — the same answer as an unknown id, and
+// customer's address is simply not found â€” the same answer as an unknown id, and
 // never a disclosure.
 func TestEveryOperationIsScopedToTheSessionAccount(t *testing.T) {
 	h := newAddressHarness(t)
@@ -914,7 +918,7 @@ func TestARefusedOperationLeavesNoAuditEvent(t *testing.T) {
 
 // FR-019, SC-008: each of the four address actions is recorded with the acting
 // account, the address it touched and what changed. The event names the members
-// that changed, never their values — contact data must not be copied into the
+// that changed, never their values â€” contact data must not be copied into the
 // audit trail (Constitution VI).
 func TestTheFourAddressActionsAreAudited(t *testing.T) {
 	h := newAddressHarness(t)
@@ -1074,6 +1078,152 @@ func TestAListingOnlyEverReturnsTheSessionAccountsAddresses(t *testing.T) {
 	}
 	if page.Addresses[0].ID != mine.ID {
 		t.Fatalf("expected %s, got %s", mine.ID, page.Addresses[0].ID)
+	}
+}
+
+// seedPair stores the account's first two addresses and remembers them, so an
+// ordering test has two rows to aim at: one that must stay the default and one that
+// must stay untouched.
+func (h *addressHarness) seedPair(t *testing.T) {
+	t.Helper()
+	h.first = h.create(t, h.owner).ID
+	h.second = h.create(t, h.owner).ID
+}
+
+// rowCount counts every stored row, hidden ones included, so a test can prove a
+// refused request added nothing.
+func (h *addressHarness) rowCount() int {
+	h.repo.mu.Lock()
+	defer h.repo.mu.Unlock()
+	return len(h.repo.rows)
+}
+
+// errRoleRead stands in for the storage layer refusing the audit role lookup. It is
+// deliberately not one of the module's sentinels: presentation maps those onto
+// specific documented answers, and what these tests need is only that the read fails
+// in a way no use case can predict or recover from.
+var errRoleRead = errors.New("users: the profile row could not be read")
+
+// refusingProfileRead is a ProfileRepository whose every read fails. It stands in for
+// storage that cannot answer the audit role lookup at all, which is the condition the
+// ordering of that lookup has to be safe under.
+type refusingProfileRead struct {
+	repository.ProfileRepository
+	reads int
+}
+
+func (r *refusingProfileRead) ByID(context.Context, uuid.UUID) (*model.Profile, error) {
+	r.reads++
+	return nil, errRoleRead
+}
+
+var _ repository.ProfileRepository = (*refusingProfileRead)(nil)
+
+// A durable change must never be reported to the client as a failure: the client
+// cannot tell the two apart from the answer alone, and the natural answer to a failed
+// POST /users/me/addresses is a retry, which is a second stored address. Every address
+// path therefore reads the actor role before its write â€” inside the transaction where
+// there is one â€” so a failed role read can only ever abort a request that stored
+// nothing.
+//
+// Both halves are asserted: the request fails, and the address table is exactly as it
+// was. The second half is the one that dies when the lookup moves back after the
+// write, because then the change is durable *and* an error is returned â€” the false
+// failure this ordering exists to prevent.
+func TestAFailedRoleReadCannotReportAStoredAddressChangeAsAFailure(t *testing.T) {
+	cases := []struct {
+		name  string
+		call  func(*addressHarness) error
+		check func(*testing.T, *addressHarness)
+	}{
+		{
+			name: "create",
+			call: func(h *addressHarness) error {
+				_, err := h.svc.CreateAddress(context.Background(), appdto.CreateAddressInput{
+					UserID:         h.owner,
+					RecipientName:  "Nguyen Van A",
+					RecipientPhone: "0912 345 678",
+					ProvinceCode:   "79",
+					WardCode:       "26734",
+					StreetAddress:  "12 Nguyen Hue",
+				})
+				return err
+			},
+			check: func(t *testing.T, h *addressHarness) {
+				if got := h.rowCount(); got != 2 {
+					t.Fatalf("expected the two seeded rows and nothing else, got %d", got)
+				}
+			},
+		},
+		{
+			name: "edit",
+			call: func(h *addressHarness) error {
+				_, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+					UserID: h.owner, AddressID: h.second,
+					StreetAddress: stringPtr("1 Le Loi"),
+				})
+				return err
+			},
+			check: func(t *testing.T, h *addressHarness) {
+				if got := h.repo.rows[h.second].StreetAddress; got != "12 Nguyen Hue" {
+					t.Fatalf("the stored street address became %q although the request failed", got)
+				}
+			},
+		},
+		{
+			name: "hide",
+			call: func(h *addressHarness) error {
+				return h.svc.DeleteAddress(context.Background(), appdto.AddressRefInput{
+					UserID: h.owner, AddressID: h.second,
+				})
+			},
+			check: func(t *testing.T, h *addressHarness) {
+				if got := h.repo.rows[h.second].DeletedAt; got != nil {
+					t.Fatalf("the address was hidden at %v although the request failed", got)
+				}
+			},
+		},
+		{
+			name: "mark default",
+			call: func(h *addressHarness) error {
+				_, err := h.svc.SetDefaultAddress(context.Background(), appdto.AddressRefInput{
+					UserID: h.owner, AddressID: h.second,
+				})
+				return err
+			},
+			check: func(t *testing.T, h *addressHarness) {
+				if h.repo.rows[h.second].IsDefault {
+					t.Fatal("the default flag moved although the request failed")
+				}
+				if !h.repo.rows[h.first].IsDefault {
+					t.Fatal("the previous default was cleared although the request failed")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAddressHarness(t)
+			h.seedPair(t)
+			eventsBefore := len(h.audit.events)
+			reader := &refusingProfileRead{ProfileRepository: h.svc.Profiles}
+			h.svc.Profiles = reader
+
+			err := tc.call(h)
+
+			if !errors.Is(err, errRoleRead) {
+				t.Fatalf("expected the failed role read to surface, got %v", err)
+			}
+			if reader.reads == 0 {
+				t.Fatal("the path never looked the role up, so this case proves nothing")
+			}
+			tc.check(t, h)
+			if got := len(h.audit.events); got != eventsBefore {
+				t.Fatalf("a request that stored nothing must not be audited, got %+v",
+					h.audit.events[eventsBefore:])
+			}
+		})
 	}
 }
 

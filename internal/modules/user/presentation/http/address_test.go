@@ -273,6 +273,40 @@ func (cascadeDivisions) ValidateAddressDivisions(_ context.Context, provinceCode
 
 var _ appinterface.Divisions = cascadeDivisions{}
 
+// errRoleRead stands in for the storage layer refusing the audit role lookup. It is
+// deliberately not one of the module's sentinels: what matters to the route is only
+// that the read fails, and it must not turn into a documented client error.
+var errRoleRead = errors.New("users: the profile row could not be read")
+
+// roleReadStore is the profile repository behind the address routes. It delegates to
+// the in-memory store, and can be told to refuse every read once the address table
+// already holds a row — storage that starts failing in the instant the mutation
+// became durable.
+//
+// It exists for one property. The audit role has to be read *before* the write, or
+// exactly this failure turns a stored address into a 500, and the obvious client
+// reaction to a 500 on POST /me/addresses is a retry that stores a second one.
+type roleReadStore struct {
+	repository.ProfileRepository
+	addresses *memoryAddressRepo
+	// failAfterWrite refuses every read once an address row exists.
+	failAfterWrite bool
+	// reads counts the lookups, so a test can pin that the role is read exactly once.
+	reads int
+}
+
+func (r *roleReadStore) ByID(ctx context.Context, id uuid.UUID) (*model.Profile, error) {
+	r.addresses.mu.Lock()
+	defer r.addresses.mu.Unlock()
+	r.reads++
+	if r.failAfterWrite && len(r.addresses.rows) > 0 {
+		return nil, errRoleRead
+	}
+	return r.ProfileRepository.ByID(ctx, id)
+}
+
+var _ repository.ProfileRepository = (*roleReadStore)(nil)
+
 // addressService binds the real address use cases to the module's full use-case
 // surface. The profile and avatar methods come from the existing stub, whose
 // routes these tests never reach; this adapter disappears once T023 wires
@@ -309,6 +343,8 @@ type addressFixture struct {
 	router http.Handler
 	repo   *memoryAddressRepo
 	audit  *profileAudit
+	// profiles is the profile repository the use cases read the audit role from.
+	profiles *roleReadStore
 	// customer is the account a valid session identifies.
 	customer uuid.UUID
 	// other is a second account whose addresses must stay invisible.
@@ -325,11 +361,15 @@ func newAddressFixture(t *testing.T) *addressFixture {
 	repo := newMemoryAddressRepo()
 	audit := &profileAudit{}
 	divisions := cascadeDivisions{}
-	addresses := implement.New(implement.Service{
-		Profiles: newMemoryProfiles(
+	profiles := &roleReadStore{
+		ProfileRepository: newMemoryProfiles(
 			model.Profile{ID: customer, Email: "customer@example.com", Role: access.RoleCustomer},
 			model.Profile{ID: other, Email: "other@example.com", Role: access.RoleCustomer},
 		),
+		addresses: repo,
+	}
+	addresses := implement.New(implement.Service{
+		Profiles:  profiles,
 		Addresses: repo,
 		Divisions: divisions,
 		Tx:        &immediateUnitOfWork{repo: repo},
@@ -342,6 +382,7 @@ func newAddressFixture(t *testing.T) *addressFixture {
 		router:   handler.Router(openLimits, sessionHooks(customer)),
 		repo:     repo,
 		audit:    audit,
+		profiles: profiles,
 		customer: customer,
 		other:    other,
 		foreign:  foreign,
@@ -462,6 +503,121 @@ func TestCreatingTheFirstAddressStoresItAndMakesItTheDefault(t *testing.T) {
 	if listed.Meta.Total != 1 || len(listed.Data) != 1 || listed.Data[0].ID != created.ID {
 		t.Fatalf("expected the saved address in the list, got %+v", listed)
 	}
+}
+
+// A change that is durably stored must never be answered with a failure, because the
+// client cannot tell the two apart from the answer alone and the obvious reaction to a
+// failed POST /me/addresses is a retry — which is a second stored address.
+//
+// Here the profile repository refuses every read once the address table is no longer
+// empty, so the lookup can only succeed while the mutation is still undecided. That is
+// the audit role read, and it happens before the insert, so the request answers 201,
+// the row is there and the event is in the trail. With the read taken after the commit
+// — which is where it was — the same failure answers 500 and the client retries into a
+// duplicate.
+func TestACreateIsNotReportedAsFailedWhenTheRoleReadBreaksAfterTheWrite(t *testing.T) {
+	fixture := newAddressFixture(t)
+	fixture.profiles.failAfterWrite = true
+
+	rec := doJSON(fixture.router, http.MethodPost, "/me/addresses", addressBody, liveToken)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for a stored address, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	created := decodeAddress(t, rec)
+	if got := fixture.profiles.reads; got != 1 {
+		t.Fatalf("expected the audit role to be read exactly once, got %d reads", got)
+	}
+	listed := fixture.list(t, liveToken, "")
+	if listed.Meta.Total != 1 || len(listed.Data) != 1 || listed.Data[0].ID != created.ID {
+		t.Fatalf("expected the stored address in the list, got %+v", listed)
+	}
+	if got := fixture.audit.countOf(constant.AuditAddressCreated); got != 1 {
+		t.Fatalf("expected the creation to be audited once, got %d", got)
+	}
+	// The other role-carrying event of a first address still lands too.
+	if got := fixture.audit.countOf(constant.AuditAddressDefaultSet); got != 1 {
+		t.Fatalf("expected the automatic first default to be audited once, got %d", got)
+	}
+}
+
+// When the audit role cannot be read at all, the request is refused and nothing is
+// stored — because the role is read before the write, a refused read has nothing
+// behind it to report. That is the other half of the guarantee: the client is never
+// told about a change that did not happen, and retrying a refusal cannot leave a
+// duplicate.
+//
+// With the read taken after the write, all four of these answered exactly the same
+// 500 while the address had already moved.
+func TestARefusedRoleReadNeverReportsAChangeThatDidNotHappen(t *testing.T) {
+	t.Run("hide", func(t *testing.T) {
+		fixture := newAddressFixture(t)
+		id := fixture.create(t, liveToken)
+		listed := fixture.list(t, liveToken, "")
+		fixture.profiles.failAfterWrite = true
+
+		rec := do(fixture.router, http.MethodDelete, "/me/addresses/"+id, liveToken)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 for a refused role read, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		if got := errorCode(t, rec); got != "INTERNAL_ERROR" {
+			t.Fatalf("expected INTERNAL_ERROR, got %s", got)
+		}
+		if got := fixture.list(t, liveToken, ""); got.Meta.Total != listed.Meta.Total {
+			t.Fatalf("a refused hide changed the listing: %+v -> %+v", listed, got)
+		}
+		if got := fixture.audit.countOf(constant.AuditAddressDeleted); got != 0 {
+			t.Fatalf("a refused hide must not be audited, got %d", got)
+		}
+	})
+
+	t.Run("edit", func(t *testing.T) {
+		fixture := newAddressFixture(t)
+		id := fixture.create(t, liveToken)
+		before := fixture.list(t, liveToken, "")
+		fixture.profiles.failAfterWrite = true
+
+		rec := doJSON(fixture.router, http.MethodPatch, "/me/addresses/"+id,
+			`{"streetAddress":"1 Le Loi"}`, liveToken)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 for a refused role read, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		if got := fixture.list(t, liveToken, ""); got.Data[0] != before.Data[0] {
+			t.Fatalf("a refused edit changed the stored address: %+v -> %+v", before.Data[0], got.Data[0])
+		}
+		if got := fixture.audit.countOf(constant.AuditAddressUpdated); got != 0 {
+			t.Fatalf("a refused edit must not be audited, got %d", got)
+		}
+	})
+
+	t.Run("mark default", func(t *testing.T) {
+		fixture := newAddressFixture(t)
+		first := fixture.create(t, liveToken)
+		second := fixture.create(t, liveToken)
+		// The first address already recorded a default change when it was created,
+		// so the baseline is what the two seeds left behind.
+		auditedBefore := fixture.audit.countOf(constant.AuditAddressDefaultSet)
+		fixture.profiles.failAfterWrite = true
+
+		rec := do(fixture.router, http.MethodPost, "/me/addresses/"+second+"/default", liveToken)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 for a refused role read, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		listed := fixture.list(t, liveToken, "")
+		if !listed.Data[0].IsDefault || listed.Data[0].ID != first {
+			t.Fatalf("a refused change still moved the default flag: %+v", listed.Data)
+		}
+		if listed.Data[1].IsDefault {
+			t.Fatalf("a refused change made the second address default: %+v", listed.Data)
+		}
+		if got := fixture.audit.countOf(constant.AuditAddressDefaultSet); got != auditedBefore {
+			t.Fatalf("a refused change must not be audited, got %d beyond the %d already recorded",
+				got, auditedBefore)
+		}
+	})
 }
 
 // US2 acceptance scenario 3: a second address is not marked as default.

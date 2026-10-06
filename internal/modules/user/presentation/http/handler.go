@@ -193,15 +193,14 @@ func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	content, filename, appErr := h.readAvatarFile(r)
+	content, appErr := h.readAvatarFile(r)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
 	profile, err := h.svc.SetAvatar(r.Context(), appdto.SetAvatarInput{
-		UserID:   accountID,
-		Content:  content,
-		Filename: filename,
+		UserID:  accountID,
+		Content: content,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -215,16 +214,21 @@ func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
 // the size rule enforceable: a post-hoc check on an already buffered body cannot
 // stop a memory-exhaustion upload.
 //
+// The client-declared file name is deliberately not returned: the domain decides
+// the image type from the leading signature, so a name has no reader anywhere
+// below this line and carrying it further would only invite trusting it (FR-014,
+// research D7).
+//
 // The ceiling is applied twice, on purpose. The route's middleware refuses a body
 // whose declared length is already over the limit, and the LimitReader below stops
 // a body that lies about its length or arrives in chunks. The second case is the
 // one that matters for an attacker: a declared length cannot be trusted, and the
 // route-level wrapper would otherwise surface as a parse failure rather than as the
 // size rule it actually is.
-func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppError) {
+func (h *Handler) readAvatarFile(r *http.Request) ([]byte, *httpx.AppError) {
 	reader, err := r.MultipartReader()
 	if err != nil {
-		return nil, "", fieldError(fieldFile, "a multipart/form-data body with a file part is required")
+		return nil, fieldError(fieldFile, "a multipart/form-data body with a file part is required")
 	}
 	ceiling := h.cfg.AvatarMaxBytesOrDefault()
 	for {
@@ -237,9 +241,9 @@ func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppErr
 			// length was absent or understated.
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				return nil, "", avatarTooLarge()
+				return nil, avatarTooLarge()
 			}
-			return nil, "", httpx.New(httpx.CodeMalformedRequest)
+			return nil, httpx.New(httpx.CodeMalformedRequest)
 		}
 		if part.FormName() != fieldFile {
 			_ = part.Close()
@@ -251,16 +255,16 @@ func (h *Handler) readAvatarFile(r *http.Request) ([]byte, string, *httpx.AppErr
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				return nil, "", avatarTooLarge()
+				return nil, avatarTooLarge()
 			}
-			return nil, "", httpx.New(httpx.CodeMalformedRequest)
+			return nil, httpx.New(httpx.CodeMalformedRequest)
 		}
 		if int64(len(content)) > ceiling {
-			return nil, "", avatarTooLarge()
+			return nil, avatarTooLarge()
 		}
-		return content, part.FileName(), nil
+		return content, nil
 	}
-	return nil, "", fieldError(fieldFile, "a file part is required")
+	return nil, fieldError(fieldFile, "a file part is required")
 }
 
 // avatarTooLarge is the one refusal for an upload over the ceiling, wherever the
