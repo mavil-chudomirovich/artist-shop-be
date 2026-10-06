@@ -1,14 +1,15 @@
 package media
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1" //nolint:gosec // Cloudinary's signed API mandates SHA-1; it is a keyed authentication hash, not a content hash.
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"sort"
@@ -118,13 +119,21 @@ var _ appinterface.MediaStore = (*Cloudinary)(nil)
 // service could detect — a provider that ignores the transformation reports the
 // original dimensions, and the domain's width guard refuses the reference rather
 // than storing something the contract says cannot exist.
+//
+// The image travels as a multipart file part, which is the provider's documented
+// REST upload. It is not sent as a bare base64 string: the live API rejects that
+// with 400 "Unsupported source URL", and it would not be sent as a data URI either,
+// because a data URI needs the image's format and this adapter only ever receives
+// []byte. Re-sniffing the magic bytes the domain already validated would put the
+// format knowledge in two places; multipart lets the provider sniff instead. The
+// signature is unaffected: "file" is excluded from it in either encoding, so the
+// same signed parameters produce the same signature value.
 func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int) (appinterface.MediaReference, error) {
 	if err := c.requireCredentials(operationUpload); err != nil {
 		return appinterface.MediaReference{}, err
 	}
 
 	form := url.Values{}
-	form.Set("file", base64.StdEncoding.EncodeToString(content))
 	form.Set("api_key", c.cfg.APIKey)
 	form.Set("timestamp", strconv.FormatInt(time.Now().UTC().Unix(), 10))
 	if c.cfg.Folder != "" {
@@ -135,13 +144,19 @@ func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int
 	}
 	form.Set("signature", c.sign(signedParameters(form)))
 
-	body, status, err := c.post(ctx, operationUpload, c.uploadPath, form)
+	body, contentType, err := multipartUpload(form, content)
+	if err != nil {
+		return appinterface.MediaReference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
+			"the provider request could not be built")
+	}
+
+	answerBody, status, err := c.post(ctx, operationUpload, c.uploadPath, contentType, body)
 	if err != nil {
 		return appinterface.MediaReference{}, err
 	}
 
 	var answer uploadResponse
-	if err := json.Unmarshal(body, &answer); err != nil {
+	if err := json.Unmarshal(answerBody, &answer); err != nil {
 		return appinterface.MediaReference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
 			fmt.Sprintf("the provider answer could not be read (status %d)", status))
 	}
@@ -180,7 +195,8 @@ func (c *Cloudinary) Remove(ctx context.Context, ref appinterface.MediaReference
 	form.Set("timestamp", strconv.FormatInt(time.Now().UTC().Unix(), 10))
 	form.Set("signature", c.sign(signedParameters(form)))
 
-	if _, _, err := c.post(ctx, operationRemove, c.destroyPath, form); err != nil {
+	if _, _, err := c.post(ctx, operationRemove, c.destroyPath,
+		"application/x-www-form-urlencoded", strings.NewReader(form.Encode())); err != nil {
 		return err
 	}
 	return nil
@@ -226,15 +242,17 @@ func (c *Cloudinary) requireCredentials(operation string) error {
 		domainerr.ErrMediaUnavailable, operation)
 }
 
-// post sends one signed form to the provider and returns the raw body with the
-// status it answered, or a bare media error that has already been logged.
-func (c *Cloudinary) post(ctx context.Context, operation, path string, form url.Values) ([]byte, int, error) {
+// post sends one signed request to the provider and returns the raw body with the
+// status it answered, or a bare media error that has already been logged. The
+// caller supplies the encoding — urlencoded for the destroy call, multipart for
+// the upload — because the two endpoints take different bodies.
+func (c *Cloudinary) post(ctx context.Context, operation, path, contentType string, body io.Reader) ([]byte, int, error) {
 	endpoint := c.baseURL + strings.Replace(path, "{cloud}", url.PathEscape(c.cfg.CloudName), 1)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return nil, 0, c.unavailable(ctx, operation, slog.LevelError, "the provider request could not be built")
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -244,7 +262,7 @@ func (c *Cloudinary) post(ctx context.Context, operation, path string, form url.
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, resp.StatusCode, c.unavailable(ctx, operation, slog.LevelError,
 			fmt.Sprintf("the provider answer could not be read (status %d)", resp.StatusCode))
@@ -256,7 +274,48 @@ func (c *Cloudinary) post(ctx context.Context, operation, path string, form url.
 		return nil, resp.StatusCode, c.unavailable(ctx, operation, slog.LevelWarn,
 			fmt.Sprintf("the provider refused the request (status %d)", resp.StatusCode))
 	}
-	return body, resp.StatusCode, nil
+	return respBody, resp.StatusCode, nil
+}
+
+// multipartUpload encodes the signed fields and the image bytes as a
+// multipart/form-data body and returns it with the content type that names the
+// boundary.
+//
+// The image is a file part named "file", which is the shape Cloudinary's REST API
+// documents and the one the live API accepts; a bare base64 string in an
+// urlencoded field is answered with 400 "Unsupported source URL". The part is left
+// as application/octet-stream so the provider, not this adapter, decides the
+// format from the bytes.
+//
+// The fields are written in sorted order so the same call always produces the same
+// body; the order is irrelevant to the signature, which sorts independently, but a
+// deterministic request is easier to reason about in a test.
+func multipartUpload(fields url.Values, content []byte) (io.Reader, string, error) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := writer.WriteField(key, fields.Get(key)); err != nil {
+			return nil, "", err
+		}
+	}
+
+	part, err := writer.CreateFormFile("file", "avatar")
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, "", err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buf, writer.FormDataContentType(), nil
 }
 
 // signedParam is one provider parameter covered by the request signature.

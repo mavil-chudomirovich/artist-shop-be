@@ -34,10 +34,19 @@ const (
 	testSecret = "abcdefghijklmnopqrstuvwxyz1234"
 )
 
+// capturedFile is one file part a fake provider received.
+type capturedFile struct {
+	filename    string
+	contentType string
+	content     []byte
+}
+
 // capturedRequest is what a fake provider saw.
 type capturedRequest struct {
-	path string
-	form url.Values
+	path        string
+	contentType string
+	form        url.Values
+	files       map[string][]capturedFile
 }
 
 // fakeProvider is an httptest server standing in for Cloudinary. It records the
@@ -60,10 +69,42 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 			`"width":512,"height":512}`,
 	}
 	provider.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
+		sent := capturedRequest{
+			path:        r.URL.Path,
+			contentType: r.Header.Get("Content-Type"),
+			files:       map[string][]capturedFile{},
+		}
+		if strings.HasPrefix(sent.contentType, "multipart/form-data") {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse the multipart provider request: %v", err)
+			}
+		} else if err := r.ParseForm(); err != nil {
 			t.Errorf("parse the provider request form: %v", err)
 		}
-		provider.seen = append(provider.seen, capturedRequest{path: r.URL.Path, form: r.Form})
+		sent.form = r.Form
+		if r.MultipartForm != nil {
+			for name, headers := range r.MultipartForm.File {
+				for _, header := range headers {
+					file, err := header.Open()
+					if err != nil {
+						t.Errorf("open the uploaded %q part: %v", name, err)
+						continue
+					}
+					content, err := io.ReadAll(file)
+					_ = file.Close()
+					if err != nil {
+						t.Errorf("read the uploaded %q part: %v", name, err)
+						continue
+					}
+					sent.files[name] = append(sent.files[name], capturedFile{
+						filename:    header.Filename,
+						contentType: header.Header.Get("Content-Type"),
+						content:     content,
+					})
+				}
+			}
+		}
+		provider.seen = append(provider.seen, sent)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(provider.status)
 		if _, err := w.Write([]byte(provider.body)); err != nil {
@@ -80,6 +121,17 @@ func (p *fakeProvider) last(t *testing.T) capturedRequest {
 		t.Fatal("the adapter never called the provider")
 	}
 	return p.seen[len(p.seen)-1]
+}
+
+// lastFile returns the most recent file part seen under name, failing the test if
+// the request carried none.
+func (p *fakeProvider) lastFile(t *testing.T, name string) capturedFile {
+	t.Helper()
+	files := p.last(t).files[name]
+	if len(files) == 0 {
+		t.Fatalf("the provider request carried no %q file part", name)
+	}
+	return files[len(files)-1]
 }
 
 func testConfig() config.MediaConfig {
@@ -147,8 +199,46 @@ func capturedLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(handler), buf
 }
 
-// pngBytes is a payload whose base64 form is recognisable in the request.
+// pngBytes is a payload whose leading bytes make it recognisable as the file part
+// the adapter must send unmodified.
 var pngBytes = append([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, 0x2A, 0x2A)
+
+// Cloudinary's signed REST upload takes the image as a file part of a
+// multipart/form-data body. A bare base64 string in an urlencoded field is answered
+// by the live API with 400 "Unsupported source URL", so this pins the encoding
+// itself: a multipart request whose "file" part carries the original bytes, never
+// their base64, and a signature recomputed independently from the form fields.
+func TestUploadSendsTheImageAsAMultipartFilePart(t *testing.T) {
+	provider := newFakeProvider(t)
+	store := newTestStore(t, provider)
+
+	if _, err := store.Upload(context.Background(), pngBytes, 512); err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+
+	sent := provider.last(t)
+	if !strings.HasPrefix(sent.contentType, "multipart/form-data") {
+		t.Fatalf("expected a multipart/form-data request, got %q", sent.contentType)
+	}
+
+	file := provider.lastFile(t, "file")
+	if !bytes.Equal(file.content, pngBytes) {
+		t.Fatalf("expected the original bytes in the file part, got %q", file.content)
+	}
+	if file.contentType != "application/octet-stream" {
+		t.Fatalf("expected the provider to sniff the bytes, got content type %q", file.contentType)
+	}
+	if sent.form.Get("file") != "" {
+		t.Fatalf("expected no urlencoded file field, got %q", sent.form.Get("file"))
+	}
+	if strings.Contains(sent.form.Get("signature"), base64.StdEncoding.EncodeToString(pngBytes)) {
+		t.Fatal("the signature covered base64 rather than the field values")
+	}
+
+	if got, want := sent.form.Get("signature"), expectedSignature(sent.form); got == "" || got != want {
+		t.Fatalf("expected the signature the API specifies\n got %s\nwant %s", got, want)
+	}
+}
 
 // The signature must be the one the API specifies, and the parameters it covers
 // must be exactly the ones sent â€” a signature over a different set, or in a
@@ -201,9 +291,9 @@ func TestUploadAsksTheProviderForTheResize(t *testing.T) {
 	if sent.form.Get("folder") != "artist-shop" {
 		t.Fatalf("expected the configured folder, got %q", sent.form.Get("folder"))
 	}
-	want := base64.StdEncoding.EncodeToString(pngBytes)
-	if got := sent.form.Get("file"); got != want {
-		t.Fatalf("expected the original bytes, unmodified, got %q", got)
+	file := provider.lastFile(t, "file")
+	if !bytes.Equal(file.content, pngBytes) {
+		t.Fatalf("expected the original bytes, unmodified, got %q", file.content)
 	}
 }
 
