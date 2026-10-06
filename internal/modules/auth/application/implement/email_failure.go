@@ -3,10 +3,12 @@ package implement
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 )
 
 const (
@@ -38,6 +40,25 @@ var deliveryRetryWaits = []time.Duration{100 * time.Millisecond, 400 * time.Mill
 type deliveryFailure struct {
 	category string
 	retry    bool
+}
+
+// disarmCooldownAfterFailedDelivery clears the resend marker that issuing a code
+// armed, because the message it was armed for was never delivered. Every path
+// that issues a code and then sends it goes through here, registration and
+// resend alike: a marker that records "a message was sent recently" must never
+// survive a send that did not happen (FR-024). The code, its lifetime and the
+// brute-force counters are untouched, because none of them belongs to delivery
+// (FR-018).
+//
+// accountID identifies the account in the diagnostic, by its reference rather
+// than by restating the recipient address (FR-012). A disarm that itself fails
+// only leaves the customer inside a cooldown they cannot see, so it is recorded
+// and does not replace the error the caller is already returning.
+func (s *Service) disarmCooldownAfterFailedDelivery(ctx context.Context, email, accountID string) {
+	if err := s.OTP.DisarmCooldown(ctx, email); err != nil {
+		logging.WithCorrelation(ctx, s.log()).ErrorContext(ctx, "resend cooldown could not be disarmed after a failed delivery",
+			slog.String("accountId", accountID))
+	}
 }
 
 // classifyDeliveryFailure maps a sender error onto the module's classification.

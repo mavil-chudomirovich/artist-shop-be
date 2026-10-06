@@ -54,6 +54,13 @@ func (s *Service) ResendVerification(ctx context.Context, in dto.EmailInput) err
 	if err := s.OTP.CanResend(ctx, normalized); err != nil {
 		return err
 	}
-	_, err = s.sendOTP(ctx, normalized)
-	return err
+	// Issuing the code arms the cooldown before the send is attempted, so a
+	// delivery that fails must give the marker back: this endpoint is the one the
+	// 503 tells the customer to use, and leaving it armed would strand them for
+	// the whole cooldown (FR-024). The failure itself is returned unchanged.
+	if _, err := s.sendOTP(ctx, normalized); err != nil {
+		s.disarmCooldownAfterFailedDelivery(ctx, normalized, account.ID.String())
+		return err
+	}
+	return nil
 }

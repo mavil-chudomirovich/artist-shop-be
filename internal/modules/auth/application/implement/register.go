@@ -78,19 +78,14 @@ func (s *Service) sendOTP(ctx context.Context, email string) (int, error) {
 // their own once delivery recovers (FR-007). A failed delivery never writes the
 // success outcome: the row states plainly that the event did not complete
 // (FR-013).
+//
+// The traces name a registration, so the resend path, which leaves traces of its
+// own kind, shares only the cooldown disarm this flow needs and not these two.
 func (s *Service) reportDeliveryFailure(ctx context.Context, account *model.Account, attempts int, err error) error {
 	failure := classifyDeliveryFailure(err)
 	logger := logging.WithCorrelation(ctx, s.log())
 
-	// The cooldown is armed before the send is attempted, so a send that did not
-	// happen must not consume it: otherwise the promise the 503 makes - request a
-	// new code - is false for exactly the seconds the customer needs it most
-	// (FR-024). The code itself, its lifetime and the brute-force counters are
-	// untouched here, because none of them belongs to delivery (FR-018).
-	if disarmErr := s.OTP.DisarmCooldown(ctx, account.Email); disarmErr != nil {
-		logger.ErrorContext(ctx, "resend cooldown could not be disarmed after a failed delivery",
-			slog.String("accountId", account.ID.String()))
-	}
+	s.disarmCooldownAfterFailedDelivery(ctx, account.Email, account.ID.String())
 
 	s.Audit.Record(ctx, constant.AuditRegisterDeliveryFailed, constant.OutcomeFailure, nil, "", "user", account.ID.String(),
 		map[string]any{"classification": failure.category})

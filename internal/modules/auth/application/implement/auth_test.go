@@ -625,3 +625,49 @@ func TestASuccessfulRegistrationLeavesTheSuccessTraceAlone(t *testing.T) {
 		t.Fatalf("a delivered message must leave the cooldown armed, got %d disarms", h.otp.disarmCount())
 	}
 }
+
+// TestAFailedResendDoesNotConsumeTheCooldown covers FR-024 on the endpoint the
+// 503 sends the customer to: the marker is armed when the code is issued, so a
+// resend whose delivery never happened must leave it disarmed and the very next
+// request must be honoured. A delivered message must still arm it, or the
+// cooldown would stop existing.
+func TestAFailedResendDoesNotConsumeTheCooldown(t *testing.T) {
+	h := newHarness()
+	ctx := context.Background()
+	const email = "resend-retry@example.com"
+
+	// The registration's own delivery fails, which leaves the account pending
+	// and the cooldown disarmed - the state the 503 hands the customer.
+	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
+	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: "Str0ng!Pass"}); !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
+		t.Fatalf("expected the delivery failure to surface, got %v", err)
+	}
+	if err := h.otp.CanResend(ctx, email); err != nil {
+		t.Fatalf("precondition: the failed registration must leave the cooldown disarmed: %v", err)
+	}
+
+	// The customer's first resend fails to deliver too. A configuration failure
+	// is not retried (FR-016), so exactly one send is spent on it.
+	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
+	err := h.svc.ResendVerification(ctx, appdto.EmailInput{Email: email})
+	if errors.Is(err, domainerr.ErrResendCooldown) {
+		t.Fatalf("the first resend must not be refused by a cooldown no message earned: %v", err)
+	}
+	if err == nil {
+		t.Fatal("expected a resend whose delivery failed to surface its failure")
+	}
+	if err := h.otp.CanResend(ctx, email); err != nil {
+		t.Fatalf("a message that was not delivered must not consume the cooldown: %v", err)
+	}
+
+	// Delivery recovers: the next request must succeed immediately.
+	if err := h.svc.ResendVerification(ctx, appdto.EmailInput{Email: email}); err != nil {
+		t.Fatalf("a new code must be requestable right after a failed resend: %v", err)
+	}
+	if err := h.otp.CanResend(ctx, email); !errors.Is(err, domainerr.ErrResendCooldown) {
+		t.Fatalf("a delivered message must arm the cooldown, got %v", err)
+	}
+	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: email, OTP: lastField(h.email.lastBody)}); err != nil {
+		t.Fatalf("the customer must be able to finish registration: %v", err)
+	}
+}
