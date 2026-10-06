@@ -151,15 +151,15 @@ ceiling; the service starts. `quickstart.md` scenario 7.
 
 **Purpose**: Documentation, decisions and the close-out gates.
 
-- [ ] T020 [P] Write the ADR (FR-019) at `docs/decisions/010-*.md` for the startup guard and the refusal-reason correction, following `docs/decisions/template.md`, and add it to the `docs/decisions/README.md` index
-- [ ] T021 [P] Update `docs/api-reference.md` (FR-006, FR-001) — the registration endpoint gains the failure branch, and the avatar endpoint's `413` reason becomes unambiguous — per Constitution VIII in the same change as the code
-- [ ] T022 [P] Update `docs/configuration.md`, covering FR-014, to state the shared ceiling's coupling to the avatar ceiling and the startup refusal, and add the row recording the observed provider failure modes
-- [ ] T023 [P] Record the new registration failure branch in `specs/003-user-profile/contracts/error-codes.md` beside the existing "codes deliberately not added" table
-- [ ] T024 [P] Verify FR-021 in `internal/share/logging/redact_test.go` that neither the new diagnostic classification nor the startup message can leak a credential, exercising both failure paths first
-- [ ] T025 Check every new and changed file for UTF-8 without BOM and LF endings, per `.editorconfig`; PowerShell's `Out-File` and `WriteAllLines` write CRLF, so write files in a way that ends up correct
-- [ ] T026 Run `make lint` and `make test` and clear every finding in the feature's scope
-- [ ] T027 Run `quickstart.md` end to end — scenarios 1 through 8 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass
-- [ ] T029 [P] Publish the operator verification procedure required by FR-023 in `docs/configuration.md`, naming each value an operator must obtain and exactly where to get it: the media cloud name from the provider console (explicitly **not** the upload folder), and the mail provider's authorised sending address. `quickstart.md` states it, but a feature folder is not where an operator looks first, so the procedure must also live in the doc the configuration table is read from
+- [x] T020 [P] Write the ADR (FR-019) at `docs/decisions/010-*.md` for the startup guard and the refusal-reason correction, following `docs/decisions/template.md`, and add it to the `docs/decisions/README.md` index
+- [x] T021 [P] Update `docs/api-reference.md` (FR-006, FR-001) — the registration endpoint gains the failure branch, and the avatar endpoint's `413` reason becomes unambiguous — per Constitution VIII in the same change as the code
+- [x] T022 [P] Update `docs/configuration.md`, covering FR-014, to state the shared ceiling's coupling to the avatar ceiling and the startup refusal, and add the row recording the observed provider failure modes
+- [x] T023 [P] Record the new registration failure branch in `specs/003-user-profile/contracts/error-codes.md` beside the existing "codes deliberately not added" table
+- [x] T024 [P] Verify FR-021 in `internal/share/logging/redact_test.go` that neither the new diagnostic classification nor the startup message can leak a credential, exercising both failure paths first
+- [x] T025 Check every new and changed file for UTF-8 without BOM and LF endings, per `.editorconfig`; PowerShell's `Out-File` and `WriteAllLines` write CRLF, so write files in a way that ends up correct
+- [x] T026 Run `make lint` and `make test` and clear every finding in the feature's scope
+- [x] T027 Run `quickstart.md` end to end — scenarios 1 through 8 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass
+- [x] T029 [P] Publish the operator verification procedure required by FR-023 in `docs/configuration.md`, naming each value an operator must obtain and exactly where to get it: the media cloud name from the provider console (explicitly **not** the upload folder), and the mail provider's authorised sending address. `quickstart.md` states it, but a feature folder is not where an operator looks first, so the procedure must also live in the doc the configuration table is read from
 - [ ] T028 Re-run the two provider-blocked outcomes once the operator's configuration is correct: a real upload succeeding with the stored width at most 512 px, and a verification message reaching a real inbox. Both were refused by configuration, not by code, so this task cannot start before that configuration is fixed
 
 ---

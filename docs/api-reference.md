@@ -40,10 +40,18 @@ Hệ quả trực tiếp:
 
 | Điều kiện vi phạm | HTTP | Error code |
 |---|------|-----------|
-| Body vượt `MAX_BODY_BYTES` (mặc định 4 MiB) hoặc vượt trần riêng của route (avatar: 2 MB) | 413 | `PAYLOAD_TOO_LARGE` |
+| Body vượt `MAX_BODY_BYTES` (mặc định 4 MiB) | 413 | `PAYLOAD_TOO_LARGE` |
+| Body vượt **trần riêng của route**, ở route nào cần trần riêng | 413 | Mã của **route đó**, không phải `PAYLOAD_TOO_LARGE` — xem `4.3` |
 | `Content-Type` không khớp với loại body mà route khai báo (route JSON nhận `multipart/form-data`, route avatar nhận `text/plain`) | 415 | `UNSUPPORTED_MEDIA_TYPE` |
 | Vượt rate limit | 429 + header `Retry-After: 1` | `RATE_LIMITED` |
 | Origin không nằm trong `CORS_ALLOWED_ORIGINS` | CORS bị chặn ở preflight | — |
+
+`PAYLOAD_TOO_LARGE` nghĩa đúng như câu chữ của nó: **request quá lớn vì một lý do không
+liên quan tới nội dung request**. Route nào có luật riêng về nội dung — ví dụ avatar bị
+giới hạn ở mức ảnh — thì trả mã của luật đó, để client biết chính xác cần sửa gì. Trước
+đây route avatar trả `PAYLOAD_TOO_LARGE` khi client khai `Content-Length`, và trả
+`USER_AVATAR_TOO_LARGE` khi client không khai: cùng một lỗi, hai mã, tuỳ cách client gửi.
+Xem [ADR 010](decisions/010-avatar-upload-refusal-and-startup-guard.md).
 
 ### 1.2 Correlation ID
 
@@ -227,7 +235,7 @@ token vì thông báo trả về là chung.
 |---|---|
 | Auth | Không |
 | Rate limit | 5/phút (`AUTH_FLOW_RATE_PER_MINUTE`) |
-| Trả về | `202 Accepted` |
+| Trả về | `202 Accepted`, hoặc `503` **khi không gửi được** (xem bên dưới) |
 
 Request
 
@@ -246,7 +254,68 @@ Response `202`
 }
 ```
 
-Lỗi: `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429
+Lỗi: `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
+
+#### Nhánh gửi lại được `503`
+
+Khi nhà cung cấp email **từ chối** thư xác nhận, endpoint này trả `503` chứ không phải
+`500`: đây là sự cố của dịch vụ, không phải lỗi khách gây ra, và `500` khiến client
+tưởng mình sai nên thử lại y hệt — một việc không bao giờ có kết quả.
+
+Response `503`
+
+```json
+{
+  "error": {
+    "code": "SERVICE_UNAVAILABLE",
+    "message": "The confirmation email could not be sent. Nothing was delivered to your address; request a new confirmation code and try again.",
+    "requestId": "..."
+  }
+}
+```
+
+Mã `SERVICE_UNAVAILABLE` là mã **dùng chung** của `httpx`, được tái sử dụng; endpoint này
+không thêm mã lỗi riêng nào của module auth.
+
+Điều mà `503` này hứa thì đúng:
+
+| Điều | Kết quả quan sát được |
+|---|---|
+| Tài khoản có được tạo không | **Có**, và giữ trạng thái `pending`. Không rollback: khách vẫn xác nhận được ngay khi gửi lại thành công |
+| `POST /auth/resend-verification` ngay sau đó | **Được chấp nhận**, không bị `AUTH_RESEND_COOLDOWN`. Một lần gửi hỏng không tiêu tốn cooldown |
+| Rate limit nhóm *flow* | Vẫn áp dụng, nên không mở đường gửi không giới hạn |
+| Body có lộ chi tiết nhà cung cấp, credential hay địa chỉ người nhận không | Không |
+| Có lộ ra email **đã tồn tại** không | **Không** — cả hai nhánh trả cùng một câu, xem bên dưới |
+
+> **Hai nhánh trả lời giống hệt nhau khi không gửi được thư.**
+> Một địa chỉ **đã có** tài khoản đang chờ xác minh vẫn thử gửi, và nếu gửi hỏng thì
+> nhận **đúng** câu trả lời mà một địa chỉ chưa có nhận — cùng status, cùng mã lỗi, cùng
+> câu chữ. Việc này là cần thiết: nếu hai nhánh khác nhau thì `202` nghĩa là *đã đăng ký*
+> và `503` nghĩa là *chưa*, và ai đó đoán được email nào đã có tài khoản trong suốt lúc
+> nhà cung cấp hỏng. Bước tiếp theo dành cho khách là giống nhau ở cả hai trường hợp —
+> yêu cầu một mã xác minh mới — nên che được mà vẫn nói thật.
+>
+> Một địa chỉ đã **xác minh** vẫn trả `202` và **không** nhận thư, vì gửi mã xác minh cho
+> người đã xác minh là hành vi không ai yêu cầu. Nói cách khác, oracle còn lại chỉ thu hẹp
+> còn email **đã xác minh** trong lúc hạ tầng mail hỏng. Xem mục *Khoảng trống đã biết*
+> ở `3.3`.
+
+Bản ghi `audit_logs` cho lần đăng ký đó dùng action `AUTH_REGISTER_DELIVERY_FAILED` với
+outcome `FAILURE`, và metadata `{"classification": ...}` là phân loại **của hệ thống
+này**, không phải câu chữ của nhà cung cấp:
+
+| Phân loại | Nghĩa | Có thử lại không |
+|---|---|---|
+| `TRANSIENT` | Provider báo lỗi tạm thời (SMTP 4xx) | Có, trong hạn mức thử lại |
+| `UNREACHABLE` | Không kết nối được provider | Có, trong hạn mức thử lại |
+| `CONFIGURATION` | Provider từ chối vì deployment này cấu hình sai (SMTP 5xx) | Không — thử lại không đổi được kết quả |
+| `REFUSED` | Provider từ chối chính thư đó | Không |
+| `UNKNOWN` | Lỗi không mang phân loại nào hệ thống này nhận biết | Không |
+
+Một dòng log ở mức `error` đi kèm, chỉ chứa `accountId`, `deliveryFailure` và
+`deliveryAttempts` — không có mã xác nhận, không có câu chữ của provider, không có địa
+chỉ người nhận. Ngân sách thử lại có trần (tối đa 3 lần, tổng thời gian chờ nằm trong
+mục tiêu trả lời 2 giây), nên `503` vẫn tới khách kịp thời.
 
 > Nếu `.env` để `SMTP_HOST` rỗng, email được ghi ra log (log sender). Bật Mailpit
 > bằng `make up-tools` rồi đặt `SMTP_HOST=mailpit`, `SMTP_PORT=1025` để xem OTP
@@ -285,6 +354,28 @@ Gửi lại OTP khi mã hết hạn hoặc người dùng không nhận được
 Request `{ "email": "user@example.com" }` → response giống hệt `POST /register`.
 
 Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `RATE_LIMITED` 429
+
+Ghi chú cho người đọc tài liệu này:
+
+- **Một lần gửi hỏng ở `POST /register` không tiêu tốn cooldown.** Khách vừa nhận
+  `503` ở `3.1` có thể gọi endpoint này ngay lập tức và được chấp nhận; đó là điều mà
+  câu trả lời `503` hứa. Ngược lại, sau một lần gửi **thành công**, cooldown vẫn áp dụng
+  và trả `AUTH_RESEND_COOLDOWN` như trước.
+- **Rate limit nhóm *flow* vẫn áp dụng** ngay cả khi cooldown đã được gỡ, nên việc gỡ
+  cooldown không mở ra một đường gửi không giới hạn.
+- **Khoảng trống đã biết:** nếu chính lần gửi lại này cũng thất bại, endpoint hiện trả
+  `500 INTERNAL_ERROR` thay vì `503 SERVICE_UNAVAILABLE` như `POST /register`. Cơ chế gỡ
+  cooldown và rate limit vẫn đúng, chỉ là **mã trả về** chưa được ánh xạ giống nhau. Sửa
+  ở đây là một thay đổi hành vi, không phải một sửa tài liệu, nên chưa nằm trong thay
+  đổi này.
+- **Khoảng trống đã biết:** ở đường thất bại, endpoint này **vẫn** phân biệt được: một
+  địa chỉ không có tài khoản, hoặc đã không còn ở trạng thái `pending`, trả `nil` và nhận
+  `202` chung; còn một địa chỉ **có** tài khoản `pending` mà bước gửi hỏng thì trả lỗi.
+  Nên khi nhà cung cấp hỏng, `202` nghĩa là *không phải tài khoản `pending`*, còn lỗi nghĩa
+  là *là*. Ở đường thành công hai trường hợp không phân biệt được; ở đường thất bại thì có.
+  Khác với `3.1`, ở đây FR-008a không áp dụng được vì endpoint này **không** hứa sẽ trả
+  `503` khi gửi hỏng — nó trả `500`. Đóng khoảng trống này cần sửa cả status của
+  resend lẫn hành vi khi địa chỉ đã tồn tại; cả hai đều ngoài thay đổi này.
 
 ### 3.4 `POST /login`
 
@@ -600,8 +691,17 @@ curl -X POST http://localhost:8080/api/v1/users/me/avatar \
 
 Lỗi: `VALIDATION_ERROR` 400 (thiếu part `file`, hoặc body không phải
 `multipart/form-data`) · `USER_AVATAR_TYPE_UNSUPPORTED` 400 · `USER_AVATAR_TOO_LARGE`
-413 · `PAYLOAD_TOO_LARGE` 413 · `USER_MEDIA_UNAVAILABLE` 503 · `MALFORMED_REQUEST` 400 ·
+413 · `USER_MEDIA_UNAVAILABLE` 503 · `MALFORMED_REQUEST` 400 ·
 `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
+
+> **`PAYLOAD_TOO_LARGE` không xuất hiện ở endpoint này.** Trước đây nó xuất hiện: một
+> request quá lớn mà client **khai `Content-Length`** bị chặn ở tầng pipeline và nhận
+> `413 PAYLOAD_TOO_LARGE`, còn request **không khai** nhận
+> `413 USER_AVATAR_TOO_LARGE`. Cùng một lỗi, hai mã khác nhau, chỉ tuỳ client có khai độ
+> dài hay không — client không có cách nào biết trước sẽ nhận mã nào. Nay **cả ba**
+> dạng gửi (khai độ dài, không khai, khai thiếu) đều trả `413 USER_AVATAR_TOO_LARGE`.
+> `PAYLOAD_TOO_LARGE` vẫn là mã của mọi route khác. Xem
+> [ADR 010](decisions/010-avatar-upload-refusal-and-startup-guard.md).
 
 Ghi chú:
 
@@ -609,14 +709,19 @@ Ghi chú:
   cũng không tin `Content-Type` mà client khai. Chỉ nhận JPEG, PNG và WebP.
 - **Trần 2 MB nằm trên route này**, không phải trên hạn mức toàn cục:
   - route đặt `BodyLimit(2 MB + 64 KB)` — 64 KB là chỗ dành cho phần đệm của
-    `multipart` (header part, boundary, tên field). Middleware này chạy **trước**
-    handler nên một body khai sai độ dài bị chặn sớm mà không bị đệm hết vào bộ nhớ;
+    `multipart` (header part, boundary, tên field), tức **2 162 688 byte**. Middleware
+    này chạy **trước** handler nên một body khai sai độ dài bị chặn sớm mà không bị đệm
+    hết vào bộ nhớ. Nó báo đúng mã mà handler sẽ báo, nên request có khai `Content-Length`
+    hay không đều cho cùng một câu trả lời;
   - handler còn chặn lần nữa khi đọc part bằng `LimitReader`, vì một `Content-Length`
     không đáng tin. Cả hai đường đều trả cùng một lỗi `413 USER_AVATAR_TOO_LARGE`;
   - `MAX_BODY_BYTES` (mặc định 4 MiB) chỉ là **chặn sớm thô** của cả pipeline, chạy
     trước routing nên route không nâng được; nó phải lớn hơn mọi trần riêng của route,
-    nếu không một upload hợp lệ sẽ bị chặn trước khi route kịp áp luật thật. Vì vậy
-    **đừng đặt `MAX_BODY_BYTES` ≤ 2 MB**: xem `docs/configuration.md`.
+    nếu không một upload hợp lệ sẽ bị chặn trước khi route kịp áp luật thật. Ràng buộc
+    đó **được kiểm tra lúc khởi động**: media có cấu hình mà `MAX_BODY_BYTES` thấp hơn
+    2 162 688 thì API **từ chối khởi động** và báo tên biến cùng cả hai giá trị — xem
+    `docs/configuration.md` và
+    [ADR 010](decisions/010-avatar-upload-refusal-and-startup-guard.md).
 - Ảnh lưu ở bề rộng **tối đa 512 px**; provider là nguồn sự thật cho kích thước kết quả
   (ADR-005), dịch vụ này không đụng vào ảnh.
 - Thứ tự thao tác được chốt: kiểm tra byte trước → tải lên → dựng tham chiếu → **ghi
@@ -1048,6 +1153,8 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-06 | `POST /users/me/avatar`: mọi cách gửi ảnh quá trần (khai `Content-Length`, không khai, khai thiếu) đều trả `413 USER_AVATAR_TOO_LARGE`; gỡ `PAYLOAD_TOO_LARGE` khỏi danh sách lỗi của endpoint này vì nó không còn là câu trả lời nào ở đây nữa. Cùng thay đổi đó sửa hàng đầu mục `1.1` (trước đó gộp trần toàn cục và trần riêng của route vào cùng một mã) và bổ sung phần trần 2 162 688 byte trong ghi chú của `4.3`. `PAYLOAD_TOO_LARGE` giữ nguyên trên mọi route không phải avatar. | `internal/modules/user/presentation/http/router.go`, `internal/share/middleware/bodylimit.go` |
+| 2026-10-06 | `POST /register`: thêm nhánh gửi lại thất bại — `503 SERVICE_UNAVAILABLE` (mã dùng chung của `httpx`, tái sử dụng, **không** thêm mã riêng của module) kèm câu báo cho khách biết không có gì được gửi tới và có thể xin mã mới. Tài khoản `pending` được giữ, cooldown gửi lại được gỡ (nên lời hứa trong câu trả lời là đúng), rate limit nhóm *flow* vẫn áp dụng. Ghi action audit `AUTH_REGISTER_DELIVERY_FAILED` + outcome `FAILURE` với metadata `classification` thuộc hệ thống này. `POST /resend-verification` ghi rõ khoảng trống đã biết: gửi lại hỏng hiện trả `500` chứ không phải `503`. | `internal/modules/auth/application/implement/email_failure.go`, `internal/modules/auth/application/implement/register.go`, `internal/modules/auth/presentation/http/errors.go` |
 | 2026-10-06 | Sửa hai giá trị **ví dụ** đã sai trong mục `/divisions`: tên tỉnh `79` là `Hồ Chí Minh` (không phải `Thành phố Hồ Chí Minh`), và mã phường ví dụ `0001` / `Phường Hoàng Kiết` **không tồn tại** trong dataset. Thay bằng `00004` / `Ba Đình`. Mã phường trong dataset là 5 chữ số và tên không kèm tiền tố `Phường`/`Xã`. | `internal/share/administrative/data/vn-divisions.json` |
 | 2026-10-06 | Thêm nhóm `/api/v1/users/*` (module 02 User): hồ sơ (`GET`/`PATCH /me`), avatar (`POST`/`DELETE /me/avatar`), sổ địa chỉ (5 route `/me/addresses*`) và tra cứu khách hàng cho admin (`GET /{userId}`, không có tiền tố `/admin`). Chủ tài khoản luôn lấy từ session; địa chỉ của người khác trả cùng `404 USER_ADDRESS_NOT_FOUND`; `divisionNeedsReview` có mặt trên địa chỉ của chính khách và vắng mặt trên tra cứu của admin. Bổ sung `USER_*` vào mục 1.4 và hai hạn mức của module vào mục 1.5. Sửa phiên bản hiến pháp trích ở đầu file: `v1.4.0` → `v1.6.0`. | `internal/modules/user/presentation/http/router.go` |
 | 2026-10-06 | Thêm nhóm `/api/v1/divisions/*` (module 02 User): `GET /divisions/provinces` và `GET /divisions/provinces/{provinceCode}/wards`, đọc dataset hành chính nhúng sẵn (ADR-002). Hai endpoint cố ý không phân trang và yêu cầu Bearer token. | `internal/modules/user/presentation/http/router.go` |

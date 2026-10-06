@@ -44,3 +44,29 @@ the previous avatar was not touched.
 | Address list page out of range | `VALIDATION_ERROR` (shared) | Pagination validation is a foundation concern |
 | A structurally invalid address member, such as an empty `recipientName` on `PATCH` | `VALIDATION_ERROR` (shared) with `details[].field` naming the member | The rule is request shape, not a user-domain rule; the detail carries the member name, which is what the client needs (FR-020) |
 | Media adapter returned an unmapped failure | `INTERNAL_ERROR` (shared) | Never leak provider detail to clients; the cause is logged with the correlation id |
+
+## Added by feature `004-fix-pending-defects`
+
+This feature adds **no module error code**. Both changes are recorded here because they
+change which answer an endpoint gives, and this file is the catalogue of answers.
+
+| Situation | Code used | Why not a module code |
+|-----------|-----------|----------------------|
+| Registration created the account but the verification message could not be delivered | `SERVICE_UNAVAILABLE` (shared, 503) | The failure is the mail provider's, not the user module's and not the client's. Reusing the shared code is the whole point: a new `USER_*` or `AUTH_*` code would tell a client "this is a domain rule you can act on", when the action is "wait and ask for a new code". The status change from `500 INTERNAL_ERROR` to `503` is the part that carries the meaning, because `500` invites a client to treat a service fault as its own fault and retry unchanged, which never works. This branch belongs to `POST /auth/register` (module 01), not to a `USER_*` endpoint, so nothing here in the user-module table moves |
+
+Related, and deliberately **not** a code change: an avatar upload over the ceiling answers
+`USER_AVATAR_TOO_LARGE` whether or not the client declared a request length. `PAYLOAD_TOO_LARGE`
+is removed from `POST /users/me/avatar` and stays on every non-avatar route, where it keeps
+its meaning: a body too large for a reason unrelated to its content.
+
+One disclosure consequence of that shared code, recorded here so it is not discovered later:
+because `503` can only be reached by an account that was **just created**, a registration
+that answers `503` proves the address had no account. While the mail provider is failing,
+`202` therefore means "already exists" and `503` means "did not". The success path is
+unaffected and still answers the same generic `202` for every address. See the warning in
+`docs/api-reference.md` §3.1.
+
+Operator-facing, not client-facing: the classification of a failed delivery
+(`TRANSIENT`, `UNREACHABLE`, `CONFIGURATION`, `REFUSED`, `UNKNOWN`) is recorded in the audit
+metadata and in one log line. It never reaches a client response, and it never carries the
+provider's own wording, so a provider editing its copy cannot change what an operator sees.

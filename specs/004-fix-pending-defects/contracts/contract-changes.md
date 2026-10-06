@@ -61,8 +61,20 @@ client to treat the failure as its own fault and retry blindly, which never work
 invites it to tell the user to wait and retry, which does.
 
 **Disclosure guarantee**: the body reveals no provider detail, no credential and no recipient
-address, and it never reveals whether the address was already registered — a failed attempt
-for an address that does not exist and one that does are indistinguishable.
+address, and it does not reveal whether the address was already registered. **Both branches
+answer the identical status, code and message when delivery fails** — an address with a
+pending account and one without are indistinguishable. That is required, not incidental: the
+account is created before the send is attempted, so if the already-registered branch kept
+answering the ordinary `202` while a new address answered `503`, an unauthenticated caller
+could enumerate registered addresses for as long as the outage lasted.
+
+The customer's next step is identical either way — request a new verification message —
+which is what makes hiding the difference possible without hiding the failure.
+
+One residue remains: an **already-verified** address answers the ordinary `202` and receives
+no message, because sending a verification code to someone already verified is a behaviour
+nobody asked for. The oracle therefore narrows from every registered address to confirmed
+ones. Recorded in `deferred.md` as D8 with both ways to close it.
 
 **Preserved guarantee**: registration still cannot be used to discover whether an email is
 registered. A successful attempt still answers the same generic `202`.

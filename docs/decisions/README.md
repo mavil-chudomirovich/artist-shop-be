@@ -35,6 +35,7 @@ Dùng [template.md](template.md).
 | [007](007-golangci-lint-v2-ci-gates.md) | golangci-lint v2 + action v9 + gate theo cỡ thay đổi | Accepted |
 | [008](008-per-route-content-type-and-body-ceiling.md) | Kiểm tra content-type theo từng route, `MAX_BODY_BYTES` bằng 2× trần avatar | Accepted |
 | [009](009-operator-address-view-without-review-flag.md) | Tra cứu operator trả hình dạng địa chỉ riêng, không có `divisionNeedsReview` | Accepted |
+| [010](010-avatar-upload-refusal-and-startup-guard.md) | Route avatar trả `USER_AVATAR_TOO_LARGE`; từ chối khởi động khi `MAX_BODY_BYTES` thấp hơn trần avatar | Accepted |
 
 ## Khi nào phải viết ADR
 
