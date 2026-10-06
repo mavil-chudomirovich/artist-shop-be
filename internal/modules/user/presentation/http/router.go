@@ -61,7 +61,14 @@ func (h *Handler) Router(limits config.UserConfig, hooks middleware.AuthHooks) h
 	// check — the multipart envelope is allowed for on top of the image, and the
 	// image itself is capped again while it is read, so a body that is over the
 	// limit is refused without being buffered whole (research D7).
-	r.With(authenticated, avatarLimit, middleware.BodyLimit(h.cfg.AvatarMaxBytesOrDefault()+avatarUploadOverhead)).
+	//
+	// The route reports the refusal its handler would have reported, so a request
+	// whose declared length is over this limit is answered with the avatar-specific
+	// code rather than the generic one the JSON routes keep. That is what makes the
+	// answer independent of whether the client declared its length (FR-001,
+	// research D1).
+	r.With(authenticated, avatarLimit,
+		middleware.BodyLimitWithRefusal(h.cfg.AvatarMaxBytesOrDefault()+avatarUploadOverhead, avatarTooLarge())).
 		Post("/me/avatar", h.SetAvatar)
 
 	r.With(authenticated).Get("/me/addresses", h.ListAddresses)

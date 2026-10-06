@@ -186,6 +186,127 @@ func pngPayload() []byte {
 	return append([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, bytes.Repeat([]byte{0x2A}, 64)...)
 }
 
+// postAvatarWithDeclaredLength posts the same multipart body while stating a
+// ContentLength the test chooses. The bytes on the wire do not depend on that
+// header, which is the whole point: a client may declare more than it sends, send
+// in chunks and declare nothing, or declare less than it sends. The ceiling has to
+// answer all three alike, because the declared length is never trusted.
+func postAvatarWithDeclaredLength(handler http.Handler, content []byte, declared int64) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "avatar.png")
+	if err != nil {
+		panic(err)
+	}
+	if _, err := part.Write(content); err != nil {
+		panic(err)
+	}
+	if err := writer.Close(); err != nil {
+		panic(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/me/avatar", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+liveToken)
+	req.ContentLength = declared
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// avatarMultipartEnvelope is the room the multipart part headers, the boundary
+// lines and the closing delimiter add on top of the content. It only has to be an
+// over-estimate: the tests that state a declared length by hand use it to be sure
+// the header is a number above the row's limit.
+const avatarMultipartEnvelope = 512
+
+// FR-001, FR-002 and SC-001: the same oversized image is refused with the same
+// documented reason whichever way the client describes its request. Only the
+// declared length differs between the rows, so the table makes it obvious that the
+// answer cannot depend on it.
+//
+// The first row is refused by the route's own body limit, because the declared
+// length is over the limit that route installs and it is caught before a byte is
+// read. The other two are refused by the handler while it reads, because the route
+// had nothing to compare against. All three must answer alike.
+func TestEveryOversizedUploadShapeAnswersTheAvatarTooLargeCode(t *testing.T) {
+	routeLimit := avatarCeiling + avatarUploadOverhead
+	overImageCeiling := make([]byte, avatarCeiling+1)
+	overRouteCeiling := bytes.Repeat([]byte("a"), int(routeLimit)+1)
+
+	cases := []struct {
+		name     string
+		content  []byte
+		declared int64
+	}{
+		{
+			name:     "declared length over the route ceiling",
+			content:  overRouteCeiling,
+			declared: int64(len(overRouteCeiling)) + avatarMultipartEnvelope,
+		},
+		{
+			name:     "no declared length",
+			content:  overImageCeiling,
+			declared: -1,
+		},
+		{
+			name:     "declared length smaller than what is sent",
+			content:  overImageCeiling,
+			declared: avatarCeiling,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAvatarFixture(t, openLimits, avatarCeiling)
+			// Seed an accepted avatar first, so the refusal has something it could
+			// have destroyed: FR-005 says the stored profile stays as it was.
+			if rec := fixture.upload(t); rec.Code != http.StatusOK {
+				t.Fatalf("seed the avatar: %d (%s)", rec.Code, rec.Body.String())
+			}
+			before := *fixture.storedAvatar(t)
+
+			rec := postAvatarWithDeclaredLength(fixture.router, tc.content, tc.declared)
+
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("expected 413, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := errorCode(t, rec); got != constant.CodeAvatarTooLarge {
+				t.Fatalf("expected %s, got %s", constant.CodeAvatarTooLarge, got)
+			}
+			if got := detailField(t, rec); got != fieldFile {
+				t.Fatalf("expected the detail to name %q, got %q", fieldFile, got)
+			}
+			after := fixture.storedAvatar(t)
+			if after == nil || *after != before {
+				t.Fatalf("a refused upload changed the stored avatar: %+v", after)
+			}
+			if fixture.media.uploads != 1 {
+				t.Fatalf("a refused upload must not reach the media service, got %d uploads",
+					fixture.media.uploads)
+			}
+		})
+	}
+}
+
+// An image exactly at the ceiling is the largest accepted one, so the refusal the
+// route now reports must not fire a byte early. The row that would catch it is the
+// declared one: the same image with a truthful Content-Length header.
+func TestAnImageAtExactlyTheCeilingIsAcceptedWithItsLengthDeclared(t *testing.T) {
+	fixture := newAvatarFixture(t, openLimits, avatarCeiling)
+	content := make([]byte, avatarCeiling)
+	copy(content, pngPayload())
+
+	rec := postAvatarWithDeclaredLength(fixture.router, content, int64(len(content))+avatarMultipartEnvelope)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	avatar := decodeAvatar(t, rec).Data.Avatar
+	if avatar == nil || avatar.PublicID == "" {
+		t.Fatalf("expected the accepted upload to have stored a reference, got %+v", avatar)
+	}
+}
+
 type avatarBody struct {
 	Data struct {
 		Avatar *struct {

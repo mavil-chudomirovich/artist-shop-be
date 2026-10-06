@@ -54,8 +54,8 @@ to report a caller-supplied reason, and the audit constant the new failure trace
 
 **⚠️ CRITICAL**: T004 and T005 must be complete before any user story task starts.
 
-- [ ] T004 Change `middleware.BodyLimit` (FR-001, FR-003) in `internal/share/middleware/bodylimit.go` so the caller can supply the error code its refusal reports, keeping the generic request-too-large code as the default so every existing caller is unchanged. Per `docs/development/code-hygiene.md` no behaviour change ships without a test
-- [ ] T005 [P] Add the failed-delivery audit constant (FR-011) next to `AuditRegister` in `internal/modules/auth/domain/constant/audit.go`, reusing the existing `OutcomeFailure` value rather than adding a new outcome
+- [x] T004 Change `middleware.BodyLimit` (FR-001, FR-003) in `internal/share/middleware/bodylimit.go` so the caller can supply the error code its refusal reports, keeping the generic request-too-large code as the default so every existing caller is unchanged. Per `docs/development/code-hygiene.md` no behaviour change ships without a test
+- [x] T005 [P] Add the failed-delivery audit constant (FR-011) next to `AuditRegister` in `internal/modules/auth/domain/constant/audit.go`, reusing the existing `OutcomeFailure` value rather than adding a new outcome
 
 **Checkpoint**: The shared middleware can speak a caller's reason, and the new audit action is
 declared. US1, US2 and US3 can now proceed independently.
@@ -78,13 +78,13 @@ reason. `quickstart.md` scenarios 1–3.
 > before the fix proves nothing — the defect already produces a `413`, so the test must assert
 > the **code**, not the status.
 
-- [ ] T006 [P] [US1] Avatar refusal tests, covering FR-001, FR-003 and FR-005, in `internal/modules/user/presentation/http/avatar_test.go`: a declared length over the route ceiling, an undeclared length, an understated length, an image exactly at the ceiling accepted, and a non-avatar JSON request over the shared ceiling still answering the generic code
-- [ ] T007 [P] [US1] Router-level test in `internal/modules/user/presentation/http/router_test.go`, covering FR-005, asserting the avatar route's refusal code, so the shared middleware's new parameter is pinned at the route that uses it
+- [x] T006 [P] [US1] Avatar refusal tests, covering FR-001, FR-003 and FR-005, in `internal/modules/user/presentation/http/avatar_test.go`: a declared length over the route ceiling, an undeclared length, an understated length, an image exactly at the ceiling accepted, and a non-avatar JSON request over the shared ceiling still answering the generic code
+- [x] T007 [P] [US1] Router-level test in `internal/modules/user/presentation/http/router_test.go`, covering FR-005, asserting the avatar route's refusal code, so the shared middleware's new parameter is pinned at the route that uses it
 
 ### Implementation for User Story 1
 
-- [ ] T008 [US1] Apply the T004 parameter (FR-001, FR-003) to the avatar route in `internal/modules/user/presentation/http/router.go`, passing the existing avatar-too-large code so a declared-length refusal names the image, not the request
-- [ ] T009 [US1] Verify FR-002 and FR-004 in `internal/modules/user/presentation/http/handler.go` that the handler's read ceiling already reports the same code for the other two request shapes, and change nothing if it does — `readAvatarFile` already funnels every ceiling path through one helper, so this task is a confirmation, not an edit
+- [x] T008 [US1] Apply the T004 parameter (FR-001, FR-003) to the avatar route in `internal/modules/user/presentation/http/router.go`, passing the existing avatar-too-large code so a declared-length refusal names the image, not the request
+- [x] T009 [US1] Verify FR-002 and FR-004 in `internal/modules/user/presentation/http/handler.go` that the handler's read ceiling already reports the same code for the other two request shapes, and change nothing if it does — `readAvatarFile` already funnels every ceiling path through one helper, so this task is a confirmation, not an edit
 
 **Checkpoint**: User Story 1 is fully functional and independently testable. This story alone
 is a valid MVP: it removes the confusing answer without touching anything else.

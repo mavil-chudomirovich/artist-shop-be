@@ -29,6 +29,31 @@ func statusOf(rec *httptest.ResponseRecorder) string {
 	return body.Error.Code
 }
 
+func messageOf(rec *httptest.ResponseRecorder) string {
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Error.Message
+}
+
+func fieldOf(rec *httptest.ResponseRecorder) string {
+	var body struct {
+		Error struct {
+			Details []struct {
+				Field string `json:"field"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if len(body.Error.Details) != 1 {
+		return ""
+	}
+	return body.Error.Details[0].Field
+}
+
 func TestBodyLimitRejectsOversized(t *testing.T) {
 	handler := BodyLimit(10)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
@@ -42,6 +67,106 @@ func TestBodyLimitRejectsOversized(t *testing.T) {
 	}
 	if statusOf(rec) != "PAYLOAD_TOO_LARGE" {
 		t.Fatalf("expected PAYLOAD_TOO_LARGE, got %q", statusOf(rec))
+	}
+}
+
+// The shared ceiling is used by every route that has no size rule of its own, so
+// its refusal has to stay exactly the generic one: the same code, the same status
+// and the same catalogue message. This pins the default, because a default that
+// drifts silently changes every route that never asked for a reason of its own
+// (FR-003).
+func TestBodyLimitDefaultRefusalStaysTheGenericRequestTooLarge(t *testing.T) {
+	handler := BodyLimit(10)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/addresses", strings.NewReader(`{"a":1}`))
+	req.ContentLength = 100
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rec.Code)
+	}
+	if got := statusOf(rec); got != "PAYLOAD_TOO_LARGE" {
+		t.Fatalf("expected PAYLOAD_TOO_LARGE, got %q", got)
+	}
+	if got := messageOf(rec); got != "Request body is too large" {
+		t.Fatalf("expected the catalogue message, got %q", got)
+	}
+}
+
+// A route that knows what its ceiling is for supplies the refusal it wants, and
+// the middleware reports it verbatim: code, status and the field detail that tells
+// the client which input to change. Only the route knows the input, so the
+// middleware never invents one (FR-001, FR-020).
+func TestBodyLimitReportsTheCallersRefusal(t *testing.T) {
+	refusal := &httpx.AppError{
+		Code:    "USER_AVATAR_TOO_LARGE",
+		Status:  http.StatusRequestEntityTooLarge,
+		Message: "Image exceeds the size limit",
+		Details: []httpx.Detail{{Field: "file", Issue: "compress the image before uploading"}},
+	}
+	called := false
+	handler := BodyLimitWithRefusal(10, refusal)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/avatar", nil)
+	req.ContentLength = 100
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", rec.Code)
+	}
+	if got := statusOf(rec); got != "USER_AVATAR_TOO_LARGE" {
+		t.Fatalf("expected the caller's code, got %q", got)
+	}
+	if got := messageOf(rec); got != "Image exceeds the size limit" {
+		t.Fatalf("expected the caller's message, got %q", got)
+	}
+	if got := fieldOf(rec); got != "file" {
+		t.Fatalf("expected the caller's field detail, got %q", got)
+	}
+	if called {
+		t.Fatal("a refused request must not reach the route")
+	}
+}
+
+// Supplying a reason must not weaken the rule: the ceiling and the cap on the
+// readable body are unchanged, so a body that declares nothing or lies about its
+// size is still cut at the limit.
+func TestBodyLimitWithRefusalKeepsTheCeilingAndTheCap(t *testing.T) {
+	refusal := &httpx.AppError{
+		Code:    "USER_AVATAR_TOO_LARGE",
+		Status:  http.StatusRequestEntityTooLarge,
+		Message: "Image exceeds the size limit",
+	}
+	var read int64
+	handler := BodyLimitWithRefusal(10, refusal)(
+		http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			n, err := io.Copy(io.Discard, r.Body)
+			if err == nil {
+				read = n
+			}
+		}))
+
+	for name, declared := range map[string]int64{"undeclared": -1, "understated": 5} {
+		t.Run(name, func(t *testing.T) {
+			read = 0
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(strings.Repeat("a", 100)))
+			req.ContentLength = declared
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			if read > 10 {
+				t.Fatalf("expected the body to be capped at 10 bytes, read %d", read)
+			}
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("small"))
+	req.ContentLength = 5
+	handler.ServeHTTP(rec, req)
+	if read != 5 {
+		t.Fatalf("a body within the ceiling must be readable in full, read %d", read)
 	}
 }
 

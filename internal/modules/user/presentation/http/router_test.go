@@ -581,6 +581,38 @@ func TestAvatarUploadIsRefusedAboveTheCeilingBeforeTheUseCase(t *testing.T) {
 	}
 }
 
+// --- feature 004-fix-pending-defects, US1 (T007) ---------------------------
+// The route installs its own body limit above the image ceiling, so a request that
+// declares a length over that limit is refused before the handler reads a byte.
+// That early refusal has to name the image like the handler's own read ceiling
+// does, or the same mistake answers two different codes depending on the client
+// (FR-001, FR-002, research D1). This is the test that pins the middleware's
+// caller-supplied refusal at the route that uses it.
+
+// usersRouter declares AvatarMaxBytes 16, so the route's own limit is 16 + 64 KB;
+// a body larger than that is refused by the route rather than by the handler.
+func TestTheAvatarRouteRefusesADeclaredOversizedRequestWithTheAvatarCode(t *testing.T) {
+	svc := newStub(access.RoleCustomer)
+	router := usersRouter(svc, &recordingAuditor{}, openLimits)
+
+	rec := doAvatar(router, bytes.Repeat([]byte("a"), 64<<10), "token")
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "USER_AVATAR_TOO_LARGE" {
+		t.Fatalf("expected USER_AVATAR_TOO_LARGE, got %s", got)
+	}
+	if got := detailField(t, rec); got != fieldFile {
+		t.Fatalf("expected the detail to name %q, got %q", fieldFile, got)
+	}
+	if svc.wasCalled("SetAvatar") {
+		t.Fatal("an oversized upload must not reach the media service")
+	}
+}
+
+// --- end feature 004-fix-pending-defects, US1 -------------------------------
+
 func TestAvatarUploadHandsTheBytesToTheUseCase(t *testing.T) {
 	svc := newStub(access.RoleCustomer)
 	router := usersRouter(svc, &recordingAuditor{}, openLimits)

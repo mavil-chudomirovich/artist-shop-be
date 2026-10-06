@@ -222,7 +222,11 @@ credential appears in any log line.
 
 - **FR-001**: System MUST answer an avatar upload that exceeds the documented size ceiling
   with the module's documented avatar-too-large code, regardless of whether the request
-  declared its length.
+  declared its length. This applies while the request is within the shared request-size
+  ceiling; a request beyond **that** ceiling is refused earlier by the shared pipeline with
+  the generic reason, and is out of this requirement. The shared ceiling is four times the
+  avatar ceiling by default, so the gap only opens to an upload more than twice as large as
+  anything the avatar ceiling would accept anyway.
 - **FR-002**: System MUST answer the same code whether the ceiling was reached while
   reading the upload or by comparing the size received.
 - **FR-003**: System MUST preserve the existing generic request-too-large answer for
