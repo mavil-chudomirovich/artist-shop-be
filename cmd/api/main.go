@@ -105,6 +105,10 @@ func run() error {
 		Email:         email.NewSender(cfg.Auth, logger),
 		Audit:         auditorAdapter,
 		Tx:            db,
+		// The composition's own structured logger, so the classified diagnostic a
+		// failed message delivery leaves carries the request correlation id the
+		// rest of the service logs with (Constitution VI).
+		Logger: logger,
 		Config: implement.Config{
 			RefreshTokenTTL:  cfg.Auth.RefreshTokenTTL,
 			PasswordResetTTL: cfg.Auth.PasswordResetTTL,
