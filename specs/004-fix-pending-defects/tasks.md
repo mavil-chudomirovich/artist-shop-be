@@ -160,7 +160,8 @@ ceiling; the service starts. `quickstart.md` scenario 7.
 - [x] T026 Run `make lint` and `make test` and clear every finding in the feature's scope
 - [x] T027 Run `quickstart.md` end to end — scenarios 1 through 8 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass
 - [x] T029 [P] Publish the operator verification procedure required by FR-023 in `docs/configuration.md`, naming each value an operator must obtain and exactly where to get it: the media cloud name from the provider console (explicitly **not** the upload folder), and the mail provider's authorised sending address. `quickstart.md` states it, but a feature folder is not where an operator looks first, so the procedure must also live in the doc the configuration table is read from
-- [ ] T028 Re-run the two provider-blocked outcomes once the operator's configuration is correct: a real upload succeeding with the stored width at most 512 px, and a verification message reaching a real inbox. Both were refused by configuration, not by code, so this task cannot start before that configuration is fixed
+- [x] T028 Re-run the media outcome against the real provider: a genuine 760x760 PNG uploaded through `POST /api/v1/users/me/avatar` is accepted, the stored width is 512 (the provider applied the transform), all four avatar columns are populated together, `USER_AVATAR_SET` is audited, a valid image refused by the provider leaves the previous avatar untouched (FR-017), and removing it clears the columns and destroys the asset
+- [ ] T028b Mail outcome, **still blocked by configuration**: the mail relay answers `525 5.7.1 Unauthorized IP address` after a successful TLS handshake, so no message reaches a real inbox. Re-tested this run by calling the relay directly. Unblocks when the sending address is authorised in the provider console
 
 ---
 
