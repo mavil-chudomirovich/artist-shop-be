@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/implement"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/interface"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/email"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/postgres"
 	authredis "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/redis"
@@ -223,5 +225,43 @@ func TestChangePasswordRevokesEverySession(t *testing.T) {
 	}
 	if rec := post(handler, "/refresh", `{"refreshToken":"`+deviceB.RefreshToken+`"}`, ""); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected every session to be revoked, got %d", rec.Code)
+	}
+}
+
+// TestAFailedDeliveryLeavesTheCustomerAWorkingRecoveryPath exercises the whole
+// story against real storage: the account is committed, the refusal is answered
+// as a service problem naming the next step, and the new code that step promises
+// can be requested in the same second - because the send that never happened did
+// not consume the cooldown the real store had armed (FR-007, FR-024).
+func TestAFailedDeliveryLeavesTheCustomerAWorkingRecoveryPath(t *testing.T) {
+	handler, sender := integrationRouter(t)
+	const email = "providerdown@example.com"
+	const password = "Str0ng!Pass"
+
+	sender.FailNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
+
+	rec := post(handler, "/register", `{"email":"`+email+`","password":"`+password+`"}`, "")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("register: expected 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "SERVICE_UNAVAILABLE") {
+		t.Fatalf("expected the shared service-unavailable code, got %s", rec.Body.String())
+	}
+	if _, ok := sender.Last(); ok {
+		t.Fatal("no message left the system, so none may be recorded as delivered")
+	}
+
+	// The answer told the customer they could request a new code, so this must not
+	// be refused with the resend cooldown.
+	rec = post(handler, "/resend-verification", `{"email":"`+email+`"}`, "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("resend: expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	msg, ok := sender.Last()
+	if !ok {
+		t.Fatal("expected the new code to be delivered")
+	}
+	if rec := post(handler, "/verify-email", `{"email":"`+email+`","otp":"`+lastFieldText(msg.Body)+`"}`, ""); rec.Code != http.StatusOK {
+		t.Fatalf("verify-email: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }

@@ -54,5 +54,6 @@ func (s *Service) ResendVerification(ctx context.Context, in dto.EmailInput) err
 	if err := s.OTP.CanResend(ctx, normalized); err != nil {
 		return err
 	}
-	return s.sendOTP(ctx, normalized)
+	_, err = s.sendOTP(ctx, normalized)
+	return err
 }

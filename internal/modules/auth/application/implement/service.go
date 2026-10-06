@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"time"
 
@@ -41,13 +42,32 @@ type Service struct {
 	Email         appinterface.EmailSender
 	Audit         appinterface.Auditor
 	Tx            appinterface.UnitOfWork
-	Config        Config
+	// Logger receives the classified diagnostic an operator acts on when a
+	// message cannot be delivered. It must be the composition's own structured
+	// logger so the line carries the request correlation id (Constitution VI).
+	Logger *slog.Logger
+	Config Config
+
+	// now and sleep are the retry budget's clock and timer. They are nil in
+	// production and replaced in tests, so the budget can be exercised without
+	// waiting on it.
+	now   func() time.Time
+	sleep func(time.Duration)
 }
 
 var _ appinterface.AuthService = (*Service)(nil)
 
 // New creates the service.
 func New(deps Service) *Service { return &deps }
+
+// log returns the service's logger, falling back to the default one so a missing
+// logger never turns a diagnostic into a panic.
+func (s *Service) log() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
+}
 
 // issueSession creates a session row and returns the token pair together with
 // the persisted session so callers can reference it in audit events.

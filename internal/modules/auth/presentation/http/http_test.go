@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,12 +22,14 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 )
 
 type stubService struct {
-	role     access.Role
-	subject  uuid.UUID
-	verifyEr error
+	role       access.Role
+	subject    uuid.UUID
+	verifyEr   error
+	registerEr error
 
 	mu           sync.Mutex
 	lastChangePW dto.ChangePasswordInput
@@ -36,7 +39,7 @@ func newStub(role access.Role) *stubService {
 	return &stubService{role: role, subject: uuid.New()}
 }
 
-func (*stubService) Register(context.Context, dto.RegisterInput) error { return nil }
+func (s *stubService) Register(context.Context, dto.RegisterInput) error { return s.registerEr }
 func (*stubService) VerifyEmail(context.Context, dto.VerifyEmailInput) error {
 	return nil
 }
@@ -139,6 +142,123 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 		t.Fatalf("decode error body %q: %v", rec.Body.String(), err)
 	}
 	return body.Error.Code
+}
+
+func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body %q: %v", rec.Body.String(), err)
+	}
+	return body.Error.Message
+}
+
+func dataMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode success body %q: %v", rec.Body.String(), err)
+	}
+	return body.Data.Message
+}
+
+const registerBody = `{"email":"probe@example.com","password":"Str0ng!Pass"}`
+
+// TestRegisterAnswersServiceUnavailableWhenTheMessageCannotBeDelivered covers
+// FR-006: the failure is reported as a service problem, the customer is told in
+// the answer itself that no code was sent and that a new one can be requested.
+func TestRegisterAnswersServiceUnavailableWhenTheMessageCannotBeDelivered(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.registerEr = domainerr.ErrVerificationDeliveryFailed
+
+	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != string(httpx.CodeUnavailable) {
+		t.Fatalf("expected %s, got %s", httpx.CodeUnavailable, got)
+	}
+	message := errorMessage(t, rec)
+	if !strings.Contains(message, "could not be sent") {
+		t.Fatalf("the answer must say the message was not sent, got %q", message)
+	}
+	if !strings.Contains(message, "request a new confirmation code") {
+		t.Fatalf("the answer must name the next step, got %q", message)
+	}
+}
+
+// TestTheDeliveryFailureAnswerRevealsNoProviderDetail covers FR-009: even when
+// the failure carries a provider sentence, a recipient address and a credential,
+// the client sees none of it.
+func TestTheDeliveryFailureAnswerRevealsNoProviderDetail(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.registerEr = fmt.Errorf("%w: unauthorized IP address 203.0.113.7, smtp password s3cr3t-value",
+		domainerr.ErrVerificationDeliveryFailed)
+
+	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	for _, leak := range []string{"unauthorized", "203.0.113.7", "s3cr3t", "probe@example.com", "550"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Fatalf("the answer leaked %q: %s", leak, rec.Body.String())
+		}
+	}
+}
+
+// TestADeliveredMessageKeepsTheGenericAcceptedAnswer is the regression guard for
+// FR-014: the endpoint must keep answering the same generic question whatever the
+// address is, so registration still cannot be used to discover whether an email
+// exists.
+func TestADeliveredMessageKeepsTheGenericAcceptedAnswer(t *testing.T) {
+	handler := routerFor(newStub(access.RoleCustomer), &recordingAuditor{},
+		config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1000})
+
+	created := doJSON(handler, http.MethodPost, "/register", registerBody, "")
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", created.Code, created.Body.String())
+	}
+	duplicate := doJSON(handler, http.MethodPost, "/register", `{"email":"taken@example.com","password":"Str0ng!Pass"}`, "")
+	if duplicate.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", duplicate.Code, duplicate.Body.String())
+	}
+	if dataMessage(t, created) != dataMessage(t, duplicate) {
+		t.Fatalf("the answer must not depend on the address: %q vs %q",
+			dataMessage(t, created), dataMessage(t, duplicate))
+	}
+}
+
+// TestTheFlowRateLimitStillAppliesAfterADeliveryFailure covers FR-025: once the
+// cooldown is disarmed, the flow-level limit is the only thing left in the way
+// and it must still refuse a customer who retries immediately. Without this the
+// disarm would be an unbounded sending path.
+func TestTheFlowRateLimitStillAppliesAfterADeliveryFailure(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.registerEr = domainerr.ErrVerificationDeliveryFailed
+	handler := routerFor(stub, &recordingAuditor{}, config.AuthConfig{FlowRatePerMinute: 1})
+
+	if rec := doJSON(handler, http.MethodPost, "/register", registerBody, ""); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	// The 503 tells the customer to request a new code, so the retry must not be
+	// refused by a cooldown - only by the flow limit.
+	rec := doJSON(handler, http.MethodPost, "/resend-verification", `{"email":"probe@example.com"}`, "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected the flow rate limit to refuse the immediate retry, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "RATE_LIMITED" {
+		t.Fatalf("expected RATE_LIMITED, got %s", got)
+	}
 }
 
 func TestMeRequiresAuthentication(t *testing.T) {

@@ -108,3 +108,13 @@ func (s *OTPStore) Verify(ctx context.Context, email, otp string) error {
 func (s *OTPStore) Invalidate(ctx context.Context, email string) error {
 	return s.cache.Del(ctx, otpKey(email), attemptsKey(email))
 }
+
+// DisarmCooldown deletes only the resend marker. The marker records "a message
+// was sent recently", so a send that never happened must not consume the
+// cooldown budget (FR-024). The code, its lifetime, the attempt counter and the
+// block marker are deliberately left alone: none of them belongs to delivery,
+// and the brute-force state a failed send must not weaken is exactly this
+// (FR-018).
+func (s *OTPStore) DisarmCooldown(ctx context.Context, email string) error {
+	return s.cache.Del(ctx, sentKey(email))
+}

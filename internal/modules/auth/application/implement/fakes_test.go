@@ -1,8 +1,10 @@
 package implement
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -161,12 +163,14 @@ type fakeOTP struct {
 	hasher      appinterface.PasswordHasher
 	maxAttempts int
 	entries     map[string]*otpEntry
+	disarms     int
 }
 
 type otpEntry struct {
 	hash     string
 	attempts int
 	blocked  bool
+	cooldown bool
 }
 
 func newFakeOTP(hasher appinterface.PasswordHasher, maxAttempts int) *fakeOTP {
@@ -176,15 +180,41 @@ func newFakeOTP(hasher appinterface.PasswordHasher, maxAttempts int) *fakeOTP {
 func (f *fakeOTP) Issue(_ context.Context, email, otpHash string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.entries[email] = &otpEntry{hash: otpHash}
+	f.entries[email] = &otpEntry{hash: otpHash, cooldown: true}
 	return nil
+}
+
+// DisarmCooldown models the port: only the resend marker is cleared, so the
+// code and the block marker survive a failed delivery.
+func (f *fakeOTP) DisarmCooldown(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disarms++
+	if e, ok := f.entries[email]; ok {
+		e.cooldown = false
+	}
+	return nil
+}
+
+// disarmCount reports how many times the cooldown was disarmed.
+func (f *fakeOTP) disarmCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.disarms
 }
 
 func (f *fakeOTP) CanResend(_ context.Context, email string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if e, ok := f.entries[email]; ok && e.blocked {
+	e, ok := f.entries[email]
+	if !ok {
+		return nil
+	}
+	if e.blocked {
 		return domainerr.ErrOTPBlocked
+	}
+	if e.cooldown {
+		return domainerr.ErrResendCooldown
 	}
 	return nil
 }
@@ -286,11 +316,44 @@ type fakeEmail struct {
 	mu       sync.Mutex
 	messages []string
 	lastBody string
+	sends    int
+	// remaining/failErr make the next n sends fail; build makes every send fail
+	// with an error built from the message body.
+	remaining int
+	failErr   error
+	build     func(body string) error
 }
 
+var _ appinterface.EmailSender = (*fakeEmail)(nil)
+
+// failNext makes the next n sends fail with err; every send after them succeeds.
+func (f *fakeEmail) failNext(n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.remaining, f.failErr, f.build = n, err, nil
+}
+
+// failAlwaysWith makes every send fail with the error build returns for the
+// message body, so a test can simulate a provider that quotes what it was sent.
+func (f *fakeEmail) failAlwaysWith(build func(body string) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.remaining, f.failErr, f.build = 0, nil, build
+}
+
+// Send records a delivered message. A refused send delivers nothing, so it is
+// never recorded and never counted as a message the customer could hold.
 func (f *fakeEmail) Send(_ context.Context, to, _ string, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.sends++
+	if f.build != nil {
+		return f.build(body)
+	}
+	if f.remaining > 0 {
+		f.remaining--
+		return f.failErr
+	}
 	f.messages = append(f.messages, to)
 	f.lastBody = body
 	return nil
@@ -302,26 +365,67 @@ func (f *fakeEmail) count() int {
 	return len(f.messages)
 }
 
-type fakeAuditor struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (f *fakeAuditor) Record(_ context.Context, action, _ string, _ *uuid.UUID, _, _, _ string, _ map[string]any) {
+func (f *fakeEmail) attempts() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.events = append(f.events, action)
+	return f.sends
+}
+
+// auditEvent is one recorded audit entry, kept whole so a test can assert on
+// every field a trace carries.
+type auditEvent struct {
+	action     string
+	outcome    string
+	actorRole  string
+	targetType string
+	targetID   string
+	metadata   map[string]any
+}
+
+type fakeAuditor struct {
+	mu     sync.Mutex
+	events []auditEvent
+}
+
+func (f *fakeAuditor) Record(_ context.Context, action, outcome string, _ *uuid.UUID, actorRole, targetType, targetID string, metadata map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, auditEvent{
+		action:     action,
+		outcome:    outcome,
+		actorRole:  actorRole,
+		targetType: targetType,
+		targetID:   targetID,
+		metadata:   metadata,
+	})
 }
 
 func (f *fakeAuditor) has(action string) bool {
+	_, ok := f.find(action)
+	return ok
+}
+
+func (f *fakeAuditor) find(action string) (auditEvent, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, e := range f.events {
-		if e == action {
-			return true
+		if e.action == action {
+			return e, true
 		}
 	}
-	return false
+	return auditEvent{}, false
+}
+
+// traces renders every recorded audit entry, so a test can assert that no trace
+// carries a value it must not hold (FR-012).
+func (f *fakeAuditor) traces() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.events))
+	for _, e := range f.events {
+		out = append(out, fmt.Sprintf("%s %s %s %s %s %v", e.action, e.outcome, e.actorRole, e.targetType, e.targetID, e.metadata))
+	}
+	return strings.Join(out, "\n")
 }
 
 type testHasher struct{}
@@ -390,10 +494,11 @@ type harness struct {
 	email     *fakeEmail
 	audit     *fakeAuditor
 	tx        *fakeTx
+	logs      *bytes.Buffer
 }
 
 func newHarness() *harness {
-	h := &harness{}
+	h := &harness{logs: &bytes.Buffer{}}
 	hasher := testHasher{}
 	h.users = newFakeUsers()
 	h.sessions = newFakeSessions()
@@ -417,6 +522,7 @@ func newHarness() *harness {
 		Email:         h.email,
 		Audit:         h.audit,
 		Tx:            h.tx,
+		Logger:        slog.New(slog.NewJSONHandler(h.logs, nil)),
 		Config:        Config{RefreshTokenTTL: time.Hour, PasswordResetTTL: time.Hour},
 	})
 	return h

@@ -43,6 +43,17 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeRefreshReused, http.StatusUnauthorized, "Refresh token already used")
 	case errors.Is(err, domainerr.ErrResetInvalid), errors.Is(err, domainerr.ErrResetNotFound):
 		return coded(constant.CodeResetInvalid, http.StatusBadRequest, "Invalid or expired reset token")
+	case errors.Is(err, domainerr.ErrVerificationDeliveryFailed):
+		// A message the provider refused is a service problem, not a client
+		// mistake, so it answers 503 rather than 500 (FR-006). The answer itself
+		// carries the next step: nothing was delivered to the address and a new
+		// code can be requested, which is true because a failed delivery does not
+		// consume the resend cooldown (FR-024). The shared code is reused, so no
+		// new client-facing code is added, and the cause is dropped here so no
+		// provider wording, credential or recipient address can reach the client
+		// (FR-009).
+		return coded(string(httpx.CodeUnavailable), http.StatusServiceUnavailable,
+			"The confirmation email could not be sent. Nothing was delivered to your address; request a new confirmation code and try again.")
 	default:
 		return httpx.Wrap(err, httpx.CodeInternal)
 	}

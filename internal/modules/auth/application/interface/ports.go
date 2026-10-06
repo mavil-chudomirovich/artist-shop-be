@@ -18,6 +18,13 @@ type OTPStore interface {
 	CanResend(ctx context.Context, email string) error
 	Verify(ctx context.Context, email, otp string) error
 	Invalidate(ctx context.Context, email string) error
+	// DisarmCooldown clears the resend marker. It deletes that marker and
+	// nothing else: the code, its lifetime, the attempt counter and the block
+	// marker are the brute-force state and a failed delivery must not touch them
+	// (FR-018). It exists because the marker is armed before delivery is
+	// attempted, so a send that did not happen must not consume the cooldown the
+	// customer is then told they can use (FR-024).
+	DisarmCooldown(ctx context.Context, email string) error
 }
 
 // Blacklist stores revoked access tokens.
