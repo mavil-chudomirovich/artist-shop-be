@@ -87,6 +87,34 @@ have to query stored data first. Log only — rejected, it leaves the constituti
 requirement unmet. Record the failure as a successful registration — rejected, it would state
 something untrue.
 
+## D4a: Why both registration answers are identical when delivery fails
+
+**Decision**: A registration answers the same `503` and the same next step whether an account
+already existed for that address or not.
+
+**Rationale**: Found while running the quickstart end to end. The account is created before
+the send is attempted, and an address that already existed returns the ordinary accepted
+answer without attempting a send at all. So during a delivery failure the accepted answer
+meant "already registered" and the `503` meant "not registered" — an unauthenticated caller
+could enumerate registered addresses for as long as the outage lasted, and could retry until
+one succeeded. That reverses the guarantee the auth module has carried since feature 001.
+
+The fix is not to hide the failure, because hiding it is the defect this feature exists to
+correct. It is to make the two cases answer identically, which is possible because the
+customer's next step is the same either way: request a new verification message. The accepted
+answer while delivery works is unchanged, so the endpoint still cannot be used to discover an
+address in normal operation.
+
+**Alternatives considered**: Keep the difference and document it — rejected: an enumeration
+oracle is not a cost an operator accepts on behalf of every customer whose address is
+enumerated, and it contradicts an existing requirement of a different feature. Return the
+ordinary accepted answer on failure too — rejected: that restores the original defect, where
+the customer is told nothing and no code ever arrives.
+
+**Cost accepted**: the already-existing branch must now attempt delivery, so a duplicate
+registration begins sending a code where it previously sent nothing. The flow-level rate
+limit bounds how often that can happen, and a pending account receiving another code is
+harmless — the newest code is the only one accepted.
 ## D5: How a delivery failure is classified before deciding to retry
 
 **Decision**: Classify on the provider's own status category, not on its message text.

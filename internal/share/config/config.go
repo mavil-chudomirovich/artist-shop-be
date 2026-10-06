@@ -37,15 +37,23 @@ type Config struct {
 
 	// MaxBodyBytes is the pipeline's own ceiling on any request body. It is a
 	// coarse early refusal: the wrapper runs before routing, so a route cannot lift
-	// it, and it must therefore stay above every module's route-specific limit or a
-	// legitimate upload would be refused before its own route could apply the real
-	// rule.
+	// it, and it must therefore stay at or above every module's route-specific
+	// limit or a legitimate upload would be refused before its own route could
+	// apply the real rule.
 	//
 	// The default is 4 MiB, twice the 2 MB avatar ceiling FR-014 declares plus the
-	// multipart envelope. A module route that accepts a body larger than that — the
-	// avatar upload is the one today — raises the limit for its own handler and
-	// enforces its precise rule there; raising the pipeline ceiling further would
-	// only widen what every other endpoint would accept.
+	// multipart envelope. The avatar upload route installs its own ceiling - the
+	// image ceiling plus the room the multipart envelope needs - on its own
+	// handler; this value is what has to leave room for it.
+	//
+	// This package supplies the number and its default and nothing else: it does
+	// not know the avatar route exists, and by Constitution I a shared package may
+	// not import a module to find out. The relation between the two ceilings is
+	// enforced by the composition root, which is the only place that sees both
+	// numbers: cmd/api calls RequireAvatarUploadCeiling before it opens anything,
+	// and a shared ceiling below what the avatar route needs refuses to start.
+	// Raising this value only widens what every other endpoint would accept, so the
+	// coupling is a floor to maintain rather than a knob to raise freely.
 	//
 	// The rate limiter, the read ceilings and the per-field rules remain the real
 	// protections against an abusive request; this value exists so one oversized

@@ -30,6 +30,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
 
@@ -41,6 +42,13 @@ func (noopAuditor) Record(context.Context, string, string, *uuid.UUID, string, s
 var _ appinterface.Auditor = noopAuditor{}
 
 func integrationRouter(t *testing.T) (http.Handler, *email.FakeSender) {
+	t.Helper()
+	return integrationRouterWith(t, config.AuthConfig{LoginRatePerMinute: 100, FlowRatePerMinute: 100})
+}
+
+// integrationRouterWith builds the router with an explicit configuration, so a
+// test that is about a limit can set one.
+func integrationRouterWith(t *testing.T, cfg config.AuthConfig) (http.Handler, *email.FakeSender) {
 	t.Helper()
 	dsn := testsupport.PostgresDSN(t)
 	ctx := context.Background()
@@ -87,7 +95,7 @@ func integrationRouter(t *testing.T) (http.Handler, *email.FakeSender) {
 		Config:        implement.Config{RefreshTokenTTL: 45 * 24 * time.Hour, PasswordResetTTL: 30 * time.Minute},
 	})
 	h := New(svc, noopAuditor{}, slog.New(slog.NewJSONHandler(io.Discard, nil)))
-	return h.Router(config.AuthConfig{LoginRatePerMinute: 100, FlowRatePerMinute: 100}), sender
+	return h.Router(cfg), sender
 }
 
 func post(handler http.Handler, path, body, token string) *httptest.ResponseRecorder {
@@ -263,5 +271,127 @@ func TestAFailedDeliveryLeavesTheCustomerAWorkingRecoveryPath(t *testing.T) {
 	}
 	if rec := post(handler, "/verify-email", `{"email":"`+email+`","otp":"`+lastFieldText(msg.Body)+`"}`, ""); rec.Code != http.StatusOK {
 		t.Fatalf("verify-email: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// providerRefuses is a refusal a retry cannot change, so exactly one send is
+// spent on it (FR-016).
+func providerRefuses() error {
+	return fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration)
+}
+
+func registrationBody(email, password string) string {
+	return `{"email":"` + email + `","password":"` + password + `"}`
+}
+
+// TestBothRegistrationBranchesAnswerIdenticallyWhenDeliveryFails is the HTTP
+// proof of FR-008a: while the provider refuses messages, an address that already
+// has a pending account must be answered exactly like one that has no account
+// at all, or the difference tells an unauthenticated caller which addresses are
+// registered. The two bodies are compared byte for byte, so any divergence in
+// status, code or message fails this test.
+func TestBothRegistrationBranchesAnswerIdenticallyWhenDeliveryFails(t *testing.T) {
+	handler, sender := integrationRouter(t)
+	const (
+		password = "Str0ng!Pass"
+		fresh    = "unregistered@example.com"
+		pending  = "registered-pending@example.com"
+	)
+
+	// The address that already exists, still unconfirmed: exactly the state a
+	// customer abandoned or a failed delivery left behind.
+	if rec := post(handler, "/register", registrationBody(pending, password), ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("register: expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	sender.FailNext(1, providerRefuses())
+	unregisteredRec := post(handler, "/register", registrationBody(fresh, password), "")
+
+	sender.FailNext(1, providerRefuses())
+	pendingRec := post(handler, "/register", registrationBody(pending, password), "")
+
+	if unregisteredRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an unregistered address must be answered 503, got %d (%s)", unregisteredRec.Code, unregisteredRec.Body.String())
+	}
+	if unregisteredRec.Code != pendingRec.Code {
+		t.Fatalf("both branches must answer the same status, %d then %d", unregisteredRec.Code, pendingRec.Code)
+	}
+	// This router carries no correlation middleware, so the request id is empty
+	// in both answers and equality is exact rather than approximate.
+	if unregisteredRec.Body.String() != pendingRec.Body.String() {
+		t.Fatalf("both branches must answer the identical body:\nunregistered: %s\npending: %s",
+			unregisteredRec.Body.String(), pendingRec.Body.String())
+	}
+	if got := errorMessage(t, pendingRec); !strings.Contains(got, "request a new confirmation code") {
+		t.Fatalf("the answer must name the same next step, got %q", got)
+	}
+	if _, ok := sender.Last(); !ok {
+		t.Fatal("precondition: the first registration delivered a message")
+	}
+	if got := sender.Count(); got != 1 {
+		t.Fatalf("neither refused send may be recorded as delivered, got %d messages", got)
+	}
+}
+
+// TestAVerifiedAddressIsAnsweredTheOrdinaryAcceptedResponseAndIsNotSentACode
+// keeps FR-014 intact for the branch that now sends: a confirmed account needs no
+// code, so it is answered the ordinary accepted answer and no message leaves the
+// system for it.
+func TestAVerifiedAddressIsAnsweredTheOrdinaryAcceptedResponseAndIsNotSentACode(t *testing.T) {
+	handler, sender := integrationRouter(t)
+	const (
+		password = "Str0ng!Pass"
+		verified = "already-confirmed@example.com"
+		fresh    = "brand-new@example.com"
+	)
+
+	registerAndVerify(t, handler, sender, verified, password)
+	sentBefore := sender.Count()
+
+	confirmed := post(handler, "/register", registrationBody(verified, password), "")
+	if confirmed.Code != http.StatusAccepted {
+		t.Fatalf("a confirmed address must be answered 202, got %d (%s)", confirmed.Code, confirmed.Body.String())
+	}
+	if got := sender.Count(); got != sentBefore {
+		t.Fatalf("a confirmed account must not be sent a code, got %d message(s)", got-sentBefore)
+	}
+
+	unknown := post(handler, "/register", registrationBody(fresh, password), "")
+	if unknown.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", unknown.Code, unknown.Body.String())
+	}
+	if dataMessage(t, confirmed) != dataMessage(t, unknown) {
+		t.Fatalf("the answer must not depend on the address: %q then %q",
+			dataMessage(t, confirmed), dataMessage(t, unknown))
+	}
+}
+
+// TestTheFlowLimitStillBoundsARegistrationFloodAcrossBothBranches covers FR-025
+// for the branch that now sends. A duplicate registration is no longer a request
+// that costs nothing, so a flood mixing both branches must still be stopped by
+// the flow-level limit.
+func TestTheFlowLimitStillBoundsARegistrationFloodAcrossBothBranches(t *testing.T) {
+	handler, _ := integrationRouterWith(t, config.AuthConfig{LoginRatePerMinute: 100, FlowRatePerMinute: 2})
+	const (
+		password = "Str0ng!Pass"
+		address  = "flood@example.com"
+	)
+
+	// One request that creates the account, one that takes the duplicate branch:
+	// the burst allows exactly two, and both of them may send.
+	if rec := post(handler, "/register", registrationBody(address, password), ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("first register: expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := post(handler, "/register", registrationBody(address, password), ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("duplicate register: expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The third request, whichever branch it would take, is refused.
+	rec := post(handler, "/register", registrationBody(address, password), "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected the flow rate limit to refuse the flood, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != string(httpx.CodeRateLimited) {
+		t.Fatalf("expected %s, got %s", httpx.CodeRateLimited, got)
 	}
 }

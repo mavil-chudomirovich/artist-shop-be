@@ -54,3 +54,10 @@ func (f *FakeSender) Last() (Message, bool) {
 	}
 	return f.sent[len(f.sent)-1], true
 }
+
+// Count returns how many messages left the system.
+func (f *FakeSender) Count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.sent)
+}

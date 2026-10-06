@@ -245,6 +245,14 @@ credential appears in any log line.
 - **FR-007**: System MUST keep the account created before the failed delivery, in a state
   from which requesting a new verification message succeeds once delivery recovers. The
   account MUST NOT be deleted, and MUST NOT be left in a state that blocks a new request.
+- **FR-008a**: When a registration's message cannot be delivered, System MUST answer the
+  same status and the same next step **whether or not an account already existed for that
+  address**. An address that already existed answers the ordinary accepted response while
+  delivery works, so it stays indistinguishable there (FR-014); during a delivery failure a
+  difference between the two answers would let an unauthenticated caller enumerate which
+  addresses are registered. Both paths therefore answer `503` with the identical message,
+  because the customer's next step — request a new verification message — is the same either
+  way.
 - **FR-008**: System MUST NOT let a repeated failed delivery create a second account for
   the same address, and a customer who retries registration after a failure MUST reach the
   same recovery path rather than an "already registered" dead end.
