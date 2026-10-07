@@ -22,7 +22,7 @@ Tài liệu tra cứu:
 | 00 | Cross-cutting foundation | [00-cross-cutting.md](modules/00-cross-cutting.md) | 0 | — | ✔ `specs/002-cross-cutting-foundation` |
 | 01 | Auth | [01-auth.md](modules/01-auth.md) | 0 | cross-cutting | ✔ `specs/001-user-auth` |
 | 02 | User | [02-user.md](modules/02-user.md) | 0 | auth | ✔ `specs/003-user-profile` |
-| 03 | Category | [03-category.md](modules/03-category.md) | 0 | cross-cutting | ⬜ |
+| 03 | Category | [03-category.md](modules/03-category.md) | 0 | cross-cutting | ✔ `specs/005-category-catalog` |
 | 04 | Product | [04-product.md](modules/04-product.md) | 1 | category | ⬜ |
 | 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | 1 | product | ⬜ |
 | 06 | Cart | [06-cart.md](modules/06-cart.md) | 1 | product | ⬜ |

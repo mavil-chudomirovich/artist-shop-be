@@ -36,6 +36,7 @@ Dùng [template.md](template.md).
 | [008](008-per-route-content-type-and-body-ceiling.md) | Kiểm tra content-type theo từng route, `MAX_BODY_BYTES` bằng 2× trần avatar | Accepted |
 | [009](009-operator-address-view-without-review-flag.md) | Tra cứu operator trả hình dạng địa chỉ riêng, không có `divisionNeedsReview` | Accepted |
 | [010](010-avatar-upload-refusal-and-startup-guard.md) | Route avatar trả `USER_AVATAR_TOO_LARGE`; từ chối khởi động khi `MAX_BODY_BYTES` thấp hơn trần avatar | Accepted |
+| [012](012-category-folding-and-two-response-shapes.md) | Danh mục: chuẩn hoá (fold) ở tầng ứng dụng, và hai hình dạng response trên một bảng | Accepted |
 
 ## Khi nào phải viết ADR
 

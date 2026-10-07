@@ -74,7 +74,7 @@ Xem [ADR 010](decisions/010-avatar-upload-refusal-and-startup-guard.md).
 }
 ```
 
-Với endpoint phân trang, `meta` bổ sung `page`, `pageSize`, `total`.
+Với endpoint phân trang, `meta` bổ sung `page`, `pageSize`, `total`. Lưu ý: `total` **vắng mặt khi bằng 0** (tầng envelope dùng `omitempty`), nên client phải đọc `total` thiếu là **0**, không phải "không có thông tin". Đây là hành vi có sẵn của tầng dùng chung, ảnh hưởng mọi endpoint phân trang.
 
 **Lỗi**
 
@@ -158,6 +158,29 @@ phân trang sai → `VALIDATION_ERROR` 400; một member của địa chỉ sai 
 > `internal/modules/user/domain/constant/audit.go`. Không có `USER_PROFILE_VIEWED_BY_ADMIN`
 > cho lần đọc trả `404`, vì không có dữ liệu nào rời khỏi tầm kiểm soát của khách.
 
+**Riêng module category** (`internal/modules/category/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `CATEGORY_NOT_FOUND` | 404 | Không có danh mục nào mang định danh/slug đó, hoặc danh mục đang bị ẩn, hoặc đã bị xoá — ba tình huống **cố ý** trả lời giống nhau |
+| `CATEGORY_NAME_TAKEN` | 409 | Một danh mục khác đã dùng tên đó (so khớp sau khi trim và bỏ qua hoa/thường) |
+| `CATEGORY_SLUG_TAKEN` | 409 | Một danh mục khác đã dùng slug đó |
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module (xem
+`specs/005-category-catalog/contracts/error-codes.md`): slug không an toàn URL hoặc một
+trường vượt độ dài → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường
+dẫn không phải UUID → `VALIDATION_ERROR` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401;
+`CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`);
+`page`/`pageSize` ngoài khoảng → `VALIDATION_ERROR` 400; body không parse được hoặc có
+member lạ → `MALFORMED_REQUEST` 400.
+
+> Action `audit_logs` của module dùng tiền tố `CATEGORY_` nhưng **không** phải mã lỗi:
+> `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_HIDDEN`, `CATEGORY_SHOWN`,
+> `CATEGORY_DELETED` — xem `internal/modules/category/domain/constant/audit.go`. Metadata
+> của mỗi dòng chỉ mang `name` và `slug` do operator gõ, **không** mang hai cột khoá chuẩn
+> hoá `normalized_name` / `normalized_slug` — hai cột đó không bao giờ xuất hiện trong
+> response, audit hay log (`specs/005-category-catalog/data-model.md`).
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
@@ -173,6 +196,11 @@ nhau và không dùng chung với hạn mức toàn cục: một tài khoản g�
 không thể dùng hết hạn mức ghi địa chỉ. Cả hai vẫn cộng dồn trên hạn mức toàn cục
 (`RATE_LIMIT_RPS`), vốn là lưới an toàn thô áp cho mọi route dưới `/api/v1`. Các
 endpoint đọc của module user không có hạn mức riêng.
+
+Nhóm `/categories` (công khai) và `/admin/categories` (quản trị) của module category
+**không** có hạn mức riêng, chỉ chịu hạn mức toàn cục. Các endpoint ghi là ADMIN-only, nên
+bề mặt lạm dụng mà hạn mức riêng của module user tồn tại để chặn — mọi khách đã đăng nhập
+đều gọi được — **không tồn tại** ở đây (`specs/005-category-catalog/deferred.md`, D5).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -1103,7 +1131,249 @@ Ghi chú:
 
 ---
 
-## 5. Bảng tổng hợp
+## 5. Module 03 — Category (`/api/v1`)
+
+Danh mục sản phẩm: khách duyệt và đọc danh mục, operator quản trị. **Một bảng** phục vụ
+**hai bề mặt** trên **hai hình dạng response** khác nhau — bề mặt công khai
+(`/categories`, không cần token, địa chỉ theo **slug**) và bề mặt quản trị
+(`/admin/categories`, vai trò `ADMIN`, địa chỉ theo **định danh**).
+
+Bốn điều dễ đọc sai, nói ngay:
+
+- **Một danh mục bị ẩn và một slug chưa từng tồn tại trả lời y hệt nhau**
+  (`404 CATEGORY_NOT_FOUND`). Nếu hai câu trả lời khác nhau, endpoint sẽ xác nhận những
+  danh mục operator đã chọn **không** công bố. Xem `5.2`.
+- **Va chạm tên/slug trả `409`, không phải `400`.** Giá trị gửi lên hợp lệ và chỉ đang bị
+  chiếm; hai mã `CATEGORY_NAME_TAKEN` / `CATEGORY_SLUG_TAKEN` nói **field nào** va chạm.
+  Xem `5.4` và `5.6`.
+- **Hình dạng công khai chỉ có bốn member** `id`, `name`, `slug`, `description`; trạng thái
+  hiển thị và thứ tự (`isVisible`, `position`) chỉ có ở hình dạng quản trị.
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5).
+
+Hai danh sách đều phân trang theo quy ước chung: `page` mặc định `1`, `pageSize` mặc định
+`20`, khoảng `1..100`.
+
+### 5.1 `GET /categories`
+
+Danh sách danh mục **đang hiển thị**, theo thứ tự operator đã đặt.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`).
+
+Response `200`
+
+```json
+{
+  "data": [
+    {
+      "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+      "name": "Điêu khắc",
+      "slug": "diau-khac",
+      "description": "Tác phẩm điêu khắc"
+    }
+  ],
+  "meta": { "requestId": "...", "timestamp": "...", "page": 1, "pageSize": 20, "total": 1 }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng;
+`details[].field` là `"page"` hoặc `"pageSize"`) · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Chỉ trả danh mục `is_visible = true`; `meta.total` đếm đúng số đó.
+- Thứ tự ổn định: `position`, rồi `created_at`, rồi `id` — hai request giống nhau trả
+  cùng thứ tự (FR-003).
+- Catalogue rỗng hoặc bị ẩn hết trả `data: []` (mảng rỗng), **không** phải `null` và
+  **không** phải lỗi.
+
+### 5.2 `GET /categories/{slug}`
+
+Đọc một danh mục đang hiển thị theo slug.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`
+
+```json
+{
+  "data": {
+    "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+    "name": "Điêu khắc",
+    "slug": "diau-khac",
+    "description": "Tác phẩm điêu khắc"
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `CATEGORY_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+> **Danh mục bị ẩn, danh mục đã xoá và slug chưa từng tồn tại trả lời y hệt nhau** — cùng
+> status, cùng mã `CATEGORY_NOT_FOUND`, cùng câu chữ. Đây là bắt buộc, không chỉ tiện: nếu
+> một danh mục bị ẩn trả lời khác một slug chưa dùng, endpoint sẽ xác nhận danh mục nào
+> operator đã chọn **không** công bố, và bất kỳ ai cũng dò được. Xem
+> `specs/005-category-catalog/contracts/error-codes.md`, mục *The one answer that is
+> deliberately ambiguous*.
+
+### 5.3 `GET /admin/categories`
+
+Danh sách **toàn bộ** danh mục, kể cả danh mục không hiển thị.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: như `5.1`.
+
+Response `200`
+
+```json
+{
+  "data": [
+    {
+      "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+      "name": "Điêu khắc",
+      "slug": "diau-khac",
+      "description": "Tác phẩm điêu khắc",
+      "position": 1,
+      "isVisible": true,
+      "createdAt": "2026-10-07T08:15:04Z",
+      "updatedAt": "2026-10-07T08:15:04Z"
+    }
+  ],
+  "meta": { "requestId": "...", "timestamp": "...", "page": 1, "pageSize": 20, "total": 1 }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng) ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với action
+`AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
+
+### 5.4 `POST /admin/categories`
+
+Tạo danh mục. Danh mục mới **luôn đang hiển thị**; muốn ẩn thì tạo rồi gọi `PATCH` với
+`isVisible: false`.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` |
+
+Request
+
+```json
+{ "name": "Điêu khắc", "slug": "diau-khac", "description": "Tác phẩm điêu khắc", "position": 1 }
+```
+
+`name` và `slug` bắt buộc; `description` và `position` tuỳ chọn (`position` mặc định `0` và
+có thể âm). `slug` do operator viết, **không** bao giờ sinh từ `name`; giá trị lưu là giá
+trị operator gõ, đã trim.
+
+Response `201` giống `data` của `5.3`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng hoặc quá 120 ký tự; `slug` rỗng, quá 140 ký tự hoặc
+không khớp mẫu URL-safe; `description` quá 2000 ký tự — `details[].field` chỉ đúng member) ·
+`MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `CATEGORY_NAME_TAKEN` 409 · `CATEGORY_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+
+> **Va chạm là `409`, không phải `400`.** Giá trị gửi lên **hợp lệ**; nó chỉ đang bị một
+> danh mục khác chiếm. Đó là tình huống khác một giá trị sai hình dạng, và bước tiếp theo
+> của operator cũng khác: đổi sang giá trị khác, chứ không phải sửa giá trị này. Hai mã
+> `CATEGORY_NAME_TAKEN` / `CATEGORY_SLUG_TAKEN` cho client biết **field nào** va chạm, kèm
+> `details[].field` (`"name"` hoặc `"slug"`). Gộp cả hai vào `400` sẽ khiến hai lời từ chối
+> phổ biến nhất của catalogue không phân biệt được
+> (`specs/005-category-catalog/contracts/error-codes.md`).
+>
+> So khớp tên bỏ qua **hoa/thường** (theo Unicode, kể cả chữ có dấu tiếng Việt) và
+> **khoảng trắng hai đầu**. Khoảng trắng **bên trong** không được gộp: `"Tranh sơn dầu"` và
+> `"Tranh  sơn  dầu"` là hai tên khác nhau (`specs/005-category-catalog/deferred.md`, D3).
+
+### 5.5 `GET /admin/categories/{categoryId}`
+
+Đọc một danh mục theo định danh, kể cả danh mục đang ẩn.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200` giống `data` của `5.3`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`categoryId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `CATEGORY_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+### 5.6 `PATCH /admin/categories/{categoryId}`
+
+Sửa một phần: member bỏ trống giữ nguyên giá trị hiện tại. Gửi lại đúng giá trị danh mục
+đang giữ cũng **thành công** — một danh mục không bao giờ trùng với chính nó.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả danh mục sau khi sửa |
+
+Request (mọi member tuỳ chọn)
+
+```json
+{
+  "name": "Điêu khắc",
+  "slug": "diau-khac",
+  "description": "Mô tả mới",
+  "position": 5,
+  "isVisible": false
+}
+```
+
+Đổi `isVisible` đi qua chuyển trạng thái Hide/Show chứ không gán thẳng; ẩn một danh mục đã
+ẩn (hoặc hiện một danh mục đã hiện) là **no-op**, không phải lỗi.
+
+Response `200` giống `data` của `5.3`.
+
+Lỗi: `VALIDATION_ERROR` 400 (giá trị sai hình dạng hoặc quá độ dài, `categoryId` không phải
+UUID) · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`CATEGORY_NOT_FOUND` 404 · `CATEGORY_NAME_TAKEN` 409 · `CATEGORY_SLUG_TAKEN` 409 ·
+`RATE_LIMITED` 429. Va chạm để lại **cả hai** danh mục nguyên vẹn.
+
+### 5.7 `DELETE /admin/categories/{categoryId}`
+
+Xoá danh mục. Đây là **hard delete**: dòng biến mất, dòng audit ở lại.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`categoryId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `CATEGORY_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Xoá lại một danh mục đã xoá trả cùng `404 CATEGORY_NOT_FOUND`, không phải lỗi.
+- Luật "không xoá cứng danh mục còn sản phẩm" **chưa kiểm chứng được** vì chưa có thực thể
+  sản phẩm; tham chiếu sẽ nằm ở `products.category_id` với `ON DELETE RESTRICT` (module 04),
+  xem `specs/005-category-catalog/deferred.md`.
+
+---
+
+## 6. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -1132,27 +1402,35 @@ Ghi chú:
 | GET | `/api/v1/users/{userId}` | ADMIN | Tra cứu khách hàng (chỉ đọc, có audit) |
 | GET | `/api/v1/divisions/provinces` | Bearer | Danh sách tỉnh/thành phố |
 | GET | `/api/v1/divisions/provinces/{provinceCode}/wards` | Bearer | Danh sách phường/xã của một tỉnh |
+| GET | `/api/v1/categories` | — | Danh mục đang hiển thị (có phân trang) |
+| GET | `/api/v1/categories/{slug}` | — | Chi tiết danh mục theo slug |
+| GET | `/api/v1/admin/categories` | ADMIN | Toàn bộ danh mục, kể cả ẩn (có phân trang) |
+| POST | `/api/v1/admin/categories` | ADMIN | Tạo danh mục (201) |
+| GET | `/api/v1/admin/categories/{categoryId}` | ADMIN | Chi tiết danh mục, kể cả ẩn |
+| PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục |
+| DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204) |
 
 ---
 
-## 6. Quy tắc cập nhật
+## 7. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 5.
-3. Thêm dòng vào Change log ở mục 7.
+2. Cập nhật bảng tổng hợp ở mục 6.
+3. Thêm dòng vào Change log ở mục 8.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
    `specs/<feature>/contracts/<module>-error-codes.md` của feature đó).
 
-## 7. Change log
+## 8. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-07 | Thêm nhóm `/api/v1/categories` (module 03 Category): hai route công khai không cần token (`GET /categories`, `GET /categories/{slug}`) và năm route quản trị dưới `/admin/categories` (danh sách, tạo, đọc, sửa, xoá), tất cả yêu cầu vai trò `ADMIN`. Hình dạng công khai chỉ có bốn member, hình dạng quản trị có thêm `position`, `isVisible`, `createdAt`, `updatedAt`. Bổ sung ba mã `CATEGORY_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: danh mục bị ẩn và slug chưa từng tồn tại trả lời y hệt nhau; va chạm tên/slug trả `409` kèm field. Phần 5 được chèn và bảng tổng hợp/change log dời xuống mục 6/8. | `internal/modules/category/presentation/http/router.go` |
 | 2026-10-06 | `POST /users/me/avatar`: mọi cách gửi ảnh quá trần (khai `Content-Length`, không khai, khai thiếu) đều trả `413 USER_AVATAR_TOO_LARGE`; gỡ `PAYLOAD_TOO_LARGE` khỏi danh sách lỗi của endpoint này vì nó không còn là câu trả lời nào ở đây nữa. Cùng thay đổi đó sửa hàng đầu mục `1.1` (trước đó gộp trần toàn cục và trần riêng của route vào cùng một mã) và bổ sung phần trần 2 162 688 byte trong ghi chú của `4.3`. `PAYLOAD_TOO_LARGE` giữ nguyên trên mọi route không phải avatar. | `internal/modules/user/presentation/http/router.go`, `internal/share/middleware/bodylimit.go` |
 | 2026-10-06 | `POST /register`: thêm nhánh gửi lại thất bại — `503 SERVICE_UNAVAILABLE` (mã dùng chung của `httpx`, tái sử dụng, **không** thêm mã riêng của module) kèm câu báo cho khách biết không có gì được gửi tới và có thể xin mã mới. Tài khoản `pending` được giữ, cooldown gửi lại được gỡ (nên lời hứa trong câu trả lời là đúng), rate limit nhóm *flow* vẫn áp dụng. Ghi action audit `AUTH_REGISTER_DELIVERY_FAILED` + outcome `FAILURE` với metadata `classification` thuộc hệ thống này. `POST /resend-verification` ghi rõ khoảng trống đã biết: gửi lại hỏng hiện trả `500` chứ không phải `503`. | `internal/modules/auth/application/implement/email_failure.go`, `internal/modules/auth/application/implement/register.go`, `internal/modules/auth/presentation/http/errors.go` |
 | 2026-10-06 | Sửa hai giá trị **ví dụ** đã sai trong mục `/divisions`: tên tỉnh `79` là `Hồ Chí Minh` (không phải `Thành phố Hồ Chí Minh`), và mã phường ví dụ `0001` / `Phường Hoàng Kiết` **không tồn tại** trong dataset. Thay bằng `00004` / `Ba Đình`. Mã phường trong dataset là 5 chữ số và tên không kèm tiền tố `Phường`/`Xã`. | `internal/share/administrative/data/vn-divisions.json` |

@@ -47,6 +47,14 @@ paths:
                       $ref: "#/components/schemas/PublicCategory"
                   meta:
                     $ref: "#/components/schemas/PagedMeta"
+        "400":
+          description: >
+            The page window is malformed or outside its permitted range
+            (VALIDATION_ERROR, with `page` or `pageSize` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
         "429":
           $ref: "#/components/responses/RateLimited"
   /api/v1/categories/{slug}:
@@ -107,6 +115,14 @@ paths:
                       $ref: "#/components/schemas/AdminCategory"
                   meta:
                     $ref: "#/components/schemas/PagedMeta"
+        "400":
+          description: >
+            The page window is malformed or outside its permitted range
+            (VALIDATION_ERROR, with `page` or `pageSize` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
         "401":
           $ref: "#/components/responses/Error"
         "403":
@@ -140,7 +156,9 @@ paths:
         "400":
           description: >
             A value failed its own rule - the slug is not URL-safe, or a field is longer
-            than its bound (VALIDATION_ERROR, with the offending field named).
+            than its bound (VALIDATION_ERROR, with the offending field named) - or the body
+            could not be read at all, including an unknown member, which answers
+            MALFORMED_REQUEST.
           content:
             application/json:
               schema:
@@ -228,7 +246,10 @@ paths:
                   meta:
                     $ref: "#/components/schemas/Meta"
         "400":
-          description: A value failed its own rule (VALIDATION_ERROR, with the field named).
+          description: >
+            A value failed its own rule (VALIDATION_ERROR, with the field named) - or the body
+            could not be read at all, including an unknown member, which answers
+            MALFORMED_REQUEST.
           content:
             application/json:
               schema:
@@ -453,7 +474,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/Meta"
         - type: object
-          required: [page, pageSize, total]
+          required: [page, pageSize]
           properties:
             page:
               type: integer
@@ -465,6 +486,13 @@ components:
             total:
               type: integer
               format: int64
+              description: >
+                The number of rows the whole result holds, not just this page. It is
+                **absent when it is zero**, because the shared envelope omits a zero
+                total. A client must therefore read a missing `total` as zero rather
+                than as "not provided". This is inherited foundation behaviour, not a
+                decision of this module; `deferred.md` records it as a cross-module
+                inconsistency worth correcting.
     Detail:
       type: object
       properties:

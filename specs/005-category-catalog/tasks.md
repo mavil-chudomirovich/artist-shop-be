@@ -172,14 +172,14 @@ under concurrency.
 
 **Purpose**: Documentation, a decision record, and the close-out gates.
 
-- [ ] T037 [P] Update `docs/api-reference.md` with the seven endpoints in the existing six-part format (info table including its rate limit, request, response, errors, notes), the three new codes in the error section, the summary table, a change-log row, and the public-shape note that a withheld category is indistinguishable from an unused one. Required by Constitution VIII in the same change as the code
-- [ ] T038 [P] Update `docs/modules/03-category.md`: status, spec pointer, the completion criteria that this feature meets, and — explicitly — the two that it cannot meet yet (products by category, and removal blocked while products reference the category) with a pointer to `deferred.md`. Marking a module complete without saying what was carried forward is how an unfinished rule becomes invisible
-- [ ] T039 [P] Write the ADR at `docs/decisions/011-*.md` for the two decisions a later reader will question: folding in the application rather than the database, and two response shapes over one table. Follow `docs/decisions/template.md`, write it in Vietnamese like the existing ADRs, add it to `docs/decisions/README.md`, and state the accepted costs
-- [ ] T040 [P] Verify in `internal/share/logging/redact_test.go` or the module's own test that neither a category's values nor an audit entry can leak something they should not — in particular that the folding keys never appear in a response, an audit entry or a log line
-- [ ] T041 Check every new and changed file for UTF-8 without BOM and LF endings, per `.editorconfig`; PowerShell's `Out-File` and `WriteAllLines` write CRLF, so write files in a way that ends up correct. Report the method and the count
-- [ ] T042 Run `make lint` and `make test` and clear every finding in the feature's scope
-- [ ] T043 Run `quickstart.md` end to end — scenarios 1 through 13 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass
-- [ ] T044 Run `make check` — the close-out gate — once, and confirm `git status` shows only intended files before anything is staged
+- [x] T037 [P] Update `docs/api-reference.md` with the seven endpoints in the existing six-part format (info table including its rate limit, request, response, errors, notes), the three new codes in the error section, the summary table, a change-log row, and the public-shape note that a withheld category is indistinguishable from an unused one. Required by Constitution VIII in the same change as the code
+- [x] T038 [P] Update `docs/modules/03-category.md`: status, spec pointer, the completion criteria that this feature meets, and — explicitly — the two that it cannot meet yet (products by category, and removal blocked while products reference the category) with a pointer to `deferred.md`. Marking a module complete without saying what was carried forward is how an unfinished rule becomes invisible
+- [x] T039 [P] Write the ADR at `docs/decisions/012-*.md` for the two decisions a later reader will question: folding in the application rather than the database, and two response shapes over one table. Follow `docs/decisions/template.md`, write it in Vietnamese like the existing ADRs, add it to `docs/decisions/README.md`, and state the accepted costs. **The number is 012, not 011:** 011 is taken by an unrelated, uncommitted Swagger decision that was set aside to run this feature, and two files claiming 011 would collide the moment it is restored
+- [x] T040 [P] Verify in `internal/share/logging/redact_test.go` or the module's own test that neither a category's values nor an audit entry can leak something they should not — in particular that the folding keys never appear in a response, an audit entry or a log line
+- [x] T041 Check every new and changed file for UTF-8 without BOM and LF endings, per `.editorconfig`; PowerShell's `Out-File` and `WriteAllLines` write CRLF, so write files in a way that ends up correct. Report the method and the count
+- [x] T042 Run `make lint` and `make test` and clear every finding in the feature's scope
+- [x] T043 Run `quickstart.md` end to end — scenarios 1 through 13 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass
+- [x] T044 Run `make check` — the close-out gate — once, and confirm `git status` shows only intended files before anything is staged
 
 ---
 
