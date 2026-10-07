@@ -56,6 +56,9 @@ converge).
 - Test task **trước** implementation task khi là state transition hoặc logic quan trọng.
 - Mỗi task phải đủ cụ thể để chạy không cần hỏi thêm: nêu rõ đường dẫn file.
 - Đánh dấu `[X]` **ngay khi xong**, không dồn cuối.
+- Task phải trả lời câu hỏi bề mặt client: nếu feature thêm/xoá/sửa HTTP endpoint, event
+  payload hay DTO client-facing thì có task viết `specs/<feature>/frontend-guide.md`; nếu
+  không đổi bề mặt client thì ghi rõ một dòng, đừng để ngỏ.
 
 ### Quy tắc khi implement
 
@@ -65,6 +68,9 @@ converge).
 4. Không lệch khỏi `plan.md` mà không cập nhật plan hoặc ghi lệch trong báo cáo.
 5. Sau mỗi phase: chạy gate tương ứng (xem `AGENTS.md` §3).
 6. Cập nhật `docs/api-reference.md` ngay khi có endpoint mới.
+7. Cập nhật `specs/<feature>/frontend-guide.md` nếu feature đổi bề mặt client — ở phase
+   cuối, đọc lại và đối chiếu **có đếm** với mã nguồn (trường DTO, giá trị enum, route, mã
+   HTTP), sửa mọi chỗ lệch.
 
 ## 3. Rà soát trước khi kết thúc (converge)
 

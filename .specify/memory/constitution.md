@@ -1,6 +1,58 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.6.0 → 1.7.0 (MINOR)
+Bump rationale: Adds the frontend integration guide deliverable and the way it is
+kept honest. `docs/api-reference.md` (Principle VIII) documents endpoints once, for
+the whole service; it says nothing about what the frontend must do when a contract
+changes, and it is written by hand to stay current. Two failure modes follow — a
+client-facing change ships with no hand-off note, or the note is written once and
+silently rots as implementation moves. The new Governance rules close both.
+
+Added principles: none (Governance rules only).
+Modified principles: none.
+Added sections: none.
+
+New Governance rules:
+- Frontend integration guide: any feature that adds, removes or changes an HTTP
+  endpoint, an event payload, or a client-facing DTO MUST ship
+  `specs/<feature>/frontend-guide.md`, enumerating each affected endpoint/event with
+  its method and path, marking it new/changed/removed, and giving before → after for
+  each changed one. A feature with no client-facing change says so in `tasks.md`.
+  The guide is the per-feature hand-off and MUST agree with `docs/api-reference.md`,
+  which stays the authoritative cross-module reference (Principle VIII).
+- Frontend guide sync: the guide is re-read and corrected in the feature's final
+  phase and after every convergence pass, comparing against the source with counts
+  (JSON fields, enum values, routes, HTTP statuses). A comparison that produces no
+  counts did not happen.
+- Technical debt found, not fixed: debt found while building a feature goes to
+  `specs/<feature>/deferred.md` with what it is, why it is out of scope and what
+  would unblock it — never an unchecked task of the feature that found it.
+
+Backfill note: features 001–005 were created before this amendment and are exempt
+from the frontend-guide rule. Their guides are backfilled deliberately in the same
+change rather than left implicit; 005 is fully implemented, 004 has one task
+(T028b) blocked by a mail-relay configuration outside the code.
+
+Templates requiring updates:
+- ✅ .specify/memory/constitution.md (this file)
+- ✅ .specify/templates/tasks-template.md (Frontend Integration Guide + out-of-scope blocks)
+- ✅ .specify/templates/deferred-template.md (created)
+- ✅ .specify/templates/plan-template.md (Constitution Check gains the guide gate; layer name corrected to `presentation`)
+- ⚠ .specify/templates/spec-template.md (no change — the guide is a close-out artifact, not a specification artefact)
+- ✅ .opencode/agents/speckit-worker.md (created, so the orchestrate skill's delegation resolves)
+- ✅ .opencode/skills/speckit-orchestrate/SKILL.md (make-target drift corrected for this repo)
+
+Docs requiring manual follow-up:
+- specs/001..005/*/frontend-guide.md (created in this change)
+- docs/development/agent-workflow.md (frontend guide noted in the task and implement rules)
+
+Follow-up TODOs: none.
+-->
+
+<!--
+Sync Impact Report
+==================
 Version change: 1.3.0 → 1.5.0 (MINOR)
 Bump rationale: Added the API Documentation principle, the container workflow
 section, documentation-location and decision-record rules, and Agent & Commit
@@ -417,5 +469,32 @@ This constitution supersedes other development practices when conflicts arise.
   Complexity Tracking table. Unjustified violations block merge.
 - **Precedence**: where `docs/` guidance and this constitution conflict, this
   constitution wins, and the docs MUST be corrected.
+- **Frontend integration guide**: any feature that adds, removes, or changes an
+  HTTP endpoint, an event payload, or a client-facing DTO MUST ship
+  `specs/<feature>/frontend-guide.md`. The guide MUST enumerate every affected
+  endpoint or event with its method and path, mark each as new, changed or
+  removed, and for each changed one state the behaviour before and after.
+  Documenting a shape without showing the transition does not satisfy this rule.
+  A feature with no client-facing change MUST say so in `tasks.md` rather than
+  leave the question open. The guide is the per-feature hand-off to the frontend
+  team and MUST agree with `docs/api-reference.md`, which remains the
+  authoritative cross-module reference (Principle VIII). Applies to features
+  created after this amendment; features 001–005 predate it and are exempt, but
+  their guides are backfilled deliberately (see the Sync Impact Report).
+- **Frontend guide sync**: the guide MUST be re-read and corrected in the
+  feature's final phase and again after any convergence pass, because
+  implementation routinely moves the contract after the guide is written. The
+  re-read MUST compare against the source rather than skim: every client-facing
+  field the DTOs emit, every value of every enum the guide documents, every route
+  it lists, every HTTP status it claims. A comparison that produces no counts did
+  not happen.
+- **Technical debt found, not fixed**: debt discovered while building a feature
+  and left unfixed MUST be recorded in `specs/<feature>/deferred.md` with what it
+  is, why it is out of scope, and what would unblock it. It MUST NOT be left as an
+  unchecked task of the feature that found it, because an unchecked task claims
+  the feature is unfinished — which is both a different claim and a false one. An
+  entry that undermines an already-ticked task's evidence MUST name that task, or
+  `[X]` will be read as unconditional. Deferring is not parking: work that turns
+  out to belong to the feature moves back into `tasks.md` as a real task.
 
-**Version**: 1.6.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-06
+**Version**: 1.7.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-07

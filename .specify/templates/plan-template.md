@@ -41,7 +41,7 @@
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
 - [ ] **Modular Monolith & Clean Architecture**: module uses the four layers
-      (`domain`, `application`, `infrastructure`, `controller`) with the strict
+      (`domain`, `application`, `infrastructure`, `presentation`) with the strict
       dependency rule; constants/errors/ports live in `domain`; `application`
       depends only on `domain` ports; shared code lives in `internal/share/`.
 - [ ] **Transactional Integrity**: all money/inventory/payment-stage changes run
@@ -59,6 +59,11 @@
       admin mutations and payment events written to `audit_logs`.
 - [ ] **Simplicity (YAGNI)**: no microservices/WebSocket/premature scaling;
       deviations recorded in Complexity Tracking with justification.
+- [ ] **Frontend Integration Guide**: a feature that adds, removes or changes an
+      HTTP endpoint, an event payload or a client-facing DTO ships
+      `specs/<feature>/frontend-guide.md`, with behaviour before → after for each
+      changed contract; a feature with no client-facing change says so in
+      `tasks.md` (Constitution §Governance).
 
 ## Project Structure
 
