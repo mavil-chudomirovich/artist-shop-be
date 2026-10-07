@@ -14,10 +14,12 @@ toàn bộ endpoint đang tồn tại: khi thêm, sửa hoặc xoá endpoint, fi
 | Chuẩn hoá error | `httpx` — `internal/share/httpx/errors.go` |
 | Nguồn code | `internal/modules/*/presentation/http/router.go` |
 
-> **Quan hệ với `specs/*/contracts/openapi.yaml`**: file OpenAPI là artifact
-> machine-readable **theo từng feature**, sinh ra ở bước `/speckit.plan`. File này
-> là bản **authoritative, xuyên module**. Khi hai bên lệch nhau, **file này thắng**
-> và `openapi.yaml` của feature phải được sửa cho khớp.
+> **Quan hệ với `specs/*/contracts/openapi.yaml` và `docs/swagger/`**: file OpenAPI
+> trong `specs/*/contracts/` là artifact machine-readable **theo từng feature**, sinh ra
+> ở bước `/speckit.plan`. `docs/swagger/` là spec machine-readable **xuyên module**, sinh
+> từ annotation trong code bằng `make swagger`. File này là bản **authoritative** cho cả
+> hai. Khi hai bên lệch nhau, **file này thắng** và artifact kia phải được sửa/sinh lại
+> cho khớp (xem `make swagger-check`).
 
 ---
 
@@ -241,6 +243,19 @@ Redis ping được; nếu không trả `503`. Không cần xác thực.
 ```
 
 Không dùng envelope `data`/`meta` (đây là endpoint vận hành, độc lập contract).
+
+### `GET /swagger/*`
+
+Giao diện Swagger UI (OpenAPI 2.0) cho toàn bộ endpoint đã annotate. **Không** nằm dưới
+`/api/v1` nên không bị rate limit API. Cần xác thực? Không.
+
+Chỉ tồn tại khi `SWAGGER_ENABLED=true`; mặc định tắt và production phải để tắt. Khi tắt,
+route trả `404 NOT_FOUND` như mọi path không tồn tại.
+
+Spec được sinh từ annotation trong code bằng `make swagger` → `docs/swagger/`. Bản này
+là **derived**, không phải nguồn authoritative: khi lệch với file này, file này thắng và
+`docs/swagger/` phải được sinh lại (xem `make swagger-check`,
+[decisions/011](decisions/011-swagger-from-code-annotations.md)).
 
 ---
 
@@ -1425,11 +1440,14 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
    `specs/<feature>/contracts/<module>-error-codes.md` của feature đó).
+6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
+   mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
 ## 8. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-07 | Thêm `GET /swagger/*` (Swagger UI, gate bởi `SWAGGER_ENABLED`, mặc định tắt) và `make swagger`/`make swagger-check`. Spec sinh từ annotation trong code vào `docs/swagger/`; file này vẫn là nguồn authoritative. Xem ADR-011. | `cmd/api/main.go`, `internal/share/httpserver/routes.go`, `Makefile` |
 | 2026-10-07 | Thêm nhóm `/api/v1/categories` (module 03 Category): hai route công khai không cần token (`GET /categories`, `GET /categories/{slug}`) và năm route quản trị dưới `/admin/categories` (danh sách, tạo, đọc, sửa, xoá), tất cả yêu cầu vai trò `ADMIN`. Hình dạng công khai chỉ có bốn member, hình dạng quản trị có thêm `position`, `isVisible`, `createdAt`, `updatedAt`. Bổ sung ba mã `CATEGORY_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: danh mục bị ẩn và slug chưa từng tồn tại trả lời y hệt nhau; va chạm tên/slug trả `409` kèm field. Phần 5 được chèn và bảng tổng hợp/change log dời xuống mục 6/8. | `internal/modules/category/presentation/http/router.go` |
 | 2026-10-06 | `POST /users/me/avatar`: mọi cách gửi ảnh quá trần (khai `Content-Length`, không khai, khai thiếu) đều trả `413 USER_AVATAR_TOO_LARGE`; gỡ `PAYLOAD_TOO_LARGE` khỏi danh sách lỗi của endpoint này vì nó không còn là câu trả lời nào ở đây nữa. Cùng thay đổi đó sửa hàng đầu mục `1.1` (trước đó gộp trần toàn cục và trần riêng của route vào cùng một mã) và bổ sung phần trần 2 162 688 byte trong ghi chú của `4.3`. `PAYLOAD_TOO_LARGE` giữ nguyên trên mọi route không phải avatar. | `internal/modules/user/presentation/http/router.go`, `internal/share/middleware/bodylimit.go` |
 | 2026-10-06 | `POST /register`: thêm nhánh gửi lại thất bại — `503 SERVICE_UNAVAILABLE` (mã dùng chung của `httpx`, tái sử dụng, **không** thêm mã riêng của module) kèm câu báo cho khách biết không có gì được gửi tới và có thể xin mã mới. Tài khoản `pending` được giữ, cooldown gửi lại được gỡ (nên lời hứa trong câu trả lời là đúng), rate limit nhóm *flow* vẫn áp dụng. Ghi action audit `AUTH_REGISTER_DELIVERY_FAILED` + outcome `FAILURE` với metadata `classification` thuộc hệ thống này. `POST /resend-verification` ghi rõ khoảng trống đã biết: gửi lại hỏng hiện trả `500` chứ không phải `503`. | `internal/modules/auth/application/implement/email_failure.go`, `internal/modules/auth/application/implement/register.go`, `internal/modules/auth/presentation/http/errors.go` |

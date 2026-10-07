@@ -144,6 +144,15 @@ func positiveQuery(raw string, fallback int) (int, error) {
 
 // GetProfile returns the signed-in customer's profile. It answers from the stored
 // reference alone, so a media outage can never fail the read (FR-021).
+//
+//	@Summary		Get the signed-in customer's profile
+//	@Description	Returns the profile of the account behind the access token.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.ProfileResponse}
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Router			/users/me [get]
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -158,6 +167,18 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateProfile changes the display name and/or the phone.
+//
+//	@Summary		Update the signed-in customer's profile
+//	@Description	Changes the display name and/or the phone. An omitted member keeps its value; an empty string clears a settable member.
+//	@Tags			User
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		httpdto.UpdateProfileRequest	true	"Profile update"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ProfileResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Router			/users/me [patch]
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -188,6 +209,22 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 // SetAvatar stores an uploaded avatar. The bytes are read with a hard ceiling and
 // handed to the use case, which validates them by content; neither the file name
 // nor the client-declared media type is trusted (FR-014, research D7).
+//
+//	@Summary		Upload an avatar
+//	@Description	Stores an image as the account's avatar. The content is validated by signature, not by name or declared media type.
+//	@Tags			User
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			file	formData	file	true	"Avatar image (JPEG, PNG or WebP)"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ProfileResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
+//	@Failure		415		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
+//	@Router			/users/me/avatar [post]
 func (h *Handler) SetAvatar(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -279,6 +316,15 @@ func avatarTooLarge() *httpx.AppError {
 }
 
 // RemoveAvatar releases the stored avatar reference.
+//
+//	@Summary		Remove the avatar
+//	@Description	Releases the stored avatar reference. The profile itself is unchanged otherwise.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.ProfileResponse}
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Router			/users/me/avatar [delete]
 func (h *Handler) RemoveAvatar(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -293,6 +339,18 @@ func (h *Handler) RemoveAvatar(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListAddresses returns a page of the account's non-hidden addresses.
+//
+//	@Summary		List the account's addresses
+//	@Description	Returns a page of the account's non-hidden addresses. Pagination is reported in meta.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query		int	false	"Page number (default 1)"
+//	@Param			pageSize	query		int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AddressResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Router			/users/me/addresses [get]
 func (h *Handler) ListAddresses(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -319,6 +377,19 @@ func (h *Handler) ListAddresses(w http.ResponseWriter, r *http.Request) {
 // client gets the offending field named; semantic validation — phone shape,
 // province and ward existence, ward/province consistency — belongs to the use
 // case and comes back through the module error codes.
+//
+//	@Summary		Create an address
+//	@Description	Stores a new shipping address. Province and ward codes must exist in the official dataset.
+//	@Tags			User
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		httpdto.CreateAddressRequest	true	"Address payload"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AddressResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/users/me/addresses [post]
 func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -362,6 +433,20 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateAddress edits an address and preserves its default flag.
+//
+//	@Summary		Update an address
+//	@Description	Edits an owned address and preserves its default flag. An address of another account answers 404.
+//	@Tags			User
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			addressId	path		string						true	"Address identifier"
+//	@Param			request		body		httpdto.UpdateAddressRequest	true	"Address update"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AddressResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/users/me/addresses/{addressId} [patch]
 func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -397,6 +482,17 @@ func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAddress hides an address. The row survives so past orders keep the
 // address text they used.
+//
+//	@Summary		Delete an address
+//	@Description	Hides an owned address. The row survives so past orders keep the address text they used.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			addressId	path	string	true	"Address identifier"
+//	@Success		204			"No Content"
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/users/me/addresses/{addressId} [delete]
 func (h *Handler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -415,6 +511,17 @@ func (h *Handler) DeleteAddress(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetDefaultAddress makes one address the account's single default.
+//
+//	@Summary		Set the default address
+//	@Description	Makes one owned address the account's single default.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			addressId	path		string	true	"Address identifier"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AddressResponse}
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/users/me/addresses/{addressId}/default [post]
 func (h *Handler) SetDefaultAddress(w http.ResponseWriter, r *http.Request) {
 	accountID, ok := h.sessionAccount(w, r)
 	if !ok {
@@ -441,6 +548,18 @@ func (h *Handler) SetDefaultAddress(w http.ResponseWriter, r *http.Request) {
 // Handing the actor to the use case through the context is what keeps FR-022a
 // satisfiable at all: the contract method takes only the subject, so the identity
 // has to travel beside it (research D5).
+//
+//	@Summary		Look up a customer (ADMIN)
+//	@Description	Read-only operator view of one customer. Reachable only by an ADMIN account; every successful read is audited.
+//	@Tags			User
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			userId	path		string	true	"Account identifier of the customer being read"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.CustomerLookupResponse}
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/users/{userId} [get]
 func (h *Handler) LookupCustomer(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {

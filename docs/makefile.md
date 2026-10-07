@@ -9,7 +9,7 @@ make help       # như trên
 make docker-help
 ```
 
-Danh sách đầy đủ 46 target: xem `make help` và 4 nhóm bên dưới.
+Danh sách đầy đủ 49 target: xem `make help` và 4 nhóm bên dưới.
 
 ---
 
@@ -112,9 +112,15 @@ trên POSIX).
 | `fmt` | `gofmt -w .` |
 | `tidy` | `go mod tidy` |
 | `install-tools` | Cài `golangci-lint` đúng version CI dùng |
+| `install-swag` | Cài `swag` (generator OpenAPI) đúng version |
+| `swagger` | Sinh OpenAPI spec vào `docs/swagger/` |
 | `clean` | Xoá `bin/` + `coverage.out` |
 
 `install-tools` ghim `v2.14.0` — tránh tình trạng dev lint bằng version khác CI.
+`install-swag` ghim `v1.16.4`. `swagger` chạy
+`swag init -g cmd/api/main.go -o docs/swagger --parseInternal --parseDependency
+--outputTypes go,json,yaml`; `--parseInternal` là bắt buộc vì handler và DTO nằm trong
+`internal/`. Xem [decisions/011-swagger-from-code-annotations.md](decisions/011-swagger-from-code-annotations.md).
 
 ## 6. Nhóm Quality
 
@@ -125,6 +131,7 @@ trên POSIX).
 | `vet` | `go vet ./...` **và** `go vet -tags integration ./...` |
 | `lint` | `golangci-lint run` |
 | `static-check` | `fmt-check` + `tidy-check` + `vet` |
+| `swagger-check` | Tái sinh spec rồi `git diff --exit-code -- docs/swagger` (phát hiện lệch) |
 | `test` | `go test -count=1 ./...` |
 | `test-race` | `go test -count=1 -race ./...` (cần gcc) |
 | `test-integration` | `go test -count=1 -p 1 -tags integration ./...` |
@@ -151,9 +158,9 @@ lúc sẽ timeout. `-p 1` = tuần tự, chậm hơn nhưng ổn định.
 ```makefile
 CGO_ENABLED_VALUE := $(shell $(GO) env CGO_ENABLED)
 ifeq ($(CGO_ENABLED_VALUE),1)
-CHECK_TARGETS := static-check lint test test-race test-integration build
+CHECK_TARGETS := static-check swagger-check lint test test-race test-integration build
 else
-CHECK_TARGETS := static-check lint test test-integration build
+CHECK_TARGETS := static-check swagger-check lint test test-integration build
 endif
 ```
 

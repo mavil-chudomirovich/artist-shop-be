@@ -239,6 +239,44 @@ func TestABodylessRequestIsUnaffected(t *testing.T) {
 	}
 }
 
+// The API reference is served only when the composition injects a handler. The
+// shared server knows nothing about the specification generator, so this is the
+// contract that decides whether /swagger exists at all.
+func TestSwaggerIsServedOnlyWhenAHandlerIsInjected(t *testing.T) {
+	router := NewRouter(Dependencies{
+		Config:  testConfig(),
+		Logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		Version: func(context.Context) (int64, error) { return 0, nil },
+		Swagger: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("swagger-ui"))
+		}),
+	})
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "swagger-ui" {
+		t.Fatalf("expected the injected handler to answer, got %q", rec.Body.String())
+	}
+}
+
+// With no handler (the default, and what production runs), the route does not
+// exist and the request falls through to the shared 404 envelope.
+func TestSwaggerIsAbsentWhenNoHandlerIsInjected(t *testing.T) {
+	rec := httptest.NewRecorder()
+	testRouter().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "NOT_FOUND" {
+		t.Fatalf("expected NOT_FOUND, got %s", got)
+	}
+}
+
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var body struct {

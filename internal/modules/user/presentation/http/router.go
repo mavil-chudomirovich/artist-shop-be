@@ -170,6 +170,15 @@ func (h *DivisionsHandler) Router(hooks middleware.AuthHooks) http.Handler {
 }
 
 // ListProvinces returns every province, ordered by name.
+//
+//	@Summary		List provinces
+//	@Description	Returns every first-level administrative unit of the official dataset, ordered by name.
+//	@Tags			Divisions
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=[]httpdto.ProvinceResponse}
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Router			/divisions/provinces [get]
 func (h *DivisionsHandler) ListProvinces(w http.ResponseWriter, r *http.Request) {
 	provinces, err := h.divisions.Provinces(r.Context())
 	if err != nil {
@@ -181,6 +190,18 @@ func (h *DivisionsHandler) ListProvinces(w http.ResponseWriter, r *http.Request)
 
 // ListWards returns the wards of one province. A ward list is always scoped to a
 // single province, so a client never receives the whole set at once (FR-007c).
+//
+//	@Summary		List wards of a province
+//	@Description	Returns the second-level administrative units of one province.
+//	@Tags			Divisions
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			provinceCode	path		string	true	"Province code"
+//	@Success		200				{object}	httpx.SwaggerSuccess{data=[]httpdto.WardResponse}
+//	@Failure		400				{object}	httpx.SwaggerError
+//	@Failure		401				{object}	httpx.SwaggerError
+//	@Failure		404				{object}	httpx.SwaggerError
+//	@Router			/divisions/provinces/{provinceCode}/wards [get]
 func (h *DivisionsHandler) ListWards(w http.ResponseWriter, r *http.Request) {
 	provinceCode := chi.URLParam(r, "provinceCode")
 	wards, err := h.divisions.Wards(r.Context(), provinceCode)

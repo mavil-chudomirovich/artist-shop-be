@@ -1,0 +1,1828 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Modular-monolith backend for the artist shop.\nEvery business endpoint is mounted under /api/v1 and uses the shared success/error envelope.",
+        "title": "Artist Shop API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/api/v1",
+    "paths": {
+        "/auth/admin/probe": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a fixed payload and is reachable only by an ADMIN account. A denial is recorded in the audit log.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Admin RBAC probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "description": "Authenticates an account and returns an access/refresh token pair.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Log in",
+                "parameters": [
+                    {
+                        "description": "Email and password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.LoginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "description": "Revokes the given refresh token's session.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Log out",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the identity of the account behind the access token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Current identity",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.IdentityResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/change": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Changes the signed-in account's password and rotates its sessions. Requires the current password and refresh token.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Change the password",
+                "parameters": [
+                    {
+                        "description": "Current password, new password and refresh token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ChangePasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/forgot": {
+            "post": {
+                "description": "Sends a reset link if the email is registered. The response is identical either way.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Request a password reset",
+                "parameters": [
+                    {
+                        "description": "Email address",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/reset": {
+            "post": {
+                "description": "Sets a new password from a reset token and returns a fresh session.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Complete a password reset",
+                "parameters": [
+                    {
+                        "description": "Reset token and new password",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/refresh": {
+            "post": {
+                "description": "Rotates a refresh token and returns a new token pair.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Refresh a session",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register": {
+            "post": {
+                "description": "Creates a pending account and emails a one-time confirmation code. The response never reveals whether the email already exists.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Register a new account",
+                "parameters": [
+                    {
+                        "description": "Registration payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/resend-verification": {
+            "post": {
+                "description": "Re-sends the confirmation code if the email is eligible. The response is identical either way.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Resend the confirmation code",
+                "parameters": [
+                    {
+                        "description": "Email address",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "description": "Confirms a pending account with the one-time code sent at registration.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Confirm an email address",
+                "parameters": [
+                    {
+                        "description": "Email and confirmation code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/divisions/provinces": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every first-level administrative unit of the official dataset, ordered by name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Divisions"
+                ],
+                "summary": "List provinces",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProvinceResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/divisions/provinces/{provinceCode}/wards": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the second-level administrative units of one province.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Divisions"
+                ],
+                "summary": "List wards of a province",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Province code",
+                        "name": "provinceCode",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.WardResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the profile of the account behind the access token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Get the signed-in customer's profile",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Changes the display name and/or the phone. An omitted member keeps its value; an empty string clears a settable member.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Update the signed-in customer's profile",
+                "parameters": [
+                    {
+                        "description": "Profile update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateProfileRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/addresses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a page of the account's non-hidden addresses. Pagination is reported in meta.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "List the account's addresses",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 20)",
+                        "name": "pageSize",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stores a new shipping address. Province and ward codes must exist in the official dataset.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Create an address",
+                "parameters": [
+                    {
+                        "description": "Address payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/addresses/{addressId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hides an owned address. The row survives so past orders keep the address text they used.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Delete an address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Address identifier",
+                        "name": "addressId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Edits an owned address and preserves its default flag. An address of another account answers 404.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Update an address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Address identifier",
+                        "name": "addressId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Address update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/addresses/{addressId}/default": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Makes one owned address the account's single default.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Set the default address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Address identifier",
+                        "name": "addressId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/avatar": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stores an image as the account's avatar. The content is validated by signature, not by name or declared media type.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Upload an avatar",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "Avatar image (JPEG, PNG or WebP)",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "415": {
+                        "description": "Unsupported Media Type",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Releases the stored avatar reference. The profile itself is unchanged otherwise.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Remove the avatar",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{userId}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Read-only operator view of one customer. Reachable only by an ADMIN account; every successful read is audited.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "User"
+                ],
+                "summary": "Look up a customer (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Account identifier of the customer being read",
+                        "name": "userId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CustomerLookupResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ChangePasswordRequest": {
+            "type": "object",
+            "properties": {
+                "currentPassword": {
+                    "type": "string"
+                },
+                "newPassword": {
+                    "type": "string"
+                },
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.IdentityResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.LoginRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetRequest": {
+            "type": "object",
+            "properties": {
+                "newPassword": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest": {
+            "type": "object",
+            "properties": {
+                "refreshToken": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "otp": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse": {
+            "type": "object",
+            "properties": {
+                "divisionNeedsReview": {
+                    "description": "DivisionNeedsReview is true when a stored code is no longer in the official\ndataset; the captured names are still returned so the customer can see what\nwas saved.\n\nIt is always stated, false included: the customer's own list knows the\nanswer, because the use case checks every stored code against the dataset.\nOmitting a known false would make a client read \"absent\" as \"unknown\",\nwhich in JavaScript is `undefined` rather than `false`.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "description": "ID identifies the address.",
+                    "type": "string"
+                },
+                "isDefault": {
+                    "description": "IsDefault reports whether this is the account's default address.",
+                    "type": "boolean"
+                },
+                "provinceCode": {
+                    "description": "ProvinceCode is the stored first-level administrative unit.",
+                    "type": "string"
+                },
+                "provinceName": {
+                    "description": "ProvinceName is the display name captured at save time.",
+                    "type": "string"
+                },
+                "recipientName": {
+                    "description": "RecipientName is the person the order goes to.",
+                    "type": "string"
+                },
+                "recipientPhone": {
+                    "description": "RecipientPhone is the normalised recipient phone number.",
+                    "type": "string"
+                },
+                "streetAddress": {
+                    "description": "StreetAddress is the free-text house number and street.",
+                    "type": "string"
+                },
+                "wardCode": {
+                    "description": "WardCode is the stored second-level administrative unit.",
+                    "type": "string"
+                },
+                "wardName": {
+                    "description": "WardName is the display name captured at save time.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AvatarResponse": {
+            "type": "object",
+            "properties": {
+                "height": {
+                    "description": "Height is the stored height.",
+                    "type": "integer"
+                },
+                "publicId": {
+                    "description": "PublicID is the media provider's opaque identifier.",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL is the displayable link.",
+                    "type": "string"
+                },
+                "width": {
+                    "description": "Width is the stored width, at most 512.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest": {
+            "type": "object",
+            "properties": {
+                "provinceCode": {
+                    "description": "ProvinceCode must exist in the official dataset.",
+                    "type": "string"
+                },
+                "provinceName": {
+                    "description": "ProvinceName is optional; captured when omitted.",
+                    "type": "string"
+                },
+                "recipientName": {
+                    "description": "RecipientName is the person the order goes to.",
+                    "type": "string"
+                },
+                "recipientPhone": {
+                    "description": "RecipientPhone is the recipient phone number.",
+                    "type": "string"
+                },
+                "streetAddress": {
+                    "description": "StreetAddress is the free-text house number and street.",
+                    "type": "string"
+                },
+                "wardCode": {
+                    "description": "WardCode must exist and belong to ProvinceCode.",
+                    "type": "string"
+                },
+                "wardName": {
+                    "description": "WardName is optional; captured when omitted.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CustomerLookupResponse": {
+            "type": "object",
+            "properties": {
+                "addresses": {
+                    "description": "Addresses holds the customer's non-hidden addresses, default first and then\nmost recently updated. They are the operator type, which carries no\ndivisionNeedsReview member.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse"
+                    }
+                },
+                "displayName": {
+                    "description": "DisplayName may be empty when the customer never set one.",
+                    "type": "string"
+                },
+                "email": {
+                    "description": "Email is the account email.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID identifies the account.",
+                    "type": "string"
+                },
+                "phone": {
+                    "description": "Phone is null when unset.",
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is CUSTOMER or ADMIN.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID identifies the address.",
+                    "type": "string"
+                },
+                "isDefault": {
+                    "description": "IsDefault reports whether the account's default address.",
+                    "type": "boolean"
+                },
+                "provinceCode": {
+                    "description": "ProvinceCode is the stored first-level administrative unit.",
+                    "type": "string"
+                },
+                "provinceName": {
+                    "description": "ProvinceName is the display name captured at save time.",
+                    "type": "string"
+                },
+                "recipientName": {
+                    "description": "RecipientName is the person the order goes to.",
+                    "type": "string"
+                },
+                "recipientPhone": {
+                    "description": "RecipientPhone is the normalised recipient phone number.",
+                    "type": "string"
+                },
+                "streetAddress": {
+                    "description": "StreetAddress is the free-text house number and street.",
+                    "type": "string"
+                },
+                "wardCode": {
+                    "description": "WardCode is the stored second-level administrative unit.",
+                    "type": "string"
+                },
+                "wardName": {
+                    "description": "WardName is the display name captured at save time.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse": {
+            "type": "object",
+            "properties": {
+                "avatar": {
+                    "description": "Avatar is null when the customer has no photo.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AvatarResponse"
+                        }
+                    ]
+                },
+                "displayName": {
+                    "description": "DisplayName may be empty when the customer never set one.",
+                    "type": "string"
+                },
+                "email": {
+                    "description": "Email is the account email.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID is the account identifier.",
+                    "type": "string"
+                },
+                "phone": {
+                    "description": "Phone is null when unset.",
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is CUSTOMER or ADMIN.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProvinceResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "Code is the stable identifier stored on an address.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is the display name.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest": {
+            "type": "object",
+            "properties": {
+                "provinceCode": {
+                    "description": "ProvinceCode is omitted to keep the current province.",
+                    "type": "string"
+                },
+                "provinceName": {
+                    "description": "ProvinceName is optional; recaptured when the province changes.",
+                    "type": "string"
+                },
+                "recipientName": {
+                    "description": "RecipientName is omitted to keep the current value.",
+                    "type": "string"
+                },
+                "recipientPhone": {
+                    "description": "RecipientPhone is omitted to keep the current value.",
+                    "type": "string"
+                },
+                "streetAddress": {
+                    "description": "StreetAddress is omitted to keep the current street address.",
+                    "type": "string"
+                },
+                "wardCode": {
+                    "description": "WardCode is omitted to keep the current ward.",
+                    "type": "string"
+                },
+                "wardName": {
+                    "description": "WardName is optional; recaptured when the ward changes.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateProfileRequest": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "description": "DisplayName is omitted to keep the current value, empty to clear it.",
+                    "type": "string"
+                },
+                "phone": {
+                    "description": "Phone is omitted to keep the current value, empty or null to clear it.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.WardResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "Code is the stable identifier stored on an address.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is the display name.",
+                    "type": "string"
+                },
+                "provinceCode": {
+                    "description": "ProvinceCode is the owning province, so a consumer never has to join back.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role": {
+            "type": "string",
+            "enum": [
+                "CUSTOMER",
+                "ADMIN"
+            ],
+            "x-enum-varnames": [
+                "RoleCustomer",
+                "RoleAdmin"
+            ]
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Detail": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "issue": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.ErrorBody": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "details": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Detail"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Meta": {
+            "type": "object",
+            "properties": {
+                "page": {
+                    "type": "integer"
+                },
+                "pageSize": {
+                    "type": "integer"
+                },
+                "requestId": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.ErrorBody"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "meta": {
+                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Meta"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "description": "Send the access token as \"Bearer \u003caccessToken\u003e\".",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}

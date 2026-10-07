@@ -32,8 +32,9 @@ type Config struct {
 	Audit      AuditConfig      `envPrefix:"AUDIT_"`
 	Migrations MigrationsConfig `envPrefix:"MIGRATIONS_"`
 	Auth       AuthConfig
-	Media      MediaConfig `envPrefix:"MEDIA_"`
-	User       UserConfig  `envPrefix:"USER_"`
+	Media      MediaConfig   `envPrefix:"MEDIA_"`
+	User       UserConfig    `envPrefix:"USER_"`
+	Swagger    SwaggerConfig `envPrefix:"SWAGGER_"`
 
 	// MaxBodyBytes is the pipeline's own ceiling on any request body. It is a
 	// coarse early refusal: the wrapper runs before routing, so a route cannot lift
@@ -173,6 +174,16 @@ type UserConfig struct {
 	// AddressWriteRatePerMinute caps address creates, edits, hides and
 	// default-flag changes per client IP and minute.
 	AddressWriteRatePerMinute int `env:"ADDRESS_WRITE_RATE_PER_MINUTE" envDefault:"30"`
+}
+
+// SwaggerConfig controls the interactive API reference served at /swagger.
+//
+// It is disabled by default because the UI exposes the whole endpoint surface
+// and is meant for development and staging only. Production deployments leave
+// it off; the generated specification under docs/swagger stays available for
+// offline review either way.
+type SwaggerConfig struct {
+	Enabled bool `env:"ENABLED" envDefault:"false"`
 }
 
 // LoadDotenv loads a local .env file when present for non-production

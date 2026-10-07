@@ -271,6 +271,15 @@ không phải lỗi khởi động:
 dòng cảnh báo lúc khởi động, chỉ nêu **tên biến** chứ không nêu giá trị. Xem
 [api-reference.md](api-reference.md) mục `POST /users/me/avatar`.
 
+### Swagger — tiền tố `SWAGGER_`
+| Biến | Mặc định | Bắt buộc | Ý nghĩa |
+|---|---|---|---|
+| `SWAGGER_ENABLED` | `false` | | Bật giao diện API reference tại `/swagger`. Chỉ dùng cho development/staging |
+
+> Swagger UI phơi ra toàn bộ endpoint nên **production phải để `false`**. Khi tắt,
+> route `/swagger` không tồn tại. File spec đã sinh ở `docs/swagger/` vẫn xem offline
+> được bất kể cài đặt này. Sinh lại bằng `make swagger`.
+
 ### Migrations — tiền tố `MIGRATIONS_`
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|

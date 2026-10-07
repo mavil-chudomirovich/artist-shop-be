@@ -22,6 +22,11 @@ type Dependencies struct {
 	Cache   health.Pinger
 	Auth    middleware.AuthHooks
 	Version func(ctx context.Context) (int64, error)
+	// Swagger is the interactive API reference handler, mounted at /swagger.
+	// The composition root supplies it only when the feature is enabled, so the
+	// shared server keeps no dependency on the specification generator and a
+	// disabled deployment passes nil.
+	Swagger http.Handler
 	// Mount registers module sub-routers under /api/v1.
 	Mount func(r chi.Router)
 }
@@ -51,6 +56,13 @@ func NewRouter(deps Dependencies) http.Handler {
 	healthHandler := health.New(deps.DB, deps.Version).WithCache(deps.Cache)
 	r.Get("/healthz", healthHandler.Liveness)
 	r.Get("/readyz", healthHandler.Readiness)
+
+	// The API reference sits outside /api/v1 so it is not subject to the API
+	// rate limit and is served by an injected handler. When the feature is off
+	// the composition passes nil and the route does not exist.
+	if deps.Swagger != nil {
+		r.Method(http.MethodGet, "/swagger/*", deps.Swagger)
+	}
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.RateLimit(

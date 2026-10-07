@@ -47,6 +47,17 @@ func toSessionResponse(s appdto.SessionOutput) httpdto.SessionResponse {
 }
 
 // Register starts registration and emails an OTP.
+//
+//	@Summary		Register a new account
+//	@Description	Creates a pending account and emails a one-time confirmation code. The response never reveals whether the email already exists.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.RegisterRequest	true	"Registration payload"
+//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/register [post]
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.RegisterRequest
 	if err := decode(r, &req); err != nil {
@@ -61,6 +72,17 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 // VerifyEmail confirms the OTP.
+//
+//	@Summary		Confirm an email address
+//	@Description	Confirms a pending account with the one-time code sent at registration.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.VerifyEmailRequest	true	"Email and confirmation code"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/verify-email [post]
 func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.VerifyEmailRequest
 	if err := decode(r, &req); err != nil {
@@ -75,6 +97,17 @@ func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResendVerification re-sends the OTP.
+//
+//	@Summary		Resend the confirmation code
+//	@Description	Re-sends the confirmation code if the email is eligible. The response is identical either way.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.EmailRequest	true	"Email address"
+//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/resend-verification [post]
 func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.EmailRequest
 	if err := decode(r, &req); err != nil {
@@ -89,6 +122,19 @@ func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
 }
 
 // Login authenticates and issues tokens.
+//
+//	@Summary		Log in
+//	@Description	Authenticates an account and returns an access/refresh token pair.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.LoginRequest	true	"Email and password"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.SessionResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/login [post]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.LoginRequest
 	if err := decode(r, &req); err != nil {
@@ -110,6 +156,17 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // Refresh rotates a session.
+//
+//	@Summary		Refresh a session
+//	@Description	Rotates a refresh token and returns a new token pair.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.TokenRequest	true	"Refresh token"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.SessionResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Router			/auth/refresh [post]
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.TokenRequest
 	if err := decode(r, &req); err != nil {
@@ -125,6 +182,16 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 // Logout revokes a session.
+//
+//	@Summary		Log out
+//	@Description	Revokes the given refresh token's session.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body	httpdto.TokenRequest	true	"Refresh token"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Router			/auth/logout [post]
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.TokenRequest
 	if err := decode(r, &req); err != nil {
@@ -139,6 +206,17 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // ForgotPassword requests a reset link.
+//
+//	@Summary		Request a password reset
+//	@Description	Sends a reset link if the email is registered. The response is identical either way.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.EmailRequest	true	"Email address"
+//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/password/forgot [post]
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.EmailRequest
 	if err := decode(r, &req); err != nil {
@@ -153,6 +231,17 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // ResetPassword completes a reset.
+//
+//	@Summary		Complete a password reset
+//	@Description	Sets a new password from a reset token and returns a fresh session.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.ResetRequest	true	"Reset token and new password"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.SessionResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Router			/auth/password/reset [post]
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.ResetRequest
 	if err := decode(r, &req); err != nil {
@@ -168,6 +257,18 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // ChangePassword changes the password of the signed-in account.
+//
+//	@Summary		Change the password
+//	@Description	Changes the signed-in account's password and rotates its sessions. Requires the current password and refresh token.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		httpdto.ChangePasswordRequest	true	"Current password, new password and refresh token"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.SessionResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Router			/auth/password/change [post]
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	identity, ok := middleware.IdentityFromContext(r.Context())
 	if !ok {
@@ -208,6 +309,15 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // Me returns the current identity.
+//
+//	@Summary		Current identity
+//	@Description	Returns the identity of the account behind the access token.
+//	@Tags			Auth
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.IdentityResponse}
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Router			/auth/me [get]
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	identity, ok := middleware.IdentityFromContext(r.Context())
 	if !ok {
@@ -228,6 +338,16 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 }
 
 // AdminProbe is an admin-only endpoint used to verify RBAC.
+//
+//	@Summary		Admin RBAC probe
+//	@Description	Returns a fixed payload and is reachable only by an ADMIN account. A denial is recorded in the audit log.
+//	@Tags			Auth
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Failure		403	{object}	httpx.SwaggerError
+//	@Router			/auth/admin/probe [get]
 func (h *Handler) AdminProbe(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "admin"})
 }

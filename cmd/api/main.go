@@ -5,12 +5,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/go-chi/chi/v5"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 
+	_ "github.com/mavil-chudomirovich/artist-shop-be/docs/swagger"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/implement"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/auditor"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/email"
@@ -40,6 +43,15 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 )
 
+// @title           Artist Shop API
+// @version         1.0
+// @description     Modular-monolith backend for the artist shop.
+// @description     Every business endpoint is mounted under /api/v1 and uses the shared success/error envelope.
+// @BasePath        /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
+// @description     Send the access token as "Bearer <accessToken>".
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
@@ -230,6 +242,15 @@ func run() error {
 	})
 	categoryHandler := categoryhttp.New(categoryService, logger)
 
+	// The interactive API reference is opt-in: the composition hands the shared
+	// server a handler only when the feature is enabled, so a production start
+	// leaves /swagger unregistered. The generated specification in docs/swagger
+	// is the same document served here.
+	var swaggerHandler http.Handler
+	if cfg.Swagger.Enabled {
+		swaggerHandler = httpSwagger.WrapHandler
+	}
+
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Config:  cfg,
 		Logger:  logger,
@@ -237,6 +258,7 @@ func run() error {
 		Cache:   redisCache,
 		Version: runner.Version,
 		Auth:    authHooks,
+		Swagger: swaggerHandler,
 		Mount: func(r chi.Router) {
 			r.Mount("/auth", authHandler.Router(cfg.Auth))
 			r.Mount("/divisions", userDivisionsHandler.Router(authHooks))

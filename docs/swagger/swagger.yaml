@@ -1,0 +1,1162 @@
+basePath: /api/v1
+definitions:
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ChangePasswordRequest:
+    properties:
+      currentPassword:
+        type: string
+      newPassword:
+        type: string
+      refreshToken:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.IdentityResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: string
+      role:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.LoginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetRequest:
+    properties:
+      newPassword:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse:
+    properties:
+      accessToken:
+        type: string
+      expiresIn:
+        type: integer
+      refreshToken:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest:
+    properties:
+      refreshToken:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest:
+    properties:
+      email:
+        type: string
+      otp:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse:
+    properties:
+      divisionNeedsReview:
+        description: |-
+          DivisionNeedsReview is true when a stored code is no longer in the official
+          dataset; the captured names are still returned so the customer can see what
+          was saved.
+
+          It is always stated, false included: the customer's own list knows the
+          answer, because the use case checks every stored code against the dataset.
+          Omitting a known false would make a client read "absent" as "unknown",
+          which in JavaScript is `undefined` rather than `false`.
+        type: boolean
+      id:
+        description: ID identifies the address.
+        type: string
+      isDefault:
+        description: IsDefault reports whether this is the account's default address.
+        type: boolean
+      provinceCode:
+        description: ProvinceCode is the stored first-level administrative unit.
+        type: string
+      provinceName:
+        description: ProvinceName is the display name captured at save time.
+        type: string
+      recipientName:
+        description: RecipientName is the person the order goes to.
+        type: string
+      recipientPhone:
+        description: RecipientPhone is the normalised recipient phone number.
+        type: string
+      streetAddress:
+        description: StreetAddress is the free-text house number and street.
+        type: string
+      wardCode:
+        description: WardCode is the stored second-level administrative unit.
+        type: string
+      wardName:
+        description: WardName is the display name captured at save time.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AvatarResponse:
+    properties:
+      height:
+        description: Height is the stored height.
+        type: integer
+      publicId:
+        description: PublicID is the media provider's opaque identifier.
+        type: string
+      url:
+        description: URL is the displayable link.
+        type: string
+      width:
+        description: Width is the stored width, at most 512.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest:
+    properties:
+      provinceCode:
+        description: ProvinceCode must exist in the official dataset.
+        type: string
+      provinceName:
+        description: ProvinceName is optional; captured when omitted.
+        type: string
+      recipientName:
+        description: RecipientName is the person the order goes to.
+        type: string
+      recipientPhone:
+        description: RecipientPhone is the recipient phone number.
+        type: string
+      streetAddress:
+        description: StreetAddress is the free-text house number and street.
+        type: string
+      wardCode:
+        description: WardCode must exist and belong to ProvinceCode.
+        type: string
+      wardName:
+        description: WardName is optional; captured when omitted.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CustomerLookupResponse:
+    properties:
+      addresses:
+        description: |-
+          Addresses holds the customer's non-hidden addresses, default first and then
+          most recently updated. They are the operator type, which carries no
+          divisionNeedsReview member.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse'
+        type: array
+      displayName:
+        description: DisplayName may be empty when the customer never set one.
+        type: string
+      email:
+        description: Email is the account email.
+        type: string
+      id:
+        description: ID identifies the account.
+        type: string
+      phone:
+        description: Phone is null when unset.
+        type: string
+      role:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role'
+        description: Role is CUSTOMER or ADMIN.
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse:
+    properties:
+      id:
+        description: ID identifies the address.
+        type: string
+      isDefault:
+        description: IsDefault reports whether the account's default address.
+        type: boolean
+      provinceCode:
+        description: ProvinceCode is the stored first-level administrative unit.
+        type: string
+      provinceName:
+        description: ProvinceName is the display name captured at save time.
+        type: string
+      recipientName:
+        description: RecipientName is the person the order goes to.
+        type: string
+      recipientPhone:
+        description: RecipientPhone is the normalised recipient phone number.
+        type: string
+      streetAddress:
+        description: StreetAddress is the free-text house number and street.
+        type: string
+      wardCode:
+        description: WardCode is the stored second-level administrative unit.
+        type: string
+      wardName:
+        description: WardName is the display name captured at save time.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse:
+    properties:
+      avatar:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AvatarResponse'
+        description: Avatar is null when the customer has no photo.
+      displayName:
+        description: DisplayName may be empty when the customer never set one.
+        type: string
+      email:
+        description: Email is the account email.
+        type: string
+      id:
+        description: ID is the account identifier.
+        type: string
+      phone:
+        description: Phone is null when unset.
+        type: string
+      role:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role'
+        description: Role is CUSTOMER or ADMIN.
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProvinceResponse:
+    properties:
+      code:
+        description: Code is the stable identifier stored on an address.
+        type: string
+      name:
+        description: Name is the display name.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest:
+    properties:
+      provinceCode:
+        description: ProvinceCode is omitted to keep the current province.
+        type: string
+      provinceName:
+        description: ProvinceName is optional; recaptured when the province changes.
+        type: string
+      recipientName:
+        description: RecipientName is omitted to keep the current value.
+        type: string
+      recipientPhone:
+        description: RecipientPhone is omitted to keep the current value.
+        type: string
+      streetAddress:
+        description: StreetAddress is omitted to keep the current street address.
+        type: string
+      wardCode:
+        description: WardCode is omitted to keep the current ward.
+        type: string
+      wardName:
+        description: WardName is optional; recaptured when the ward changes.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateProfileRequest:
+    properties:
+      displayName:
+        description: DisplayName is omitted to keep the current value, empty to clear
+          it.
+        type: string
+      phone:
+        description: Phone is omitted to keep the current value, empty or null to
+          clear it.
+        items:
+          type: integer
+        type: array
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.WardResponse:
+    properties:
+      code:
+        description: Code is the stable identifier stored on an address.
+        type: string
+      name:
+        description: Name is the display name.
+        type: string
+      provinceCode:
+        description: ProvinceCode is the owning province, so a consumer never has
+          to join back.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_access.Role:
+    enum:
+    - CUSTOMER
+    - ADMIN
+    type: string
+    x-enum-varnames:
+    - RoleCustomer
+    - RoleAdmin
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Detail:
+    properties:
+      field:
+        type: string
+      issue:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.ErrorBody:
+    properties:
+      code:
+        type: string
+      details:
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Detail'
+        type: array
+      message:
+        type: string
+      requestId:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Meta:
+    properties:
+      page:
+        type: integer
+      pageSize:
+        type: integer
+      requestId:
+        type: string
+      timestamp:
+        type: string
+      total:
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError:
+    properties:
+      error:
+        $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.ErrorBody'
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess:
+    properties:
+      data: {}
+      meta:
+        $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.Meta'
+    type: object
+info:
+  contact: {}
+  description: |-
+    Modular-monolith backend for the artist shop.
+    Every business endpoint is mounted under /api/v1 and uses the shared success/error envelope.
+  title: Artist Shop API
+  version: "1.0"
+paths:
+  /auth/admin/probe:
+    get:
+      description: Returns a fixed payload and is reachable only by an ADMIN account.
+        A denial is recorded in the audit log.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Admin RBAC probe
+      tags:
+      - Auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates an account and returns an access/refresh token pair.
+      parameters:
+      - description: Email and password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Log in
+      tags:
+      - Auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      description: Revokes the given refresh token's session.
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Log out
+      tags:
+      - Auth
+  /auth/me:
+    get:
+      description: Returns the identity of the account behind the access token.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.IdentityResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Current identity
+      tags:
+      - Auth
+  /auth/password/change:
+    post:
+      consumes:
+      - application/json
+      description: Changes the signed-in account's password and rotates its sessions.
+        Requires the current password and refresh token.
+      parameters:
+      - description: Current password, new password and refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Change the password
+      tags:
+      - Auth
+  /auth/password/forgot:
+    post:
+      consumes:
+      - application/json
+      description: Sends a reset link if the email is registered. The response is
+        identical either way.
+      parameters:
+      - description: Email address
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Request a password reset
+      tags:
+      - Auth
+  /auth/password/reset:
+    post:
+      consumes:
+      - application/json
+      description: Sets a new password from a reset token and returns a fresh session.
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Complete a password reset
+      tags:
+      - Auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Rotates a refresh token and returns a new token pair.
+      parameters:
+      - description: Refresh token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Refresh a session
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a pending account and emails a one-time confirmation code.
+        The response never reveals whether the email already exists.
+      parameters:
+      - description: Registration payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Register a new account
+      tags:
+      - Auth
+  /auth/resend-verification:
+    post:
+      consumes:
+      - application/json
+      description: Re-sends the confirmation code if the email is eligible. The response
+        is identical either way.
+      parameters:
+      - description: Email address
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Resend the confirmation code
+      tags:
+      - Auth
+  /auth/verify-email:
+    post:
+      consumes:
+      - application/json
+      description: Confirms a pending account with the one-time code sent at registration.
+      parameters:
+      - description: Email and confirmation code
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Confirm an email address
+      tags:
+      - Auth
+  /divisions/provinces:
+    get:
+      description: Returns every first-level administrative unit of the official dataset,
+        ordered by name.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProvinceResponse'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List provinces
+      tags:
+      - Divisions
+  /divisions/provinces/{provinceCode}/wards:
+    get:
+      description: Returns the second-level administrative units of one province.
+      parameters:
+      - description: Province code
+        in: path
+        name: provinceCode
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.WardResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List wards of a province
+      tags:
+      - Divisions
+  /users/{userId}:
+    get:
+      description: Read-only operator view of one customer. Reachable only by an ADMIN
+        account; every successful read is audited.
+      parameters:
+      - description: Account identifier of the customer being read
+        in: path
+        name: userId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CustomerLookupResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Look up a customer (ADMIN)
+      tags:
+      - User
+  /users/me:
+    get:
+      description: Returns the profile of the account behind the access token.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Get the signed-in customer's profile
+      tags:
+      - User
+    patch:
+      consumes:
+      - application/json
+      description: Changes the display name and/or the phone. An omitted member keeps
+        its value; an empty string clears a settable member.
+      parameters:
+      - description: Profile update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Update the signed-in customer's profile
+      tags:
+      - User
+  /users/me/addresses:
+    get:
+      description: Returns a page of the account's non-hidden addresses. Pagination
+        is reported in meta.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List the account's addresses
+      tags:
+      - User
+    post:
+      consumes:
+      - application/json
+      description: Stores a new shipping address. Province and ward codes must exist
+        in the official dataset.
+      parameters:
+      - description: Address payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Create an address
+      tags:
+      - User
+  /users/me/addresses/{addressId}:
+    delete:
+      description: Hides an owned address. The row survives so past orders keep the
+        address text they used.
+      parameters:
+      - description: Address identifier
+        in: path
+        name: addressId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Delete an address
+      tags:
+      - User
+    patch:
+      consumes:
+      - application/json
+      description: Edits an owned address and preserves its default flag. An address
+        of another account answers 404.
+      parameters:
+      - description: Address identifier
+        in: path
+        name: addressId
+        required: true
+        type: string
+      - description: Address update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Update an address
+      tags:
+      - User
+  /users/me/addresses/{addressId}/default:
+    post:
+      description: Makes one owned address the account's single default.
+      parameters:
+      - description: Address identifier
+        in: path
+        name: addressId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Set the default address
+      tags:
+      - User
+  /users/me/avatar:
+    delete:
+      description: Releases the stored avatar reference. The profile itself is unchanged
+        otherwise.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove the avatar
+      tags:
+      - User
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores an image as the account's avatar. The content is validated
+        by signature, not by name or declared media type.
+      parameters:
+      - description: Avatar image (JPEG, PNG or WebP)
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.ProfileResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "415":
+          description: Unsupported Media Type
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Upload an avatar
+      tags:
+      - User
+securityDefinitions:
+  BearerAuth:
+    description: Send the access token as "Bearer <accessToken>".
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

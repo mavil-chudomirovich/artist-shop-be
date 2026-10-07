@@ -74,6 +74,26 @@ jobs:
               with:
                   version: v2.14.0
 
+    swagger:
+        name: Swagger Spec
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout source
+              uses: actions/checkout@v4
+
+            - name: Set up Go 1.26
+              uses: actions/setup-go@v5
+              with:
+                  go-version: "1.26.x"
+                  cache: true
+                  cache-dependency-path: go.sum
+
+            - name: Install pinned swag
+              run: make install-swag
+
+            - name: Check docs/swagger is up to date
+              run: make swagger-check
+
     build:
         name: Build Binaries
         runs-on: ubuntu-latest

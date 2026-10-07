@@ -14,12 +14,14 @@
 
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
+SWAG ?= swag
 COMPOSE ?= docker compose
 COMPOSE_DEV = $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
 
 BIN_DIR := bin
 GO_BUILD_FLAGS := -trimpath -ldflags="-s -w"
 GOLANGCI_LINT_VERSION ?= v2.14.0
+SWAG_VERSION ?= v1.16.4
 
 # Redirect to both: `2>/dev/null` for POSIX shells, `2>NUL` for Windows cmd.exe.
 # Without the second form every make run on Windows prints
@@ -97,6 +99,8 @@ quality-help:
 	@echo   make test-integration : Integration tests (needs Docker)
 	@echo   make coverage       : Unit test coverage summary
 	@echo   make static-check   : fmt-check + tidy-check + vet
+	@echo   make swagger        : Generate the OpenAPI spec into docs/swagger
+	@echo   make swagger-check  : Verify docs/swagger matches the code annotations
 	@echo   make check          : Everything CI runs, locally
 
 docker-help:
@@ -170,6 +174,18 @@ install-tools: ## Install the pinned golangci-lint used by CI
 	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	@echo Installed. Ensure $$(go env GOPATH)/bin is on PATH.
 
+.PHONY: install-swag
+install-swag: ## Install the pinned swag generator used by make swagger
+	@echo Installing swag $(SWAG_VERSION)...
+	$(GO) install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)
+	@echo Installed. Ensure $$(go env GOPATH)/bin is on PATH.
+
+.PHONY: swagger
+swagger: ## Generate the OpenAPI spec from code annotations into docs/swagger
+	@echo Generating OpenAPI specification...
+	$(SWAG) init -g cmd/api/main.go -o docs/swagger --parseInternal --parseDependency --outputTypes go,json,yaml
+	@echo Generated docs/swagger/{docs.go,swagger.json,swagger.yaml}.
+
 .PHONY: clean
 clean: ## Remove bin/ and coverage.out
 	@echo Cleaning build artifacts...
@@ -184,6 +200,13 @@ fmt-check: ## Verify formatting without editing files
 	@echo Checking Go source formatting...
 	@$(FMT_CHECK_CMD)
 	@echo Formatting is valid.
+
+.PHONY: swagger-check
+swagger-check: ## Verify docs/swagger is up to date with the code annotations
+	@echo Regenerating the OpenAPI specification and checking for drift...
+	$(SWAG) init -g cmd/api/main.go -o docs/swagger --parseInternal --parseDependency --outputTypes go,json,yaml
+	git diff --exit-code -- docs/swagger
+	@echo docs/swagger is up to date.
 
 .PHONY: tidy-check
 tidy-check: ## Verify go.mod / go.sum are tidy (does not modify files)
@@ -241,9 +264,9 @@ coverage: ## Report unit test coverage
 # instead of failing. `make test-race` stays available and explains the problem.
 CGO_ENABLED_VALUE := $(shell $(GO) env CGO_ENABLED)
 ifeq ($(CGO_ENABLED_VALUE),1)
-CHECK_TARGETS := static-check lint test test-race test-integration build
+CHECK_TARGETS := static-check swagger-check lint test test-race test-integration build
 else
-CHECK_TARGETS := static-check lint test test-integration build
+CHECK_TARGETS := static-check swagger-check lint test test-integration build
 endif
 
 .PHONY: check
