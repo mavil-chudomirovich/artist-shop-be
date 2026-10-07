@@ -1,7 +1,7 @@
 # Module 04 — Product
 
-- **Trạng thái Spec Kit**: Chưa specify
-- **Spec**: _(chưa có)_
+- **Trạng thái Spec Kit**: Đã có spec
+- **Spec**: `specs/006-product-catalog`
 - **Ưu tiên / Giai đoạn**: Giai đoạn 1
 - **Phụ thuộc**: category
 
@@ -50,8 +50,18 @@ Không (hoãn):
 
 ## Ghi chú / câu hỏi mở
 
-- Combo set tính giá thế nào (giá cố định hay tổng thành phần)?
-- Pre-order giới hạn số lượng theo đợt? Trạng thái riêng?
+Hai câu hỏi dưới đây đã được chốt lúc specify — xem `specs/006-product-catalog/spec.md`, mục
+`Clarifications`, session 2026-10-07:
+
+- **Combo set tính giá thế nào (giá cố định hay tổng thành phần)?** → **Operator đặt giá cho cả
+  set** (FR-038). Set là một sản phẩm độc lập có giá riêng; các sản phẩm trong set không quyết
+  định giá đó.
+- **Pre-order giới hạn số lượng theo đợt? Trạng thái riêng?** → **Không**. Pre-order là một nhãn
+  kèm ngày dự kiến trên sản phẩm bình thường, không thêm trạng thái bán (FR-039).
+
+Còn để ngỏ cho **module 05 Inventory**: luồng "trạng thái tự chuyển khi hết/hồi kho". Module 04
+không theo dõi tồn kho, nên `OUT_OF_STOCK` hiện do operator đặt (FR-037); phần tự động hoá là việc
+của module 05.
 
 ## Tham chiếu
 

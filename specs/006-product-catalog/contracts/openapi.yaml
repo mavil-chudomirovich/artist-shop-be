@@ -1,0 +1,922 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Product Module
+  version: 1.0.0
+  description: >
+    The shop's products: physical items, combo sets and pre-orders. Every response uses
+    the foundation envelope (data + meta, or error) and the X-Request-Id correlation
+    header.
+
+    Two audiences read the same rows and must not see the same thing. A customer reads
+    only products that are visible to them — on sale, or announced as a pre-order, and
+    in a category the operator has not hidden — and never learns that anything else
+    exists. An administrator reads everything. The public surface is addressed by slug
+    because the slug is what a customer-facing link is built from; the administrator
+    surface is addressed by identifier because the operator reaches it from a list and
+    an identifier cannot change mid-edit.
+
+    The sell state is changed through its own endpoint rather than as a field on an
+    update, because a transition is not a value: it can be refused, and the refusal
+    names the state that made it invalid.
+
+    This file also records one amendment to module 03's contract: removing a category
+    that still has products now answers 409 CATEGORY_IN_USE rather than succeeding,
+    because this feature adds the restricting reference that makes the rule enforceable.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: catalogue
+    description: Public browsing. No authentication.
+  - name: admin
+    description: Maintenance. Administrator role required.
+paths:
+  /api/v1/products:
+    get:
+      tags: [catalogue]
+      summary: List the products a customer can see
+      description: >
+        Only products that are visible: on sale, or announced as a pre-order, and in a
+        category the operator has left on display. Ordered by the position the operator
+        set; ties are broken by creation order and then by identifier, so the order is
+        identical across identical requests.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/CategoryFilter"
+      responses:
+        "200":
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicProduct"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "400":
+          description: >
+            The page window is malformed or outside its permitted range
+            (VALIDATION_ERROR, with `page` or `pageSize` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/products/{slug}:
+    get:
+      tags: [catalogue]
+      summary: Read one product by its slug
+      description: >
+        A product that is not visible — hidden by its own state, retired, or in a
+        category the operator has hidden — removed or never existing answers the same
+        not-found, so a caller cannot use this endpoint to discover what the operator has
+        not published.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/ProductSlug"
+      responses:
+        "200":
+          description: The product, with its description and every picture.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublicProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "404":
+          description: >
+            Unknown, hidden by state, retired, in a hidden category, or removed
+            (PRODUCT_NOT_FOUND). The situations are indistinguishable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/products:
+    get:
+      tags: [admin]
+      summary: List every product, whatever its state
+      description: >
+        Carries the sell state, the position, the category and the set flag, which the
+        public list never exposes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminProduct"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "400":
+          description: >
+            The page window is malformed or outside its permitted range
+            (VALIDATION_ERROR, with `page` or `pageSize` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [admin]
+      summary: Create a product
+      description: >
+        The product is created in COMING_SOON. A product that carries the pre-order
+        label is visible to customers immediately; one that does not stays hidden until
+        it is put on sale.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: The product, in COMING_SOON.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            A field failed its rule — the slug shape or a length bound, a non-positive
+            price, a currency that is not three uppercase letters, a category or member
+            identifier that does not exist (VALIDATION_ERROR, with the field named) — or
+            the body could not be read at all, including an unknown member, which answers
+            MALFORMED_REQUEST.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Another product already uses that slug (PRODUCT_SLUG_TAKEN).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/products/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ProductId"
+    get:
+      tags: [admin]
+      summary: Read one product, whatever its state
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The product, with its pictures and, for a set, its members.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown or removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    patch:
+      tags: [admin]
+      summary: Edit a product
+      description: >
+        Changes the fields the request carries and leaves the rest alone. It never
+        changes the sell state: that is a transition and has its own endpoint. Sending
+        the same slug the product already has succeeds — a product is never a duplicate
+        of itself.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: The product as it now stands.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            A field failed its rule, or a referenced category or member does not exist
+            (VALIDATION_ERROR, with the field named) — or the body could not be read at
+            all, including an unknown member, which answers MALFORMED_REQUEST.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown or removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: Another product already uses that slug (PRODUCT_SLUG_TAKEN).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      tags: [admin]
+      summary: Remove a product
+      description: >
+        The product is removed along with its pictures, which release their stored
+        assets, and its set membership rows. The members of a removed set are untouched.
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown or already removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/products/{id}/state:
+    post:
+      tags: [admin]
+      summary: Move a product through its selling life
+      description: >
+        The allowed moves are: COMING_SOON to ACTIVE; ACTIVE to OUT_OF_STOCK and back;
+        and any of those three to DISCONTINUED, which is terminal. Nothing else, and
+        nothing out of DISCONTINUED. Launching a product clears its pre-order label,
+        because a product that is on sale is not "coming soon".
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeStateRequest"
+      responses:
+        "200":
+          description: The product in its new state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The requested state is not one of the four (VALIDATION_ERROR, with `to`
+            named) — or the body could not be read at all, including an unknown member,
+            which answers MALFORMED_REQUEST.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown or removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The move is not one the current state allows
+            (PRODUCT_STATE_TRANSITION_INVALID, naming the current state).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/products/{id}/images:
+    post:
+      tags: [admin]
+      summary: Attach a picture to a product
+      description: >
+        The bytes are validated by their own signature before anything is sent to the
+        provider, and the provider is asked to downscale the image. The first picture a
+        product receives becomes its main one. A product carries at most ten.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: The product, with the new picture in place.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The bytes are not JPEG, PNG or WebP, or the part is missing
+            (PRODUCT_IMAGE_TYPE_UNSUPPORTED, or VALIDATION_ERROR with `image` named) — or
+            the body could not be read at all, including an unknown member, which answers
+            MALFORMED_REQUEST.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: Unknown or removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: The product already carries ten pictures (PRODUCT_IMAGE_LIMIT_REACHED).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "413":
+          description: The upload exceeds the size ceiling (PRODUCT_IMAGE_TOO_LARGE).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: >
+            The media service refused or could not store the upload, or its credentials
+            are not configured (PRODUCT_MEDIA_UNAVAILABLE). Retryable; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /api/v1/admin/products/{id}/images/{imageId}:
+    delete:
+      tags: [admin]
+      summary: Detach a picture from a product
+      description: >
+        The stored asset is released after the row is gone. Removing the main picture
+        promotes the next one by position, so a product with pictures always has a main
+        one.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/ImageId"
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: >
+            The product is unknown or removed, or the picture does not belong to it
+            (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/products/{id}/images/{imageId}/primary:
+    post:
+      tags: [admin]
+      summary: Make one picture the product's main one
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/ImageId"
+      responses:
+        "200":
+          description: The product, with the chosen picture as its main one.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminProductDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: >
+            The product is unknown or removed, or the picture does not belong to it
+            (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/categories/{id}:
+    delete:
+      tags: [admin]
+      summary: Remove a category (amendment to module 03)
+      description: >
+        This path belongs to module 03 and is declared here only because this feature
+        changes one of its answers. Removing a category that still has products is
+        refused, and the refusal now comes from the storage layer rather than from a
+        check — the reference this feature adds is what makes it hold.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Removed. Unchanged from module 03.
+        "409":
+          description: >
+            Products still belong to this category (CATEGORY_IN_USE). New in this
+            feature; before it the situation could not arise.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CategoryFilter:
+      name: category
+      in: query
+      required: false
+      description: >
+        The slug of the category to narrow the list to. A hidden or unknown slug answers
+        an empty list rather than a not-found, so the filter reveals nothing about
+        hidden categories.
+      schema:
+        type: string
+    ProductSlug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        maxLength: 140
+    ProductId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ImageId:
+      name: imageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Error:
+      description: >
+        UNAUTHENTICATED (401), FORBIDDEN (403), VALIDATION_ERROR (400) or
+        INTERNAL_ERROR (500).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: RATE_LIMITED (429), with Retry-After.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+    PagedMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          properties:
+            page:
+              type: integer
+            pageSize:
+              type: integer
+            total:
+              type: integer
+              description: >
+                Absent when zero, because the shared envelope omits it. A client must
+                read a missing total as 0.
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        requestId:
+          type: string
+          format: uuid
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+    Price:
+      type: object
+      required: [amount, currency]
+      description: >
+        Money as an integer amount in the currency's minor unit plus the currency. Never
+        a floating point number, so the amount a customer sees is exactly the amount the
+        operator entered.
+      properties:
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+        currency:
+          type: string
+          pattern: "^[A-Z]{3}$"
+    PublicProduct:
+      type: object
+      required: [id, name, slug, price, isPreorder]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        slug:
+          type: string
+          maxLength: 140
+        price:
+          $ref: "#/components/schemas/Price"
+        imageUrl:
+          type: [string, "null"]
+          format: uri
+          description: The main picture's link, or null when the product has none.
+        isPreorder:
+          type: boolean
+          description: >
+            True when the product is announced but not yet available. It is visible and
+            not buyable.
+    PublicProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/PublicProduct"
+        - type: object
+          required: [description, images]
+          properties:
+            description:
+              type: string
+              maxLength: 5000
+            images:
+              type: array
+              items:
+                $ref: "#/components/schemas/PublicImage"
+    PublicImage:
+      type: object
+      required: [id, url, width, height]
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+        height:
+          type: integer
+    AdminProduct:
+      type: object
+      required: [id, name, slug, description, price, categoryId, position, sellState, isSet, isPreorder, imageCount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        price:
+          $ref: "#/components/schemas/Price"
+        categoryId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        sellState:
+          $ref: "#/components/schemas/SellState"
+        isSet:
+          type: boolean
+        isPreorder:
+          type: boolean
+        preorderExpectedAt:
+          type: [string, "null"]
+          format: date
+        imageCount:
+          type: integer
+        imageUrl:
+          type: [string, "null"]
+          format: uri
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AdminProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminProduct"
+        - type: object
+          required: [images]
+          properties:
+            images:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminImage"
+            members:
+              type: array
+              description: >
+                The products inside a set, in order. Present only for a set, and only on
+                the administrator surface: the public shape does not enumerate a set's
+                contents.
+              items:
+                $ref: "#/components/schemas/SetMember"
+    AdminImage:
+      type: object
+      required: [id, publicId, url, width, height, position, isPrimary]
+      properties:
+        id:
+          type: string
+          format: uuid
+        publicId:
+          type: string
+        url:
+          type: string
+          format: uri
+        width:
+          type: integer
+        height:
+          type: integer
+        position:
+          type: integer
+        isPrimary:
+          type: boolean
+    SetMember:
+      type: object
+      required: [id, name, slug]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+    SellState:
+      type: string
+      enum: [COMING_SOON, ACTIVE, OUT_OF_STOCK, DISCONTINUED]
+      description: >
+        COMING_SOON is announced and hidden unless the pre-order label is set. ACTIVE is
+        visible and buyable. OUT_OF_STOCK is hidden. DISCONTINUED is terminal.
+    CreateProductRequest:
+      type: object
+      required: [name, slug, price, categoryId, position]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 5000
+          description: Optional. An omitted or empty description is stored as empty.
+        price:
+          $ref: "#/components/schemas/Price"
+        categoryId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        isSet:
+          type: boolean
+          default: false
+        memberProductIds:
+          type: array
+          description: The products inside the set. Ignored unless isSet is true.
+          items:
+            type: string
+            format: uuid
+        isPreorder:
+          type: boolean
+          default: false
+        preorderExpectedAt:
+          type: [string, "null"]
+          format: date
+    UpdateProductRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Only the fields present are changed. `sellState` is not accepted here: a state
+        change is a transition and has its own endpoint.
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        slug:
+          type: string
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 5000
+          description: Optional. Sending an empty string clears it.
+        price:
+          $ref: "#/components/schemas/Price"
+        categoryId:
+          type: string
+          format: uuid
+        position:
+          type: integer
+        isSet:
+          type: boolean
+        memberProductIds:
+          type: array
+          description: >
+            Replaces the whole member list when present. Ignored unless the product is a
+            set.
+          items:
+            type: string
+            format: uuid
+        isPreorder:
+          type: boolean
+        preorderExpectedAt:
+          type: [string, "null"]
+          format: date
+    ChangeStateRequest:
+      type: object
+      required: [to]
+      additionalProperties: false
+      properties:
+        to:
+          $ref: "#/components/schemas/SellState"
