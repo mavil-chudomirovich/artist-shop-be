@@ -14,9 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
-	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/model"
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
@@ -26,31 +24,13 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
 
-// The category module is not mounted in cmd/api yet (T030), so the public group
-// is built here against a real PostgreSQL container: real migrations, the real
+// The category module is now mounted in cmd/api (T030). This test builds the
+// public group against a real PostgreSQL container: real migrations, the real
 // repository adapter and the real public use cases, with rows seeded through the
-// repository.
+// repository. The real *implement.Service serves every route — the administrator
+// stub that stood in while its methods did not exist is gone.
 
 const publicCategoriesPath = "/api/v1/categories"
-
-// integrationCategoryService serves the public routes with the real use cases
-// and the administrator routes with the stub, which no request in this test
-// reaches. It disappears once every story has landed and cmd/api wires
-// *implement.Service directly.
-type integrationCategoryService struct {
-	*stubCategoryService
-	impl *implement.Service
-}
-
-func (s integrationCategoryService) ListPublic(ctx context.Context, in appdto.ListPublicInput) (appdto.PublicCategoryPage, error) {
-	return s.impl.ListPublic(ctx, in)
-}
-
-func (s integrationCategoryService) GetPublicBySlug(ctx context.Context, in appdto.PublicCategoryRefInput) (appdto.PublicCategoryOutput, error) {
-	return s.impl.GetPublicBySlug(ctx, in)
-}
-
-var _ appinterface.CategoryService = integrationCategoryService{}
 
 func newCatalogueFixture(t *testing.T) (*pgxpool.Pool, *categorypostgres.CategoryRepository, http.Handler) {
 	t.Helper()
@@ -73,10 +53,7 @@ func newCatalogueFixture(t *testing.T) (*pgxpool.Pool, *categorypostgres.Categor
 	t.Cleanup(pool.Close)
 
 	repo := categorypostgres.NewCategoryRepository(pool)
-	service := integrationCategoryService{
-		stubCategoryService: &stubCategoryService{},
-		impl:                implement.New(implement.Service{Categories: repo, Mapper: mapper.New()}),
-	}
+	service := implement.New(implement.Service{Categories: repo, Mapper: mapper.New()})
 	handler := New(service, testLogger)
 
 	root := chi.NewRouter()

@@ -22,8 +22,9 @@ import (
 
 // stubCategoryService records what the handlers passed down and answers with
 // controlled data, so an HTTP test is about the transport and not the use case.
-// The administrator methods exist only to satisfy the interface: US1 routes
-// never reach them, and a test asserts that.
+// Its administrator methods satisfy the use-case interface — the real
+// *implement.Service now serves every route in the integration fixtures, so the
+// stub exists only to drive the transport tests.
 type stubCategoryService struct {
 	mu     sync.Mutex
 	called []string

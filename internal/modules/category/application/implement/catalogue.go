@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/dto"
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/repository"
 )
@@ -23,11 +24,17 @@ const (
 // Service implements the category module's use cases.
 //
 // The public browse methods answer a visitor and never reveal that a withheld
-// category exists (FR-005, FR-007). The administrator methods are added by US2.
+// category exists (FR-005, FR-007). The administrator methods live in
+// maintenance.go and are reached only behind the administrator role guard.
 type Service struct {
 	// Categories persists categories. It never opens a transaction: the
 	// application layer owns every boundary (Constitution I).
 	Categories domainrepo.CategoryRepository
+	// Audit records every administrative mutation: create, edit, display
+	// change and removal (FR-013, Constitution VI). It is optional in a
+	// read-only construction — the public browse use cases never reach it — but
+	// the composition root always supplies the module's auditor adapter.
+	Audit appinterface.Auditor
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }

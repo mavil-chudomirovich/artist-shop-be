@@ -18,6 +18,11 @@ import (
 	authredis "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/redis"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	authhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/http"
+	categoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
+	categorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
+	categoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/auditor"
+	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
+	categoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
 	userappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
 	usermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/mapper"
@@ -209,6 +214,22 @@ func run() error {
 	// (docs/system-design/contract-purity.md, research D8).
 	userHandler := userhttp.New(userService, userConfig, logger)
 
+	// Module 03 (category). The catalogue is read by customers and maintained by
+	// an administrator, so the module has two route groups: the public
+	// /categories group, which needs no session, and the /admin/categories group,
+	// which carries the administrator role guard. Both are guarded by the same
+	// foundation auth hooks the other modules use, so a role denial is audited by
+	// the hook's OnDenied exactly as module 01 audits its own.
+	//
+	// The module reuses the foundation audit writer the auth and user modules
+	// already write through: one queue, one retry policy, one shutdown.
+	categoryService := categoryimplement.New(categoryimplement.Service{
+		Categories: categorypostgres.NewCategoryRepository(db.Pool),
+		Audit:      categoryauditor.New(auditWriter),
+		Mapper:     categorymapper.New(),
+	})
+	categoryHandler := categoryhttp.New(categoryService, logger)
+
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Config:  cfg,
 		Logger:  logger,
@@ -223,6 +244,11 @@ func run() error {
 			// guard its routes need; the static /me segment is resolved by chi ahead
 			// of the /{userId} parameter inside it.
 			r.Mount("/users", userHandler.Router(cfg.User, authHooks))
+			// The catalogue: the public read carries no session, and the
+			// /admin/categories group is addressed by identifier behind the
+			// administrator role guard (research D7).
+			r.Mount("/categories", categoryHandler.Router(authHooks))
+			r.Mount("/admin/categories", categoryHandler.AdminRouter(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
