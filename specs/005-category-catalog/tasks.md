@@ -89,15 +89,15 @@ fetching it answers byte-for-byte what an unused slug answers. Delivers value on
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementing.**
 
-- [ ] T017 [P] [US1] Use-case tests in `internal/modules/category/application/implement/catalogue_test.go` over an in-memory repository: only on-display categories are returned (FR-002); the order is the configured one and is identical across two calls (FR-003); an empty catalogue answers an empty result rather than an error (FR-006); reading a withheld, removed or unknown slug answers the same not-found (FR-005, SC-004)
-- [ ] T018 [P] [US1] HTTP tests in `internal/modules/category/presentation/http/catalogue_test.go`: the public list is reachable with no token (FR-001, FR-014); each entry carries **exactly** `id`, `name`, `slug`, `description` and no `isVisible`, no `position` and no folding key (FR-004, FR-007); `quickstart.md` scenario 3 is the shape assertion to encode
-- [ ] T019 [P] [US1] Router test in `internal/modules/category/presentation/http/router_test.go` asserting the two public paths resolve and that the detail route takes a slug, not an identifier
+- [x] T017 [P] [US1] Use-case tests in `internal/modules/category/application/implement/catalogue_test.go` over an in-memory repository: only on-display categories are returned (FR-002); the order is the configured one and is identical across two calls (FR-003); an empty catalogue answers an empty result rather than an error (FR-006); reading a withheld, removed or unknown slug answers the same not-found (FR-005, SC-004)
+- [x] T018 [P] [US1] HTTP tests in `internal/modules/category/presentation/http/catalogue_test.go`: the public list is reachable with no token (FR-001, FR-014); each entry carries **exactly** `id`, `name`, `slug`, `description` and no `isVisible`, no `position` and no folding key (FR-004, FR-007); `quickstart.md` scenario 3 is the shape assertion to encode
+- [x] T019 [P] [US1] Router test in `internal/modules/category/presentation/http/router_test.go` asserting the two public paths resolve and that the detail route takes a slug, not an identifier
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Implement the public browse use cases in `internal/modules/category/application/implement/catalogue.go`
-- [ ] T021 [US1] Implement the public HTTP shapes, handler and router in `internal/modules/category/presentation/http/{handler.go,router.go,errors.go}` (FR-001, FR-004, FR-005, FR-007)
-- [ ] T022 [US1] Add the integration test in `internal/modules/category/presentation/http/catalogue_integration_test.go` behind the `integration` tag: with rows seeded through the repository, a withheld category is absent from the list, `meta.total` counts only what is visible, the order is stable across two requests, and the withheld-slug answer and the unknown-slug answer are identical apart from the request identifier (FR-002, FR-003, FR-005, SC-001, SC-002, SC-004)
+- [x] T020 [US1] Implement the public browse use cases in `internal/modules/category/application/implement/catalogue.go`
+- [x] T021 [US1] Implement the public HTTP shapes, handler and router in `internal/modules/category/presentation/http/{handler.go,router.go,errors.go}` (FR-001, FR-004, FR-005, FR-007)
+- [x] T022 [US1] Add the integration test in `internal/modules/category/presentation/http/catalogue_integration_test.go` behind the `integration` tag: with rows seeded through the repository, a withheld category is absent from the list, `meta.total` counts only what is visible, the order is stable across two requests, and the withheld-slug answer and the unknown-slug answer are identical apart from the request identifier (FR-002, FR-003, FR-005, SC-001, SC-002, SC-004)
 
 **Checkpoint**: US1 is fully functional and independently testable. This is a valid MVP: the
 catalogue is browsable, which is the only part of the feature a customer touches.

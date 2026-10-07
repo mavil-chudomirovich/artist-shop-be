@@ -37,7 +37,7 @@ choice of whether customers can see it.
 | `categories_name_length_ck` | check: `length(name) <= 120` | FR-019 | Bounds the stored value, not just the request |
 | `categories_slug_length_ck` | check: `length(slug) <= 140` | FR-019 | Same |
 | `categories_description_length_ck` | check: `length(description) <= 2000` | FR-019 | Same |
-| `position` index | btree on `(position, created_at, id)` | FR-003 | The order customers see is this index's order. Leaving it unindexed would make the catalogue's one read path scan and sort |
+| `categories_ordering_idx` | btree on `(position, created_at, id)` | FR-003 | Gives the catalogue its order without a sort. It does **not** cover the public read's `is_visible` filter — at the catalogue's size the planner scans regardless, and an index that also covered the filter is a scale decision recorded in `deferred.md` rather than guessed at now |
 
 **On the length checks and characters**: `length()` in PostgreSQL counts characters, not bytes,
 which is exactly what FR-019 requires and what a Vietnamese name needs — 120 characters of
@@ -88,7 +88,7 @@ so a caller cannot reach an inconsistent state by assigning.
 | remove | the row is deleted | it does not exist | `CATEGORY_DELETED` |
 
 **Editing a category without changing its name or slug succeeds.** The uniqueness check excludes
-the row being edited, so a category is never a duplicate of itself (FR-019). The adapter
+the row being edited, so a category is never a duplicate of itself (FR-022). The adapter
 **recomputes** the two normalised columns from the name and the slug on every write, using the
 domain's pure folding function. Recomputing is safe precisely because the fold is deterministic:
 the same name always produces the same key, so a same-name edit writes back the value that is
