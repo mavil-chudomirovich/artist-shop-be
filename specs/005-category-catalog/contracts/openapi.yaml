@@ -1,0 +1,492 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Category Module
+  version: 1.0.0
+  description: >
+    The product catalogue's categories. Every response uses the foundation envelope
+    (data + meta, or error) and the X-Request-Id correlation header.
+
+    Two audiences read the same rows and must not see the same thing: customers read
+    only what the operator has put on display, and an administrator reads everything
+    including what is withheld. The public surface is addressed by slug because the
+    slug is what a customer-facing link is built from; the administrator surface is
+    addressed by identifier because the operator reaches it from a list and an
+    identifier cannot change mid-edit.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: catalogue
+    description: Public browsing. No authentication.
+  - name: admin
+    description: Maintenance. Administrator role required.
+paths:
+  /api/v1/categories:
+    get:
+      tags: [catalogue]
+      summary: List the categories on display
+      description: >
+        Only categories the operator has left on display. Ordered by the position the
+        operator set; ties are broken by creation order and then by identifier, so the
+        order is identical across identical requests.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicCategory"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/categories/{slug}:
+    get:
+      tags: [catalogue]
+      summary: Read one category by its slug
+      description: >
+        A category that is withheld, removed or never existed answers the same not-found,
+        so a caller cannot use this endpoint to discover what the operator has not
+        published.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/CategorySlug"
+      responses:
+        "200":
+          description: The category.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublicCategory"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "404":
+          description: Unknown, withheld or removed (CATEGORY_NOT_FOUND). The three are indistinguishable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/categories:
+    get:
+      tags: [admin]
+      summary: List every category, including the ones not on display
+      description: >
+        Carries the display state and the position, which the public list never exposes.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminCategory"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    post:
+      tags: [admin]
+      summary: Create a category
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryRequest"
+      responses:
+        "201":
+          description: The category, on display.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminCategory"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            A value failed its own rule - the slug is not URL-safe, or a field is longer
+            than its bound (VALIDATION_ERROR, with the offending field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: >
+            The name or the slug is already used by another category (CATEGORY_NAME_TAKEN
+            or CATEGORY_SLUG_TAKEN, with the field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/admin/categories/{categoryId}:
+    get:
+      tags: [admin]
+      summary: Read one category, including one that is not on display
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "200":
+          description: The category.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminCategory"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: The identifier is not a UUID (VALIDATION_ERROR).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No category carries that identifier (CATEGORY_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    patch:
+      tags: [admin]
+      summary: Change a category's name, slug, description, position or display state
+      description: >
+        Partial update: an omitted member keeps its current value. Sending the values a
+        category already holds succeeds - a category is never a duplicate of itself.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCategoryRequest"
+      responses:
+        "200":
+          description: The category after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminCategory"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: A value failed its own rule (VALIDATION_ERROR, with the field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No category carries that identifier (CATEGORY_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The new name or slug is already used by a different category
+            (CATEGORY_NAME_TAKEN or CATEGORY_SLUG_TAKEN, with the field named). Both
+            categories are left unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    delete:
+      tags: [admin]
+      summary: Remove a category
+      description: >
+        Removes the row. The audit trail keeps the record of the removal. Once products
+        exist they will reference a category with a restricting reference, so a category
+        that products use will not be removable - see deferred.md.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CategoryId"
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          description: The identifier is not a UUID (VALIDATION_ERROR).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          description: No category carries that identifier (CATEGORY_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CategorySlug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+        maxLength: 140
+        pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+    CategoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    Error:
+      description: Error using the standard error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: >
+        Rate limit exceeded (RATE_LIMITED). The response carries a Retry-After header in
+        seconds. The caller's existing state is unchanged, so the request is safe to retry.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    PublicCategory:
+      type: object
+      description: >
+        Exactly what a customer reads. The display state and the position are absent by
+        design: they are how the operator manages the catalogue, not part of it.
+      required: [id, name, slug, description]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable for the category's lifetime; the reference a product will use.
+        name:
+          type: string
+          maxLength: 120
+        slug:
+          type: string
+          maxLength: 140
+          description: The segment a customer-facing link is built from.
+        description:
+          type: string
+          maxLength: 2000
+          description: May be empty. An empty description is valid.
+    AdminCategory:
+      type: object
+      required: [id, name, slug, description, position, isVisible, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 120
+        slug:
+          type: string
+          maxLength: 140
+        description:
+          type: string
+          maxLength: 2000
+        position:
+          type: integer
+          description: Any whole number, including zero and negative. A preference, not a sequence.
+        isVisible:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          maxLength: 120
+          description: Trimmed before it is stored. Unique ignoring letter case and surrounding whitespace.
+        slug:
+          type: string
+          maxLength: 140
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+          description: >
+            Lowercase letters, digits and single hyphens, with no leading or trailing
+            hyphen. Written by the operator; never derived from the name.
+        description:
+          type: string
+          maxLength: 2000
+          description: Optional. An omitted or empty description is stored as empty.
+        position:
+          type: integer
+          description: Optional. Defaults to zero when omitted.
+    UpdateCategoryRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Partial update. Every member is optional and an omitted member keeps its current
+        value. Sending the values a category already holds succeeds.
+      properties:
+        name:
+          type: string
+          maxLength: 120
+        slug:
+          type: string
+          maxLength: 140
+          pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+        description:
+          type: string
+          maxLength: 2000
+        position:
+          type: integer
+        isVisible:
+          type: boolean
+          description: Whether customers can see the category.
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    PagedMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          required: [page, pageSize, total]
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            pageSize:
+              type: integer
+              minimum: 1
+              maximum: 100
+            total:
+              type: integer
+              format: int64
+    Detail:
+      type: object
+      properties:
+        field:
+          type: string
+        issue:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: "#/components/schemas/Detail"
+            requestId:
+              type: string
