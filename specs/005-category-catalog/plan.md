@@ -94,7 +94,7 @@ documentation that must move with them.
       attributes or tags. No caching layer: a list of tens of rows read from an indexed table
       does not need one, and adding it would give the module a second source of truth for
       nothing.
-│   ├── openapi.yaml     # The seven endpoints
+- [x] **VIII. API Documentation as a Contract**: The seven endpoints, the new error codes and
       the refusal semantics change `docs/api-reference.md`, this feature's OpenAPI contract and
       the module document's status in the same change as the code, never after it.
 

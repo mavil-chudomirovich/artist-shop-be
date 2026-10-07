@@ -88,10 +88,15 @@ so a caller cannot reach an inconsistent state by assigning.
 | remove | the row is deleted | it does not exist | `CATEGORY_DELETED` |
 
 **Editing a category without changing its name or slug succeeds.** The uniqueness check excludes
-the row being edited, so a category is never a duplicate of itself (FR-019). This is the one
-place the storage-layer unique index is not sufficient on its own — an `UPDATE` that rewrites
-the same value would trip it — so the adapter updates the normalised columns to the values they
-already hold rather than to a recomputed value that could differ.
+the row being edited, so a category is never a duplicate of itself (FR-019). The adapter
+**recomputes** the two normalised columns from the name and the slug on every write, using the
+domain's pure folding function. Recomputing is safe precisely because the fold is deterministic:
+the same name always produces the same key, so a same-name edit writes back the value that is
+already there and cannot trip the unique index. It is also the only arrangement that cannot be
+got wrong by a caller — a write path that forgot to carry the keys, or that built an entity
+without reading one first, would otherwise store an empty key that passes the shape check and
+silently makes two categories indistinguishable. The domain keeps the rule; the adapter applies
+it.
 
 ## What each read path projects
 
@@ -102,9 +107,10 @@ already hold rather than to a recomputed value that could differ.
 | administrator list | administrator | every column including `is_visible`, `position`, `created_at`, `updated_at` | FR-009 |
 | administrator detail | administrator | every column | FR-009 |
 
-`normalized_name` and `normalized_slug` appear in **no** projection. The adapter lists its
-columns explicitly, so a column added to the table later cannot leak into a response by
-accident — the trap that a `SELECT *` repository created in module 02.
+`normalized_name` and `normalized_slug` appear in **no client-facing projection** — no response,
+no audit entry, no log line. The adapter recomputes them on write from the name and the slug, so
+no read path needs to carry them either; the repository's read projection is the eight columns a
+response may use.
 
 ## What this feature does not change
 
