@@ -10,33 +10,17 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
-// MediaStore stores binary media outside the service and hands back a reference
-// to keep in the database. It is named for the capability rather than the
-// vendor, so swapping the provider touches only the adapter (ADR-005).
-type MediaStore interface {
-	// Upload stores content and returns the stored reference. targetWidth asks
-	// the provider to resize during the upload; the provider, not this service,
-	// is the system of record for the resulting dimensions.
-	Upload(ctx context.Context, content []byte, targetWidth int) (MediaReference, error)
-	// Remove releases a previously stored reference. Removing an unknown
-	// reference must succeed so a retry never fails on an already-freed asset.
-	Remove(ctx context.Context, ref MediaReference) error
-}
+// MediaStore is the shared media port, re-exported here so this module names its
+// dependency without declaring a second interface that could drift from the
+// shared one (research D2). The port itself lives in internal/share/media.
+type MediaStore = media.Store
 
-// MediaReference identifies one stored media asset. Media bytes are never kept
-// in the database; only this reference is (Constitution, Media constraint).
-type MediaReference struct {
-	// PublicID is the provider's opaque identifier, used to release the asset.
-	PublicID string
-	// URL is the displayable link returned to clients.
-	URL string
-	// Width and Height are the stored pixel dimensions as reported by the
-	// provider after resizing.
-	Width  int
-	Height int
-}
+// MediaReference identifies one stored media asset, as internal/share/media
+// defines it. It is re-exported for the same reason as MediaStore.
+type MediaReference = media.Reference
 
 // Divisions exposes the official Vietnamese administrative reference data
 // (province -> ward, two levels) to the use cases. It is the only way the

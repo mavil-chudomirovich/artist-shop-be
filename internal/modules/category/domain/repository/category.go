@@ -70,4 +70,22 @@ type CategoryRepository interface {
 	// display, plus the total number of them, in the same FR-003 order. It
 	// serves the administrator list (FR-009).
 	ListAll(ctx context.Context, page, pageSize int) ([]model.Category, int64, error)
+
+	// VisibleIDs returns the identifiers of every category on display. It is
+	// the read behind the cross-module query contract
+	// (internal/contracts.CategoryQuery): the whole set is what lets another
+	// module filter its own catalogue in SQL without reading this module's table
+	// (research D1). The order is deterministic but is not part of the contract,
+	// because the caller uses the values as a set.
+	VisibleIDs(ctx context.Context) ([]uuid.UUID, error)
+
+	// IDBySlug resolves the category a slug names, without regard to its display
+	// state. It is the read behind the cross-module query contract's
+	// CategoryIDBySlug: another module addresses a customer-facing category link
+	// by its slug and must not read this module's table to resolve it (research
+	// D1). The second result reports whether a row carries the slug; an unknown
+	// slug answers (uuid.Nil, false, nil) rather than a not-found error, so the
+	// caller can answer the public filter directly. A hidden category still
+	// resolves: the caller's visibility predicate excludes it afterwards.
+	IDBySlug(ctx context.Context, slug string) (uuid.UUID, bool, error)
 }

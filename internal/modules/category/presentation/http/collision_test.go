@@ -129,6 +129,31 @@ func (r *collisionRepo) ListAll(_ context.Context, page, pageSize int) ([]model.
 	return r.list(false, page, pageSize)
 }
 
+// VisibleIDs mirrors the adapter's cross-module read (research D1).
+func (r *collisionRepo) VisibleIDs(_ context.Context) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(r.rows))
+	for id, row := range r.rows {
+		if row.IsVisible {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// IDBySlug mirrors the adapter's cross-module slug lookup (research D1).
+func (r *collisionRepo) IDBySlug(_ context.Context, slug string) (uuid.UUID, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, row := range r.rows {
+		if row.Slug == slug {
+			return id, true, nil
+		}
+	}
+	return uuid.Nil, false, nil
+}
+
 func (r *collisionRepo) list(onlyVisible bool, page, pageSize int) ([]model.Category, int64, error) {
 	r.mu.Lock()
 	all := make([]model.Category, 0, len(r.rows))

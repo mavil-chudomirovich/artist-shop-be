@@ -14,6 +14,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/repository"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // targetTypeProfile is the audit_logs target type of the profile events. The
@@ -54,10 +55,11 @@ type Service struct {
 	// Audit records every change a customer makes and every operator read of
 	// customer contact details (FR-019, FR-022a).
 	Audit appinterface.Auditor
-	// Media stores avatar bytes outside the service. The profile read and update
-	// never touch it, which is what keeps a media outage from failing them
-	// (FR-021); only the avatar use cases reach for it.
-	Media appinterface.MediaStore
+	// Media stores avatar bytes outside the service through the shared media
+	// port. The profile read and update never touch it, which is what keeps a
+	// media outage from failing them (FR-021); only the avatar use cases reach
+	// for it.
+	Media media.Store
 	// Config carries the avatar ceilings the composition resolved. A zero value
 	// falls back to the documented contract defaults, so a use case constructed
 	// without it still enforces FR-014 and FR-015 rather than accepting anything.
@@ -271,7 +273,7 @@ func (s *Service) RemoveAvatar(ctx context.Context, userID uuid.UUID) (dto.Profi
 // nothing but the module's own sentinel — a log line would add no information a
 // log line is allowed to hold.
 func (s *Service) releaseAvatar(ctx context.Context, reference model.AvatarReference) {
-	_ = s.Media.Remove(ctx, appinterface.MediaReference{
+	_ = s.Media.Remove(ctx, media.Reference{
 		PublicID: reference.PublicID,
 		URL:      reference.URL,
 		Width:    reference.Width,

@@ -236,6 +236,30 @@ func (r *CategoryRepository) FindVisibleBySlug(ctx context.Context, slug string)
 	return scanCategory(row)
 }
 
+// IDBySlug resolves the category a slug names, without regard to its display
+// state.
+//
+// It is the read behind internal/contracts.CategoryQuery's CategoryIDBySlug:
+// another module addresses a customer-facing category link by its slug and may
+// not read this module's table to resolve it (research D1). The second result is
+// the found flag: an unknown slug answers (uuid.Nil, false, nil) rather than a
+// not-found error, so the caller can answer the public filter's empty list
+// directly. A hidden category resolves too; the caller's visibility predicate
+// excludes it afterwards, which is what makes a hidden slug and an unknown slug
+// answer the same thing (FR-006).
+func (r *CategoryRepository) IDBySlug(ctx context.Context, slug string) (uuid.UUID, bool, error) {
+	const query = `SELECT id FROM categories WHERE slug = $1`
+	var id uuid.UUID
+	err := r.querier(ctx).QueryRow(ctx, query, slug).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, false, nil
+	}
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("find category id by slug: %w", err)
+	}
+	return id, true, nil
+}
+
 // ListVisible returns a page of the categories on display plus the total number
 // of them, in the FR-003 order.
 func (r *CategoryRepository) ListVisible(ctx context.Context, page, pageSize int) ([]model.Category, int64, error) {
@@ -247,6 +271,35 @@ func (r *CategoryRepository) ListVisible(ctx context.Context, page, pageSize int
 // administrator list (FR-009).
 func (r *CategoryRepository) ListAll(ctx context.Context, page, pageSize int) ([]model.Category, int64, error) {
 	return r.list(ctx, false, page, pageSize)
+}
+
+// VisibleIDs returns the identifiers of every category on display, in the FR-003
+// order.
+//
+// It is the read behind internal/contracts.CategoryQuery: the whole set is
+// what lets another module filter its own catalogue in SQL without reading this
+// module's table (research D1). The order is deterministic but is not part of
+// that contract, because the caller uses the values as a set.
+func (r *CategoryRepository) VisibleIDs(ctx context.Context) ([]uuid.UUID, error) {
+	const query = `SELECT id FROM categories WHERE is_visible ORDER BY position, created_at, id`
+	rows, err := r.querier(ctx).Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list visible category ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan visible category id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // list runs the shared paged read for one of the two audiences.

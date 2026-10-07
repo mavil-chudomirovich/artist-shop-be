@@ -31,7 +31,6 @@ import (
 	usermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/mapper"
 	useradministrative "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/administrative"
 	userauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/auditor"
-	usermedia "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/media"
 	userpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/infrastructure/implement/postgres"
 	userhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/presentation/http"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
@@ -41,6 +40,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpserver"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // @title           Artist Shop API
@@ -193,7 +193,7 @@ func run() error {
 	//
 	// The logger is the composition's own, so a provider failure carries the request
 	// correlation the rest of the service logs with.
-	userMediaStore := usermedia.NewWithDefaults(cfg.Media, logger)
+	userMediaStore := media.NewWithDefaults(cfg.Media, logger)
 	if !cfg.Media.IsConfigured() {
 		// Named, never valued: the keys are safe to log, the secrets behind them are
 		// not (Constitution V, VI).

@@ -117,6 +117,31 @@ func (m *memoryCategories) ListAll(_ context.Context, page, pageSize int) ([]mod
 	return m.list(false, page, pageSize)
 }
 
+// VisibleIDs mirrors the adapter's cross-module read (research D1).
+func (m *memoryCategories) VisibleIDs(_ context.Context) ([]uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(m.rows))
+	for id, row := range m.rows {
+		if row.IsVisible {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// IDBySlug mirrors the adapter's cross-module slug lookup (research D1).
+func (m *memoryCategories) IDBySlug(_ context.Context, slug string) (uuid.UUID, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, row := range m.rows {
+		if row.Slug == slug {
+			return id, true, nil
+		}
+	}
+	return uuid.Nil, false, nil
+}
+
 // list applies the same order and window the adapter applies, so a test cannot
 // pass because the fake happened to keep insertion order.
 func (m *memoryCategories) list(onlyVisible bool, page, pageSize int) ([]model.Category, int64, error) {

@@ -8,30 +8,48 @@ All technical unknowns resolved here. No decision depends on an unanswered quest
 module 04 through the composition root:
 
 ```go
-// CategoryVisibility answers the one question module 04 cannot answer itself: which
-// categories a customer is allowed to see.
-type CategoryVisibility interface {
+// CategoryQuery answers the two facts about categories that module 04 needs and cannot
+// read itself: which categories a customer is allowed to see, and which category a
+// customer-facing slug names.
+type CategoryQuery interface {
     VisibleCategoryIDs(ctx context.Context) ([]uuid.UUID, error)
+    CategoryIDBySlug(ctx context.Context, slug string) (uuid.UUID, bool, error)
 }
 ```
 
-Module 04's public use cases call it and pass the returned set to the repository, which filters
+Module 04's public use cases call it and pass the answers to the repository, which filters
 `category_id = ANY($n)` **in SQL** — on the list and on the single-product read alike.
+
+**Why two questions and not one**: the visibility predicate needs the *set* of visible categories;
+the public list's optional `category` filter needs the identifier the *slug* names. Both are facts
+about categories that module 04 cannot read, and both must reach the SQL for the same reason, so
+they belong to one dependency rather than two — one interface, one adapter, one fake. They are not
+the same question, which is why the interface is named for the asking rather than for visibility
+alone: an earlier draft exposed only `VisibleCategoryIDs`, and the filter could not be built from
+it.
+
+**On `CategoryIDBySlug` returning a found-flag rather than a not-found error**: the filter must
+answer an **empty list** for a hidden slug, an unknown slug and a slug naming a category with
+nothing visible in it — all three indistinguishable (FR-006). A found-flag lets the use case answer
+that empty list directly; an error would make the caller translate a not-found into a success,
+which is the kind of inversion a later reader gets wrong. A *hidden* slug resolves to its
+identifier and is then excluded by the visibility predicate anyway, so the two paths agree without
+a special case.
 
 **Rationale**: FR-002 makes a product visible only when its category is, and FR-006 requires the
 same rule inside a paginated filter. That has three consequences that decide the shape:
 
 - **The filter must be in the query, not in Go.** Fetching a page of products and then dropping
   the ones in hidden categories returns a short page and a `total` that counts rows the caller
-  never received. The set therefore has to reach the SQL.
-- **Module 04 may not read `categories.is_visible`.** Constitution I forbids one module reading
-  another's tables, and a join would put module 03's schema inside module 04's query. A contract
-  is the arrangement the constitution prescribes for exactly this.
+  never received. Both the visible set and the filtered identifier therefore have to reach the SQL.
+- **Module 04 may not read `categories.is_visible` or `categories.slug`.** Constitution I forbids
+  one module reading another's tables, and a join would put module 03's schema inside module 04's
+  query. A contract is the arrangement the constitution prescribes for exactly this.
 - **The set is small by nature.** A shop's category catalogue is tens of rows, not thousands, so
   answering with the whole set costs one indexed scan and removes an N+1 that a per-product check
   would create.
 
-The single-product read uses the same set, so no second method is needed and no membership check
+The single-product read uses the same set, so no third method is needed and no membership check
 happens in Go: the repository's detail query carries `category_id = ANY($n)` too, and a product in
 a hidden category simply answers not-found.
 
@@ -43,9 +61,13 @@ acceptable rather than sloppy.
 
 **Alternatives considered**: A join onto `categories` — rejected: the module-ownership violation
 above. Filtering in Go after the page — rejected: breaks pagination and `total`. Denormalising the
-category's visibility onto the product — rejected: hiding a category later would not propagate,
-so the copy would be wrong exactly when it mattered. A per-product `IsVisible` call — rejected: it
-answers the list's question N times.
+category's visibility or slug onto the product — rejected: hiding a category, or renaming one,
+would not propagate, so the copy would be wrong exactly when it mattered. Changing the public
+filter from `category=<slug>` to `categoryId=<uuid>` — rejected: a customer-facing link is built
+from the slug (research D11), so a UUID filter would make the slug decorative and contradict
+`contracts/openapi.yaml` and `quickstart.md`. A per-product `IsVisible` call — rejected: it answers
+the list's question N times. A second, separate interface for the slug lookup — rejected: two
+dependencies and two fakes for two halves of the same question.
 
 ## D2: The image capability moves to `internal/share/media`
 

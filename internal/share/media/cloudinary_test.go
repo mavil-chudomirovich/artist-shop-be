@@ -16,16 +16,14 @@ import (
 	"strings"
 	"testing"
 
-	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
-	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/reqctx"
 )
 
 // appReference builds the port's reference value, so a test never has to spell the
 // struct out and an unset reference reads as one expression.
-func appReference(publicID, link string, width, height int) appinterface.MediaReference {
-	return appinterface.MediaReference{PublicID: publicID, URL: link, Width: width, Height: height}
+func appReference(publicID, link string, width, height int) Reference {
+	return Reference{PublicID: publicID, URL: link, Width: width, Height: height}
 }
 
 const (
@@ -358,7 +356,7 @@ func TestProviderFailuresBecomeTheRetryableMediaError(t *testing.T) {
 
 			ref, err := store.Upload(context.Background(), pngBytes, 512)
 
-			if !errors.Is(err, domainerr.ErrMediaUnavailable) {
+			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 			}
 			if ref != (appReference("", "", 0, 0)) {
@@ -388,7 +386,7 @@ func TestAnUnreachableProviderBecomesTheRetryableMediaError(t *testing.T) {
 
 	ref, err := store.Upload(context.Background(), pngBytes, 512)
 
-	if !errors.Is(err, domainerr.ErrMediaUnavailable) {
+	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 	}
 	if ref != (appReference("", "", 0, 0)) {
@@ -448,7 +446,7 @@ func TestRemoveReportsAProviderFailureAsTheRetryableMediaError(t *testing.T) {
 
 	err := store.Remove(context.Background(), appReference("avatars/one", "", 512, 512))
 
-	if !errors.Is(err, domainerr.ErrMediaUnavailable) {
+	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 	}
 	if strings.Contains(err.Error(), "upstream down") {
@@ -459,8 +457,8 @@ func TestRemoveReportsAProviderFailureAsTheRetryableMediaError(t *testing.T) {
 // The media settings are deliberately outside Validate, so a deployment can reach
 // the API with no credentials at all. The adapter then fails closed on every call
 // rather than inventing a reference or reporting a success, which is what makes a
-// missing configuration disable avatar upload and nothing else â€” the profile read
-// never calls the provider (FR-021, FR-017).
+// missing configuration disable every media write and nothing else: serving a
+// stored reference never calls the provider.
 func TestMissingCredentialsFailClosed(t *testing.T) {
 	cases := map[string]config.MediaConfig{
 		"nothing set":        {},
@@ -476,13 +474,13 @@ func TestMissingCredentialsFailClosed(t *testing.T) {
 			store := New(cfg, provider.server.Client(), discardLogger(), provider.server.URL)
 
 			ref, err := store.Upload(context.Background(), pngBytes, 512)
-			if !errors.Is(err, domainerr.ErrMediaUnavailable) {
+			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 			}
 			if ref != (appReference("", "", 0, 0)) {
 				t.Fatalf("expected no reference, got %+v", ref)
 			}
-			if err := store.Remove(context.Background(), appReference("avatars/one", "", 512, 512)); !errors.Is(err, domainerr.ErrMediaUnavailable) {
+			if err := store.Remove(context.Background(), appReference("avatars/one", "", 512, 512)); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("expected ErrMediaUnavailable from Remove, got %v", err)
 			}
 			// No request may reach a provider that was never configured, and the
@@ -555,7 +553,7 @@ func TestProviderFailuresAreLoggedWithoutLeakingAnything(t *testing.T) {
 			store := New(testConfig(), provider.server.Client(), logger, provider.server.URL)
 
 			ctx := reqctx.WithCorrelation(context.Background(), correlationID)
-			if _, err := store.Upload(ctx, pngBytes, 512); !errors.Is(err, domainerr.ErrMediaUnavailable) {
+			if _, err := store.Upload(ctx, pngBytes, 512); !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 			}
 
@@ -607,7 +605,7 @@ func TestTheLoggedClassificationIsTheOneTheCallerGets(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a provider failure")
 	}
-	classification := strings.TrimPrefix(err.Error(), domainerr.ErrMediaUnavailable.Error()+": ")
+	classification := strings.TrimPrefix(err.Error(), ErrUnavailable.Error()+": ")
 	if !strings.Contains(output.String(), classification) {
 		t.Fatalf("the logged classification %q differs from the returned one:\n%s",
 			classification, output.String())
@@ -627,7 +625,7 @@ func TestANilLoggerStillFailsCleanly(t *testing.T) {
 	provider.status = http.StatusInternalServerError
 	store := New(testConfig(), provider.server.Client(), nil, provider.server.URL)
 
-	if _, err := store.Upload(context.Background(), pngBytes, 512); !errors.Is(err, domainerr.ErrMediaUnavailable) {
+	if _, err := store.Upload(context.Background(), pngBytes, 512); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrMediaUnavailable, got %v", err)
 	}
 }

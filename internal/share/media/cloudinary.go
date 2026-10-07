@@ -17,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
-	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 )
@@ -43,7 +41,7 @@ const (
 	operationRemove = "remove"
 )
 
-// Cloudinary stores avatar bytes outside this service.
+// Cloudinary stores media bytes outside this service.
 //
 // It speaks Cloudinary's signed REST API directly with the standard library: the
 // SDK would add a dependency for two endpoints, and the signed API is a signature
@@ -53,7 +51,7 @@ const (
 //
 // Every provider failure — a transport error, a non-2xx status, a body that cannot
 // be read or parsed, a success body missing a field this service needs — comes back
-// as domainerr.ErrMediaUnavailable and nothing more. No provider prose, no
+// as ErrUnavailable and nothing more. No provider prose, no
 // response body, no URL and no credential is attached: presentation logs whatever
 // error it is given, so anything carried here would reach a log line, and a log
 // line is not a place for a provider's internal message or an internal hostname
@@ -107,7 +105,7 @@ func NewWithDefaults(cfg config.MediaConfig, logger *slog.Logger) *Cloudinary {
 	return New(cfg, nil, logger, DefaultBaseURL)
 }
 
-var _ appinterface.MediaStore = (*Cloudinary)(nil)
+var _ Store = (*Cloudinary)(nil)
 
 // Upload stores the original bytes and asks the provider to resize them to
 // targetWidth as part of the upload (ADR-005, research D6). The provider, not this
@@ -117,8 +115,8 @@ var _ appinterface.MediaStore = (*Cloudinary)(nil)
 // The original bytes go up untouched: this service adds no imaging dependency and
 // never decodes a pixel. That is also why the resize cannot fail in a way this
 // service could detect — a provider that ignores the transformation reports the
-// original dimensions, and the domain's width guard refuses the reference rather
-// than storing something the contract says cannot exist.
+// original dimensions, and it is the caller's own rules, not this adapter, that
+// decide whether those dimensions are acceptable.
 //
 // The image travels as a multipart file part, which is the provider's documented
 // REST upload. It is not sent as a bare base64 string: the live API rejects that
@@ -128,9 +126,9 @@ var _ appinterface.MediaStore = (*Cloudinary)(nil)
 // format knowledge in two places; multipart lets the provider sniff instead. The
 // signature is unaffected: "file" is excluded from it in either encoding, so the
 // same signed parameters produce the same signature value.
-func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int) (appinterface.MediaReference, error) {
+func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int) (Reference, error) {
 	if err := c.requireCredentials(operationUpload); err != nil {
-		return appinterface.MediaReference{}, err
+		return Reference{}, err
 	}
 
 	form := url.Values{}
@@ -146,25 +144,25 @@ func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int
 
 	body, contentType, err := multipartUpload(form, content)
 	if err != nil {
-		return appinterface.MediaReference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
+		return Reference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
 			"the provider request could not be built")
 	}
 
 	answerBody, status, err := c.post(ctx, operationUpload, c.uploadPath, contentType, body)
 	if err != nil {
-		return appinterface.MediaReference{}, err
+		return Reference{}, err
 	}
 
 	var answer uploadResponse
 	if err := json.Unmarshal(answerBody, &answer); err != nil {
-		return appinterface.MediaReference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
+		return Reference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
 			fmt.Sprintf("the provider answer could not be read (status %d)", status))
 	}
 	if answer.PublicID == "" || answer.SecureURL == "" {
-		return appinterface.MediaReference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
+		return Reference{}, c.unavailable(ctx, operationUpload, slog.LevelError,
 			fmt.Sprintf("the provider answer carried no usable reference (status %d)", status))
 	}
-	return appinterface.MediaReference{
+	return Reference{
 		PublicID: answer.PublicID,
 		URL:      answer.SecureURL,
 		Width:    answer.Width,
@@ -177,10 +175,11 @@ func (c *Cloudinary) Upload(ctx context.Context, content []byte, targetWidth int
 // The port's contract is that releasing an unknown reference succeeds, so a retry
 // never fails on an asset that is already gone: the provider answers a destroy of
 // an unknown identifier with 200 and a "not found" result, which this method
-// treats as success. Anything else is a genuine outage and is reported as one, but
-// only after the row that referenced the asset has already been written — see
-// implement.Service.releaseAvatar.
-func (c *Cloudinary) Remove(ctx context.Context, ref appinterface.MediaReference) error {
+// treats as success. Anything else is a genuine outage and is reported as one. The
+// caller is expected to release an asset only after the row that referenced it is
+// gone, so a failed release leaves an orphaned asset rather than a reference to
+// something that no longer exists.
+func (c *Cloudinary) Remove(ctx context.Context, ref Reference) error {
 	if err := c.requireCredentials(operationRemove); err != nil {
 		return err
 	}
@@ -203,7 +202,7 @@ func (c *Cloudinary) Remove(ctx context.Context, ref appinterface.MediaReference
 }
 
 // unavailable records the sanitised classification of a provider failure and
-// returns it as the module's retryable error, so the two can never drift apart:
+// returns it as the retryable error, so the two can never drift apart:
 // the operator and the caller are told the same thing, in the same words.
 //
 // The level follows the failure rather than being uniform. A refusal is a warning
@@ -220,7 +219,7 @@ func (c *Cloudinary) unavailable(ctx context.Context, operation string, level sl
 		slog.String("operation", operation),
 		slog.String("classification", classification),
 	)
-	return fmt.Errorf("%w: %s", domainerr.ErrMediaUnavailable, classification)
+	return fmt.Errorf("%w: %s", ErrUnavailable, classification)
 }
 
 // requireCredentials is the fail-closed gate.
@@ -229,9 +228,9 @@ func (c *Cloudinary) unavailable(ctx context.Context, operation string, level sl
 // are absent from Validate and ValidateForAPI so that migrate and seed stay
 // runnable without them, which means a deployment can legitimately reach the API
 // with no media credentials at all. In that state the adapter refuses every call
-// with the module's retryable error instead of inventing a reference or reporting
-// a success — so a missing configuration disables avatar upload and nothing else
-// (the profile read never calls the provider, FR-021).
+// with the retryable error instead of inventing a reference or reporting
+// a success — so a missing configuration disables media storage and nothing else,
+// because the reads that do not need the provider never call it.
 //
 // The message names the operation and the configuration key, never a value.
 func (c *Cloudinary) requireCredentials(operation string) error {
@@ -239,7 +238,7 @@ func (c *Cloudinary) requireCredentials(operation string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s needs MEDIA_CLOUD_NAME, MEDIA_API_KEY and MEDIA_API_SECRET to be set",
-		domainerr.ErrMediaUnavailable, operation)
+		ErrUnavailable, operation)
 }
 
 // post sends one signed request to the provider and returns the raw body with the
@@ -305,7 +304,7 @@ func multipartUpload(fields url.Values, content []byte) (io.Reader, string, erro
 		}
 	}
 
-	part, err := writer.CreateFormFile("file", "avatar")
+	part, err := writer.CreateFormFile("file", "upload")
 	if err != nil {
 		return nil, "", err
 	}
