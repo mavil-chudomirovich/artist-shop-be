@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/error"
 )
@@ -98,6 +99,65 @@ func TestFoldingKeyFoldsVietnameseUppercase(t *testing.T) {
 	if len("Đ") == 1 {
 		t.Fatalf("test setup: %q must be multi-byte", "Đ")
 	}
+}
+
+// T033, FR-016, research D3: a name is refused when it differs from an existing
+// one only by the case of a Vietnamese letter.
+//
+// The refusal is decided by the unique index on normalized_name, so proving the
+// two names fold to one key proves the second is refused. The letter is
+// Vietnamese — Đ (U+0110) whose lowercase is đ (U+0111) — and not an ASCII one,
+// because that is the exact case a locale-driven fold passes: PostgreSQL's
+// lower() under the C collation folds ASCII only, so "Đàn bầu" and "đàn bầu"
+// would keep two different keys there, the index would accept both, and the
+// catalogue would silently hold two names a human reads as the same. Go folds it
+// with Unicode simple case mapping, which is why the fold lives in the
+// application (research D3). The ASCII-only fold asserted below is there so this
+// test cannot be satisfied by one.
+func TestAVietnameseCaseOnlyDifferenceCollides(t *testing.T) {
+	existing := "Đàn bầu"
+	candidate := "đàn bầu"
+	if existing == candidate {
+		t.Fatal("test setup: the two names must differ")
+	}
+
+	if got, want := FoldKey(candidate), FoldKey(existing); got != want {
+		t.Fatalf("a Vietnamese case-only difference must fold to one key: %q != %q", got, want)
+	}
+
+	// A locale- or ASCII-driven fold leaves the pair distinct, so this test is
+	// not passable by one — the reason it uses a Vietnamese letter.
+	if asciiOnlyFold(existing) == asciiOnlyFold(candidate) {
+		t.Fatal("test setup: a locale-driven fold must NOT fold the Vietnamese pair, otherwise this test proves nothing about Unicode folding")
+	}
+
+	// The key a category stores is the fold of its name, so the two candidates
+	// carry the same normalized_name and the unique index refuses the second.
+	first, err := NewCategory(CategoryDraft{Name: existing, Slug: "dan-bau-mot"}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("NewCategory(%q): %v", existing, err)
+	}
+	second, err := NewCategory(CategoryDraft{Name: candidate, Slug: "dan-bau-hai"}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatalf("NewCategory(%q): %v", candidate, err)
+	}
+	if first.NormalizedName != second.NormalizedName {
+		t.Fatalf("the two names must collide on the stored key: %q != %q",
+			first.NormalizedName, second.NormalizedName)
+	}
+}
+
+// asciiOnlyFold is what a collation-driven fold gives under the C collation:
+// it lowercases the ASCII range and leaves everything else untouched. It exists
+// only so TestAVietnameseCaseOnlyDifferenceCollides can show the Vietnamese pair
+// survives it.
+func asciiOnlyFold(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, value)
 }
 
 // Research D11: internal runs of whitespace are deliberately not collapsed, so
