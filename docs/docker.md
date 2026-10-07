@@ -171,7 +171,7 @@ Ba bài học từ lỗi thật:
 |---|---|---|
 | `seed: DATABASE_URL is required` | Chỉ `api` có `env_file` | YAML anchor `x-common-env` gắn cho cả 3 service |
 | `migrate`/`seed` chạy mỗi lần `up`, và `seed` fail khi chưa có `ADMIN_*` | Không có profile | Đặt sau `profiles: [tools]`; `docker compose run --rm seed` tự bật profile nên `make seed-docker` vẫn chạy |
-| `mailpit` không nhận email dù đã bật | `SMTP_HOST` chỉ nằm trong `env_file`, không được compose nội suy | Sửa `.env` (xem bên dưới) |
+| `mailpit` không nhận email dù đã bật | `SMTP_HOST` trong `.env` trỏ nhà cung cấp thật, và API đang chạy trên host nên override của container không áp dụng | Xem [troubleshooting.md](troubleshooting.md) mục `mailpit` không nhận email |
 
 ### Tại sao `db`/`redis` không publish port
 Máy dev thường đã có PostgreSQL/Redis riêng, hoặc đang chạy container của dự án
@@ -186,8 +186,13 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 # hoặc: make up-tools
 ```
 
-Chỉ 3 phần: publish port `db`/`redis` trên `127.0.0.1`, và service `mailpit`
-(UI 8025, SMTP 1025).
+Bốn phần: publish port `db`/`redis` trên `127.0.0.1`, service `mailpit` (UI 8025, SMTP 1025),
+và trỏ service `api` vào Mailpit bằng `SMTP_HOST=mailpit`, `SMTP_PORT=1025`.
+
+**Vì sao trỏ `api` ở đây chứ không ở `.env`:** `.env` giữ credential của nhà cung cấp thật
+cho deployment. Đặt override trong overlay nghĩa là container **không bao giờ** thử gọi nhà
+cung cấp, mà `.env` vẫn nguyên vẹn. Khi API chạy trên host thay vì trong container, hostname
+phải là `localhost` — xem [configuration.md](configuration.md) mục *Phân tầng file env*.
 
 **Vì sao tách file riêng:** Compose không hỗ trợ "publish port có điều kiện". Nếu
 để trong file chính thì port luôn mở — trái với chủ ý "chỉ mở khi cần debug". Lớp

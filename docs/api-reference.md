@@ -360,9 +360,11 @@ Một dòng log ở mức `error` đi kèm, chỉ chứa `accountId`, `deliveryF
 chỉ người nhận. Ngân sách thử lại có trần (tối đa 3 lần, tổng thời gian chờ nằm trong
 mục tiêu trả lời 2 giây), nên `503` vẫn tới khách kịp thời.
 
-> Nếu `.env` để `SMTP_HOST` rỗng, email được ghi ra log (log sender). Bật Mailpit
-> bằng `make up-tools` rồi đặt `SMTP_HOST=mailpit`, `SMTP_PORT=1025` để xem OTP
-> trên `http://localhost:8025`.
+> Nếu `.env` để `SMTP_HOST` rỗng, email được ghi ra log (log sender). Để xem OTP thật qua
+> Mailpit thì không cần sửa `.env`: `make up-tools` tự trỏ container vào Mailpit, còn khi
+> chạy API trên host thì tạo `.env.local` với `SMTP_HOST=localhost`, `SMTP_PORT=1025`. Đọc
+> hộp thư ở `http://localhost:8025` hoặc `make mail`. Xem
+> [configuration.md](configuration.md) mục *Phân tầng file env*.
 
 ### 3.2 `POST /verify-email`
 

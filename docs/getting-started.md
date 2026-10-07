@@ -129,15 +129,21 @@ make mail          # in email Mailpit bắt được
 
 ### Bật Mailpit để nhận email thật
 
-Mặc định app **ghi email ra log** (`LogSender`). Muốn nhận qua SMTP thật, sửa `.env`:
+Mặc định app **ghi email ra log** (`LogSender`). Muốn nhận qua SMTP thật thì trỏ transport
+vào Mailpit — **không cần sửa `.env`**, vì hostname khác nhau tuỳ nơi chạy API:
 
-```ini
-SMTP_HOST=mailpit
-SMTP_PORT=1025
-```
+| Nơi chạy API | Cần làm gì |
+|---|---|
+| Trong container (`make up-tools`) | Không cần làm gì. `docker-compose.dev.yml` đã đặt `SMTP_HOST=mailpit`, `SMTP_PORT=1025` cho service `api` |
+| Trên host (`make run`) | Tạo `.env.local` với `SMTP_HOST=localhost`, `SMTP_PORT=1025` — xem `.env.example.local` |
 
-rồi `docker compose up -d --force-recreate api`. Mã OTP sẽ nằm trong hộp thư web
-`http://localhost:8025`.
+Lý do hai đường khác nhau: container gọi Mailpit bằng **tên service**, host gọi bằng **cổng
+đã publish**. Chi tiết ở [configuration.md](configuration.md) mục *Phân tầng file env*.
+
+Cách này giữ nguyên credential của nhà cung cấp trong `.env` cho deployment, nên dev không
+phải sửa qua lại và không có nguy cơ commit nhầm giá trị local.
+
+Mã OTP sẽ nằm trong hộp thư web `http://localhost:8025`, hoặc in ra bằng `make mail`.
 
 ## Chạy bằng Go trên máy (không Docker hoá app)
 

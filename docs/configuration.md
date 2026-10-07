@@ -171,11 +171,46 @@ dòng cảnh báo ghi rõ hệ quả đó.
 ### Auth — email
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `SMTP_HOST` | *(rỗng)* | | Rỗng ⇒ `LogSender` in email ra log |
+| `SMTP_HOST` | *(rỗng)* | | Rỗng thì `LogSender` in email ra log; đặt host để gửi thật. Xem *Phân tầng file env* bên dưới |
 | `SMTP_PORT` | `587` | | |
 | `SMTP_USERNAME` | *(rỗng)* | | |
 | `SMTP_PASSWORD` | *(rỗng)* | | |
 | `SMTP_FROM` | `no-reply@artist-shop.local` | | Địa chỉ người gửi. Provider thường **phải được cho phép gửi từ địa chỉ này** — xem [Xác minh với nhà cung cấp thật](#xác-minh-với-nhà-cung-cấp-thật) |
+
+### Phân tầng file env
+
+Cấu hình được nạp theo thứ tự sau, **cái sau không đè cái trước**:
+
+1. **Biến môi trường thật** của tiến trình (nền tảng deploy, hoặc `environment:` của
+   compose) — thắng tất cả.
+2. **`.env.local`** — override cho riêng máy này. Git-ignored, không bao giờ được commit.
+3. **`.env`** — giá trị của môi trường, dùng chung.
+
+Cả hai file đều **không được đọc khi `APP_ENV=production`**: ở đó nền tảng cấp biến môi
+trường, và một file lỡ còn sót lại không được phép đổi hướng bất cứ thứ gì.
+
+**Vì sao cần lớp giữa.** Một máy dev cần trỏ mail vào sink local (Mailpit) mà `.env` lại
+giữ credential của nhà cung cấp cho deployment. Sửa `.env` để dev nghĩa là mỗi lần đổi phải
+sửa tay và có nguy cơ commit nhầm. `.env.local` giữ phần khác biệt đó tách rời:
+
+```bash
+# .env.local
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_USERNAME=
+SMTP_PASSWORD=
+```
+
+Chỉ khai báo **phần cần khác**; giá trị chỉ `.env` có vẫn được dùng. Mẫu đầy đủ ở
+`.env.example.local`.
+
+| Nơi chạy API | `SMTP_HOST` | Vì sao |
+|---|---|---|
+| Trên host (`make run`) | `localhost` | Đặt trong `.env.local` |
+| Trong container (`make up-tools`) | `mailpit` | `docker-compose.dev.yml` tự đặt, không cần `.env.local` |
+
+Hostname khác nhau vì container gọi Mailpit bằng tên service còn host gọi bằng cổng đã
+publish. Đó là lý do có hai cơ chế chứ không một.
 
 Khi thư xác nhận không gửi được, `POST /auth/register` trả `503 SERVICE_UNAVAILABLE`
 (xem [api-reference.md](api-reference.md) mục `3.1`) và ghi lại **một** phân loại của

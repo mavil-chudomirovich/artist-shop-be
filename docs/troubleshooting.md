@@ -64,15 +64,26 @@ từ chối — đây là hành vi đúng.
 
 ### `mailpit` không nhận email
 
-Biến `SMTP_HOST` chỉ tồn tại trong `env_file` nên Compose **không nội suy** được;
-truyền bằng biến shell của máy cũng không tới container. Cách đúng — sửa `.env`:
+Kiểm theo thứ tự:
 
-```ini
-SMTP_HOST=mailpit
-SMTP_PORT=1025
+1. **Service `api` có đang chạy bằng dev overlay không?** `docker-compose.dev.yml` mới là
+   thứ đặt `SMTP_HOST=mailpit` cho container. Nếu chạy `docker-compose.yml` trần thì không
+   có Mailpit và cũng không có override — dùng `make up-tools`.
+2. **API có chạy trên host không?** Khi đó container override không áp dụng: host cần
+   `.env.local` với `SMTP_HOST=localhost`, `SMTP_PORT=1025` (container gọi bằng tên service,
+   host gọi bằng cổng đã publish).
+3. **Đã tạo lại container chưa?** `environment:` chỉ áp dụng lúc tạo:
+   `docker compose up -d --force-recreate api`.
+4. **`SMTP_HOST` trong `.env` có đang đè không?** Không — `.env.local` và biến môi trường
+   thật đều thắng `.env`, còn compose `environment:` thắng cả hai. Nhưng nếu bạn *đã* sửa
+   `.env` từ trước, giá trị đó vẫn được dùng ở chế độ host-run.
+
+Kiểm nhanh xem tiến trình thật sự thấy gì:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml config | grep SMTP_HOST
 ```
 
-rồi `docker compose up -d --force-recreate api`.
 
 ### Container `api` restart liên tục
 

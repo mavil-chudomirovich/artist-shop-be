@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -215,5 +217,115 @@ func TestValidateRejectsNonPositiveUserRateLimits(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "USER rate-limit thresholds") {
 		t.Fatalf("expected a USER rate-limit error, got %v", err)
+	}
+}
+
+// --- LoadDotenv layering ---------------------------------------------------
+//
+// LoadDotenv layers .env.local over .env so a developer can point the mail
+// transport at a local sink while .env keeps the credentials a deployment
+// needs. The precedence is deliberate, and these tests are what hold it.
+
+func writeEnvFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// unsetEnv removes a variable for the duration of the test. t.Setenv cannot do
+// this: godotenv skips a key that is already present, so setting one to empty
+// would stop the file value from applying and the test would prove nothing.
+func unsetEnv(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		previous, had := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+		t.Cleanup(func() {
+			if had {
+				_ = os.Setenv(key, previous)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}
+
+func TestLoadDotenvLayersLocalOverridesOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeEnvFile(t, dir, ".env", "SMTP_HOST=provider.example\nSMTP_PORT=587\nSMTP_FROM=no-reply@example.com\n")
+	writeEnvFile(t, dir, ".env.local", "SMTP_HOST=localhost\nSMTP_PORT=1025\n")
+	t.Chdir(dir)
+	unsetEnv(t, "APP_ENV", "SMTP_HOST", "SMTP_PORT", "SMTP_FROM")
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv: %v", err)
+	}
+	if got := os.Getenv("SMTP_HOST"); got != "localhost" {
+		t.Fatalf("the local override must win: SMTP_HOST = %q, want %q", got, "localhost")
+	}
+	if got := os.Getenv("SMTP_PORT"); got != "1025" {
+		t.Fatalf("the local override must win: SMTP_PORT = %q, want %q", got, "1025")
+	}
+	// A value only .env defines still applies, so the override file does not
+	// have to repeat everything.
+	if got := os.Getenv("SMTP_FROM"); got != "no-reply@example.com" {
+		t.Fatalf("a value only .env sets must survive: SMTP_FROM = %q", got)
+	}
+}
+
+// The two-call shape of LoadDotenv exists for this: godotenv.Load returns on the
+// first missing file, so one call naming both would skip .env entirely whenever
+// no override file exists — which is the normal state of a fresh checkout.
+func TestLoadDotenvStillLoadsEnvWhenNoOverrideFileExists(t *testing.T) {
+	dir := t.TempDir()
+	writeEnvFile(t, dir, ".env", "SMTP_HOST=provider.example\n")
+	t.Chdir(dir)
+	unsetEnv(t, "APP_ENV", "SMTP_HOST")
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv: %v", err)
+	}
+	if got := os.Getenv("SMTP_HOST"); got != "provider.example" {
+		t.Fatalf("a missing .env.local must not stop .env loading: SMTP_HOST = %q", got)
+	}
+}
+
+// A real environment variable is the deployment's own setting, so neither file
+// may override it. This is what keeps compose's SMTP_HOST=mailpit working in a
+// container even if an override file were ever present there.
+func TestARealEnvironmentVariableWinsOverBothEnvFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeEnvFile(t, dir, ".env", "SMTP_HOST=provider.example\n")
+	writeEnvFile(t, dir, ".env.local", "SMTP_HOST=localhost\n")
+	t.Chdir(dir)
+	unsetEnv(t, "APP_ENV")
+	t.Setenv("SMTP_HOST", "from-the-platform")
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv: %v", err)
+	}
+	if got := os.Getenv("SMTP_HOST"); got != "from-the-platform" {
+		t.Fatalf("a real environment variable must win: SMTP_HOST = %q", got)
+	}
+}
+
+// Production reads neither file: the platform supplies the environment there,
+// and a stray override file must not be able to redirect anything.
+func TestProductionIgnoresBothEnvFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeEnvFile(t, dir, ".env", "SMTP_HOST=provider.example\n")
+	writeEnvFile(t, dir, ".env.local", "SMTP_HOST=localhost\n")
+	t.Chdir(dir)
+	unsetEnv(t, "SMTP_HOST")
+	t.Setenv("APP_ENV", EnvProduction)
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv: %v", err)
+	}
+	if got := os.Getenv("SMTP_HOST"); got != "" {
+		t.Fatalf("production must read neither file: SMTP_HOST = %q", got)
 	}
 }

@@ -5,8 +5,13 @@
 #
 # Publishes the backing services on localhost so you can inspect them with a
 # GUI client or psql, and adds Mailpit as a local SMTP sink for OTP and
-# password-reset emails. Set SMTP_HOST=mailpit and SMTP_PORT=1025 in .env to
-# use it.
+# password-reset emails.
+#
+# The api service is pointed at Mailpit here rather than in .env, so the
+# credentials .env holds for a real provider stay untouched and a container
+# never tries to reach one. This is the container half of the local mail setup;
+# the host half is .env.local, because the host reaches Mailpit at localhost
+# while a container reaches it at the service name.
 
 services:
   db:
@@ -16,6 +21,15 @@ services:
   redis:
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+
+  api:
+    environment:
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      # Mailpit needs no credentials and accepts any sender, so the provider's
+      # are cleared rather than offered to a server that does not want them.
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
 
   mailpit:
     image: axllent/mailpit:latest

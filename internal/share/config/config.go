@@ -193,10 +193,18 @@ func LoadDotenv() error {
 	if os.Getenv("APP_ENV") == EnvProduction {
 		return nil
 	}
-	if err := godotenv.Load(); err != nil {
-		// A missing .env is expected in production and CI.
-		return nil
-	}
+	// .env.local is loaded first on purpose. godotenv never overwrites a
+	// variable that is already set, so the first file to define one wins: a
+	// local override beats .env, and a real environment variable set by the
+	// platform or by compose beats both. That ordering is what lets a developer
+	// point the mail transport at a local sink without touching the credentials
+	// .env holds for deployment.
+	//
+	// Each call tolerates its own missing file, which is why this is two calls
+	// rather than one with both names: Load returns on the first missing file,
+	// so a single call would skip .env entirely when no override exists.
+	_ = godotenv.Load(".env.local")
+	_ = godotenv.Load()
 	return nil
 }
 
