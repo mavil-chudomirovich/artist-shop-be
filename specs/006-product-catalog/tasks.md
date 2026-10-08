@@ -286,13 +286,13 @@ the label. It is P3 because the catalogue works without it.
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementing.**
 
-- [ ] T063 [P] [US6] Use-case tests in `internal/modules/product/application/implement/maintenance_test.go`: setting the pre-order label on a product that is not on sale succeeds; setting it on an `ACTIVE` product is refused naming `isPreorder`; an expected date without the label is refused; and launching a product clears the label (FR-039, `quickstart.md` 5e)
-- [ ] T064 [P] [US6] Visibility tests in `internal/modules/product/presentation/http/catalogue_test.go`: a pre-order is **present** in the public list with `isPreorder: true` while an ordinary unlaunched product is absent — the two cases side by side, because passing one and failing the other is exactly the contradiction the clarification resolved (FR-002, FR-039, `quickstart.md` 5b)
-- [ ] T065 [US6] Integration test in `internal/modules/product/presentation/http/catalogue_integration_test.go` behind the `integration` tag: a pre-order is visible and not buyable; launching it makes it buyable and clears the label; and the database's pre-order consistency check refuses a row that claims both (FR-039)
+- [x] T063 [P] [US6] Use-case tests in `internal/modules/product/application/implement/maintenance_test.go`: setting the pre-order label on a product that is not on sale succeeds; setting it on an `ACTIVE` product is refused naming `isPreorder`; an expected date without the label is refused; and launching a product clears the label (FR-040, `quickstart.md` 5e)
+- [x] T064 [P] [US6] Visibility tests in `internal/modules/product/presentation/http/catalogue_test.go`: a pre-order is **present** in the public list with `isPreorder: true` while an ordinary unlaunched product is absent — the two cases side by side, because passing one and failing the other is exactly the contradiction the clarification resolved (FR-002, FR-039, `quickstart.md` 5b)
+- [x] T065 [US6] Integration test in `internal/modules/product/presentation/http/catalogue_integration_test.go` behind the `integration` tag: a pre-order is visible and not buyable; launching it makes it buyable and clears the label; and the database's pre-order consistency check refuses a row that claims both (FR-039)
 
 ### Implementation for User Story 6
 
-- [ ] T066 [US6] Add the pre-order label and expected date to the create and update request shapes in `internal/modules/product/presentation/dto/dto.go`, to the visibility condition in `internal/modules/product/infrastructure/implement/postgres/product.go`, and to the label-clearing in `internal/modules/product/domain/model/product.go`'s launch transition (FR-002, FR-039, FR-040)
+- [x] T066 [US6] Add the pre-order label and expected date to the create and update request shapes in `internal/modules/product/presentation/dto/dto.go`, to the visibility condition in `internal/modules/product/infrastructure/implement/postgres/product.go`, and to the label-clearing in `internal/modules/product/domain/model/product.go`'s launch transition (FR-002, FR-040)
 
 **Checkpoint**: All six stories are independently functional.
 

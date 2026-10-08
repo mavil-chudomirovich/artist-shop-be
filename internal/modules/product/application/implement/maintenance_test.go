@@ -855,3 +855,139 @@ func TestRemovingASetLeavesItsMembersAlone(t *testing.T) {
 	}
 	requireAudited(t, f.audit, constant.AuditProductDeleted, f.actor, set.ID)
 }
+
+// --- User Story 6: pre-orders ---
+
+// preorderDate is the expected-availability date the pre-order tests use. It is a
+// calendar date, which is what the contract declares (format: date).
+func preorderDate() time.Time {
+	return time.Date(2026, time.December, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// FR-040, quickstart 5a: the pre-order label may be set on a product that is not
+// on sale, and it carries its optional expected-availability date. A created
+// product is COMING_SOON, so a create is the simplest not-on-sale product.
+func TestSettingThePreorderLabelOnAProductNotOnSaleSucceeds(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	expected := preorderDate()
+
+	out, err := maintenanceService(repo, &recordingAuditor{}).CreateProduct(context.Background(), dto.CreateProductInput{
+		Name:               "Pre-order Aki",
+		Slug:               "preorder-aki",
+		Price:              price(120000),
+		CategoryID:         category,
+		Position:           1,
+		IsPreorder:         true,
+		PreorderExpectedAt: &expected,
+	})
+	if err != nil {
+		t.Fatalf("setting the pre-order label while not on sale must succeed, got %v", err)
+	}
+	if !out.IsPreorder {
+		t.Fatalf("the created product must carry the pre-order label, got %+v", out)
+	}
+	if out.PreorderExpectedAt == nil || !out.PreorderExpectedAt.Equal(expected) {
+		t.Fatalf("the created product must carry the expected date, got %v", out.PreorderExpectedAt)
+	}
+}
+
+// FR-040, quickstart 5e: a product that is on sale is not "coming soon", so the
+// label cannot be set on it. The refusal names isPreorder and the row is left as
+// it was.
+func TestSettingThePreorderLabelOnAnActiveProductIsRefused(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	svc := maintenanceService(repo, &recordingAuditor{})
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "On sale", Slug: "on-sale", Price: price(120000), CategoryID: category,
+	}, time.Now().UTC().Add(-time.Hour))
+	if _, err := svc.ChangeSellState(context.Background(), dto.ChangeSellStateInput{
+		ID: seeded.ID, To: constant.SellStateActive,
+	}); err != nil {
+		t.Fatalf("launch the product: %v", err)
+	}
+
+	on := true
+	out, err := svc.UpdateProduct(context.Background(), dto.UpdateProductInput{ID: seeded.ID, IsPreorder: &on})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldIsPreorder {
+		t.Fatalf("expected the field %q to be named, got %v", model.FieldIsPreorder, err)
+	}
+	if out.ID != uuid.Nil {
+		t.Fatalf("a refused edit must not answer a product, got %+v", out)
+	}
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	if stored.Product.IsPreorder {
+		t.Fatal("a refused edit must leave the row untouched")
+	}
+}
+
+// FR-040: an expected date belongs to a pre-order and to nothing else, so sending
+// one without the label is refused naming preorderExpectedAt.
+func TestAnExpectedDateWithoutThePreorderLabelIsRefused(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	expected := preorderDate()
+
+	out, err := maintenanceService(repo, &recordingAuditor{}).CreateProduct(context.Background(), dto.CreateProductInput{
+		Name:               "Not a pre-order",
+		Slug:               "not-a-preorder",
+		Price:              price(120000),
+		CategoryID:         category,
+		Position:           1,
+		IsPreorder:         false,
+		PreorderExpectedAt: &expected,
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldPreorderExpectedAt {
+		t.Fatalf("expected the field %q to be named, got %v", model.FieldPreorderExpectedAt, err)
+	}
+	if out.ID != uuid.Nil {
+		t.Fatalf("a refused create must not answer a product, got %+v", out)
+	}
+}
+
+// FR-039, FR-040, quickstart 5d: going on sale clears the pre-order label and its
+// date, because a product that is on sale is not "coming soon". The persisted row
+// is checked as well as the answer.
+func TestLaunchingClearsThePreorderLabel(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	svc := maintenanceService(repo, &recordingAuditor{})
+	expected := preorderDate()
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "Pre-order", Slug: "preorder", Price: price(120000), CategoryID: category,
+		IsPreorder: true, PreorderExpectedAt: &expected,
+	}, time.Now().UTC().Add(-time.Hour))
+
+	out, err := svc.ChangeSellState(context.Background(), dto.ChangeSellStateInput{
+		ID: seeded.ID, To: constant.SellStateActive,
+	})
+	if err != nil {
+		t.Fatalf("launch the pre-order: %v", err)
+	}
+	if out.IsPreorder || out.PreorderExpectedAt != nil {
+		t.Fatalf("launching must clear the pre-order label and date, got %+v", out)
+	}
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	if stored.Product.IsPreorder || stored.Product.PreorderExpectedAt != nil {
+		t.Fatalf("the stored row must have no pre-order label after launch: %+v", stored.Product)
+	}
+}

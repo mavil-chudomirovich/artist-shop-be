@@ -408,6 +408,51 @@ func TestFilteringByAHiddenAndAnUnknownCategoryBothAnswerAnEmptyList(t *testing.
 	}
 }
 
+// FR-002, FR-040, quickstart 5b: a pre-order is present in the public list with
+// isPreorder true while an ordinary unlaunched product is absent. The two cases
+// are asserted side by side because passing one and failing the other is exactly
+// the contradiction the clarification resolved: the pre-order is the one
+// unlaunched product a customer sees.
+func TestAPreorderIsVisibleWhileAnOrdinaryUnlaunchedProductIsNot(t *testing.T) {
+	handler, repo, visibility := newPublicFixture(t)
+	category := uuid.New()
+	visibility.visible = append(visibility.visible, category)
+
+	repo.seed(t, model.ProductDraft{
+		Name:       "Pre-order Aki",
+		Slug:       "preorder-aki",
+		Price:      model.Price{Amount: 120000, Currency: "VND"},
+		CategoryID: category,
+		Position:   1,
+		IsPreorder: true,
+	}, time.Now().UTC().Add(-2*time.Hour))
+	repo.seed(t, model.ProductDraft{
+		Name:       "Announced Aki",
+		Slug:       "announced-aki",
+		Price:      model.Price{Amount: 130000, Currency: "VND"},
+		CategoryID: category,
+		Position:   2,
+	}, time.Now().UTC().Add(-time.Hour))
+
+	rec := perform(handler, http.MethodGet, "/api/v1/products")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeRawList(t, rec)
+	if len(body.Data) != 1 {
+		t.Fatalf("expected exactly the pre-order in the list, got %d entries", len(body.Data))
+	}
+	if string(body.Data[0]["slug"]) != `"preorder-aki"` {
+		t.Fatalf("expected the pre-order to be the visible entry, got %s", body.Data[0]["slug"])
+	}
+	if string(body.Data[0]["isPreorder"]) != "true" {
+		t.Fatalf("the visible entry must report isPreorder true, got %s", body.Data[0]["isPreorder"])
+	}
+	if strings.Contains(rec.Body.String(), "announced-aki") {
+		t.Fatalf("an ordinary unlaunched product must be absent: %s", rec.Body.String())
+	}
+}
+
 func keys(raw map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(raw))
 	for member := range raw {

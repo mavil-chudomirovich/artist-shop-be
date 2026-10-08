@@ -8,10 +8,39 @@
 package httpdto
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// preorderDateLayout is the calendar-date form the contract declares for a
+// pre-order's expected-availability date (format: date). It is named so the
+// intent does not depend on reading the layout string.
+const preorderDateLayout = "2006-01-02"
+
+// PreorderDate is the calendar date a pre-order is expected on, as the contract
+// declares it (format: date). It accepts the date-only form the contract
+// documents — "2026-12-01" — as well as the RFC 3339 form, so a client is not
+// forced to add a time it does not mean (FR-040, research D9). It is a request
+// type only: an administrator response carries the stored time.Time.
+type PreorderDate struct {
+	time.Time
+}
+
+// UnmarshalJSON reads a date-only or RFC 3339 value, refusing anything else as a
+// malformed request rather than silently storing a zero date.
+func (d *PreorderDate) UnmarshalJSON(raw []byte) error {
+	text := strings.Trim(strings.TrimSpace(string(raw)), `"`)
+	for _, layout := range []string{preorderDateLayout, time.RFC3339} {
+		if parsed, err := time.Parse(layout, text); err == nil {
+			d.Time = parsed
+			return nil
+		}
+	}
+	return fmt.Errorf("preorderExpectedAt: expected a date in YYYY-MM-DD or RFC 3339 form, got %q", text)
+}
 
 // PriceResponse is money as an integer amount in the currency's minor unit plus
 // the currency (FR-030, research D3). It is never a floating point number, so
@@ -84,8 +113,8 @@ type PriceRequest struct {
 }
 
 // CreateProductRequest is the administrator create body (contracts/openapi.yaml,
-// CreateProductRequest). It carries only the members FR-010 names; the set,
-// member and pre-order members land with US5 and US6.
+// CreateProductRequest). It carries only the members FR-010 names plus the set
+// (FR-039) and pre-order (FR-040) members.
 type CreateProductRequest struct {
 	// Name is the product name.
 	Name string `json:"name"`
@@ -105,6 +134,13 @@ type CreateProductRequest struct {
 	// MemberProductIDs are the products inside the set, in the order they are
 	// listed. They are recorded only when IsSet is true (research D10).
 	MemberProductIDs []uuid.UUID `json:"memberProductIds"`
+	// IsPreorder reports whether the product is announced as a pre-order
+	// (FR-040, research D9). A created product is COMING_SOON, so the label may
+	// always be set here; the domain refuses it only once the product is on sale.
+	IsPreorder bool `json:"isPreorder"`
+	// PreorderExpectedAt is the optional expected-availability date, in the
+	// contract's date-only form. It is meaningful only together with IsPreorder.
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
 }
 
 // UpdateProductRequest is the administrator partial-edit body
@@ -132,6 +168,13 @@ type UpdateProductRequest struct {
 	// recorded only when the product is a set (research D10); sending an empty
 	// list clears the set's members.
 	MemberProductIDs *[]uuid.UUID `json:"memberProductIds"`
+	// IsPreorder is the new pre-order label; nil keeps the current value. Setting
+	// it false also clears PreorderExpectedAt (FR-040). The domain refuses
+	// setting it true while the product is on sale, naming isPreorder.
+	IsPreorder *bool `json:"isPreorder"`
+	// PreorderExpectedAt is the new expected-availability date, in the
+	// contract's date-only form; nil keeps the current value.
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
 }
 
 // ChangeStateRequest is the administrator sell-state transition body

@@ -890,3 +890,53 @@ func TestASelfReferencingMemberIsRefusedNotA500(t *testing.T) {
 		t.Fatalf("expected the detail to name memberProductIds, got %+v", body.Error.Details)
 	}
 }
+
+// --- User Story 6: the pre-order request shape ---
+
+// FR-040, quickstart 5: the create body accepts the pre-order label and its
+// optional expected-availability date. The date arrives in the contract's
+// date-only form (format: date), so the transport must understand "2026-12-01"
+// rather than refuse it as a malformed member.
+func TestCreateProductAcceptsThePreorderLabelAndDate(t *testing.T) {
+	stub := &stubProductService{createOut: sampleAdminProduct()}
+	router := newAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodPost, adminProductsPath,
+		`{"name":"Pre-order Aki","slug":"preorder-aki","price":{"amount":120000,"currency":"VND"},"categoryId":"`+uuid.New().String()+`","position":1,"isPreorder":true,"preorderExpectedAt":"2026-12-01"}`,
+		"admin-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !stub.createIn.IsPreorder {
+		t.Fatalf("the use case must receive the pre-order label, got %+v", stub.createIn)
+	}
+	if stub.createIn.PreorderExpectedAt == nil {
+		t.Fatal("the use case must receive the expected date")
+	}
+	if got := stub.createIn.PreorderExpectedAt.Format("2006-01-02"); got != "2026-12-01" {
+		t.Fatalf("the expected date must be the one sent, got %s", got)
+	}
+}
+
+// FR-040, quickstart 5: the edit body accepts the label and the date on a partial
+// update, so an operator can announce a product as a pre-order after creating it.
+func TestUpdateProductAcceptsThePreorderLabelAndDate(t *testing.T) {
+	id := uuid.New()
+	stub := &stubProductService{updateOut: sampleAdminProduct()}
+	router := newAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodPatch, adminProductsPath+"/"+id.String(),
+		`{"isPreorder":true,"preorderExpectedAt":"2026-12-02"}`, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if stub.updateIn.IsPreorder == nil || !*stub.updateIn.IsPreorder {
+		t.Fatalf("the use case must receive the pre-order label, got %+v", stub.updateIn.IsPreorder)
+	}
+	if stub.updateIn.PreorderExpectedAt == nil {
+		t.Fatal("the use case must receive the expected date")
+	}
+	if got := stub.updateIn.PreorderExpectedAt.Format("2006-01-02"); got != "2026-12-02" {
+		t.Fatalf("the expected date must be the one sent, got %s", got)
+	}
+}

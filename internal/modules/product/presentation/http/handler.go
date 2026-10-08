@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -268,14 +269,16 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.CreateProduct(ctx, appdto.CreateProductInput{
-		Name:             req.Name,
-		Slug:             req.Slug,
-		Description:      req.Description,
-		Price:            model.Price{Amount: req.Price.Amount, Currency: req.Price.Currency},
-		CategoryID:       req.CategoryID,
-		Position:         req.Position,
-		IsSet:            req.IsSet,
-		MemberProductIDs: req.MemberProductIDs,
+		Name:               req.Name,
+		Slug:               req.Slug,
+		Description:        req.Description,
+		Price:              model.Price{Amount: req.Price.Amount, Currency: req.Price.Currency},
+		CategoryID:         req.CategoryID,
+		Position:           req.Position,
+		IsSet:              req.IsSet,
+		MemberProductIDs:   req.MemberProductIDs,
+		IsPreorder:         req.IsPreorder,
+		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -303,15 +306,17 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.UpdateProduct(ctx, appdto.UpdateProductInput{
-		ID:               id,
-		Name:             req.Name,
-		Slug:             req.Slug,
-		Description:      req.Description,
-		Price:            toPricePointer(req.Price),
-		CategoryID:       req.CategoryID,
-		Position:         req.Position,
-		IsSet:            req.IsSet,
-		MemberProductIDs: req.MemberProductIDs,
+		ID:                 id,
+		Name:               req.Name,
+		Slug:               req.Slug,
+		Description:        req.Description,
+		Price:              toPricePointer(req.Price),
+		CategoryID:         req.CategoryID,
+		Position:           req.Position,
+		IsSet:              req.IsSet,
+		MemberProductIDs:   req.MemberProductIDs,
+		IsPreorder:         req.IsPreorder,
+		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -506,6 +511,17 @@ func toPricePointer(price *httpdto.PriceRequest) *model.Price {
 		return nil
 	}
 	return &model.Price{Amount: price.Amount, Currency: price.Currency}
+}
+
+// toPreorderDate converts the request's date-only value to the domain's optional
+// time. A nil request date keeps the stored one, which is what makes a partial
+// edit partial; clearing the label clears the date explicitly (FR-040).
+func toPreorderDate(date *httpdto.PreorderDate) *time.Time {
+	if date == nil {
+		return nil
+	}
+	at := date.Time
+	return &at
 }
 
 // toAdminProductResponse is the single conversion point from the application

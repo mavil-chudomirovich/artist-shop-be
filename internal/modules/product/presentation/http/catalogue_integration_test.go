@@ -5,6 +5,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	categorymodel "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/model"
@@ -321,5 +324,66 @@ func TestPublicProductCatalogueAgainstPostgres(t *testing.T) {
 	if !reflect.DeepEqual(hiddenEnvelope, unknownEnvelope) {
 		t.Fatalf("the hidden and unknown answers differ beyond the request identifier:\n hidden %s\n unknown  %s",
 			hiddenRec.Body.String(), unknownRec.Body.String())
+	}
+}
+
+// FR-025, FR-040, quickstart 5: against real PostgreSQL a pre-order is visible to
+// customers and not buyable; launching it makes it buyable and clears the label
+// and its date; and the database's own pre-order consistency check refuses a row
+// that claims both, so the rule holds even for a writer that bypasses the domain.
+func TestPreorderVisibilityAndConsistencyAgainstPostgres(t *testing.T) {
+	fixture := newProductCatalogueFixture(t)
+	categoryRepo := categorypostgres.NewCategoryRepository(fixture.pool)
+	category := seedCatalogueCategory(t, categoryRepo, "preorder", true)
+
+	preorder := seedCatalogueProduct(t, fixture.products, productmodel.ProductDraft{
+		Name: "Pre-order Aki", Slug: "preorder-aki", Price: productPrice(120000),
+		CategoryID: category.ID, Position: 1, IsPreorder: true,
+	}, nil)
+
+	// Visible, marked as a pre-order, and not buyable.
+	list := decodeProductCatalogueList(t, getProductWithRequestID(t, fixture.handler, publicProductsPath, "preorder-list"))
+	if list.Meta.Total != 1 || len(list.Data) != 1 || list.Data[0].Slug != preorder.Slug || !list.Data[0].IsPreorder {
+		t.Fatalf("a pre-order must be visible and marked, got %+v", list)
+	}
+	stored, err := fixture.products.FindByID(context.Background(), preorder.ID)
+	if err != nil {
+		t.Fatalf("read the pre-order: %v", err)
+	}
+	if !stored.Product.IsPreorder || stored.Product.Buyable() {
+		t.Fatalf("a pre-order must be announced and not buyable, got %+v", stored.Product)
+	}
+
+	// Launching makes it buyable and clears the label and its date.
+	if err := stored.Product.Launch(time.Now().UTC()); err != nil {
+		t.Fatalf("launch the pre-order: %v", err)
+	}
+	if !stored.Product.Buyable() || stored.Product.IsPreorder || stored.Product.PreorderExpectedAt != nil {
+		t.Fatalf("launching must clear the label and make it buyable, got %+v", stored.Product)
+	}
+	if err := fixture.products.Update(context.Background(), &stored.Product); err != nil {
+		t.Fatalf("persist the launched product: %v", err)
+	}
+	after := decodeProductCatalogueList(t, getProductWithRequestID(t, fixture.handler, publicProductsPath, "preorder-after"))
+	if len(after.Data) != 1 || after.Data[0].Slug != preorder.Slug || after.Data[0].IsPreorder {
+		t.Fatalf("a launched pre-order must stay visible and report isPreorder false, got %+v", after)
+	}
+
+	// The database refuses a row that is both on sale and a pre-order, so the
+	// application rule is not the only guarantee (Constitution II, data-model
+	// products_preorder_ck). The insert bypasses the domain and the adapter.
+	const insert = `
+		INSERT INTO products
+			(id, name, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position, sell_state, is_set, is_preorder, created_at, updated_at)
+		VALUES ($1, 'Conflict', 'conflict', 'conflict', '', 100, 'VND', $2, 1, 'ACTIVE', false, true, now(), now())`
+	_, err = fixture.pool.Exec(context.Background(), insert, uuid.New(), category.ID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("the database must refuse an on-sale pre-order row, got %v", err)
+	}
+	if pgErr.Code != "23514" || pgErr.ConstraintName != "products_preorder_ck" {
+		t.Fatalf("expected a check violation on products_preorder_ck, got code %s constraint %s",
+			pgErr.Code, pgErr.ConstraintName)
 	}
 }
