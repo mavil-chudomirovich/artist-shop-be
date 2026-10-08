@@ -8,6 +8,7 @@
 package httpdto
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -23,10 +24,20 @@ const preorderDateLayout = "2006-01-02"
 // PreorderDate is the calendar date a pre-order is expected on, as the contract
 // declares it (format: date). It accepts the date-only form the contract
 // documents — "2026-12-01" — as well as the RFC 3339 form, so a client is not
-// forced to add a time it does not mean (FR-040, research D9). It is a request
-// type only: an administrator response carries the stored time.Time.
+// forced to add a time it does not mean (FR-040, research D9). It is used on
+// both sides of the contract: a request may send either form, and a response
+// writes the date-only form, so an administrator answer honours `format: date`
+// instead of marshalling the embedded time.Time as RFC 3339.
 type PreorderDate struct {
 	time.Time
+}
+
+// MarshalJSON writes the calendar date, so a response carries "2026-12-01"
+// rather than the RFC 3339 form encoding/json gives an embedded time.Time. It
+// is the mirror of UnmarshalJSON and is what makes the response side of the
+// contract's `format: date` true.
+func (d PreorderDate) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.Format(preorderDateLayout))
 }
 
 // UnmarshalJSON reads a date-only or RFC 3339 value, refusing anything else as a
@@ -212,8 +223,9 @@ type AdminProductResponse struct {
 	IsSet bool `json:"isSet"`
 	// IsPreorder reports whether the product is announced as a pre-order.
 	IsPreorder bool `json:"isPreorder"`
-	// PreorderExpectedAt is the optional expected availability date, or null.
-	PreorderExpectedAt *time.Time `json:"preorderExpectedAt"`
+	// PreorderExpectedAt is the optional expected availability date, or null. It
+	// is written in the contract's date-only form (format: date).
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
 	// ImageCount is how many pictures the product has.
 	ImageCount int `json:"imageCount"`
 	// ImageURL is the main picture's link, or null when the product has none.

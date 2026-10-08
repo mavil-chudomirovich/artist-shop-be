@@ -524,6 +524,17 @@ func toPreorderDate(date *httpdto.PreorderDate) *time.Time {
 	return &at
 }
 
+// toPreorderDateResponse converts the stored optional time to the response's
+// contract form. The administrator response writes the calendar date
+// (format: date), so this is where the stored value becomes the date the
+// contract declares; a nil date stays nil and marshals as null.
+func toPreorderDateResponse(date *time.Time) *httpdto.PreorderDate {
+	if date == nil {
+		return nil
+	}
+	return &httpdto.PreorderDate{Time: *date}
+}
+
 // toAdminProductResponse is the single conversion point from the application
 // administrator DTO to the administrator HTTP shape, so the members a customer
 // must not see cannot drift per route.
@@ -539,7 +550,7 @@ func toAdminProductResponse(product appdto.AdminProductOutput) httpdto.AdminProd
 		SellState:          string(product.SellState),
 		IsSet:              product.IsSet,
 		IsPreorder:         product.IsPreorder,
-		PreorderExpectedAt: product.PreorderExpectedAt,
+		PreorderExpectedAt: toPreorderDateResponse(product.PreorderExpectedAt),
 		ImageCount:         product.ImageCount,
 		ImageURL:           product.ImageURL,
 		CreatedAt:          product.CreatedAt,

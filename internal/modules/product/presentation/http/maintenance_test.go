@@ -940,3 +940,26 @@ func TestUpdateProductAcceptsThePreorderLabelAndDate(t *testing.T) {
 		t.Fatalf("the expected date must be the one sent, got %s", got)
 	}
 }
+
+// FR-040, contracts/openapi.yaml (format: date): the administrator response
+// writes `preorderExpectedAt` as a calendar date, not as the RFC 3339 form a
+// bare time.Time would produce. This is the response side of the request form
+// the two tests above exercise.
+func TestTheAdministratorResponseWritesThePreorderDateAsACalendarDate(t *testing.T) {
+	expected := time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)
+	out := sampleAdminProduct()
+	out.PreorderExpectedAt = &expected
+	stub := &stubProductService{getOut: out}
+	router := newAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodGet, adminProductsPath+"/"+out.ID.String(), "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"preorderExpectedAt":"2026-12-01"`) {
+		t.Fatalf("the response must carry the date-only form the contract declares, got %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "T00:00:00Z") {
+		t.Fatalf("the response must not carry the RFC 3339 form, got %s", rec.Body.String())
+	}
+}
