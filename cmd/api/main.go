@@ -25,7 +25,12 @@ import (
 	categorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
 	categoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/auditor"
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
+	categoryvisibility "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/visibility"
 	categoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/presentation/http"
+	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
+	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
+	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
+	producthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
 	userappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
 	usermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/mapper"
@@ -235,12 +240,27 @@ func run() error {
 	//
 	// The module reuses the foundation audit writer the auth and user modules
 	// already write through: one queue, one retry policy, one shutdown.
+	categoryRepository := categorypostgres.NewCategoryRepository(db.Pool)
 	categoryService := categoryimplement.New(categoryimplement.Service{
-		Categories: categorypostgres.NewCategoryRepository(db.Pool),
+		Categories: categoryRepository,
 		Audit:      categoryauditor.New(auditWriter),
 		Mapper:     categorymapper.New(),
 	})
 	categoryHandler := categoryhttp.New(categoryService, logger)
+
+	// Module 04 (product). The catalogue is read by customers and maintained by
+	// an administrator; this phase mounts the public /products group, which needs
+	// no session. The public reads filter on the category's display state, which
+	// module 03 owns, so the composition wires the cross-module contract over
+	// module 03's own repository rather than letting module 04 read module 03's
+	// table (research D1, Constitution I). The administrator group is a separate
+	// mount added with US2.
+	productService := productimplement.New(productimplement.Service{
+		Products:   productpostgres.NewProductRepository(db.Pool),
+		Visibility: categoryvisibility.New(categoryRepository),
+		Mapper:     productmapper.New(),
+	})
+	productHandler := producthttp.New(productService, logger)
 
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
@@ -271,6 +291,10 @@ func run() error {
 			// administrator role guard (research D7).
 			r.Mount("/categories", categoryHandler.Router(authHooks))
 			r.Mount("/admin/categories", categoryHandler.AdminRouter(authHooks))
+			// The public catalogue: on sale or pre-order, in a category the
+			// operator has left on display, addressed by slug. No session is
+			// required (FR-001).
+			r.Mount("/products", productHandler.Router(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
