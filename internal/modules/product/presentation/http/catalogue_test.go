@@ -27,8 +27,8 @@ import (
 )
 
 // var _ documents the transport's dependency explicitly: the real use-case
-// service must satisfy the narrow surface the public routes consume.
-var _ CatalogueService = (*productimplement.Service)(nil)
+// service must satisfy the single declared use-case surface the routes consume.
+var _ appinterface.ProductService = (*productimplement.Service)(nil)
 
 var testLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 

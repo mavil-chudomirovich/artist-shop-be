@@ -45,6 +45,10 @@ const (
 	FieldPreorderExpectedAt = "preorderExpectedAt"
 	// FieldMemberProductIDs is the request member carrying a set's members.
 	FieldMemberProductIDs = "memberProductIds"
+	// FieldTo is the request member carrying the target of a sell-state
+	// transition. It is the member name of ChangeStateRequest in the contract, so
+	// a rejected target is reported against the exact input the client sent.
+	FieldTo = "to"
 )
 
 // Product is one thing the shop sells: a physical item, a combo set or a
@@ -331,6 +335,30 @@ func (p *Product) applyState(to constant.SellState, now time.Time) error {
 	}
 	p.UpdatedAt = now
 	return nil
+}
+
+// VisibleToCustomers reports whether the product may be served on a customer-facing
+// route, judged from its own state alone (FR-002, FR-027).
+//
+// It is the domain's statement of the read rule, so a product hidden by its state
+// is not served however the row came to hold it: an on-sale product is visible, a
+// pre-order is visible while it is announced, and a retired product is hidden even
+// if it still carries the pre-order label, because retiring is terminal and takes
+// the product out of the catalogue for good (FR-026). Whether the product's
+// category is on display is deliberately absent: module 04 cannot read module 03's
+// table, so the public query composes that half in SQL (research D1).
+func (p *Product) VisibleToCustomers() bool {
+	if p.SellState == constant.SellStateDiscontinued {
+		return false
+	}
+	return p.SellState == constant.SellStateActive || p.IsPreorder
+}
+
+// Buyable reports whether a customer may buy the product: only a product that is on
+// sale is buyable, so every other state — including a pre-order that is announced
+// but not yet available — is not (FR-025).
+func (p *Product) Buyable() bool {
+	return p.SellState == constant.SellStateActive
 }
 
 // validatePreorder enforces the two pre-order consistency rules FR-040 states.

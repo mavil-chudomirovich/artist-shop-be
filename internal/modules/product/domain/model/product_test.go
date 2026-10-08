@@ -486,6 +486,46 @@ func TestApplyClearsTheDateWhenTheLabelIsDropped(t *testing.T) {
 	}
 }
 
+// FR-002, FR-025, FR-027: the state a customer-facing response implies is a
+// property of the product's own state, enforced when it is read and not only when
+// it is written. The rows below are built by assigning SellState and IsPreorder
+// directly — the way a scan or any other writer produces a row — so the predicate
+// must answer from the state alone, whatever wrote it. A retired product is hidden
+// even when it still carries the pre-order label, because retirement is terminal
+// and takes it out of the catalogue for good (FR-026).
+func TestTheCustomerFacingRuleIsEnforcedFromTheStateWhateverWroteTheRow(t *testing.T) {
+	cases := []struct {
+		name     string
+		state    constant.SellState
+		preorder bool
+		visible  bool
+		buyable  bool
+	}{
+		{"announced and hidden", constant.SellStateComingSoon, false, false, false},
+		{"announced as a pre-order", constant.SellStateComingSoon, true, true, false},
+		{"on sale", constant.SellStateActive, false, true, true},
+		{"out of stock", constant.SellStateOutOfStock, false, false, false},
+		{"retired", constant.SellStateDiscontinued, false, false, false},
+		{"retired pre-order", constant.SellStateDiscontinued, true, false, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Direct assignment, bypassing the transition functions: this is a row
+			// as any writer left it, not an entity this package built.
+			product := Product{SellState: tc.state, IsPreorder: tc.preorder}
+
+			if got := product.VisibleToCustomers(); got != tc.visible {
+				t.Errorf("VisibleToCustomers() = %v, want %v for %s (pre-order %v)",
+					got, tc.visible, tc.state, tc.preorder)
+			}
+			if got := product.Buyable(); got != tc.buyable {
+				t.Errorf("Buyable() = %v, want %v for %s", got, tc.buyable, tc.state)
+			}
+		})
+	}
+}
+
 // assertCurrentState fails the test unless err carries the state the refused move
 // started from (FR-024).
 func assertCurrentState(t *testing.T, err error, want constant.SellState) {

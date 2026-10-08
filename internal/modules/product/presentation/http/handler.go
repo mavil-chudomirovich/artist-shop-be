@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
@@ -29,56 +29,15 @@ const (
 	maxPageSize     = 100
 )
 
-// CatalogueService is the part of the product use-case surface the public browse
-// routes consume.
-//
-// It is declared here rather than taking application/interface.ProductService
-// whole, because the public group is a consumer-side subset of the declared
-// surface, not a second declaration of it: the real *implement.Service satisfies
-// it, and the administrator group widens this through ProductService below.
-type CatalogueService interface {
-	// ListPublic returns one page of the products a customer may see, in the
-	// configured order (FR-001 to FR-009).
-	ListPublic(ctx context.Context, in appdto.ListPublicInput) (appdto.PublicProductPage, error)
-	// GetPublicBySlug returns one visible product with its description and every
-	// picture. A hidden, removed or unknown slug answers the same not-found
-	// (FR-005).
-	GetPublicBySlug(ctx context.Context, in appdto.PublicProductRefInput) (appdto.PublicProductDetailOutput, error)
-}
-
-// ProductService is the product use-case surface the mounted routes consume: the
-// customer-facing reads plus the administrator maintenance and picture use cases
-// delivered with US2.
-//
-// It is a consumer-side subset of the declared application surface: the state
-// transition route lands with US3, so the handler depends on what it serves rather
-// than on methods no route reaches yet.
-type ProductService interface {
-	CatalogueService
-	// ListAdmin returns one page of every product, including the ones withheld
-	// from customers (FR-011).
-	ListAdmin(ctx context.Context, in appdto.ListAdminInput) (appdto.AdminProductPage, error)
-	// GetAdmin returns one product by identifier, including one not visible to
-	// customers (FR-011).
-	GetAdmin(ctx context.Context, in appdto.AdminProductRefInput) (appdto.AdminProductDetailOutput, error)
-	// CreateProduct creates a product in COMING_SOON and audits the change
-	// (FR-010, FR-014).
-	CreateProduct(ctx context.Context, in appdto.CreateProductInput) (appdto.AdminProductDetailOutput, error)
-	// UpdateProduct applies a partial edit and audits the change (FR-012).
-	UpdateProduct(ctx context.Context, in appdto.UpdateProductInput) (appdto.AdminProductDetailOutput, error)
-	// DeleteProduct removes a product and audits the removal (FR-013).
-	DeleteProduct(ctx context.Context, in appdto.AdminProductRefInput) error
-	// AddPicture validates and stores an uploaded picture (FR-016 to FR-020).
-	AddPicture(ctx context.Context, in appdto.AddPictureInput) (appdto.AdminProductDetailOutput, error)
-	// RemovePicture removes a picture and releases its stored asset (FR-021).
-	RemovePicture(ctx context.Context, in appdto.RemovePictureInput) error
-	// SetPrimaryPicture makes one picture the product's main one (FR-017).
-	SetPrimaryPicture(ctx context.Context, in appdto.SetPrimaryPictureInput) (appdto.AdminProductDetailOutput, error)
-}
-
 // Handler adapts the product use cases to HTTP.
+//
+// It consumes application/interface.ProductService directly — the one declared
+// use-case surface — rather than declaring its own subset of it: the real
+// *implement.Service satisfies it, and a second declaration for the same service
+// is the drift the project refuses elsewhere (reconciliation with module 03's
+// handler, which takes appinterface.CategoryService).
 type Handler struct {
-	svc    ProductService
+	svc    appinterface.ProductService
 	cfg    appinterface.Config
 	logger *slog.Logger
 }
@@ -88,7 +47,7 @@ type Handler struct {
 // The picture configuration is carried here as well as in the use cases because
 // the upload route sizes its body limit from the very ceiling the use case
 // enforces, so a declared length and a chunked body answer the same rule.
-func New(svc ProductService, cfg appinterface.Config, logger *slog.Logger) *Handler {
+func New(svc appinterface.ProductService, cfg appinterface.Config, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, cfg: cfg, logger: logger}
 }
 
@@ -375,6 +334,40 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ChangeSellState moves a product through its selling life (FR-022 to FR-026).
+//
+// The handler only decodes the requested target and reports: whether the move is
+// one the current state allows is the domain transition table's decision, and the
+// refusal names the current state (FR-023, FR-024). A target that is not one of the
+// four states is reported against `to` by the use case. The acting administrator
+// comes from the session, never from the body (FR-015).
+func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	var req httpdto.ChangeStateRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ChangeSellState(ctx, appdto.ChangeSellStateInput{
+		ID: id,
+		To: constant.SellState(req.To),
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
 // AddPicture stores an uploaded picture. The bytes are read with a hard ceiling

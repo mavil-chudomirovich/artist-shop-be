@@ -51,6 +51,9 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/{id}", h.GetAdmin)
 	r.Patch("/{id}", h.UpdateProduct)
 	r.Delete("/{id}", h.DeleteProduct)
+	// The state change is its own endpoint: a transition is not a field edit and
+	// it can be refused, which is what the surface has to express (research D11).
+	r.Post("/{id}/state", h.ChangeSellState)
 	// The upload route raises the body limit for its own handler: the image
 	// ceiling is above the shared pipeline ceiling only for its envelope, and the
 	// handler caps the image itself again while it reads. The route reports the

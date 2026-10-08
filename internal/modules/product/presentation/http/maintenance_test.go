@@ -64,6 +64,9 @@ type stubProductService struct {
 	removePictureErr error
 	setPrimaryOut    appdto.AdminProductDetailOutput
 	setPrimaryErr    error
+	changeStateOut   appdto.AdminProductDetailOutput
+	changeStateErr   error
+	changeStateIn    appdto.ChangeSellStateInput
 
 	// seenActor is the actor the use case received through the context, which is
 	// how the test proves the identity travels beside the request.
@@ -118,7 +121,15 @@ func (s *stubProductService) SetPrimaryPicture(ctx context.Context, _ appdto.Set
 	return s.setPrimaryOut, s.setPrimaryErr
 }
 
-var _ ProductService = (*stubProductService)(nil)
+func (s *stubProductService) ChangeSellState(ctx context.Context, in appdto.ChangeSellStateInput) (appdto.AdminProductDetailOutput, error) {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	s.changeStateIn = in
+	return s.changeStateOut, s.changeStateErr
+}
+
+// The stub satisfies the one declared use-case surface the handler consumes, so
+// the surface cannot drift away from what the routes reach.
+var _ appinterface.ProductService = (*stubProductService)(nil)
 
 // sampleAdminProduct is a well-formed administrator answer, carrying the members
 // the public shape must not expose (FR-011).
@@ -173,7 +184,7 @@ func maintenanceHooks(denied *bool) middleware.AuthHooks {
 
 // newAdminRouter mounts the module's administrator group the way the composition
 // root mounts it.
-func newAdminRouter(svc ProductService, hooks middleware.AuthHooks) http.Handler {
+func newAdminRouter(svc appinterface.ProductService, hooks middleware.AuthHooks) http.Handler {
 	handler := New(svc, appinterface.Config{}, testLogger)
 	root := chi.NewRouter()
 	root.Mount(adminProductsPath, handler.AdminRouter(hooks))
@@ -246,6 +257,7 @@ func maintenanceRoutes(id, imageID uuid.UUID) []adminRoute {
 		{http.MethodGet, adminProductsPath + "/" + id.String(), ""},
 		{http.MethodPatch, adminProductsPath + "/" + id.String(), `{"name":"B"}`},
 		{http.MethodDelete, adminProductsPath + "/" + id.String(), ""},
+		{http.MethodPost, adminProductsPath + "/" + id.String() + "/state", `{"to":"ACTIVE"}`},
 		{http.MethodPost, adminProductsPath + "/" + id.String() + "/images", ""},
 		{http.MethodDelete, adminProductsPath + "/" + id.String() + "/images/" + imageID.String(), ""},
 		{http.MethodPost, adminProductsPath + "/" + id.String() + "/images/" + imageID.String() + "/primary", ""},

@@ -123,6 +123,16 @@ type UpdateProductRequest struct {
 	Position *int `json:"position"`
 }
 
+// ChangeStateRequest is the administrator sell-state transition body
+// (contracts/openapi.yaml, ChangeStateRequest). It carries only the target state:
+// a transition is not a field change, so it has its own endpoint (research D11).
+type ChangeStateRequest struct {
+	// To is the requested target state. It must be one of the four sell states;
+	// the use case validates it and reports an unknown value against this member,
+	// which is why it is a string here rather than the domain enum.
+	To string `json:"to"`
+}
+
 // AdminProductResponse is one entry of the administrator surface: the members a
 // customer must not receive — the sell state, the position, the category and the
 // set flag — plus the timestamps and the picture summary (FR-011). The public
