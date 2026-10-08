@@ -228,7 +228,7 @@ JSON
 | 11d | `GET $BASE/products` still lists each member individually (US5 scenario 2) |
 | 11e | `DELETE $BASE/admin/products/$SET` | `204`, and both members still exist |
 | 11f | `POST` a set whose `memberProductIds` contains an unknown identifier | `400 VALIDATION_ERROR`, the field named |
-| 11g | `POST` a set whose `memberProductIds` contains its own id | `400`, or `201` — a self-member is refused by the storage check, so it must not be `500` |
+| 11g | `PATCH` a set whose `memberProductIds` contains its own id | `400 VALIDATION_ERROR` naming `memberProductIds`, never `500`. A self-member is refused by the storage check. It is reached by an edit and not by a create, because at create the service generates the identifier and a client cannot name it |
 
 ## Scenario 12 — a category with products cannot be removed
 

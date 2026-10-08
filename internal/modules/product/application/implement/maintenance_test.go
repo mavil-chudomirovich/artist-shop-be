@@ -44,6 +44,10 @@ type fauxProducts struct {
 	mu       sync.Mutex
 	products map[uuid.UUID]model.Product
 	pictures map[uuid.UUID][]model.Picture
+	// members records a set's member list in order, keyed by the set's
+	// identifier. It is what ListSetMembers answers from, so a test can observe
+	// what the use case asked the repository to store (FR-039).
+	members map[uuid.UUID][]uuid.UUID
 
 	// categories, when non-nil, is the set of category identifiers this fake
 	// knows. A create or update naming one outside it is refused the way the
@@ -60,6 +64,7 @@ func newFauxProducts() *fauxProducts {
 	return &fauxProducts{
 		products: make(map[uuid.UUID]model.Product),
 		pictures: make(map[uuid.UUID][]model.Picture),
+		members:  make(map[uuid.UUID][]uuid.UUID),
 	}
 }
 
@@ -174,6 +179,23 @@ func (m *fauxProducts) Delete(_ context.Context, id uuid.UUID) error {
 	}
 	delete(m.products, id)
 	delete(m.pictures, id)
+	// Removing a set removes its membership rows; removing a member removes it
+	// from any set it was in. Both mirror the cascading foreign keys, so the
+	// fake answers the way storage does (research D13, US5 scenario 3).
+	delete(m.members, id)
+	for setID, memberIDs := range m.members {
+		kept := memberIDs[:0:0]
+		for _, memberID := range memberIDs {
+			if memberID != id {
+				kept = append(kept, memberID)
+			}
+		}
+		if len(kept) == 0 {
+			delete(m.members, setID)
+		} else {
+			m.members[setID] = kept
+		}
+	}
 	return nil
 }
 
@@ -294,6 +316,56 @@ func (m *fauxProducts) SetPrimaryPicture(_ context.Context, productID, pictureID
 	return nil
 }
 
+// ReplaceSetMembers stores a set's whole member list in order. It mirrors the
+// adapter: a member no product carries, a duplicate and a self-reference are all
+// refused naming memberProductIds, exactly as the storage constraints classify
+// them (FR-039, research D10). The call is recorded so a test can prove it ran
+// inside the caller's transaction.
+func (m *fauxProducts) ReplaceSetMembers(ctx context.Context, setProductID uuid.UUID, memberIDs []uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.record(ctx, "replaceMembers")
+	if _, ok := m.products[setProductID]; !ok {
+		return domainerr.ErrProductNotFound
+	}
+	seen := make(map[uuid.UUID]bool, len(memberIDs))
+	for _, memberID := range memberIDs {
+		if memberID == setProductID || seen[memberID] {
+			return domainerr.InvalidProductField(model.FieldMemberProductIDs, "is not a valid member")
+		}
+		if _, ok := m.products[memberID]; !ok {
+			return domainerr.InvalidProductField(model.FieldMemberProductIDs, "does not exist")
+		}
+		seen[memberID] = true
+	}
+	if len(memberIDs) == 0 {
+		delete(m.members, setProductID)
+	} else {
+		m.members[setProductID] = append([]uuid.UUID(nil), memberIDs...)
+	}
+	return nil
+}
+
+// ListSetMembers returns a set's members in order, as the administrator detail
+// reads them. The public shape never calls it (research D18).
+func (m *fauxProducts) ListSetMembers(_ context.Context, setProductID uuid.UUID) ([]domainrepo.SetMember, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	memberIDs := m.members[setProductID]
+	if len(memberIDs) == 0 {
+		return nil, nil
+	}
+	out := make([]domainrepo.SetMember, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		member, ok := m.products[memberID]
+		if !ok {
+			continue
+		}
+		out = append(out, domainrepo.SetMember{ID: member.ID, Name: member.Name, Slug: member.Slug})
+	}
+	return out, nil
+}
+
 // orderedPictures returns the pictures in the FR-017 display order.
 func orderedPictures(pictures []model.Picture) []model.Picture {
 	if len(pictures) == 0 {
@@ -408,7 +480,7 @@ func requireAudited(t *testing.T, recorder *recordingAuditor, action string, act
 }
 
 func maintenanceService(repo *fauxProducts, authority appinterface.Auditor) *Service {
-	return New(Service{Products: repo, Audit: authority, Mapper: mapper.New()})
+	return New(Service{Products: repo, Audit: authority, Mapper: mapper.New(), Tx: &fauxUnitOfWork{}})
 }
 
 // FR-009: create returns a product in COMING_SOON, persists it and records
@@ -628,4 +700,158 @@ func TestTheAuditedActorComesFromTheSessionContext(t *testing.T) {
 	if events[0].actorID == nil || *events[0].actorID != actor.ID || events[0].actorRole != string(access.RoleAdmin) {
 		t.Fatalf("the audit event must name the session's administrator, got %+v", events[0])
 	}
+}
+
+// --- User Story 5: combo sets ---
+
+// setFixture builds the maintenance service over the in-memory repository and a
+// recording auditor, with two ordinary member products already stored.
+type setFixture struct {
+	service  *Service
+	repo     *fauxProducts
+	audit    *recordingAuditor
+	actor    appinterface.Actor
+	category uuid.UUID
+}
+
+func newSetFixture(t *testing.T) *setFixture {
+	t.Helper()
+	repo := newFauxProducts()
+	audit := &recordingAuditor{}
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	return &setFixture{
+		service:  maintenanceService(repo, audit),
+		repo:     repo,
+		audit:    audit,
+		actor:    adminActor(),
+		category: category,
+	}
+}
+
+// member seeds one ordinary product a set can contain.
+func (f *setFixture) member(t *testing.T, name, slug string, amount int64) *model.Product {
+	t.Helper()
+	return f.repo.seed(t, model.ProductDraft{
+		Name: name, Slug: slug, Price: price(amount), CategoryID: f.category,
+	}, time.Now().UTC().Add(-time.Hour))
+}
+
+// ctx is the request context carrying the session's administrator, never an
+// actor drawn from the input (FR-015).
+func (f *setFixture) ctx() context.Context {
+	return appinterface.WithActor(context.Background(), f.actor)
+}
+
+// createSet stores one combo set through the use case.
+func (f *setFixture) createSet(t *testing.T, slug string, amount int64, memberIDs []uuid.UUID) dto.AdminProductDetailOutput {
+	t.Helper()
+	out, err := f.service.CreateProduct(f.ctx(), dto.CreateProductInput{
+		Name: "Combo " + slug, Slug: slug, Price: price(amount), CategoryID: f.category,
+		Position: 20, IsSet: true, MemberProductIDs: memberIDs,
+	})
+	if err != nil {
+		t.Fatalf("CreateProduct(%q): %v", slug, err)
+	}
+	return out
+}
+
+// FR-039, research D10: creating a set records its members and keeps the price
+// the operator set rather than summing the members, and the membership write runs
+// inside the same transaction as the product write.
+func TestCreatingASetRecordsItsMembersAndKeepsTheOperatorsPrice(t *testing.T) {
+	f := newSetFixture(t)
+	first := f.member(t, "First member", "first-member", 100000)
+	second := f.member(t, "Second member", "second-member", 50000)
+
+	out := f.createSet(t, "combo-aki", 300000, []uuid.UUID{first.ID, second.ID})
+
+	if !out.IsSet {
+		t.Fatalf("the created product must be a set, got %+v", out)
+	}
+	// The sum of the members would be 150000; the set must carry 300000.
+	if out.Price.Amount != 300000 {
+		t.Fatalf("a set keeps the operator's price, not the members' sum: got %d", out.Price.Amount)
+	}
+	if len(out.Members) != 2 || out.Members[0].ID != first.ID || out.Members[1].ID != second.ID {
+		t.Fatalf("the set must record its members in order, got %+v", out.Members)
+	}
+
+	calls := f.repo.ops("replaceMembers")
+	if len(calls) != 1 {
+		t.Fatalf("expected one membership write, got %d", len(calls))
+	}
+	if !calls[0].inTx {
+		t.Fatal("the membership write must run inside the caller's transaction (FR-039)")
+	}
+	requireAudited(t, f.audit, constant.AuditProductCreated, f.actor, out.ID)
+}
+
+// FR-039: editing a set replaces the whole member list rather than appending or
+// merging.
+func TestEditingASetReplacesTheWholeMemberList(t *testing.T) {
+	f := newSetFixture(t)
+	first := f.member(t, "First member", "first-member", 100000)
+	second := f.member(t, "Second member", "second-member", 50000)
+	replacement := f.member(t, "Replacement member", "replacement-member", 70000)
+	set := f.createSet(t, "combo-aki", 300000, []uuid.UUID{first.ID, second.ID})
+
+	next := []uuid.UUID{replacement.ID}
+	out, err := f.service.UpdateProduct(f.ctx(), dto.UpdateProductInput{
+		ID: set.ID, MemberProductIDs: &next,
+	})
+	if err != nil {
+		t.Fatalf("UpdateProduct: %v", err)
+	}
+	if len(out.Members) != 1 || out.Members[0].ID != replacement.ID {
+		t.Fatalf("an edit must replace the whole member list, got %+v", out.Members)
+	}
+	requireAudited(t, f.audit, constant.AuditProductUpdated, f.actor, set.ID)
+}
+
+// FR-039: a member identifier no product carries is refused naming the member
+// field, not reported as a server failure.
+func TestASetMemberThatDoesNotExistIsRefusedNamingTheField(t *testing.T) {
+	f := newSetFixture(t)
+	unknown := uuid.New()
+
+	out, err := f.service.CreateProduct(f.ctx(), dto.CreateProductInput{
+		Name: "Combo unknown", Slug: "combo-unknown", Price: price(100), CategoryID: f.category,
+		Position: 1, IsSet: true, MemberProductIDs: []uuid.UUID{unknown},
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldMemberProductIDs {
+		t.Fatalf("expected the field %q to be named, got %v", model.FieldMemberProductIDs, err)
+	}
+	if out.ID != uuid.Nil {
+		t.Fatalf("a refused create must not answer a product, got %+v", out)
+	}
+	if len(f.audit.snapshot()) != 0 {
+		t.Fatalf("a refused create must record nothing, got %v", f.audit.actions())
+	}
+}
+
+// US5 scenario 3: removing a set removes its membership rows and touches none of
+// its members.
+func TestRemovingASetLeavesItsMembersAlone(t *testing.T) {
+	f := newSetFixture(t)
+	first := f.member(t, "First member", "first-member", 100000)
+	second := f.member(t, "Second member", "second-member", 50000)
+	set := f.createSet(t, "combo-aki", 300000, []uuid.UUID{first.ID, second.ID})
+
+	if err := f.service.DeleteProduct(f.ctx(), dto.AdminProductRefInput{ID: set.ID}); err != nil {
+		t.Fatalf("DeleteProduct: %v", err)
+	}
+	if _, err := f.repo.FindByID(context.Background(), set.ID); !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("the removed set must be gone, got %v", err)
+	}
+	for _, member := range []*model.Product{first, second} {
+		if _, err := f.repo.FindByID(context.Background(), member.ID); err != nil {
+			t.Fatalf("removing a set must not touch its member %s: %v", member.Slug, err)
+		}
+	}
+	requireAudited(t, f.audit, constant.AuditProductDeleted, f.actor, set.ID)
 }

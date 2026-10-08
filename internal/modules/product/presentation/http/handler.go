@@ -268,12 +268,14 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.CreateProduct(ctx, appdto.CreateProductInput{
-		Name:        req.Name,
-		Slug:        req.Slug,
-		Description: req.Description,
-		Price:       model.Price{Amount: req.Price.Amount, Currency: req.Price.Currency},
-		CategoryID:  req.CategoryID,
-		Position:    req.Position,
+		Name:             req.Name,
+		Slug:             req.Slug,
+		Description:      req.Description,
+		Price:            model.Price{Amount: req.Price.Amount, Currency: req.Price.Currency},
+		CategoryID:       req.CategoryID,
+		Position:         req.Position,
+		IsSet:            req.IsSet,
+		MemberProductIDs: req.MemberProductIDs,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -301,13 +303,15 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.UpdateProduct(ctx, appdto.UpdateProductInput{
-		ID:          id,
-		Name:        req.Name,
-		Slug:        req.Slug,
-		Description: req.Description,
-		Price:       toPricePointer(req.Price),
-		CategoryID:  req.CategoryID,
-		Position:    req.Position,
+		ID:               id,
+		Name:             req.Name,
+		Slug:             req.Slug,
+		Description:      req.Description,
+		Price:            toPricePointer(req.Price),
+		CategoryID:       req.CategoryID,
+		Position:         req.Position,
+		IsSet:            req.IsSet,
+		MemberProductIDs: req.MemberProductIDs,
 	})
 	if err != nil {
 		h.fail(w, r, err)

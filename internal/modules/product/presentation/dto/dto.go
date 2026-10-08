@@ -100,6 +100,11 @@ type CreateProductRequest struct {
 	CategoryID uuid.UUID `json:"categoryId"`
 	// Position is the ordering preference.
 	Position int `json:"position"`
+	// IsSet reports whether the product is a combo set (FR-039, research D10).
+	IsSet bool `json:"isSet"`
+	// MemberProductIDs are the products inside the set, in the order they are
+	// listed. They are recorded only when IsSet is true (research D10).
+	MemberProductIDs []uuid.UUID `json:"memberProductIds"`
 }
 
 // UpdateProductRequest is the administrator partial-edit body
@@ -121,6 +126,12 @@ type UpdateProductRequest struct {
 	CategoryID *uuid.UUID `json:"categoryId"`
 	// Position is the new position; nil keeps the current value.
 	Position *int `json:"position"`
+	// IsSet is the new combo-set flag; nil keeps the current value.
+	IsSet *bool `json:"isSet"`
+	// MemberProductIDs replaces the whole member list when non-nil. It is
+	// recorded only when the product is a set (research D10); sending an empty
+	// list clears the set's members.
+	MemberProductIDs *[]uuid.UUID `json:"memberProductIds"`
 }
 
 // ChangeStateRequest is the administrator sell-state transition body

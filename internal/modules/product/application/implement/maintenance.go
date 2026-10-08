@@ -77,7 +77,19 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 	if err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
-	if err := s.Products.Create(ctx, product); err != nil {
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if err := s.Products.Create(txCtx, product); err != nil {
+			return err
+		}
+		// The membership rows are written in the same transaction as the product,
+		// so a set is never stored without its members (FR-039). A member that no
+		// product carries is refused by the repository and rolls the whole create
+		// back, naming the field.
+		if product.IsSet && len(in.MemberProductIDs) > 0 {
+			return s.Products.ReplaceSetMembers(txCtx, product.ID, in.MemberProductIDs)
+		}
+		return nil
+	}); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
 	s.recordProduct(ctx, constant.AuditProductCreated, product.ID, map[string]any{"slug": product.Slug})
@@ -97,6 +109,7 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 		return dto.AdminProductDetailOutput{}, err
 	}
 	product := stored.Product
+	wasSet := product.IsSet
 	if err := product.Apply(model.ProductEdit{
 		Name:               in.Name,
 		Slug:               in.Slug,
@@ -110,7 +123,23 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 	}, now()); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
-	if err := s.Products.Update(ctx, &product); err != nil {
+	// The membership rows move in the same transaction as the product row. A
+	// member list is written only while the product is a set: sending it on an
+	// ordinary product is ignored, and turning a set back into an ordinary product
+	// clears its members so no stale rows survive the flag (FR-039).
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if err := s.Products.Update(txCtx, &product); err != nil {
+			return err
+		}
+		switch {
+		case product.IsSet && in.MemberProductIDs != nil:
+			return s.Products.ReplaceSetMembers(txCtx, product.ID, *in.MemberProductIDs)
+		case !product.IsSet && wasSet:
+			return s.Products.ReplaceSetMembers(txCtx, product.ID, nil)
+		default:
+			return nil
+		}
+	}); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
 	s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"slug": product.Slug})

@@ -257,14 +257,14 @@ individual items without it.
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementing.**
 
-- [ ] T058 [P] [US5] Use-case tests in `internal/modules/product/application/implement/maintenance_test.go`: creating a set records its members and keeps the operator's price rather than summing the members (FR-038, research D10); editing replaces the whole member list; a member identifier that does not exist is refused naming the field; and removing a set leaves its members alone (US5 scenario 3)
-- [ ] T059 [P] [US5] HTTP tests in `internal/modules/product/presentation/http/maintenance_test.go`: the administrator detail lists a set's members in order; the public detail lists **none** (research D18, `quickstart.md` 11c); and a self-referencing member is refused rather than producing a `500` (`quickstart.md` 11g)
-- [ ] T060 [US5] Integration test in `internal/modules/product/presentation/http/maintenance_integration_test.go` behind the `integration` tag: the membership rows are written and read in order, removing a set cascades its membership rows and leaves the members, and removing a member removes it from the set it was in
+- [x] T058 [P] [US5] Use-case tests in `internal/modules/product/application/implement/maintenance_test.go`: creating a set records its members and keeps the operator's price rather than summing the members (FR-039, research D10); editing replaces the whole member list; a member identifier that does not exist is refused naming the field; and removing a set leaves its members alone (US5 scenario 3)
+- [x] T059 [P] [US5] HTTP tests in `internal/modules/product/presentation/http/maintenance_test.go`: the administrator detail lists a set's members in order; the public detail lists **none** (research D18, `quickstart.md` 11c); and a self-referencing member is refused rather than producing a `500` (`quickstart.md` 11g)
+- [x] T060 [US5] Integration test in `internal/modules/product/presentation/http/maintenance_integration_test.go` behind the `integration` tag: the membership rows are written and read in order, removing a set cascades its membership rows and leaves the members, and removing a member removes it from the set it was in
 
 ### Implementation for User Story 5
 
-- [ ] T061 [US5] Implement set-membership reads and writes in `internal/modules/product/infrastructure/implement/postgres/product.go` and wire them through `internal/modules/product/application/implement/maintenance.go`, inside the same transaction as the product write so a set is never created without its members (FR-038)
-- [ ] T062 [US5] Add `isSet` and `memberProductIds` to the create and update request shapes in `internal/modules/product/presentation/dto/dto.go` and the `members` field to the administrator detail shape, leaving the public shape without it (research D18)
+- [x] T061 [US5] Implement set-membership reads and writes in `internal/modules/product/infrastructure/implement/postgres/product.go` and wire them through `internal/modules/product/application/implement/maintenance.go`, inside the same transaction as the product write so a set is never created without its members (FR-038)
+- [x] T062 [US5] Add `isSet` and `memberProductIds` to the create and update request shapes in `internal/modules/product/presentation/dto/dto.go` and the `members` field to the administrator detail shape, leaving the public shape without it (research D18)
 
 **Checkpoint**: US5 is functional and the catalogue still sells individual items unchanged.
 

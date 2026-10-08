@@ -511,10 +511,15 @@ type uploadRepo struct {
 	mu       sync.Mutex
 	products map[uuid.UUID]model.Product
 	pictures map[uuid.UUID][]model.Picture
+	members  map[uuid.UUID][]uuid.UUID
 }
 
 func newUploadRepo() *uploadRepo {
-	return &uploadRepo{products: make(map[uuid.UUID]model.Product), pictures: make(map[uuid.UUID][]model.Picture)}
+	return &uploadRepo{
+		products: make(map[uuid.UUID]model.Product),
+		pictures: make(map[uuid.UUID][]model.Picture),
+		members:  make(map[uuid.UUID][]uuid.UUID),
+	}
 }
 
 func (r *uploadRepo) seed(t *testing.T, slug string) *model.Product {
@@ -571,6 +576,69 @@ func (r *uploadRepo) FindByID(_ context.Context, id uuid.UUID) (*domainrepo.Prod
 		return nil, domainerr.ErrProductNotFound
 	}
 	return &domainrepo.ProductView{Product: product, Pictures: model.OrderPictures(r.pictures[id])}, nil
+}
+
+// Create stores a new product. The fake needs it so the set tests can go through
+// the real create use case, which is the only writer of the combo-set members.
+func (r *uploadRepo) Create(_ context.Context, product *model.Product) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.products[product.ID] = *product
+	return nil
+}
+
+// Update writes an existing product.
+func (r *uploadRepo) Update(_ context.Context, product *model.Product) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.products[product.ID]; !ok {
+		return domainerr.ErrProductNotFound
+	}
+	r.products[product.ID] = *product
+	return nil
+}
+
+// ReplaceSetMembers mirrors the adapter's classification: a member no product
+// carries, a duplicate and a self-reference are refused naming memberProductIds,
+// which is what makes the self-reference an answerable 400 rather than a 500.
+func (r *uploadRepo) ReplaceSetMembers(_ context.Context, setProductID uuid.UUID, memberIDs []uuid.UUID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.products[setProductID]; !ok {
+		return domainerr.ErrProductNotFound
+	}
+	seen := make(map[uuid.UUID]bool, len(memberIDs))
+	for _, memberID := range memberIDs {
+		if memberID == setProductID || seen[memberID] {
+			return domainerr.InvalidProductField(model.FieldMemberProductIDs, "is not a valid member")
+		}
+		if _, ok := r.products[memberID]; !ok {
+			return domainerr.InvalidProductField(model.FieldMemberProductIDs, "does not exist")
+		}
+		seen[memberID] = true
+	}
+	if len(memberIDs) == 0 {
+		delete(r.members, setProductID)
+	} else {
+		r.members[setProductID] = append([]uuid.UUID(nil), memberIDs...)
+	}
+	return nil
+}
+
+// ListSetMembers returns a set's members in order for the administrator detail.
+func (r *uploadRepo) ListSetMembers(_ context.Context, setProductID uuid.UUID) ([]domainrepo.SetMember, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	memberIDs := r.members[setProductID]
+	out := make([]domainrepo.SetMember, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		member, ok := r.products[memberID]
+		if !ok {
+			continue
+		}
+		out = append(out, domainrepo.SetMember{ID: member.ID, Name: member.Name, Slug: member.Slug})
+	}
+	return out, nil
 }
 
 // uploadFixture is the real picture use case over the in-memory repository and the
@@ -724,5 +792,101 @@ func TestOversizedUploadIsRefusedWithTheSizeCode(t *testing.T) {
 	}
 	if f.media.uploads != 0 {
 		t.Fatalf("an oversized upload must not reach the provider, got %d uploads", f.media.uploads)
+	}
+}
+
+// --- User Story 5: combo sets ---
+
+// setBody builds a set create body carrying the operator's price, the category
+// and the given members, in order.
+func setBody(categoryID uuid.UUID, slug string, amount int64, memberIDs []uuid.UUID) string {
+	members := make([]string, 0, len(memberIDs))
+	for _, id := range memberIDs {
+		members = append(members, `"`+id.String()+`"`)
+	}
+	return `{"name":"Combo ` + slug + `","slug":"` + slug + `","price":{"amount":` +
+		fmt.Sprintf("%d", amount) + `,"currency":"VND"},"categoryId":"` + categoryID.String() +
+		`","position":20,"isSet":true,"memberProductIds":[` + strings.Join(members, ",") + `]}`
+}
+
+// FR-039, research D18, quickstart 11b: the administrator detail lists a set's
+// members in the order they were stored.
+func TestTheAdministratorDetailListsASetsMembersInOrder(t *testing.T) {
+	f := newUploadFixture(t, 4096)
+	first := f.repo.seed(t, "member-first")
+	second := f.repo.seed(t, "member-second")
+
+	create := performJSON(f.router, http.MethodPost, adminProductsPath, setBody(uuid.New(), "combo-aki", 300000, []uuid.UUID{first.ID, second.ID}), "admin-token")
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create set: expected 201, got %d (%s)", create.Code, create.Body.String())
+	}
+	created := decodeAdminProduct(t, create)
+	if !created.IsSet || created.Price.Amount != 300000 {
+		t.Fatalf("the created set must keep its own price: %+v", created)
+	}
+	if len(created.Members) != 2 || created.Members[0].ID != first.ID || created.Members[1].ID != second.ID {
+		t.Fatalf("the create answer must list the members in order, got %+v", created.Members)
+	}
+
+	rec := performJSON(f.router, http.MethodGet, adminProductsPath+"/"+created.ID.String(), "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read set: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	detail := decodeAdminProduct(t, rec)
+	if len(detail.Members) != 2 || detail.Members[0].ID != first.ID || detail.Members[1].ID != second.ID {
+		t.Fatalf("the administrator detail must list the members in order, got %+v", detail.Members)
+	}
+}
+
+// research D18, quickstart 11c: the public detail does not enumerate a set's
+// contents, and carries no `isSet` either.
+func TestThePublicDetailDoesNotEnumerateASet(t *testing.T) {
+	handler, repo, visibility := newPublicFixture(t)
+	category := uuid.New()
+	set := repo.seed(t, model.ProductDraft{
+		Name: "Combo Aki", Slug: "combo-aki", Price: model.Price{Amount: 300000, Currency: "VND"},
+		CategoryID: category, Position: 20, IsSet: true,
+	}, time.Now().UTC().Add(-time.Hour))
+	repo.move(t, set.ID, (*model.Product).Launch)
+	visibility.visible = append(visibility.visible, category)
+
+	rec := perform(handler, http.MethodGet, "/api/v1/products/combo-aki")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	for _, forbidden := range []string{"members", "isSet"} {
+		if strings.Contains(rec.Body.String(), forbidden) {
+			t.Fatalf("the public detail must not carry %q: %s", forbidden, rec.Body.String())
+		}
+	}
+}
+
+// quickstart 11g: a self-referencing member is refused as a validation error
+// naming the member field, never as a 500. The set is addressed by its own
+// identifier because the server assigns it, so only an edit can name it.
+func TestASelfReferencingMemberIsRefusedNotA500(t *testing.T) {
+	f := newUploadFixture(t, 4096)
+	member := f.repo.seed(t, "member-of-self")
+
+	create := performJSON(f.router, http.MethodPost, adminProductsPath, setBody(uuid.New(), "combo-self", 100, []uuid.UUID{member.ID}), "admin-token")
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create set: expected 201, got %d (%s)", create.Code, create.Body.String())
+	}
+	set := decodeAdminProduct(t, create)
+
+	rec := performJSON(f.router, http.MethodPatch, adminProductsPath+"/"+set.ID.String(),
+		`{"memberProductIds":["`+set.ID.String()+`"]}`, "admin-token")
+	if rec.Code == http.StatusInternalServerError {
+		t.Fatalf("a self-referencing member must not produce a 500: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeAdminError(t, rec)
+	if body.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "memberProductIds" {
+		t.Fatalf("expected the detail to name memberProductIds, got %+v", body.Error.Details)
 	}
 }

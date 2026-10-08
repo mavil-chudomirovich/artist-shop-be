@@ -585,3 +585,129 @@ func containsSlug(slugs []string, want string) bool {
 	}
 	return false
 }
+
+// FR-039, US5 scenarios 1-3 against real PostgreSQL: the membership rows are
+// written and read in order, removing a member drops it from the set it was in
+// while leaving the others, and removing the set cascades its membership rows and
+// leaves the members alone.
+func TestSetMembershipAgainstPostgres(t *testing.T) {
+	f := newProductMaintenanceFixture(t)
+	category := seedCatalogueCategory(t, f.categoryRepo, "combo", true)
+	first := seedActiveProduct(t, f.products, category.ID, "combo-member-first")
+	second := seedActiveProduct(t, f.products, category.ID, "combo-member-second")
+
+	create := f.call(http.MethodPost, adminProductsPath, setBody(category.ID, "combo-aki", 300000, []uuid.UUID{first.ID, second.ID}), f.adminToken)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create set: expected 201, got %d (%s)", create.Code, create.Body.String())
+	}
+	set := decodeAdminProduct(t, create)
+	if !set.IsSet || set.Price.Amount != 300000 {
+		t.Fatalf("the set must keep its own price rather than the members' sum: %+v", set)
+	}
+	if len(set.Members) != 2 || set.Members[0].ID != first.ID || set.Members[1].ID != second.ID {
+		t.Fatalf("the members must be written and read in order, got %+v", set.Members)
+	}
+
+	// The rows themselves exist in the stored order.
+	rows, err := f.pool.Query(context.Background(),
+		`SELECT member_product_id FROM product_set_items WHERE set_product_id = $1 ORDER BY position`, set.ID)
+	if err != nil {
+		t.Fatalf("read membership rows: %v", err)
+	}
+	defer rows.Close()
+	ordered := make([]uuid.UUID, 0, 2)
+	for rows.Next() {
+		var memberID uuid.UUID
+		if err := rows.Scan(&memberID); err != nil {
+			t.Fatalf("scan membership row: %v", err)
+		}
+		ordered = append(ordered, memberID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate membership rows: %v", err)
+	}
+	if len(ordered) != 2 || ordered[0] != first.ID || ordered[1] != second.ID {
+		t.Fatalf("the membership rows must be stored in order, got %v", ordered)
+	}
+
+	// A self-referencing member reaches the storage check and is reported as a
+	// validation error naming the member field, not as a 500, and the failed
+	// transaction leaves the stored members untouched (quickstart 11g).
+	selfRef := f.call(http.MethodPatch, adminProductsPath+"/"+set.ID.String(),
+		`{"memberProductIds":["`+set.ID.String()+`"]}`, f.adminToken)
+	if selfRef.Code != http.StatusBadRequest {
+		t.Fatalf("a self-referencing member: expected 400, got %d (%s)", selfRef.Code, selfRef.Body.String())
+	}
+	if body := decodeAdminError(t, selfRef); body.Error.Code != "VALIDATION_ERROR" {
+		t.Fatalf("a self-referencing member: expected VALIDATION_ERROR, got %s", body.Error.Code)
+	}
+	if got := f.count(t, `SELECT count(*) FROM product_set_items WHERE set_product_id = $1`, set.ID); got != 2 {
+		t.Fatalf("a refused self-reference must leave the members untouched, got %d", got)
+	}
+
+	// Removing a member removes it from the set it was in and leaves the other.
+	removeMember := f.call(http.MethodDelete, adminProductsPath+"/"+first.ID.String(), "", f.adminToken)
+	if removeMember.Code != http.StatusNoContent {
+		t.Fatalf("remove member: expected 204, got %d (%s)", removeMember.Code, removeMember.Body.String())
+	}
+	if got := f.count(t, `SELECT count(*) FROM product_set_items WHERE set_product_id = $1 AND member_product_id = $2`, set.ID, first.ID); got != 0 {
+		t.Fatalf("removing a member must drop it from the set, got %d membership rows", got)
+	}
+	if got := f.count(t, `SELECT count(*) FROM product_set_items WHERE set_product_id = $1 AND member_product_id = $2`, set.ID, second.ID); got != 1 {
+		t.Fatalf("removing one member must leave the other in the set, got %d membership rows", got)
+	}
+
+	// Removing the set cascades its membership rows and leaves the member.
+	removeSet := f.call(http.MethodDelete, adminProductsPath+"/"+set.ID.String(), "", f.adminToken)
+	if removeSet.Code != http.StatusNoContent {
+		t.Fatalf("remove set: expected 204, got %d (%s)", removeSet.Code, removeSet.Body.String())
+	}
+	if got := f.count(t, `SELECT count(*) FROM product_set_items WHERE set_product_id = $1`, set.ID); got != 0 {
+		t.Fatalf("removing a set must cascade its membership rows, got %d", got)
+	}
+	if got := f.count(t, `SELECT count(*) FROM products WHERE id = $1`, second.ID); got != 1 {
+		t.Fatalf("removing a set must leave its member, product count is %d", got)
+	}
+}
+
+// T060 negative control: a self-referencing membership is refused by the
+// storage check product_set_items_not_self_ck, not by an application check.
+// Dropping the constraint inside a rollback-only transaction lets the same row
+// through, which is the evidence that the guarantee lives in storage.
+func TestTheSelfReferenceCheckRefusesASelfMemberAgainstPostgres(t *testing.T) {
+	f := newProductMaintenanceFixture(t)
+	ctx := context.Background()
+	category := seedCatalogueCategory(t, f.categoryRepo, "self-check", true)
+	product := seedActiveProduct(t, f.products, category.ID, "self-product")
+
+	if err := f.rawInsertSelfMember(ctx, product.ID); err == nil {
+		t.Fatal("the storage layer accepted a self-referencing membership")
+	} else if name := constraintNameOf(err); name != "product_set_items_not_self_ck" {
+		t.Fatalf("expected product_set_items_not_self_ck to refuse the row, got %v", err)
+	}
+
+	// Negative control: without the check the same row is storable.
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `ALTER TABLE product_set_items DROP CONSTRAINT product_set_items_not_self_ck`); err != nil {
+		t.Fatalf("drop the check inside the transaction: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO product_set_items (set_product_id, member_product_id, position) VALUES ($1, $1, 0)`,
+		product.ID); err != nil {
+		t.Fatalf("without the check a self-referencing membership must be storable, got %v", err)
+	}
+}
+
+// rawInsertSelfMember writes a self-referencing membership straight into the
+// table, bypassing the adapter and the domain, so the check constraint is the
+// only thing that can refuse it.
+func (f *productMaintenanceFixture) rawInsertSelfMember(ctx context.Context, productID uuid.UUID) error {
+	_, err := f.pool.Exec(ctx,
+		`INSERT INTO product_set_items (set_product_id, member_product_id, position) VALUES ($1, $1, 0)`,
+		productID)
+	return err
+}
