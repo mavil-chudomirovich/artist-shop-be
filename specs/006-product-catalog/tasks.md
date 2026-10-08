@@ -227,15 +227,15 @@ and it changes module 03. It is P2 for that reason.
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementing.** T026 already proves the
 > foreign key at the storage layer; these prove the operator's answer and the wiring around it.
 
-- [ ] T052 [P] [US4] HTTP test in `internal/modules/category/presentation/http/maintenance_test.go` asserting that removing a category which still has products answers `409 CATEGORY_IN_USE` rather than `500`, and that the category and its products are both still there afterwards (FR-036, FR-037)
-- [ ] T053 [P] [US4] Error-mapping test in `internal/modules/category/presentation/http/errors_test.go` asserting the new sentinel maps to `409` with its code, alongside the existing `CATEGORY_*` mappings
-- [ ] T054 [US4] Integration test in `internal/modules/category/presentation/http/maintenance_integration_test.go` behind the `integration` tag: with a real product referencing the category, the delete is refused; after the product is removed the delete succeeds; and the refusal is produced by the storage layer, proven by asserting the error is a foreign-key violation before it is translated (FR-035, FR-036, SC-005)
+- [x] T052 [P] [US4] HTTP test in `internal/modules/category/presentation/http/maintenance_test.go` asserting that removing a category which still has products answers `409 CATEGORY_IN_USE` rather than `500`, and that the category and its products are both still there afterwards (FR-036, FR-037)
+- [x] T053 [P] [US4] Error-mapping test in `internal/modules/category/presentation/http/errors_test.go` asserting the new sentinel maps to `409` with its code, alongside the existing `CATEGORY_*` mappings
+- [x] T054 [US4] Integration test in `internal/modules/category/presentation/http/maintenance_integration_test.go` behind the `integration` tag: with a real product referencing the category, the delete is refused; after the product is removed the delete succeeds; and the refusal is produced by the storage layer, proven by asserting the error is a foreign-key violation before it is translated (FR-035, FR-036, SC-005)
 
 ### Implementation for User Story 4
 
-- [ ] T055 [US4] Add the `CATEGORY_IN_USE` code to `internal/modules/category/domain/constant/codes.go`, its sentinel to `internal/modules/category/domain/error/errors.go`, and its mapping to `internal/modules/category/presentation/http/errors.go` (FR-036)
-- [ ] T056 [US4] Translate the storage refusal in `internal/modules/category/infrastructure/implement/postgres/category.go`: classify the foreign-key violation by its SQLSTATE rather than by the database's message text, and report the new sentinel so the use case can answer it. Module 03 MUST NOT check for products itself — that would be reading module 04's table (research D15)
-- [ ] T057 [US4] Confirm the removal rule is now reported in `docs/modules/03-category.md` as met rather than carried forward, and that `specs/005-category-catalog/deferred.md` D1's closing condition is satisfied. Do not edit 005's spec — superseding it with the record here is what the constitution requires
+- [x] T055 [US4] Add the `CATEGORY_IN_USE` code to `internal/modules/category/domain/constant/codes.go`, its sentinel to `internal/modules/category/domain/error/errors.go`, and its mapping to `internal/modules/category/presentation/http/errors.go` (FR-036)
+- [x] T056 [US4] Translate the storage refusal in `internal/modules/category/infrastructure/implement/postgres/category.go`: classify the foreign-key violation by its SQLSTATE rather than by the database's message text, and report the new sentinel so the use case can answer it. Module 03 MUST NOT check for products itself — that would be reading module 04's table (research D15)
+- [x] T057 [US4] Confirm the removal rule is now reported in `docs/modules/03-category.md` as met rather than carried forward, and that `specs/005-category-catalog/deferred.md` D1's closing condition is satisfied. Do not edit 005's spec — superseding it with the record here is what the constitution requires
 
 **Checkpoint**: The debt feature 005 left is paid, and module 03's completion criterion is true.
 

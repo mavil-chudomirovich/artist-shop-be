@@ -59,6 +59,12 @@ func mapError(err error) *httpx.AppError {
 			coded(constant.CodeCategorySlugTaken, http.StatusConflict, "Another category already uses that slug"),
 			model.FieldSlug, "choose a different slug",
 		)
+	case errors.Is(err, domainerr.ErrCategoryInUse):
+		// The category is well formed and the request is understandable; what
+		// stands in the way is that products still belong to it. That is a
+		// conflict, not a validation failure, and the message names the operator's
+		// own fact rather than the database's wording (FR-036, FR-037).
+		return coded(constant.CodeCategoryInUse, http.StatusConflict, "Category still has products and cannot be removed")
 	case errors.As(err, &invalid):
 		// A value that is invalid on its own is a request-shape problem the
 		// client fixes, so it stays on the shared VALIDATION_ERROR and adds no

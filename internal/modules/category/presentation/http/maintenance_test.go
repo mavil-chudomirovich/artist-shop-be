@@ -13,7 +13,10 @@ import (
 	"github.com/google/uuid"
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/dto"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/error"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/presentation/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
@@ -373,5 +376,67 @@ func TestTheAdministratorListRouteResolves(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"isVisible"`) {
 		t.Fatalf("the administrator list must carry the display state: %s", rec.Body.String())
+	}
+}
+
+// inUseRepo is an in-memory CategoryRepository that models the one fact the
+// category module cannot see itself: whether products still reference a
+// category. It answers a delete with domainerr.ErrCategoryInUse when they do,
+// exactly as the restricting foreign key makes storage answer it, so the whole
+// real use-case, mapper and HTTP path can be driven without a database. The
+// storage guarantee itself is proven against real PostgreSQL by the integration
+// test; this one proves the operator's answer and the wiring around it.
+type inUseRepo struct {
+	*collisionRepo
+	productsByCategory map[uuid.UUID]int
+}
+
+func newInUseRepo() *inUseRepo {
+	return &inUseRepo{
+		collisionRepo:      newCollisionRepo(),
+		productsByCategory: make(map[uuid.UUID]int),
+	}
+}
+
+// Delete refuses while any product references the category, mirroring
+// products_category_fk ON DELETE RESTRICT (FR-036).
+func (r *inUseRepo) Delete(ctx context.Context, id uuid.UUID) error {
+	if r.productsByCategory[id] > 0 {
+		return domainerr.ErrCategoryInUse
+	}
+	return r.collisionRepo.Delete(ctx, id)
+}
+
+// FR-036, FR-037: removing a category that still has products answers 409
+// CATEGORY_IN_USE rather than 500 or 204, and neither the category nor the
+// products that reference it are touched.
+func TestRemovingACategoryWithProductsAnswers409AndKeepsBoth(t *testing.T) {
+	repo := newInUseRepo()
+	service := implement.New(implement.Service{Categories: repo, Mapper: mapper.New()})
+	router := newAdminRouter(service, maintenanceHooks(nil))
+
+	created := createExisting(t, router)
+	repo.productsByCategory[created.ID] = 1
+
+	rec := performJSON(router, http.MethodDelete, adminCategoriesPath+"/"+created.ID.String(), "", "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeAdminError(t, rec); body.Error.Code != constant.CodeCategoryInUse {
+		t.Fatalf("expected %s, got %s", constant.CodeCategoryInUse, body.Error.Code)
+	}
+
+	// The category survives: the administrator still reads it.
+	read := performJSON(router, http.MethodGet, adminCategoriesPath+"/"+created.ID.String(), "", "admin-token")
+	if read.Code != http.StatusOK {
+		t.Fatalf("the category must survive the refused removal, got %d (%s)", read.Code, read.Body.String())
+	}
+	if decodeAdminCategory(t, read).ID != created.ID {
+		t.Fatal("the surviving category must be the one that was addressed")
+	}
+
+	// Its products survive too: the refusal happened before anything was removed.
+	if repo.productsByCategory[created.ID] != 1 {
+		t.Fatal("a refused removal must not touch the products that reference the category")
 	}
 }

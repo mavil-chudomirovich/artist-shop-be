@@ -22,6 +22,13 @@ var (
 	// ErrCategorySlugTaken is returned when another category already uses the
 	// slug, compared the same way (FR-017, FR-021).
 	ErrCategorySlugTaken = errors.New("category slug taken")
+	// ErrCategoryInUse is returned when a category cannot be removed because
+	// products still reference it. The restricting foreign key on
+	// products.category_id, added by feature 006, is what refuses the removal at
+	// the storage layer; the adapter reports it here so the use case answers a
+	// code an operator can act on rather than an unexplained server failure
+	// (FR-036, FR-037).
+	ErrCategoryInUse = errors.New("category still has products")
 	// ErrCategoryInvalid is returned when a value fails its own rule: a blank
 	// required member, a value longer than its bound, or a slug that is not
 	// URL-safe.

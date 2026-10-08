@@ -46,7 +46,9 @@ type CategoryRepository interface {
 
 	// Delete removes the row. Removal is a hard delete (research D5); the audit
 	// entry is what survives it. It reports domainerr.ErrCategoryNotFound when
-	// no row carries the identifier.
+	// no row carries the identifier, and domainerr.ErrCategoryInUse when the
+	// category is still referenced by products — the refusal comes from the
+	// restricting foreign key added by feature 006 (FR-036).
 	Delete(ctx context.Context, id uuid.UUID) error
 
 	// FindByID returns one category for the administrator surface, including a

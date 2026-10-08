@@ -1,7 +1,7 @@
 # Module 03 — Category
 
-- **Trạng thái Spec Kit**: Hoàn tất phần danh mục (implement + converge; hai tiêu chí phụ
-  thuộc sản phẩm được chuyển tiếp — xem "Các tiêu chí chưa đáp ứng được")
+- **Trạng thái Spec Kit**: Hoàn tất phần danh mục (implement + converge; ràng buộc "không
+  xoá danh mục còn sản phẩm" đã được module 04 Product đóng — xem "Các tiêu chí hoàn thành")
 - **Spec**: [`specs/005-category-catalog/spec.md`](../../specs/005-category-catalog/spec.md)
   — đặc tả danh mục sản phẩm
 - **Plan**: [`specs/005-category-catalog/plan.md`](../../specs/005-category-catalog/plan.md)
@@ -50,28 +50,31 @@ Không (hoãn):
 - [x] Ràng buộc duy nhất có test — hai unique index trên `normalized_name` /
   `normalized_slug` ở tầng lưu trữ, kiểm chứng với PostgreSQL thật và qua endpoint.
 - [x] Danh mục ẩn không xuất hiện với khách, và trả lời y hệt một slug chưa từng tồn tại.
-- [ ] **Ràng buộc "không xoá cứng danh mục còn sản phẩm"** — feature này **chưa thể** đáp
-  ứng; xem bảng bên dưới.
-- [ ] **"Khách xem sản phẩm thuộc danh mục"** — feature này **chưa thể** đáp ứng; cùng lý do.
+- [x] **Ràng buộc "không xoá cứng danh mục còn sản phẩm"** — đã đáp ứng: module 04 Product
+  thêm `products.category_id` tham chiếu `categories(id)` với `ON DELETE RESTRICT`, và module
+  này dịch lỗi khoá ngoại đó thành `409 CATEGORY_IN_USE` (feature 006).
+- [x] **"Khách xem sản phẩm thuộc danh mục"** — đã đáp ứng: module 04 Product giao
+  `GET /api/v1/products?category=<slug>`, lọc sản phẩm theo danh mục (feature 006, FR-006).
 
-### Các tiêu chí chưa đáp ứng được (đã chuyển tiếp)
+### Hai tiêu chí chuyển tiếp, nay đã đóng
 
-Phạm vi MVP của module có hai điểm phụ thuộc vào thực thể **sản phẩm**, mà thực thể đó chưa
-tồn tại — hôm nay hệ thống chỉ lưu tài khoản, địa chỉ và vết audit. Feature
-`005-category-catalog` giao trọn phần danh mục và **nói rõ** phần không thể kiểm chứng,
-thay vì đánh dấu hoàn tất rồi để một luật chưa xong trở nên vô hình. Chi tiết đầy đủ ở
+Phạm vi MVP của module có hai điểm phụ thuộc vào thực thể **sản phẩm**, và cả hai đã được
+**module 04 Product** (feature 006) đóng:
+
+| Tiêu chí | Đóng bởi |
+|---|---|
+| "Không xoá cứng danh mục còn sản phẩm" | `products.category_id` với `ON DELETE RESTRICT`, và module này dịch lỗi khoá ngoại thành `409 CATEGORY_IN_USE` |
+| "Khách xem sản phẩm thuộc danh mục" | `GET /api/v1/products?category=<slug>` lọc sản phẩm theo danh mục |
+
+Feature `005-category-catalog` giao trọn phần danh mục và **nói rõ** phần nó không thể kiểm
+chứng, thay vì đánh dấu hoàn tất rồi để một luật chưa xong trở nên vô hình. Chi tiết đầy đủ ở
 [`specs/005-category-catalog/deferred.md`](../../specs/005-category-catalog/deferred.md)
-(D1, D2).
-
-| Tiêu chí | Vì sao chưa đáp ứng được | Giao khi |
-|---|---|---|
-| "Khách xem sản phẩm thuộc danh mục" | Không có bảng `products` thì không có gì để liệt kê theo danh mục | **Module 04 Product** — endpoint "sản phẩm theo danh mục" lọc bảng sản phẩm theo định danh danh mục |
-| Ràng buộc "không xoá cứng danh mục còn sản phẩm" (có test) | Tham chiếu `products.category_id` nằm ở bảng `products`, không phải bảng `categories`; thêm nó bây giờ là tạo data model của module khác | **Module 04 Product** thêm `products.category_id` tham chiếu `categories(id)` với `ON DELETE RESTRICT`; khi đó ràng buộc trở thành bảo đảm ở tầng lưu trữ |
+(D1, D2 — cả hai đã đóng).
 
 Nửa **kiểm chứng được ngay** đã giao kèm feature này: định danh mà sản phẩm sẽ tham chiếu
 là bất biến và duy nhất (FR-015), và luật xoá đã định nghĩa (hard delete, dòng audit ở
-lại). Phần còn lại — chặn xoá khi còn sản phẩm — trở thành bảo đảm ở tầng lưu trữ ngay khi
-module 04 thêm tham chiếu.
+lại). Phần còn lại — chặn xoá khi còn sản phẩm — nay đã trở thành bảo đảm ở tầng lưu trữ:
+module 04 đã thêm tham chiếu `products_category_fk`.
 
 Hợp đồng HTTP của module nằm ở [api-reference.md](../api-reference.md) mục 5 — danh sách
 endpoint và mã lỗi chỉ có ở đó, file này không nhân bản.

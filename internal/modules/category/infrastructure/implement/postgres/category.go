@@ -34,6 +34,12 @@ const (
 // index rejection (23505).
 const uniqueViolationCode = "23505"
 
+// foreignKeyViolationCode is the SQLSTATE code PostgreSQL reports for a
+// foreign-key rejection (23503). The one foreign key pointing at categories is
+// products_category_fk, created by feature 006, so a delete refused this way
+// means products still reference the category (FR-036, research D15).
+const foreignKeyViolationCode = "23503"
+
 // categoryColumns is the projection every read of the categories table selects.
 //
 // It is deliberately the eight columns a response may carry, matching the "what
@@ -195,11 +201,16 @@ func (r *CategoryRepository) Update(ctx context.Context, category *model.Categor
 // Delete removes the row. Removal is a hard delete (research D5); the audit
 // entry is what survives it. An unknown identifier is reported as
 // domainerr.ErrCategoryNotFound.
+//
+// A delete PostgreSQL refuses because products still reference the row is
+// reported as domainerr.ErrCategoryInUse (FR-036): the restricting foreign key
+// added by feature 006 is what refuses it, so the module never checks for
+// products itself — that would mean reading module 04's table (research D15).
 func (r *CategoryRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	const query = `DELETE FROM categories WHERE id = $1`
 	tag, err := r.querier(ctx).Exec(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("delete category: %w", err)
+		return classifyDeleteError("delete category", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return domainerr.ErrCategoryNotFound
@@ -374,6 +385,23 @@ func classifyWriteError(operation string, err error) error {
 		default:
 			return err
 		}
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+// classifyDeleteError labels a failed delete and maps a foreign-key rejection to
+// the module sentinel that reports the category is still referenced (FR-036).
+//
+// Attribution is by the SQLSTATE PostgreSQL reports, never by its message text:
+// the message is localized and free to change while the SQLSTATE is part of the
+// protocol. products_category_fk is the only foreign key that points at
+// categories, so a 23503 from this delete can only mean products still reference
+// the row. Any other failure is returned unwrapped rather than guessed at, so an
+// unexpected error cannot be quietly reported as a category in use.
+func classifyDeleteError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationCode {
+		return domainerr.ErrCategoryInUse
 	}
 	return fmt.Errorf("%s: %w", operation, err)
 }

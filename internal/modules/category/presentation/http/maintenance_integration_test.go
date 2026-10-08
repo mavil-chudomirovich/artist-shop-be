@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	authdomainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
@@ -393,5 +394,86 @@ func TestTheAdministratorListIncludesHiddenCategoriesAgainstPostgres(t *testing.
 
 	if got := f.publicList(t); len(got) != 1 || got[0] != "cong-khai" {
 		t.Fatalf("the public list must hide the withheld category, got %v", got)
+	}
+}
+
+// seedCategoryProduct inserts a product that references the category, the way
+// module 04's own adapter would, so the restricting foreign key has a live row to
+// refuse against. Raw SQL is deliberate: this test seeds across a module boundary
+// on purpose to prove the storage guarantee, not the product module.
+func seedCategoryProduct(t *testing.T, pool *pgxpool.Pool, categoryID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	slug := "tranh-thu-" + id.String()[:8]
+	const query = `
+		INSERT INTO products
+			(id, name, slug, normalized_slug, description, price_amount, currency, category_id, position, sell_state)
+		VALUES ($1, $2, $3, $4, '', 100, 'VND', $5, 1, 'COMING_SOON')`
+	if _, err := pool.Exec(context.Background(), query, id, "Tranh thử", slug, slug, categoryID); err != nil {
+		t.Fatalf("seed a product referencing the category: %v", err)
+	}
+	return id
+}
+
+// FR-035, FR-036, SC-005 against real PostgreSQL: with a product referencing the
+// category the removal is refused, and the refusal is produced by the storage
+// layer — the database itself reports a foreign-key violation (SQLSTATE 23503)
+// before module 03 translates it into CATEGORY_IN_USE. After the product is
+// removed the removal succeeds. This is the debt feature 005 left and this
+// scenario is what closes it (quickstart.md 12).
+func TestRemovingACategoryWithProductsIsRefusedByTheForeignKeyAgainstPostgres(t *testing.T) {
+	f := newMaintenanceFixture(t)
+
+	createRec := f.call(http.MethodPost, adminCategoriesPath,
+		`{"name":"Tranh sơn dầu","slug":"tranh-son-dau","position":1}`, f.adminToken)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", createRec.Code, createRec.Body.String())
+	}
+	created := decodeAdminCategory(t, createRec)
+
+	productID := seedCategoryProduct(t, f.pool, created.ID)
+
+	// The storage layer itself refuses the removal: before any translation, the
+	// database reports a foreign-key violation. This is the check an
+	// application-level guard would fail, and the reason the rule cannot be
+	// bypassed by a code path that skips the check.
+	var pgErr *pgconn.PgError
+	_, storageErr := f.pool.Exec(context.Background(), `DELETE FROM categories WHERE id = $1`, created.ID)
+	if !errors.As(storageErr, &pgErr) || pgErr.Code != "23503" {
+		t.Fatalf("the database must refuse the removal with a foreign-key violation, got %v", storageErr)
+	}
+
+	// The operator's answer is the module code, not an unexplained server failure.
+	rec := f.call(http.MethodDelete, adminCategoriesPath+"/"+created.ID.String(), "", f.adminToken)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeAdminError(t, rec); body.Error.Code != constant.CodeCategoryInUse {
+		t.Fatalf("expected %s, got %s", constant.CodeCategoryInUse, body.Error.Code)
+	}
+
+	// The category and its product are both still there.
+	if f.categoryRowCount(t, created.ID) != 1 {
+		t.Fatal("a refused removal must leave the category in place")
+	}
+	var products int
+	if err := f.pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM products WHERE id = $1", productID).Scan(&products); err != nil {
+		t.Fatalf("count the referencing product: %v", err)
+	}
+	if products != 1 {
+		t.Fatal("a refused removal must leave the products in place")
+	}
+
+	// Removing the product frees the category: the removal then succeeds.
+	if _, err := f.pool.Exec(context.Background(), `DELETE FROM products WHERE id = $1`, productID); err != nil {
+		t.Fatalf("remove the product: %v", err)
+	}
+	afterRec := f.call(http.MethodDelete, adminCategoriesPath+"/"+created.ID.String(), "", f.adminToken)
+	if afterRec.Code != http.StatusNoContent {
+		t.Fatalf("after the product is gone the removal must succeed, got %d (%s)", afterRec.Code, afterRec.Body.String())
+	}
+	if f.categoryRowCount(t, created.ID) != 0 {
+		t.Fatal("the category must be gone once nothing references it")
 	}
 }

@@ -14,3 +14,11 @@ thế trong khi chờ, và điều kiện để đóng lại. Không mục nào 
 | D7 | **Danh mục đa cấp lồng nhau** | `docs/modules/03-category.md` đã tự trả lời: *"mặc định: phẳng"*. Mở lại câu đã trả lời là tiêu tốn sự chú ý của người đọc | Một cấp, không có `parent_id` | Khi có nhu cầu cụ thể và được chốt — đó là **feature mới**, không phải chỉnh sửa feature này, vì nó đổi data model, contract và cách tính thứ tự |
 | D8 | **Index thứ tự không phủ bộ lọc `is_visible` của đường đọc công khai** | `categories_ordering_idx` là `(position, created_at, id)` — nó cho thứ tự mà không phải sort, nhưng không phủ `WHERE is_visible`. Ở quy mô hiện tại (vài chục danh mục) planner quét bảng dù có index, nên thêm cột chỉ là suy đoán | Đúng về mặt chức năng; FR-003 được thoả. Đã ghi nhận trong `data-model.md` rằng index phục vụ thứ tự chứ không phủ bộ lọc | Khi catalogue đủ lớn để planner thật sự chọn index — lúc đó thay bằng `(is_visible, position, created_at, id)` hoặc một partial index `WHERE is_visible`, kèm đo lại |
 | D9 | **`meta.total` vắng mặt khi bằng 0** — tầng envelope dùng `omitempty` cho `Total` (`internal/share/httpx/response.go:21`) | Phát hiện khi chạy quickstart: catalogue rỗng trả `meta` **không có** `total`, trong khi `docs/api-reference.md` §1.3 nói endpoint phân trang có `total` và contract của module này khai `total` bắt buộc. Đây là **bất nhất quán có sẵn của tầng dùng chung**, ảnh hưởng cả danh sách địa chỉ của module 02 — không phải do feature này tạo ra | Contract đã sửa cho khớp thực tế (`total` không còn bắt buộc, kèm mô tả rằng thiếu = 0). Tài liệu §1.3 đã ghi rõ điều đó. Hành vi không đổi | Sửa ở tầng dùng chung: đổi `Total` sang `*int64` (hoặc tách một kiểu meta riêng cho endpoint phân trang) để `total` **luôn** có mặt khi phân trang, còn response không phân trang vẫn không mang `page`/`pageSize`/`total`. Là thay đổi tầng dùng chung ảnh hưởng module 02, cần feature riêng |
+
+> **D1 đã đóng bởi feature 006.** `products_category_fk` (`ON DELETE RESTRICT`) đã có trong
+> `migrations/00006_product.sql`, và module 03 dịch lỗi khoá ngoại thành
+> `409 CATEGORY_IN_USE`. Điều kiện đóng lại của D1 đã được thoả.
+
+> **D2 đã đóng bởi feature 006.** `GET /api/v1/products?category=<slug>` liệt kê sản phẩm theo
+> danh mục (FR-006), và `docs/modules/03-category.md` đã đánh dấu tiêu chí tương ứng là đạt.
+> Điều kiện đóng lại của D2 đã được thoả.

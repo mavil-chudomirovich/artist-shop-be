@@ -20,4 +20,10 @@ const (
 	// CodeCategorySlugTaken reports that another category already uses the
 	// slug (FR-017).
 	CodeCategorySlugTaken = "CATEGORY_SLUG_TAKEN"
+	// CodeCategoryInUse reports that a category cannot be removed because
+	// products still belong to it. The reference is enforced by a restricting
+	// foreign key added by feature 006, so the refusal comes from the storage
+	// layer rather than from a check (FR-036); the answer tells the operator
+	// what stands in the way (FR-037).
+	CodeCategoryInUse = "CATEGORY_IN_USE"
 )

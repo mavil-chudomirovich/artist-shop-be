@@ -48,6 +48,12 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			details: true,
 		},
 		{
+			name:   "a category products still reference is a conflict the operator can act on",
+			err:    domainerr.ErrCategoryInUse,
+			code:   constant.CodeCategoryInUse,
+			status: http.StatusConflict,
+		},
+		{
 			name:    "an invalid slug is a validation error naming the field",
 			err:     domainerr.InvalidCategoryField(model.FieldSlug, "must be lowercase letters, digits and single hyphens"),
 			code:    string(httpx.CodeValidation),
