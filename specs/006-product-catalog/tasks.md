@@ -308,10 +308,10 @@ the label. It is P3 because the catalogue works without it.
 - [x] T070 [P] Write the ADR at `docs/decisions/013-*.md` for the decisions a later reader will question: the cross-module visibility contract and why a join was refused, the shared media capability's new home, and hard-deleting a product while the module document says soft. Follow `docs/decisions/template.md`, write it in Vietnamese like the existing ADRs, add it to `docs/decisions/README.md`, and state the accepted costs. **Check the number against `docs/decisions/` at the time of writing** — 011 and 012 are taken
 - [x] T071 [P] Verify in `internal/modules/product/presentation/http/leak_test.go` that neither a product's values nor an audit entry can leak something they should not — in particular that the folding key never appears in a response, an audit entry or a log line, and that a media failure's log line carries no provider URL, credential or response body (FR-013, Constitution V, VI)
 - [x] T072 Check every new and changed file for UTF-8 without BOM and LF endings, per `.editorconfig`; PowerShell's `Out-File` and `WriteAllLines` write CRLF, so write files in a way that ends up correct. Report the method and the count
-- [ ] T073 Run `make lint` and `make test` and clear every finding in the feature's scope
-- [ ] T074 Run `quickstart.md` end to end — scenarios 1 through 16 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass. Scenarios 10 and 11 need real media credentials; if they are absent, report them `BLOCKED` rather than passing them
-- [ ] T075 Run `make check` — the close-out gate — once, and confirm `git status` shows only intended files before anything is staged
-- [ ] T076 Re-read `specs/006-product-catalog/frontend-guide.md` against the implementation with counts — JSON fields, enum values, routes, HTTP statuses — and correct it. The constitution requires this re-read in the feature's final phase, and a comparison that produces no counts did not happen
+- [x] T073 Run `make lint` and `make test` and clear every finding in the feature's scope
+- [x] T074 Run `quickstart.md` end to end — scenarios 1 through 16 — and confirm each passes. A container-backed check that silently skips is a **fail**, not a pass. Scenarios 10 and 11 need real media credentials; if they are absent, report them `BLOCKED` rather than passing them
+- [x] T075 Run `make check` — the close-out gate — once, and confirm `git status` shows only intended files before anything is staged
+- [x] T076 Re-read `specs/006-product-catalog/frontend-guide.md` against the implementation with counts — JSON fields, enum values, routes, HTTP statuses — and correct it. The constitution requires this re-read in the feature's final phase, and a comparison that produces no counts did not happen
 
 ---
 

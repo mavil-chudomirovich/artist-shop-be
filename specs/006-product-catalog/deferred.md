@@ -116,3 +116,40 @@ Không mục nào ở đây chặn việc đóng feature này; không mục nào
   `docs/api-reference.md` từ đó. Hiện `docs/api-reference.md` là nguồn thẩm quyền
   (Constitution VIII), và hai file feature chỉ chồng lấn ở đúng một path này.
 - **Ảnh hưởng tới task đã tick**: không.
+
+### D9 — Alias `MediaStore`/`MediaReference` còn lại trong module 02
+
+- **Vấn đề**: khi tách capability media sang `internal/share/media`, `internal/modules/user/application/interface/ports.go`
+  vẫn còn `type MediaStore = media.Store` và `type MediaReference = media.Reference`. Đó là **alias**, không
+  phải định nghĩa thứ hai: chỉ có một định nghĩa duy nhất, ở `share/media`, và comment tại chỗ nói rõ điều đó.
+  Nhưng production của module 02 (`profile.go`) đã dùng thẳng `media.Store`, nên alias **chỉ còn test dùng**.
+- **Vì sao ngoài phạm vi**: T003 cấm sửa `avatar_test.go` để giữ bằng chứng "đây là move chứ không phải
+  rewrite" — 3 file test (kể cả `http_integration_test.go`) tham chiếu tên cũ. Giữ alias đổi lấy bằng chứng
+  đó là một đánh đổi có ý thức của orchestrator, không phải sót.
+- **Gỡ bằng cách nào**: xoá hai alias và đổi ~12 tham chiếu kiểu trong `avatar_test.go` (2 file) và
+  `http_integration_test.go`. Thuần đổi tên kiểu, không đổi assertion. Việc nhỏ, làm khi có dịp chạm module 02.
+- **Ảnh hưởng tới task đã tick**: không. Không task nào của feature này phụ thuộc alias.
+
+### D10 — `normalized_slug` bằng `slug` với sản phẩm, nên cột đó dư
+
+- **Vấn đề**: luật slug đã bắt buộc chữ thường và đã trim, nên khoá gập `FoldKey(slug)` **luôn bằng** `slug`.
+  Cột `normalized_slug`, shape check và unique index trên nó không sai, nhưng **không bao giờ khác** giá trị
+  của `slug`. Điều này đúng với cả module 03 (feature 005 cũng có `normalized_slug` như vậy).
+- **Vì sao ngoài phạm vi**: đây là pattern **có sẵn** từ feature 005, và sửa nó là thay đổi cả module 03.
+  Với `name` thì khoá gập thật sự cần (tên không bắt buộc chữ thường); với `slug` thì không.
+- **Gỡ bằng cách nào**: một feature riêng bỏ `normalized_slug` ở **cả hai** module và chuyển unique index
+  sang chính `slug`, kèm ghi chú rằng luật shape đã bảo đảm chữ thường. Cần làm cùng lúc hai module để
+  hai bảng không lệch quy ước.
+- **Ảnh hưởng tới task đã tick**: không. T026 khẳng định unique index từ chối slug trùng — vẫn đúng, chỉ là
+  index đang nằm trên cột có giá trị bằng `slug`.
+
+### D11 — `preorderExpectedAt: null` khi cập nhật nghĩa là "giữ nguyên"
+
+- **Vấn đề**: gửi `null` và **không gửi** trường `preorderExpectedAt` đều được hiểu là "giữ nguyên ngày cũ".
+  Vì vậy client **không thể** xoá ngày dự kiến mà vẫn giữ nhãn pre-order; muốn xoá thì gửi `isPreorder: false`
+  (xoá cả hai).
+- **Vì sao ngoài phạm vi**: spec và `quickstart.md` không yêu cầu thao tác "xoá ngày, giữ nhãn". Thêm cờ
+  hiện diện cho một trường là thay đổi contract mà spec không mô tả.
+- **Gỡ bằng cách nào**: nếu product owner cần, thêm một cặp cờ hiện diện (`hasPreorderExpectedAt`) hoặc một
+  quy ước rõ ràng rằng `null` = xoá, rồi sửa `contracts/openapi.yaml` và `frontend-guide.md` cùng lúc.
+- **Ảnh hưởng tới task đã tick**: không.
