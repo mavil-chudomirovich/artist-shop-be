@@ -42,6 +42,17 @@ type Service struct {
 	// is unused by the public browse use cases, but the composition root always
 	// supplies the module's auditor adapter.
 	Audit appinterface.Auditor
+	// Media stores pictures outside the service through the shared media port
+	// (FR-018). It is reached only by the picture use cases, which is what keeps
+	// a provider outage from failing a product read or edit.
+	Media appinterface.MediaStore
+	// Tx owns the picture operations' transaction boundaries. The ten-picture
+	// ceiling is a count no unique index can express, so it is checked while the
+	// product's row is locked inside this transaction (research D6).
+	Tx appinterface.UnitOfWork
+	// Config carries the picture upload ceilings the composition resolved. A
+	// zero value falls back to the documented contract defaults.
+	Config appinterface.Config
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }

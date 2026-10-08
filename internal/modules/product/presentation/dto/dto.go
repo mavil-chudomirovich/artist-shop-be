@@ -8,6 +8,8 @@
 package httpdto
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 )
 
@@ -69,4 +71,134 @@ type PublicProductDetailResponse struct {
 	// Images holds every picture in display order. It is always an array, never
 	// null, so a product with no picture answers `[]`.
 	Images []PublicImageResponse `json:"images"`
+}
+
+// PriceRequest is money supplied by an operator on a create or an edit. It is an
+// integer amount in the currency's minor unit plus the currency, never a floating
+// point number, so the stored amount equals the amount supplied exactly (FR-031).
+type PriceRequest struct {
+	// Amount is the price in the currency's minor unit.
+	Amount int64 `json:"amount"`
+	// Currency is the currency code: exactly three uppercase letters.
+	Currency string `json:"currency"`
+}
+
+// CreateProductRequest is the administrator create body (contracts/openapi.yaml,
+// CreateProductRequest). It carries only the members FR-010 names; the set,
+// member and pre-order members land with US5 and US6.
+type CreateProductRequest struct {
+	// Name is the product name.
+	Name string `json:"name"`
+	// Slug is the public link segment.
+	Slug string `json:"slug"`
+	// Description is the text shown to customers; an omitted or empty value is
+	// stored empty.
+	Description string `json:"description"`
+	// Price is the price with its currency.
+	Price PriceRequest `json:"price"`
+	// CategoryID is the one category the product belongs to.
+	CategoryID uuid.UUID `json:"categoryId"`
+	// Position is the ordering preference.
+	Position int `json:"position"`
+}
+
+// UpdateProductRequest is the administrator partial-edit body
+// (contracts/openapi.yaml, UpdateProductRequest). An omitted member keeps its
+// current value; a pointer to a zero value changes it. `sellState` is not
+// accepted here: a state change is a transition and has its own endpoint
+// (research D11).
+type UpdateProductRequest struct {
+	// Name is the new name; nil keeps the current value.
+	Name *string `json:"name"`
+	// Slug is the new slug; nil keeps the current value.
+	Slug *string `json:"slug"`
+	// Description is the new description; nil keeps the current value, an empty
+	// string clears it.
+	Description *string `json:"description"`
+	// Price is the new price; nil keeps the current value.
+	Price *PriceRequest `json:"price"`
+	// CategoryID is the new category; nil keeps the current value.
+	CategoryID *uuid.UUID `json:"categoryId"`
+	// Position is the new position; nil keeps the current value.
+	Position *int `json:"position"`
+}
+
+// AdminProductResponse is one entry of the administrator surface: the members a
+// customer must not receive — the sell state, the position, the category and the
+// set flag — plus the timestamps and the picture summary (FR-011). The public
+// shape carries none of them (FR-008).
+type AdminProductResponse struct {
+	// ID is the product's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the name the operator wrote.
+	Name string `json:"name"`
+	// Slug is the link segment the operator wrote.
+	Slug string `json:"slug"`
+	// Description is the text shown to customers; an empty string is valid.
+	Description string `json:"description"`
+	// Price is the integer amount with its currency.
+	Price PriceResponse `json:"price"`
+	// CategoryID is the one category the product belongs to.
+	CategoryID uuid.UUID `json:"categoryId"`
+	// Position is the operator's ordering preference.
+	Position int `json:"position"`
+	// SellState is where the product is in its selling life (FR-022).
+	SellState string `json:"sellState"`
+	// IsSet reports whether the product is a combo set (FR-039).
+	IsSet bool `json:"isSet"`
+	// IsPreorder reports whether the product is announced as a pre-order.
+	IsPreorder bool `json:"isPreorder"`
+	// PreorderExpectedAt is the optional expected availability date, or null.
+	PreorderExpectedAt *time.Time `json:"preorderExpectedAt"`
+	// ImageCount is how many pictures the product has.
+	ImageCount int `json:"imageCount"`
+	// ImageURL is the main picture's link, or null when the product has none.
+	ImageURL *string `json:"imageUrl"`
+	// CreatedAt and UpdatedAt are the stored timestamps.
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AdminImageResponse is one picture as an administrator sees it, including the
+// provider's opaque identifier, its position and whether it is the main one.
+// None of these three is part of the public picture shape.
+type AdminImageResponse struct {
+	// ID identifies the picture.
+	ID uuid.UUID `json:"id"`
+	// PublicID is the provider's opaque identifier.
+	PublicID string `json:"publicId"`
+	// URL is the displayable link.
+	URL string `json:"url"`
+	// Width and Height are the stored pixel dimensions.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	// Position is the display order.
+	Position int `json:"position"`
+	// IsPrimary reports whether this is the product's main picture.
+	IsPrimary bool `json:"isPrimary"`
+}
+
+// SetMemberResponse is one product inside a combo set, as the administrator
+// detail lists it. The public shape does not enumerate a set's contents
+// (research D18).
+type SetMemberResponse struct {
+	// ID is the member product's identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the member product's name.
+	Name string `json:"name"`
+	// Slug is the member product's public link segment.
+	Slug string `json:"slug"`
+}
+
+// AdminProductDetailResponse is one product's full detail for an administrator:
+// the administrator fields plus its pictures and, for a set, its members
+// (FR-011, research D18).
+type AdminProductDetailResponse struct {
+	AdminProductResponse
+	// Images holds every picture in display order. It is always an array, never
+	// null.
+	Images []AdminImageResponse `json:"images"`
+	// Members holds the products inside a set, in order. It is omitted for a
+	// product that is not a set.
+	Members []SetMemberResponse `json:"members,omitempty"`
 }

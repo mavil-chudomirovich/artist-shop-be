@@ -465,7 +465,18 @@ func (r *ProductRepository) SetPrimaryPicture(ctx context.Context, productID, pi
 		return fmt.Errorf("find product picture: %w", err)
 	}
 
-	const promote = `UPDATE product_images SET is_primary = (id = $2) WHERE product_id = $1`
+	// Two statements rather than one. PostgreSQL checks the partial unique index
+	// as each row is written, so a single statement that both sets the new primary
+	// and clears the old one can be rejected when the rows happen to be written in
+	// the order that briefly has two primaries. Clearing first leaves zero main
+	// pictures for an instant inside the transaction, which the index permits, and
+	// the caller's product row lock keeps another promotion from observing it
+	// (research D7).
+	const demote = `UPDATE product_images SET is_primary = false WHERE product_id = $1 AND id <> $2 AND is_primary`
+	if _, err := r.querier(ctx).Exec(ctx, demote, productID, pictureID); err != nil {
+		return fmt.Errorf("clear product primary picture: %w", err)
+	}
+	const promote = `UPDATE product_images SET is_primary = true WHERE product_id = $1 AND id = $2`
 	if _, err := r.querier(ctx).Exec(ctx, promote, productID, pictureID); err != nil {
 		return fmt.Errorf("set product primary picture: %w", err)
 	}

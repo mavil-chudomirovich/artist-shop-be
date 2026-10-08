@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
@@ -195,7 +196,7 @@ func newPublicFixture(t *testing.T) (http.Handler, *stubRepository, *stubVisibil
 		Visibility: visibility,
 		Mapper:     mapper.New(),
 	})
-	handler := New(service, testLogger)
+	handler := New(service, appinterface.Config{}, testLogger)
 
 	root := chi.NewRouter()
 	root.Mount("/api/v1/products", handler.Router(middleware.AuthHooks{}))

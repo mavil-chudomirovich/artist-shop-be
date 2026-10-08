@@ -18,6 +18,7 @@ import (
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
 	categoryvisibility "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/visibility"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	productmodel "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
@@ -70,7 +71,7 @@ func newProductCatalogueFixture(t *testing.T) *productCatalogueFixture {
 		Visibility: categoryvisibility.New(categoryRepo),
 		Mapper:     mapper.New(),
 	})
-	handler := New(service, testLogger)
+	handler := New(service, appinterface.Config{}, testLogger)
 
 	root := chi.NewRouter()
 	root.Use(productRequestID)
