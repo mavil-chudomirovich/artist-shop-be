@@ -153,3 +153,18 @@ Không mục nào ở đây chặn việc đóng feature này; không mục nào
 - **Gỡ bằng cách nào**: nếu product owner cần, thêm một cặp cờ hiện diện (`hasPreorderExpectedAt`) hoặc một
   quy ước rõ ràng rằng `null` = xoá, rồi sửa `contracts/openapi.yaml` và `frontend-guide.md` cùng lúc.
 - **Ảnh hưởng tới task đã tick**: không.
+
+### D12 — Module 03 và 04 không có annotation Swagger, nên `/swagger` chỉ phủ module 01/02
+
+- **Vấn đề**: ADR 011 dựng Swagger từ annotation trong code, phục vụ tại `/swagger`. Module 01 (auth) và
+  module 02 (user) có `@Summary`/`@Router`; module 03 (category) và module 04 (product) **không có**, nên
+  giao diện `/swagger` không liệt kê endpoint của hai module này.
+- **Vì sao ngoài phạm vi**: đây là **khoảng trống cấp dự án**, không phải phần chưa xong của feature này.
+  Feature 005 (module 03) đã giao mà không thêm annotation, và `specs/005-category-catalog/deferred.md`
+  không ghi lại điều đó (đó là một thiếu sót của 005, ghi ở đây để không mất). Definition of Done của
+  constitution chỉ đòi `docs/api-reference.md` — đã cập nhật — và `make swagger-check` vẫn **pass** vì nó
+  chỉ so `docs/swagger` với annotation hiện có, không đòi annotation phải tồn tại.
+- **Gỡ bằng cách nào**: một feature riêng thêm annotation cho **cả** module 03 và 04 (và mọi module sau),
+  rồi chạy `make swagger`. Làm lẻ một module sẽ khiến `/swagger` lệch quy ước giữa các module.
+- **Ảnh hưởng tới task đã tick**: không. T067 giao `docs/api-reference.md` theo Constitution VIII và
+  `make check` (gồm `swagger-check`) xanh — không task nào của feature này hứa annotation Swagger.
