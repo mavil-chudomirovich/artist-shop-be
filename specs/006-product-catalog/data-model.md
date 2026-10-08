@@ -173,14 +173,25 @@ Both public reads carry the **whole visibility predicate** in their own query, s
 filtered in Go and pagination stays correct (research D1):
 
 ```sql
-(sell_state = 'ACTIVE' OR is_preorder) AND category_id = ANY($visible)
+(sell_state = 'ACTIVE' OR (is_preorder AND sell_state <> 'DISCONTINUED'))
+  AND category_id = ANY($visible)
 ```
 
-The first half is FR-002's own condition — on sale, or announced as a pre-order — and it lives in
-the query rather than in Go for the same reason the category half does: dropping rows after the
-page is fetched returns a short page and a `total` that counts rows the caller never received
-(SC-001, `quickstart.md` 16e). The second half is the category's display state, reached through the
-contract because module 04 may not read module 03's table.
+The first half is FR-002's own condition — on sale, or announced as a pre-order. The
+`sell_state <> 'DISCONTINUED'` guard is **not** redundant: retiring is reachable from every state
+and does **not** clear the pre-order label (only launching does, FR-040), so a retired product can
+still carry it, and `is_preorder` alone would then serve a product FR-002 says must never appear.
+This was found while implementing US3 and corrected here and in the adapter.
+
+The predicate lives in the query rather than in Go for the same reason the category half does:
+dropping rows after the page is fetched returns a short page and a `total` that counts rows the
+caller never received (SC-001, `quickstart.md` 16e). The second half is the category's display
+state, reached through the contract because module 04 may not read module 03's table.
+
+**On the rule having two expressions**: the state half is stated once as
+`model.Product.VisibleToCustomers` (and `Buyable`) and once as the SQL string above, because a
+query cannot call Go and the filter must run in SQL. They are pinned together by an integration
+test rather than by convention: a change to one that the other does not follow fails that test.
 
 `normalized_slug` appears in **no client-facing projection** — no response, no audit entry, no log
 line. The adapter recomputes it on write, so no read path carries it.

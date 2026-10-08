@@ -269,7 +269,10 @@ func (r *ProductRepository) ListVisible(ctx context.Context, query domainrepo.Vi
 		return []domainrepo.ProductListItem{}, 0, nil
 	}
 	args := []any{query.VisibleCategoryIDs}
-	predicate := "(sell_state = 'ACTIVE' OR is_preorder) AND category_id = ANY($1)"
+	// The state half of the predicate mirrors model.Product.VisibleToCustomers: an
+	// on-sale product, or a pre-order — but never a retired one, even when it still
+	// carries the pre-order label (FR-002, FR-026, FR-027).
+	predicate := "(sell_state = 'ACTIVE' OR (is_preorder AND sell_state <> 'DISCONTINUED')) AND category_id = ANY($1)"
 	if query.CategoryID != nil {
 		args = append(args, *query.CategoryID)
 		predicate += fmt.Sprintf(" AND category_id = $%d", len(args))
@@ -303,7 +306,7 @@ func (r *ProductRepository) FindVisibleBySlug(ctx context.Context, slug string, 
 	query := fmt.Sprintf(`
 		SELECT %s FROM products
 		WHERE slug = $1
-		  AND (sell_state = 'ACTIVE' OR is_preorder)
+		  AND (sell_state = 'ACTIVE' OR (is_preorder AND sell_state <> 'DISCONTINUED'))
 		  AND category_id = ANY($2)`, list)
 	product, err := scanProduct(r.querier(ctx).QueryRow(ctx, query, slug, visibleCategoryIDs))
 	if err != nil {
