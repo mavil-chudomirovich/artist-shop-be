@@ -167,6 +167,7 @@ phân trang sai → `VALIDATION_ERROR` 400; một member của địa chỉ sai 
 | `CATEGORY_NOT_FOUND` | 404 | Không có danh mục nào mang định danh/slug đó, hoặc danh mục đang bị ẩn, hoặc đã bị xoá — ba tình huống **cố ý** trả lời giống nhau |
 | `CATEGORY_NAME_TAKEN` | 409 | Một danh mục khác đã dùng tên đó (so khớp sau khi trim và bỏ qua hoa/thường) |
 | `CATEGORY_SLUG_TAKEN` | 409 | Một danh mục khác đã dùng slug đó |
+| `CATEGORY_IN_USE` | 409 | Danh mục còn sản phẩm tham chiếu nên không xoá được. **Mới trở nên khả thi ở feature 006**: module 04 Product thêm `products.category_id` với `ON DELETE RESTRICT`, nên tầng lưu trữ từ chối thay vì xoá thành công |
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module (xem
 `specs/005-category-catalog/contracts/error-codes.md`): slug không an toàn URL hoặc một
@@ -182,6 +183,35 @@ member lạ → `MALFORMED_REQUEST` 400.
 > của mỗi dòng chỉ mang `name` và `slug` do operator gõ, **không** mang hai cột khoá chuẩn
 > hoá `normalized_name` / `normalized_slug` — hai cột đó không bao giờ xuất hiện trong
 > response, audit hay log (`specs/005-category-catalog/data-model.md`).
+
+**Riêng module product** (`internal/modules/product/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `PRODUCT_NOT_FOUND` | 404 | Không có sản phẩm nào mang định danh/slug đó, hoặc sản phẩm bị ẩn — không đang bán và không phải pre-order, đã ngừng bán, hoặc **danh mục của nó bị ẩn** — hoặc đã bị xoá. Trên bề mặt công khai các tình huống này **cố ý** trả lời giống nhau (mục 6) |
+| `PRODUCT_SLUG_TAKEN` | 409 | Một sản phẩm khác đã dùng slug đó (so khớp sau khi trim và bỏ qua hoa/thường) |
+| `PRODUCT_STATE_TRANSITION_INVALID` | 409 | Chuyển trạng thái bán không được trạng thái hiện tại cho phép; message nêu trạng thái hiện tại |
+| `PRODUCT_IMAGE_LIMIT_REACHED` | 409 | Sản phẩm đã có đủ 10 ảnh |
+| `PRODUCT_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte tải lên không phải JPEG, PNG hoặc WebP (nhận theo chữ ký nội dung) |
+| `PRODUCT_IMAGE_TOO_LARGE` | 413 | Ảnh vượt trần 2 MB |
+| `PRODUCT_MEDIA_UNAVAILABLE` | 503 | Dịch vụ media từ chối hoặc không lưu được; **không có gì bị đổi** nên thử lại được |
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module product (xem
+`specs/006-product-catalog/contracts/error-codes.md`): slug không an toàn URL, một trường vượt
+độ dài, giá không dương, `currency` không phải ba chữ in hoa, `categoryId`/`memberProductIds`
+không tồn tại → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không
+phải UUID → `VALIDATION_ERROR` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401; `CUSTOMER`
+gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`); `page`/`pageSize` ngoài
+khoảng → `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ →
+`MALFORMED_REQUEST` 400.
+
+> Action `audit_logs` của module dùng tiền tố `PRODUCT_` nhưng **không** phải mã lỗi:
+> `PRODUCT_CREATED`, `PRODUCT_UPDATED`, `PRODUCT_STATE_CHANGED`, `PRODUCT_IMAGE_ADDED`,
+> `PRODUCT_IMAGE_REMOVED`, `PRODUCT_IMAGE_PRIMARY_SET`, `PRODUCT_DELETED` — xem
+> `internal/modules/product/domain/constant/audit.go`. Metadata của mỗi dòng chỉ mang giá trị
+> do operator gõ (`slug` ở create/update, `from`/`to` ở đổi trạng thái, `imageId` ở thao tác
+> ảnh), **không** mang cột khoá chuẩn hoá `normalized_slug` — cột đó không bao giờ xuất hiện
+> trong response, audit hay log (`specs/006-product-catalog/data-model.md`).
 
 ### 1.5 Rate limit
 
@@ -203,6 +233,11 @@ Nhóm `/categories` (công khai) và `/admin/categories` (quản trị) của mo
 **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục. Các endpoint ghi là ADMIN-only, nên
 bề mặt lạm dụng mà hạn mức riêng của module user tồn tại để chặn — mọi khách đã đăng nhập
 đều gọi được — **không tồn tại** ở đây (`specs/005-category-catalog/deferred.md`, D5).
+
+Nhóm `/products` (công khai) và `/admin/products` (quản trị) của module product cũng **không**
+có hạn mức riêng, chỉ chịu hạn mức toàn cục. Lý do giống module category: các endpoint ghi là
+ADMIN-only, nên bề mặt lạm dụng mà hạn mức riêng tồn tại để chặn — mọi khách đã đăng nhập đều
+gọi được — **không tồn tại** (`specs/006-product-catalog/spec.md`, mục *Assumptions*).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -1379,18 +1414,412 @@ Xoá danh mục. Đây là **hard delete**: dòng biến mất, dòng audit ở 
 Request: không có body.
 
 Lỗi: `VALIDATION_ERROR` 400 (`categoryId` không phải UUID) · `UNAUTHENTICATED` 401 ·
-`FORBIDDEN` 403 · `CATEGORY_NOT_FOUND` 404 · `RATE_LIMITED` 429
+`FORBIDDEN` 403 · `CATEGORY_NOT_FOUND` 404 · `CATEGORY_IN_USE` 409 · `RATE_LIMITED` 429
 
 Ghi chú:
 
 - Xoá lại một danh mục đã xoá trả cùng `404 CATEGORY_NOT_FOUND`, không phải lỗi.
-- Luật "không xoá cứng danh mục còn sản phẩm" **chưa kiểm chứng được** vì chưa có thực thể
-  sản phẩm; tham chiếu sẽ nằm ở `products.category_id` với `ON DELETE RESTRICT` (module 04),
-  xem `specs/005-category-catalog/deferred.md`.
+- **Luật "không xoá cứng danh mục còn sản phẩm" nay đã kiểm chứng được** (feature 006). Tham
+  chiếu `products.category_id` với `ON DELETE RESTRICT` do module 04 Product thêm vào; khi còn
+  sản phẩm tham chiếu, **tầng lưu trữ** từ chối xoá và module 03 dịch lỗi khoá ngoại đó thành
+  `409 CATEGORY_IN_USE`. Trước feature 006, tình huống này không thể xảy ra (không có bảng sản
+  phẩm), nên đây là một câu trả lời **mới** của endpoint. Danh mục và sản phẩm đều nguyên vẹn
+  sau khi bị từ chối; xoá danh mục không còn sản phẩm vẫn `204` như trước.
+  Xem `specs/006-product-catalog/deferred.md` (D8) và
+  [decisions/013](decisions/013-product-visibility-media-and-hard-delete.md).
 
 ---
 
-## 6. Bảng tổng hợp
+## 6. Module 04 — Product (`/api/v1`)
+
+Sản phẩm của shop: món vật lý, combo set và pre-order, cùng ảnh, giá, danh mục và trạng thái
+bán. **Một bảng, hai bề mặt, hai hình dạng response**: bề mặt công khai (`/products`, không cần
+token, địa chỉ theo **slug**) và bề mặt quản trị (`/admin/products`, vai trò `ADMIN`, địa chỉ
+theo **định danh**).
+
+Bốn điều dễ đọc sai, nói ngay:
+
+- **Sản phẩm bị ẩn và một slug chưa từng tồn tại trả lời y hệt nhau** (`404
+  PRODUCT_NOT_FOUND`). Gồm cả sản phẩm nằm trong **danh mục bị ẩn**. Nếu các tình huống trả lời
+  khác nhau, endpoint sẽ xác nhận sản phẩm/danh mục operator đã chọn **không** công bố. Xem
+  `6.2`.
+- **Slug là ngoại lệ ở bề mặt công khai**: một sản phẩm **pre-order** được hiện dù chưa bán,
+  nhưng **không mua được**. "Hiện" và "mua được" là hai điều kiện khác nhau.
+- **Trạng thái bán đi qua endpoint riêng** `POST .../state`; `PATCH` **không** nhận `sellState`.
+  Một lần chuyển không hợp lệ trả `409`, không phải `400`.
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5).
+
+Hai danh sách đều phân trang theo quy ước chung: `page` mặc định `1`, `pageSize` mặc định `20`,
+khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi `id`.
+
+**Hình dạng công khai** `PublicProduct` (6 member) — một phần tử của danh sách:
+
+```json
+{
+  "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+  "name": "Acrylic stand Aki",
+  "slug": "acrylic-stand-aki",
+  "price": { "amount": 120000, "currency": "VND" },
+  "imageUrl": "https://res.cloudinary.com/demo/image/upload/stand.jpg",
+  "isPreorder": false
+}
+```
+
+**Hình dạng quản trị** `AdminProduct` (15 member) — một phần tử của danh sách quản trị:
+
+```json
+{
+  "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+  "name": "Acrylic stand Aki",
+  "slug": "acrylic-stand-aki",
+  "description": "Acrylic stand 15cm",
+  "price": { "amount": 120000, "currency": "VND" },
+  "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "position": 10,
+  "sellState": "COMING_SOON",
+  "isSet": false,
+  "isPreorder": false,
+  "preorderExpectedAt": null,
+  "imageCount": 1,
+  "imageUrl": "https://res.cloudinary.com/demo/image/upload/stand.jpg",
+  "createdAt": "2026-10-07T08:15:04Z",
+  "updatedAt": "2026-10-07T08:15:04Z"
+}
+```
+
+### 6.1 `GET /products`
+
+Danh sách sản phẩm **khách thấy được**: đang bán (`ACTIVE`) **hoặc** là pre-order đang thông
+báo, và **danh mục chưa bị ẩn** (FR-002). Lọc tuỳ chọn theo danh mục.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`),
+`category` (slug danh mục, tuỳ chọn).
+
+Response `200`: `data` là mảng `PublicProduct`; `meta` là khối phân trang chung.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng;
+`details[].field` là `"page"` hoặc `"pageSize"`) · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- **Ẩn danh mục ẩn luôn sản phẩm bên trong** — nhưng **không** sửa gì trên dòng sản phẩm; bỏ ẩn
+  danh mục đưa sản phẩm trở lại y như cũ.
+- Lọc `?category=<slug>`: danh mục **ẩn**, **không tồn tại**, hoặc **không có sản phẩm hiển thị**
+  đều trả `data: []` — **không** `404` — nên bộ lọc không tiết lộ danh mục ẩn (FR-006).
+- `meta.total` đếm đúng số sản phẩm hiển thị; thiếu `total` nghĩa là `0` (§1.3).
+- Catalogue rỗng trả `data: []`, **không** phải `null` và **không** phải lỗi (FR-007).
+
+### 6.2 `GET /products/{slug}`
+
+Đọc một sản phẩm khách thấy được theo slug, kèm mô tả và **toàn bộ** ảnh theo thứ tự.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200` là `data` = `PublicProductDetail` (8 member = `PublicProduct` + `description` +
+`images`; mỗi phần tử `images` là `{ id, url, width, height }`).
+
+Lỗi: `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+> **Sản phẩm bị ẩn, hết hàng, đã ngừng bán, nằm trong danh mục bị ẩn, đã xoá và slug chưa từng
+> tồn tại trả lời y hệt nhau** — cùng status, cùng mã `PRODUCT_NOT_FOUND`, cùng câu chữ. Đây là
+> bắt buộc, không chỉ tiện (FR-003): nếu một sản phẩm bị ẩn trả lời khác một slug chưa dùng,
+> endpoint sẽ xác nhận sản phẩm/danh mục operator đã chọn **không** công bố. Một **pre-order**
+> thì được phục vụ (`200`) và mang `isPreorder: true`.
+>
+> Hình dạng công khai **không** liệt kê nội dung của một combo set (FR-005, research D18); chỉ
+> hình dạng quản trị (`6.5`) mới có `members`.
+
+### 6.3 `GET /admin/products`
+
+Danh sách **toàn bộ** sản phẩm, kể cả sản phẩm không hiển thị.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: như `6.1` (không có `category`).
+
+Response `200`: `data` là mảng `AdminProduct`; `meta` là khối phân trang chung.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
+(ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
+
+### 6.4 `POST /admin/products`
+
+Tạo sản phẩm. Sản phẩm **luôn được tạo ở `COMING_SOON`** (FR-010). Tác nhân lấy từ **session**,
+không bao giờ từ body.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` |
+
+Request (`CreateProductRequest`, `additionalProperties: false`)
+
+```json
+{
+  "name": "Acrylic stand Aki",
+  "slug": "acrylic-stand-aki",
+  "description": "Acrylic stand 15cm",
+  "price": { "amount": 120000, "currency": "VND" },
+  "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "position": 10,
+  "isSet": false,
+  "memberProductIds": [],
+  "isPreorder": false,
+  "preorderExpectedAt": null
+}
+```
+
+`name`, `slug`, `price`, `categoryId`, `position` **bắt buộc**; `description`, `position` có
+mặc định (`position` mặc định `0`, có thể âm); `memberProductIds` chỉ được ghi khi `isSet` là
+`true`; `preorderExpectedAt` (`YYYY-MM-DD`) chỉ có nghĩa khi `isPreorder` là `true`. `slug` do
+operator viết, **không** sinh từ `name`.
+
+Response `201`: `data` = `AdminProductDetail` (17 member = `AdminProduct` + `images` +
+`members`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng/quá 120 ký tự; `slug` rỗng, quá 140 ký tự hoặc không
+khớp mẫu URL-safe; `description` quá 5000 ký tự; `price.amount` không dương; `price.currency`
+không phải ba chữ in hoa; `categoryId`/`memberProductIds` không tồn tại — `details[].field` chỉ
+đúng member) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Sản phẩm mang `isPreorder: true` **hiện ngay** với khách; sản phẩm thường vẫn ẩn cho tới khi
+  lên `ACTIVE` (FR-002, FR-040).
+- Combo set là **một sản phẩm độc lập** có giá riêng do operator đặt; giá này **không** suy ra
+  từ các thành viên (FR-039, research D10).
+- Mỗi lần tạo ghi `audit_logs` với action `PRODUCT_CREATED`, metadata `{"slug": ...}`.
+
+### 6.5 `GET /admin/products/{id}`
+
+Đọc một sản phẩm theo định danh, kể cả sản phẩm không hiển thị, kèm ảnh và (với set) thành viên.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`: `data` = `AdminProductDetail`; `members` chỉ có mặt khi sản phẩm là set, mỗi
+phần tử là `{ id, name, slug }`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+### 6.6 `PATCH /admin/products/{id}`
+
+Sửa một phần: member bỏ trống giữ nguyên giá trị hiện tại. **Không bao giờ đổi `sellState`**
+(research D11).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả sản phẩm sau khi sửa |
+
+Request (`UpdateProductRequest`, mọi member tuỳ chọn, `additionalProperties: false`)
+
+```json
+{
+  "name": "Acrylic stand Aki mới",
+  "slug": "acrylic-stand-aki-moi",
+  "description": "Mô tả mới",
+  "price": { "amount": 130000, "currency": "VND" },
+  "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "position": 5,
+  "isSet": true,
+  "memberProductIds": ["<uuid>", "<uuid>"],
+  "isPreorder": true,
+  "preorderExpectedAt": "2026-12-01"
+}
+```
+
+Gửi `memberProductIds` **thay toàn bộ** danh sách thành viên (chỉ ghi khi là set); gửi `[]` xoá
+hết; đổi `isSet` từ `true` sang `false` cũng xoá thành viên. `isPreorder: false` xoá luôn
+`preorderExpectedAt` (FR-040).
+
+Response `200`: `data` = `AdminProductDetail`.
+
+Lỗi: `VALIDATION_ERROR` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN`
+403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Gửi lại **đúng slug sản phẩm đang giữ** thành công — một sản phẩm không bao giờ trùng với
+  chính nó.
+- Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"slug": ...}`.
+
+### 6.7 `DELETE /admin/products/{id}`
+
+Xoá sản phẩm. Đây là **hard delete** (research D13): dòng biến mất, dòng audit ở lại.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Ảnh của sản phẩm được giải phóng và các dòng membership bị xoá theo (cascade);
+  **thành viên của một set bị xoá không bị đụng** (FR-013, US5).
+- Xoá lại sản phẩm đã xoá trả cùng `404 PRODUCT_NOT_FOUND`, không phải lỗi.
+- Ghi `audit_logs` với action `PRODUCT_DELETED`.
+- **Lệch có chủ ý so với module doc**: `docs/modules/04-product.md` ghi "xóa mềm" trong phạm vi
+  MVP, nhưng feature này chọn hard delete vì hiện **không có gì đọc** một sản phẩm đã xoá (chưa
+  có đơn hàng). Nghĩa vụ còn lại thuộc module 07 Order, ghi ở
+  `specs/006-product-catalog/deferred.md` (D3) và
+  [decisions/013](decisions/013-product-visibility-media-and-hard-delete.md).
+
+### 6.8 `POST /admin/products/{id}/state`
+
+Chuyển trạng thái bán. Đây là một **transition**, không phải một field: nó có thể bị từ chối và
+câu từ chối nêu trạng thái hiện tại (Constitution III, research D11).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả sản phẩm ở trạng thái mới |
+
+Request (`ChangeStateRequest`, `additionalProperties: false`)
+
+```json
+{ "to": "ACTIVE" }
+```
+
+Các cạnh **hợp lệ duy nhất** (FR-022): `COMING_SOON → ACTIVE`; `ACTIVE ↔ OUT_OF_STOCK` (hai
+chiều, để hồi kho đưa sản phẩm trở lại bán); mọi trạng thái → `DISCONTINUED`. `DISCONTINUED` là
+**cuối** và không có đường ra (FR-026). Lên `ACTIVE` **xoá nhãn pre-order** và ngày dự kiến.
+
+Response `200`: `data` = `AdminProductDetail`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`to` không thuộc bốn trạng thái; `details[].field` là `"to"`) ·
+`MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 ·
+`PRODUCT_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Một lần chuyển bị từ chối **không đổi gì**: sản phẩm ở nguyên trạng thái cũ (FR-024).
+- Ghi `audit_logs` với action `PRODUCT_STATE_CHANGED`, metadata `{"from": ..., "to": ...}`.
+
+### 6.9 `POST /admin/products/{id}/images`
+
+Gắn một ảnh vào sản phẩm. Body là `multipart/form-data` với đúng một part tên `image`.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` — trả sản phẩm với ảnh mới |
+
+Request
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/products/$ID/images \
+  -H "Authorization: Bearer $ACCESS" \
+  -F "image=@stand.jpg"
+```
+
+Response `201`: `data` = `AdminProductDetail`; ảnh mới nằm trong `images` (mỗi phần tử
+`{ id, publicId, url, width, height, position, isPrimary }`).
+
+Lỗi: `VALIDATION_ERROR` 400 (thiếu part `image`, hoặc body không phải `multipart/form-data`;
+`details[].field` là `"image"`) · `MALFORMED_REQUEST` 400 · `PRODUCT_IMAGE_TYPE_UNSUPPORTED` 400
+(byte không phải JPEG/PNG/WebP, theo chữ ký nội dung) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
+· `PRODUCT_NOT_FOUND` 404 · `PRODUCT_IMAGE_LIMIT_REACHED` 409 · `PRODUCT_IMAGE_TOO_LARGE` 413 ·
+`RATE_LIMITED` 429 · `PRODUCT_MEDIA_UNAVAILABLE` 503
+
+Ghi chú:
+
+- Loại ảnh nhận diện từ **byte tải lên** (chữ ký định dạng), không tin tên file cũng không tin
+  `Content-Type` client khai; chỉ JPEG, PNG và WebP (FR-019).
+- Trần ảnh là **2 MB**, cùng ngưỡng avatar; route đặt trần riêng cho phần đệm `multipart` và
+  handler chặn lại khi đọc, nên mọi cách gửi đều trả cùng `413 PRODUCT_IMAGE_TOO_LARGE`
+  (FR-019).
+- **Ảnh đầu tiên trở thành ảnh chính** (`isPrimary: true`); sản phẩm tối đa **10** ảnh, ảnh thứ
+  11 bị từ chối **trước khi** byte nào lên provider, nên không để lại tài nguyên mồ côi
+  (FR-020).
+- Ảnh được thu nhỏ ở provider (mặc định bề rộng tối đa **1600 px**); provider là nguồn sự thật
+  cho kích thước (research D16).
+- Thiếu cấu hình `MEDIA_*` chỉ tắt thao tác ảnh: mọi lệnh gọi provider trả `503
+  PRODUCT_MEDIA_UNAVAILABLE`, sản phẩm **không** bị đổi nên thử lại được (FR-018).
+- Ghi `audit_logs` với action `PRODUCT_IMAGE_ADDED`, metadata `{"imageId": ...}`.
+
+### 6.10 `DELETE /admin/products/{id}/images/{imageId}`
+
+Gỡ một ảnh khỏi sản phẩm và giải phóng tài nguyên đã lưu (FR-021).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` / `imageId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Gỡ **ảnh chính** sẽ thăng cấp ảnh kế theo `position`, nên sản phẩm còn ảnh luôn có đúng một
+  ảnh chính (FR-021, research D7).
+- Một ảnh không thuộc sản phẩm (hoặc sản phẩm không tồn tại) trả **cùng** `404
+  PRODUCT_NOT_FOUND`, nên không dò được ảnh của sản phẩm khác.
+- Tài nguyên được giải phóng **sau** khi dòng đã mất: hỏng bước giải phóng chỉ để lại tài
+  nguyên mồ côi, không làm sản phẩm trỏ vào thứ không còn (research D14).
+- Ghi `audit_logs` với action `PRODUCT_IMAGE_REMOVED`, metadata `{"imageId": ...}`.
+
+### 6.11 `POST /admin/products/{id}/images/{imageId}/primary`
+
+Đặt một ảnh làm ảnh chính của sản phẩm (FR-017).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả sản phẩm với ảnh được chọn làm chính |
+
+Request: không có body.
+
+Response `200`: `data` = `AdminProductDetail`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` / `imageId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 (sản phẩm hoặc ảnh không thuộc sản phẩm) ·
+`RATE_LIMITED` 429
+
+Ghi chú:
+
+- Thao tác chạy trong một transaction khoá dòng sản phẩm, nên hai lần thăng cấp đồng thời không
+  thể để lại hai ảnh chính; partial unique index trên `(product_id) WHERE is_primary` là bảo
+  đảm ở tầng lưu trữ (research D7).
+- Ghi `audit_logs` với action `PRODUCT_IMAGE_PRIMARY_SET`, metadata `{"imageId": ...}`.
+
+---
+
+## 7. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -1425,19 +1854,30 @@ Ghi chú:
 | POST | `/api/v1/admin/categories` | ADMIN | Tạo danh mục (201) |
 | GET | `/api/v1/admin/categories/{categoryId}` | ADMIN | Chi tiết danh mục, kể cả ẩn |
 | PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục |
-| DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204) |
+| DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204; `409 CATEGORY_IN_USE` nếu còn sản phẩm — feature 006) |
+| GET | `/api/v1/products` | — | Sản phẩm khách thấy được (có phân trang, lọc `?category=`) |
+| GET | `/api/v1/products/{slug}` | — | Chi tiết sản phẩm theo slug |
+| GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang) |
+| POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm, luôn ở `COMING_SOON` (201) |
+| GET | `/api/v1/admin/products/{id}` | ADMIN | Chi tiết sản phẩm, kể cả không hiển thị |
+| PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đổi `sellState`) |
+| DELETE | `/api/v1/admin/products/{id}` | ADMIN | Xoá cứng sản phẩm (204) |
+| POST | `/api/v1/admin/products/{id}/state` | ADMIN | Chuyển trạng thái bán |
+| POST | `/api/v1/admin/products/{id}/images` | ADMIN | Gắn ảnh (multipart, ≤ 2 MB, ≤ 10 ảnh) (201) |
+| DELETE | `/api/v1/admin/products/{id}/images/{imageId}` | ADMIN | Gỡ ảnh (204) |
+| POST | `/api/v1/admin/products/{id}/images/{imageId}/primary` | ADMIN | Đặt ảnh chính |
 
 ---
 
-## 7. Quy tắc cập nhật
+## 8. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 6.
-3. Thêm dòng vào Change log ở mục 8.
+2. Cập nhật bảng tổng hợp ở mục 7.
+3. Thêm dòng vào Change log ở mục 9.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
@@ -1445,10 +1885,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 8. Change log
+## 9. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-08 | Thêm nhóm `/api/v1/products` (module 04 Product): hai route công khai không cần token (`GET /products` có lọc `?category=<slug>`, `GET /products/{slug}`) và chín route quản trị dưới `/admin/products` (danh sách, tạo, đọc, sửa, xoá, đổi trạng thái, thêm/gỡ/đặt ảnh chính), tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: công khai 6 member (danh sách) / 8 member (chi tiết, thêm `description` + `images`); quản trị 15 member / 17 member (thêm `images`, `members`). Bổ sung bảy mã `PRODUCT_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm bị ẩn (kể cả do danh mục bị ẩn) và slug chưa từng tồn tại trả lời y hệt nhau (`404 PRODUCT_NOT_FOUND`); trạng thái bán đi qua endpoint riêng; giá là số nguyên + currency; `preorderExpectedAt` ghi theo `format: date`; xoá cứng. **Đổi một câu trả lời của module 03**: `DELETE /admin/categories/{categoryId}` nay trả `409 CATEGORY_IN_USE` khi còn sản phẩm (tham chiếu `ON DELETE RESTRICT` do feature này thêm), và `CATEGORY_IN_USE` được bổ sung vào bảng mã module category. Phần 6 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 7/8/9. Xem ADR-013. | `internal/modules/product/presentation/http/router.go`, `internal/modules/category/presentation/http/errors.go` |
 | 2026-10-07 | Thêm `GET /swagger/*` (Swagger UI, gate bởi `SWAGGER_ENABLED`, mặc định tắt) và `make swagger`/`make swagger-check`. Spec sinh từ annotation trong code vào `docs/swagger/`; file này vẫn là nguồn authoritative. Xem ADR-011. | `cmd/api/main.go`, `internal/share/httpserver/routes.go`, `Makefile` |
 | 2026-10-07 | Thêm nhóm `/api/v1/categories` (module 03 Category): hai route công khai không cần token (`GET /categories`, `GET /categories/{slug}`) và năm route quản trị dưới `/admin/categories` (danh sách, tạo, đọc, sửa, xoá), tất cả yêu cầu vai trò `ADMIN`. Hình dạng công khai chỉ có bốn member, hình dạng quản trị có thêm `position`, `isVisible`, `createdAt`, `updatedAt`. Bổ sung ba mã `CATEGORY_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: danh mục bị ẩn và slug chưa từng tồn tại trả lời y hệt nhau; va chạm tên/slug trả `409` kèm field. Phần 5 được chèn và bảng tổng hợp/change log dời xuống mục 6/8. | `internal/modules/category/presentation/http/router.go` |
 | 2026-10-06 | `POST /users/me/avatar`: mọi cách gửi ảnh quá trần (khai `Content-Length`, không khai, khai thiếu) đều trả `413 USER_AVATAR_TOO_LARGE`; gỡ `PAYLOAD_TOO_LARGE` khỏi danh sách lỗi của endpoint này vì nó không còn là câu trả lời nào ở đây nữa. Cùng thay đổi đó sửa hàng đầu mục `1.1` (trước đó gộp trần toàn cục và trần riêng của route vào cùng một mã) và bổ sung phần trần 2 162 688 byte trong ghi chú của `4.3`. `PAYLOAD_TOO_LARGE` giữ nguyên trên mọi route không phải avatar. | `internal/modules/user/presentation/http/router.go`, `internal/share/middleware/bodylimit.go` |
