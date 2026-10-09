@@ -17,6 +17,7 @@ import (
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/dto"
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/model"
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/repository"
@@ -35,6 +36,10 @@ const inventoryAdminPath = "/api/v1/admin/inventory"
 
 var testLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 
+// fixedHTTPNow is the instant the seeded movements carry, so the history the
+// route returns is deterministic (research D14).
+var fixedHTTPNow = time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+
 // The tokens the test hooks accept, carrying a fixed subject so a test can
 // assert the identity the handler handed to the use case.
 var (
@@ -51,6 +56,9 @@ type httpRepository struct {
 	physical  int64
 	movements int
 	holds     []model.Hold
+	// movementRows is the ledger the history read pages through, so the US6
+	// route can be exercised over HTTP (FR-008).
+	movementRows []model.Movement
 }
 
 func (r *httpRepository) Level(context.Context, uuid.UUID) (int64, error) { return r.physical, nil }
@@ -99,6 +107,27 @@ func (r *httpRepository) FindActiveHold(_ context.Context, orderID, productID uu
 		}
 	}
 	return nil, false, nil
+}
+
+// Movements pages through the seeded ledger, oldest first, mirroring the storage
+// contract the PostgreSQL adapter provides (FR-008, research D14).
+func (r *httpRepository) Movements(_ context.Context, productID uuid.UUID, page, pageSize int) ([]model.Movement, int64, error) {
+	product := make([]model.Movement, 0, len(r.movementRows))
+	for _, movement := range r.movementRows {
+		if movement.ProductID == productID {
+			product = append(product, movement)
+		}
+	}
+	total := int64(len(product))
+	start := (page - 1) * pageSize
+	if start >= len(product) {
+		return nil, total, nil
+	}
+	end := start + pageSize
+	if end > len(product) {
+		end = len(product)
+	}
+	return product[start:end], total, nil
 }
 
 // httpLookup answers the ProductLookup contract with a fixed existence.
@@ -228,6 +257,7 @@ type inventoryRoute struct {
 func inventoryRoutes(id uuid.UUID) []inventoryRoute {
 	return []inventoryRoute{
 		{http.MethodGet, inventoryAdminPath + "/" + id.String(), ""},
+		{http.MethodGet, inventoryAdminPath + "/" + id.String() + "/movements", ""},
 		{http.MethodPost, inventoryAdminPath + "/" + id.String() + "/restock", `{"quantity":1}`},
 		{http.MethodPost, inventoryAdminPath + "/" + id.String() + "/damage", `{"quantity":1}`},
 		{http.MethodPost, inventoryAdminPath + "/" + id.String() + "/adjustment", `{"quantity":1}`},
@@ -400,7 +430,7 @@ func TestABadQuantityIs400NamingQuantity(t *testing.T) {
 
 // FR-002, FR-009, quickstart 3b-3c: damage over the shelf is 409
 // INVENTORY_INSUFFICIENT_STOCK, the shelf is unchanged on a follow-up read, and
-// the refusal leaves no history entry — a real refusal, not a negative number
+// the refusal leaves no history entry ΓÇö a real refusal, not a negative number
 // that then exists (US2).
 func TestDamageOverTheShelfIs409AndLeavesTheStockUnchanged(t *testing.T) {
 	id := uuid.New()
@@ -473,5 +503,209 @@ func TestReadShowsHeldWhilePhysicalIsUnchanged(t *testing.T) {
 	stock := decodeStock(t, rec)
 	if stock.Data.PhysicalQuantity != 5 || stock.Data.HeldQuantity != 2 || stock.Data.AvailableQuantity != 3 {
 		t.Fatalf("the read must show held while physical is unchanged, got %+v", stock.Data)
+	}
+}
+
+// movementBody is the paginated movement history a client decodes, including the
+// members the StockMovement schema declares (contracts/openapi.yaml).
+type movementBody struct {
+	Data []struct {
+		ID                uuid.UUID  `json:"id"`
+		ProductID         uuid.UUID  `json:"productId"`
+		Kind              string     `json:"kind"`
+		Delta             int64      `json:"delta"`
+		ResultingQuantity int64      `json:"resultingQuantity"`
+		SourceReference   *string    `json:"sourceReference"`
+		ActorID           *uuid.UUID `json:"actorId"`
+		Note              *string    `json:"note"`
+		CreatedAt         time.Time  `json:"createdAt"`
+	} `json:"data"`
+	Meta struct {
+		Page     int   `json:"page"`
+		PageSize int   `json:"pageSize"`
+		Total    int64 `json:"total"`
+	} `json:"meta"`
+}
+
+func decodeMovements(t *testing.T, rec *httptest.ResponseRecorder) movementBody {
+	t.Helper()
+	var body movementBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the movement body %q: %v", rec.Body.String(), err)
+	}
+	return body
+}
+
+// newMovementRouter builds the real use case over a repository seeded with a
+// ledger, so the history route is exercised over HTTP end to end (FR-008).
+func newMovementRouter(t *testing.T, rows []model.Movement, exists bool) http.Handler {
+	t.Helper()
+	repo := &httpRepository{physical: 5, movementRows: rows}
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: repo,
+		Lookup:    &httpLookup{exists: exists},
+		Tx:        httpTx{},
+		Clock:     httpClock{},
+		Audit:     nil,
+		Mapper:    mapper.New(),
+	})
+	handler := New(svc, testLogger)
+	root := chi.NewRouter()
+	root.Mount(inventoryAdminPath, handler.AdminRouter(inventoryHooks(nil)))
+	return root
+}
+
+// FR-008, quickstart 9: GET .../movements answers 200 with the paginated
+// movement shape — including resultingQuantity, sourceReference and actorId —
+// matching the StockMovement schema.
+func TestTheMovementsRouteAnswersThePaginatedHistory(t *testing.T) {
+	id := uuid.New()
+	actor := testAdminID
+	note := "hàng về kho"
+	reference := "evt-1"
+	rows := []model.Movement{
+		{ID: uuid.New(), ProductID: id, Kind: constant.MovementRestock, Delta: 10, ResultingQuantity: 10, ActorID: &actor, Note: &note, CreatedAt: fixedHTTPNow},
+		{ID: uuid.New(), ProductID: id, Kind: constant.MovementDamage, Delta: -3, ResultingQuantity: 7, ActorID: &actor, CreatedAt: fixedHTTPNow.Add(time.Minute)},
+		{ID: uuid.New(), ProductID: id, Kind: constant.MovementSale, Delta: -2, ResultingQuantity: 5, SourceReference: &reference, CreatedAt: fixedHTTPNow.Add(2 * time.Minute)},
+	}
+	router := newMovementRouter(t, rows, true)
+
+	rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("movements: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeMovements(t, rec)
+	if body.Meta.Page != 1 || body.Meta.PageSize != 20 || body.Meta.Total != 3 {
+		t.Fatalf("unexpected page metadata: %+v", body.Meta)
+	}
+	if len(body.Data) != 3 {
+		t.Fatalf("expected three movements, got %d", len(body.Data))
+	}
+	first := body.Data[0]
+	if first.Kind != "RESTOCK" || first.Delta != 10 || first.ResultingQuantity != 10 {
+		t.Fatalf("unexpected first movement: %+v", first)
+	}
+	if first.ActorID == nil || *first.ActorID != actor {
+		t.Fatalf("a manual movement must carry the administrator, got %+v", first.ActorID)
+	}
+	if first.SourceReference != nil {
+		t.Fatalf("a manual movement carries no source reference, got %v", *first.SourceReference)
+	}
+	if first.Note == nil || *first.Note != note {
+		t.Fatalf("a manual movement must carry its note, got %+v", first.Note)
+	}
+	last := body.Data[2]
+	if last.Kind != "SALE" || last.Delta != -2 || last.ResultingQuantity != 5 {
+		t.Fatalf("unexpected last movement: %+v", last)
+	}
+	if last.SourceReference == nil || *last.SourceReference != reference {
+		t.Fatalf("a sale must carry the event's source reference, got %+v", last.SourceReference)
+	}
+	if last.ActorID != nil {
+		t.Fatalf("a system-caused sale carries no human actor, got %+v", last.ActorID)
+	}
+}
+
+// FR-008, quickstart 9b: the requested window is applied and the metadata echoes
+// it, so a long history pages correctly.
+func TestTheMovementsRoutePagesThroughTheHistory(t *testing.T) {
+	id := uuid.New()
+	rows := make([]model.Movement, 0, 3)
+	for i := 0; i < 3; i++ {
+		rows = append(rows, model.Movement{
+			ID: uuid.New(), ProductID: id, Kind: constant.MovementRestock,
+			Delta: 1, ResultingQuantity: int64(i + 1), CreatedAt: fixedHTTPNow.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	router := newMovementRouter(t, rows, true)
+
+	rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements?page=2&pageSize=2", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("movements page 2: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeMovements(t, rec)
+	if body.Meta.Page != 2 || body.Meta.PageSize != 2 || body.Meta.Total != 3 {
+		t.Fatalf("unexpected page metadata: %+v", body.Meta)
+	}
+	if len(body.Data) != 1 || body.Data[0].ID != rows[2].ID {
+		t.Fatalf("page 2 of size 2 must hold the third movement, got %+v", body.Data)
+	}
+}
+
+// FR-008, quickstart 9d: a product with no movements answers 200 and an empty
+// array, not an error.
+func TestTheMovementsRouteAnswersAnEmptyHistory(t *testing.T) {
+	id := uuid.New()
+	router := newMovementRouter(t, nil, true)
+
+	rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty movements: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeMovements(t, rec); len(body.Data) != 0 || body.Meta.Total != 0 {
+		t.Fatalf("expected an empty page, got %+v", body)
+	}
+	if !strings.Contains(rec.Body.String(), `"data":[]`) {
+		t.Fatalf("an empty history must serialise as an empty array, got %s", rec.Body.String())
+	}
+}
+
+// FR-007, research D12: an unknown product answers 404 PRODUCT_NOT_FOUND.
+func TestTheMovementsRouteAnswers404ForAnUnknownProduct(t *testing.T) {
+	id := uuid.New()
+	router, _, _ := newStockRouter(t, 0, false, inventoryHooks(nil))
+
+	rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements", "", "admin-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown product: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
+		t.Fatalf("expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// quickstart 9c, contracts/error-codes.md: a page or page size outside its range
+// is 400 VALIDATION_ERROR naming the offending field.
+func TestTheMovementsRouteRefusesAPageOutsideItsRange(t *testing.T) {
+	id := uuid.New()
+	router, _, _ := newStockRouter(t, 0, true, inventoryHooks(nil))
+
+	cases := []struct {
+		query string
+		field string
+	}{
+		{"?pageSize=101", "pageSize"},
+		{"?pageSize=0", "pageSize"},
+		{"?page=0", "page"},
+		{"?page=abc", "page"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements"+tc.query, "", "admin-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			body := decodeError(t, rec)
+			if body.Error.Code != "VALIDATION_ERROR" {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+			}
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != tc.field {
+				t.Fatalf("expected the detail to name %s, got %+v", tc.field, body.Error.Details)
+			}
+		})
+	}
+}
+
+// FR-005: the history route is an administrator's, so a customer token is 403.
+func TestTheMovementsRouteRefusesACustomerToken(t *testing.T) {
+	id := uuid.New()
+	router, _, _ := newStockRouter(t, 0, true, inventoryHooks(nil))
+
+	rec := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String()+"/movements", "", "customer-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("customer token: expected 403, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
+		t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 	}
 }

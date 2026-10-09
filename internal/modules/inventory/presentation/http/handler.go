@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -18,15 +20,24 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
+// Pagination bounds of the movement history (contracts/openapi.yaml,
+// Page/PageSize). They match the project's existing list convention (research
+// D14).
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
+
 // stockService is the slice of the module's use-case surface the administrator
-// routes consume. It is the US1 half of appinterface.InventoryService; the hold,
-// event and history methods are added to it by the stories that implement them,
-// so a route cannot reach a use case that does not exist yet.
+// routes consume: the manual stock operations and the read US1 delivers, plus the
+// history read US6 adds. The hold and event methods stay off it — they have no
+// HTTP surface (research D7).
 type stockService interface {
 	Restock(ctx context.Context, in appdto.RestockInput) (appdto.StockOutput, error)
 	Damage(ctx context.Context, in appdto.DamageInput) (appdto.StockOutput, error)
 	Adjust(ctx context.Context, in appdto.AdjustmentInput) (appdto.StockOutput, error)
 	Stock(ctx context.Context, in appdto.StockRefInput) (appdto.StockOutput, error)
+	History(ctx context.Context, in appdto.HistoryInput) (appdto.MovementPage, error)
 }
 
 // Handler adapts the inventory administrator use cases to HTTP. It carries no
@@ -61,6 +72,30 @@ func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteSuccess(w, r, http.StatusOK, toStockResponse(out))
+}
+
+// GetMovements returns one page of a product's movement history, oldest first
+// (FR-008). An unknown product is 404 PRODUCT_NOT_FOUND, because the history of a
+// product that does not exist is not an empty history (research D12). The window
+// is validated here — a page or size outside its range is 400 VALIDATION_ERROR
+// naming the field — and the paginated envelope carries the page metadata.
+func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
+	id, appErr := pathUUID(r, "productId", fieldProductID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	page, pageSize, appErr := pageParams(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	out, err := h.svc.History(r.Context(), appdto.HistoryInput{ProductID: id, Page: page, PageSize: pageSize})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccessList(w, r, toMovementResponses(out.Movements), out.Page, out.PageSize, out.Total)
 }
 
 // Restock records goods arriving (FR-001). The acting administrator comes from
@@ -181,6 +216,41 @@ func quantityValue(raw json.Number) (int64, *httpx.AppError) {
 	return value, nil
 }
 
+// pageParams reads the movement-history window. Pagination validation is a
+// foundation concern and stays on the shared VALIDATION_ERROR code, matching the
+// catalogue and address lists (research D14).
+func pageParams(r *http.Request) (int, int, *httpx.AppError) {
+	query := r.URL.Query()
+	page, err := positiveQuery(query.Get("page"), 1)
+	if err != nil {
+		return 0, 0, fieldError(fieldPage, "must be an integer of at least 1")
+	}
+	pageSize, err := positiveQuery(query.Get("pageSize"), defaultPageSize)
+	if err != nil {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	if pageSize > maxPageSize {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	return page, pageSize, nil
+}
+
+// positiveQuery parses a whole-number query member, falling back to the default
+// when it is absent and reporting a value below 1 as unacceptable.
+func positiveQuery(raw string, fallback int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.New("not an integer")
+	}
+	if parsed < 1 {
+		return 0, errors.New("below the lower bound")
+	}
+	return parsed, nil
+}
+
 // sessionActor returns the acting account taken from the authenticated session.
 //
 // No inventory route accepts an owner identifier: the session is the only source
@@ -221,4 +291,33 @@ func toStockResponse(out appdto.StockOutput) httpdto.StockResponse {
 		HeldQuantity:      out.HeldQuantity,
 		AvailableQuantity: out.AvailableQuantity,
 	}
+}
+
+// toMovementResponse is the single conversion point from the application movement
+// DTO to the HTTP shape, so the nine-member shape cannot drift per route. A nil
+// source reference and a nil actor are carried through as null, which is what
+// keeps a manual change distinguishable from a system-caused sale (FR-008).
+func toMovementResponse(out appdto.MovementOutput) httpdto.MovementResponse {
+	return httpdto.MovementResponse{
+		ID:                out.ID,
+		ProductID:         out.ProductID,
+		Kind:              string(out.Kind),
+		Delta:             out.Delta,
+		ResultingQuantity: out.ResultingQuantity,
+		SourceReference:   out.SourceReference,
+		ActorID:           out.ActorID,
+		Note:              out.Note,
+		CreatedAt:         out.CreatedAt,
+	}
+}
+
+// toMovementResponses maps a page of movements. It always returns a non-nil slice
+// — an empty page serialises as `[]`, which is what a client expects of a history
+// that has no changes (quickstart 9d), rather than as `null`.
+func toMovementResponses(list []appdto.MovementOutput) []httpdto.MovementResponse {
+	out := make([]httpdto.MovementResponse, 0, len(list))
+	for _, movement := range list {
+		out = append(out, toMovementResponse(movement))
+	}
+	return out
 }

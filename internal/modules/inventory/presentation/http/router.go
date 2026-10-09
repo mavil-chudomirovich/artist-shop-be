@@ -20,6 +20,7 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
 	r.Get("/{productId}", h.GetStock)
+	r.Get("/{productId}/movements", h.GetMovements)
 	r.Post("/{productId}/restock", h.Restock)
 	r.Post("/{productId}/damage", h.Damage)
 	r.Post("/{productId}/adjustment", h.Adjustment)

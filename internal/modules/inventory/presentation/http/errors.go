@@ -21,6 +21,8 @@ const codeProductNotFound = "PRODUCT_NOT_FOUND"
 const (
 	fieldProductID = "productId"
 	fieldQuantity  = "quantity"
+	fieldPage      = "page"
+	fieldPageSize  = "pageSize"
 )
 
 // coded builds a module error response with an explicit status, so a code that is
