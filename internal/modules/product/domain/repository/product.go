@@ -151,6 +151,13 @@ type ProductRepository interface {
 	// reported as domainerr.ErrProductNotFound (FR-011).
 	FindByID(ctx context.Context, id uuid.UUID) (*ProductView, error)
 
+	// Exists reports whether a product carries the identifier, without reading the
+	// row or its pictures. It answers the cross-module lookup the inventory module
+	// asks (specs/007-inventory-tracking research D4, D12): a read or a decrease
+	// writes no product row, so the foreign key cannot answer it, and the product
+	// module is the only place that can. It joins the caller's transaction.
+	Exists(ctx context.Context, id uuid.UUID) (bool, error)
+
 	// LockProduct takes the product's row lock inside the caller's transaction,
 	// so the picture count that follows cannot be read by two concurrent uploads
 	// as the same value (research D6). An unknown identifier is reported as

@@ -142,6 +142,18 @@ type ProductService interface {
 	// table and audits the change (FR-022 to FR-026, research D8).
 	ChangeSellState(ctx context.Context, in dto.ChangeSellStateInput) (dto.AdminProductDetailOutput, error)
 
+	// MarkOutOfStock is the system-facing signal the inventory module sends when a
+	// product's availability reaches zero. It moves ACTIVE → OUT_OF_STOCK through
+	// the entity's own transition, leaves announced and retired products untouched,
+	// and audits PRODUCT_STATE_CHANGED with no human actor (FR-024, research D4).
+	MarkOutOfStock(ctx context.Context, productID uuid.UUID) error
+	// MarkOnSale is the system-facing signal the inventory module sends when a
+	// product's availability rises from zero. It moves OUT_OF_STOCK → ACTIVE
+	// through the entity's own transition, leaves announced and retired products
+	// untouched, and audits PRODUCT_STATE_CHANGED with no human actor (FR-025,
+	// research D4).
+	MarkOnSale(ctx context.Context, productID uuid.UUID) error
+
 	// AddPicture validates the upload, stores it through the MediaStore and
 	// audits the change. The first picture becomes the main one (FR-016 to
 	// FR-020).

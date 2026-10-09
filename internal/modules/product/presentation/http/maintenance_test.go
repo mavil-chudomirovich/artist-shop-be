@@ -127,6 +127,12 @@ func (s *stubProductService) ChangeSellState(ctx context.Context, in appdto.Chan
 	return s.changeStateOut, s.changeStateErr
 }
 
+// The system-facing availability signals are never reached over HTTP; the stub
+// only has to satisfy the surface the handler consumes.
+func (s *stubProductService) MarkOutOfStock(context.Context, uuid.UUID) error { return nil }
+
+func (s *stubProductService) MarkOnSale(context.Context, uuid.UUID) error { return nil }
+
 // The stub satisfies the one declared use-case surface the handler consumes, so
 // the surface cannot drift away from what the routes reach.
 var _ appinterface.ProductService = (*stubProductService)(nil)
