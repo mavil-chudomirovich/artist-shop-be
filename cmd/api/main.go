@@ -22,6 +22,10 @@ import (
 	authredis "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/redis"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
 	authhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/http"
+	cartimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/implement"
+	cartmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/mapper"
+	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
+	carthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/presentation/http"
 	categoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
 	categorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
 	categoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/auditor"
@@ -31,6 +35,7 @@ import (
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
 	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
 	inventoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/auditor"
+	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
 	inventoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/http"
 	inventoryworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/worker"
@@ -39,6 +44,7 @@ import (
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	productauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/auditor"
 	productavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/availability"
+	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
 	producthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
@@ -315,6 +321,24 @@ func run() error {
 	// sweeper and the availability sum agree on what has expired (research D15).
 	inventorySweeper := inventoryworker.New(inventoryService, logger)
 
+	// Module 06 (cart). One customer group, /cart, carries the session guard and
+	// no cart identifier: the owner is the session, so a client never names a cart
+	// (research D7, FR-010). The module consumes module 04's product facts and
+	// module 05's availability through the two cross-module contracts, each
+	// supplied by the providing module's own adapter here, so the cart never
+	// imports another module's internals (research D1, D2, D13, Constitution I).
+	// The cart checks availability but never holds stock (FR-011, research D12).
+	cartRepository := cartpostgres.NewCartRepository(db.Pool)
+	cartService := cartimplement.New(cartimplement.Service{
+		Carts:        cartRepository,
+		Products:     productcatalog.New(productRepository),
+		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
+		Tx:           db,
+		Clock:        wallClock{},
+		Mapper:       cartmapper.New(),
+	})
+	cartHandler := carthttp.New(cartService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -354,6 +378,10 @@ func run() error {
 			// manual operations, addressed by identifier behind the administrator
 			// role guard (research D8).
 			r.Mount("/admin/inventory", inventoryHandler.AdminRouter(authHooks))
+			// The cart: the signed-in customer's singleton resource, addressed at
+			// /cart with no identifier behind the session guard; lines are
+			// addressed by their product identifier (research D7).
+			r.Mount("/cart", cartHandler.Router(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
