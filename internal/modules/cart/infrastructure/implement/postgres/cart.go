@@ -196,6 +196,18 @@ func (r *CartRepository) DeleteLine(ctx context.Context, cartID, productID uuid.
 	return nil
 }
 
+// ClearLines removes every line of a cart in one statement. A cart with no line
+// is a no-op: a retried clear changes nothing, so checkout can empty the cart it
+// just turned into an order without reading the lines first (research D1). It
+// joins the transaction the application put in the context.
+func (r *CartRepository) ClearLines(ctx context.Context, cartID uuid.UUID) error {
+	const query = `DELETE FROM cart_items WHERE cart_id = $1`
+	if _, err := r.querier(ctx).Exec(ctx, query, cartID); err != nil {
+		return fmt.Errorf("clear cart lines: %w", err)
+	}
+	return nil
+}
+
 // Lines returns the cart's lines in a stable order — created_at then id — so two
 // reads return the same order even when they share a timestamp.
 func (r *CartRepository) Lines(ctx context.Context, cartID uuid.UUID) ([]model.CartLine, error) {

@@ -122,6 +122,13 @@ func (r *httpRepo) Lines(_ context.Context, cartID uuid.UUID) ([]model.CartLine,
 	return append([]model.CartLine(nil), r.lines[cartID]...), nil
 }
 
+// ClearLines empties the cart, mirroring the adapter's one-statement delete that
+// checkout uses to empty the cart it just turned into an order (research D1).
+func (r *httpRepo) ClearLines(_ context.Context, cartID uuid.UUID) error {
+	delete(r.lines, cartID)
+	return nil
+}
+
 // httpCatalog answers the ProductCatalog contract from a fixed set.
 type httpCatalog struct {
 	products map[uuid.UUID]contracts.ProductSummary

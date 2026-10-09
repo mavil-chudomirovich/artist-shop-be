@@ -102,6 +102,13 @@ func (r *memoryRepo) Lines(_ context.Context, cartID uuid.UUID) ([]model.CartLin
 	return append([]model.CartLine(nil), r.lines[cartID]...), nil
 }
 
+// ClearLines empties the cart, mirroring the adapter's one-statement delete that
+// checkout uses to empty the cart it just turned into an order (research D1).
+func (r *memoryRepo) ClearLines(_ context.Context, cartID uuid.UUID) error {
+	delete(r.lines, cartID)
+	return nil
+}
+
 var _ domainrepo.CartRepository = (*memoryRepo)(nil)
 
 // fakeCatalog answers the ProductCatalog contract from a fixed set of products.

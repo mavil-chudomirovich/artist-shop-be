@@ -63,6 +63,13 @@ type CartRepository interface {
 	// transaction.
 	DeleteLine(ctx context.Context, cartID, productID uuid.UUID) error
 
+	// ClearLines removes every line of a cart in one statement, so checkout can
+	// empty the cart it just turned into an order without reading the lines
+	// first (research D1). A cart with no line is a no-op rather than an error,
+	// so a retried clear is harmless. It joins the caller's transaction, so the
+	// order and the emptied cart commit together or not at all.
+	ClearLines(ctx context.Context, cartID uuid.UUID) error
+
 	// Lines returns the cart's lines in a stable order — created_at then id — so
 	// two reads return the same order even when they share a timestamp. It joins
 	// the caller's transaction.
