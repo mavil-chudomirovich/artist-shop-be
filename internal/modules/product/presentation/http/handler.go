@@ -62,6 +62,17 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 // The `category` filter is passed down as the slug a customer-facing link
 // carries; the use case resolves it, and a hidden or unknown slug answers an
 // empty page rather than a not-found (FR-006).
+//
+//	@Summary		List the products a customer can see
+//	@Description	Returns a page of the visible catalogue — on sale, or announced as a pre-order, in a category on display — ordered by the operator's position. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.
+//	@Tags			Product
+//	@Produce		json
+//	@Param			page		query	int		false	"Page number (default 1)"
+//	@Param			pageSize	query	int		false	"Page size (default 20)"
+//	@Param			category	query	string	false	"Category slug to narrow the list to"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicProductResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Router			/products [get]
 func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, appErr := pageParams(r)
 	if appErr != nil {
@@ -84,6 +95,15 @@ func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 // picture, addressed by the slug a customer-facing link is built from
 // (FR-005). A hidden, retired, removed or unknown slug answers the same
 // not-found (FR-003).
+//
+//	@Summary		Read one product by slug
+//	@Description	Returns one visible product with its description and every picture. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.
+//	@Tags			Product
+//	@Produce		json
+//	@Param			slug	path	string	true	"Product slug"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.PublicProductDetailResponse}
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/products/{slug} [get]
 func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	out, err := h.svc.GetPublicBySlug(r.Context(), appdto.PublicProductRefInput{Slug: slug})
@@ -222,6 +242,19 @@ func pathUUID(r *http.Request, name, field string) (uuid.UUID, *httpx.AppError) 
 
 // ListAdmin returns a page of every product, including the ones withheld from
 // customers (FR-011). It is reached only behind the administrator role guard.
+//
+//	@Summary		List every product (ADMIN)
+//	@Description	Returns a page of every product, including the ones withheld from customers, with the sell state, the position, the category and the picture summary a customer never sees.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminProductResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Router			/admin/products [get]
 func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, appErr := pageParams(r)
 	if appErr != nil {
@@ -239,6 +272,19 @@ func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 // GetAdmin returns one product by identifier, including one not visible to
 // customers (FR-011). A malformed identifier is answered with the field named; an
 // unknown one is the module not-found.
+//
+//	@Summary		Read one product by identifier (ADMIN)
+//	@Description	Returns one product, including one not visible to customers, with its pictures and, for a set, its members.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Product identifier"
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400	{object}	httpx.SwaggerError
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Failure		403	{object}	httpx.SwaggerError
+//	@Failure		404	{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id} [get]
 func (h *Handler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 	id, appErr := pathUUID(r, "id", fieldID)
 	if appErr != nil {
@@ -257,6 +303,20 @@ func (h *Handler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 // administrator comes from the session the middleware resolved, never from the
 // body: the input carries no account member and the decoder refuses an unknown
 // one.
+//
+//	@Summary		Create a product (ADMIN)
+//	@Description	Creates a product in COMING_SOON. The acting administrator comes from the session, never the body.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body	httpdto.CreateProductRequest	true	"Product payload"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/products [post]
 func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -289,6 +349,22 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProduct applies a partial administrator edit (FR-012). An omitted member
 // keeps its current value; the sell state is never changed here (research D11).
+//
+//	@Summary		Update a product (ADMIN)
+//	@Description	Applies a partial edit. An omitted member keeps its value; the sell state is never changed here (it has its own transition endpoint).
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string						true	"Product identifier"
+//	@Param			request	body	httpdto.UpdateProductRequest	true	"Product update"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id} [patch]
 func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -327,6 +403,19 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 
 // DeleteProduct removes a product (FR-013). Removal is a hard delete; the audit
 // entry is what survives it.
+//
+//	@Summary		Delete a product (ADMIN)
+//	@Description	Removes a product. Removal is a hard delete; the audit entry is what survives it.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Product identifier"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.SwaggerError
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Failure		403	{object}	httpx.SwaggerError
+//	@Failure		404	{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id} [delete]
 func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -352,6 +441,22 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 // refusal names the current state (FR-023, FR-024). A target that is not one of the
 // four states is reported against `to` by the use case. The acting administrator
 // comes from the session, never from the body (FR-015).
+//
+//	@Summary		Move a product through its selling life (ADMIN)
+//	@Description	Requests a sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. The acting administrator comes from the session, never the body.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string					true	"Product identifier"
+//	@Param			request	body	httpdto.ChangeStateRequest	true	"Target sell state"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/state [post]
 func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -383,6 +488,24 @@ func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
 // and handed to the use case, which validates them by content and by the
 // product's count; neither the file name nor the client-declared media type is
 // trusted (FR-019, FR-020).
+//
+//	@Summary		Upload a product picture (ADMIN)
+//	@Description	Stores a picture for the product through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.
+//	@Tags			Product
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string	true	"Product identifier"
+//	@Param			image	formData	file	true	"Product image (JPEG, PNG or WebP)"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/images [post]
 func (h *Handler) AddPicture(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -409,6 +532,20 @@ func (h *Handler) AddPicture(w http.ResponseWriter, r *http.Request) {
 
 // RemovePicture detaches one picture from a product and releases its stored asset
 // (FR-021).
+//
+//	@Summary		Remove a product picture (ADMIN)
+//	@Description	Detaches one picture from the product and releases its stored asset. Removing the main picture promotes the next one by position.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Product identifier"
+//	@Param			imageId	path	string	true	"Picture identifier"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/images/{imageId} [delete]
 func (h *Handler) RemovePicture(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -433,6 +570,20 @@ func (h *Handler) RemovePicture(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetPrimaryPicture makes one picture the product's main one (FR-017).
+//
+//	@Summary		Set the main product picture (ADMIN)
+//	@Description	Makes one picture the product's main one, clearing any other in the same operation.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Product identifier"
+//	@Param			imageId	path	string	true	"Picture identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/images/{imageId}/primary [post]
 func (h *Handler) SetPrimaryPicture(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {

@@ -46,6 +46,16 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 
 // ListPublic returns a page of the catalogue on display. It is reachable with no
 // session (FR-001, FR-014): the route installs no authentication middleware.
+//
+//	@Summary		List the categories on display
+//	@Description	Returns a page of the categories the operator has left on display, in the configured order. No session is required.
+//	@Tags			Category
+//	@Produce		json
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicCategoryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Router			/categories [get]
 func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, appErr := pageParams(r)
 	if appErr != nil {
@@ -63,6 +73,15 @@ func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 // GetPublicBySlug returns one category on display, addressed by the slug a
 // customer-facing link is built from (research D7). A withheld, removed or
 // unknown slug answers the same not-found (FR-005).
+//
+//	@Summary		Read one displayed category by slug
+//	@Description	Returns one category on display, addressed by its slug. A withheld, removed or unknown slug answers the same not-found. No session is required.
+//	@Tags			Category
+//	@Produce		json
+//	@Param			slug	path	string	true	"Category slug"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.PublicCategoryResponse}
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/categories/{slug} [get]
 func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	out, err := h.svc.GetPublicBySlug(r.Context(), appdto.PublicCategoryRefInput{Slug: slug})
@@ -76,6 +95,19 @@ func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 // ListAdmin returns a page of every category, including the ones not on display
 // (FR-009). It is reached only behind the administrator role guard, which is what
 // keeps the display state and the position from a customer (FR-007, FR-014).
+//
+//	@Summary		List every category (ADMIN)
+//	@Description	Returns a page of every category, including the ones not on display, with the position and display state a customer never sees.
+//	@Tags			Category
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminCategoryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Router			/admin/categories [get]
 func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, appErr := pageParams(r)
 	if appErr != nil {
@@ -93,6 +125,19 @@ func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 // GetAdmin returns one category by identifier, including one not on display
 // (FR-009). A malformed identifier is a request-shape problem answered with the
 // field named; an unknown one is the module not-found.
+//
+//	@Summary		Read one category by identifier (ADMIN)
+//	@Description	Returns one category, including one not on display. A malformed identifier is a request error with the field named; an unknown one is not-found.
+//	@Tags			Category
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			categoryId	path	string	true	"Category identifier"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AdminCategoryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/admin/categories/{categoryId} [get]
 func (h *Handler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 	id, appErr := pathUUID(r, "categoryId", fieldCategoryID)
 	if appErr != nil {
@@ -111,6 +156,20 @@ func (h *Handler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 // administrator comes from the session the middleware resolved, never from the
 // body: the input carries no account member and the decoder refuses an unknown
 // one.
+//
+//	@Summary		Create a category (ADMIN)
+//	@Description	Creates a category on display. The acting administrator comes from the session, never the body.
+//	@Tags			Category
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body	httpdto.CreateCategoryRequest	true	"Category payload"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminCategoryResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/categories [post]
 func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -138,6 +197,22 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 // UpdateCategory applies a partial administrator edit, including a display
 // change (FR-010, FR-011). An omitted member keeps its current value; the acting
 // administrator comes from the session.
+//
+//	@Summary		Update a category (ADMIN)
+//	@Description	Applies a partial edit (name, slug, description, position and display state). An omitted member keeps its value.
+//	@Tags			Category
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			categoryId	path	string	true	"Category identifier"
+//	@Param			request		body	httpdto.UpdateCategoryRequest	true	"Category update"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AdminCategoryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/categories/{categoryId} [patch]
 func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -172,6 +247,20 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 // DeleteCategory removes a category (FR-012). Removal is a hard delete; the
 // audit entry is what survives it. The acting administrator comes from the
 // session.
+//
+//	@Summary		Delete a category (ADMIN)
+//	@Description	Removes a category. A category that still has products cannot be removed.
+//	@Tags			Category
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			categoryId	path	string	true	"Category identifier"
+//	@Success		204			"No Content"
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/categories/{categoryId} [delete]
 func (h *Handler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {

@@ -166,6 +166,12 @@ Không mục nào ở đây chặn việc đóng feature này; không mục nào
 
 ### D12 — Module 03 và 04 không có annotation Swagger, nên `/swagger` chỉ phủ module 01/02
 
+> **D12 đã đóng (2026-10-09).** Đã thêm annotation cho **cả ba** module 03 (category), 04 (product)
+> và 05 (inventory), rồi regenerate `docs/swagger`; `/swagger` giờ phủ đủ các module đã giao
+> (36 path, từ 19). Sửa kèm hai lệch kiểu: `quantity` (dùng `json.Number`) khai `integer`, và
+> `preorderExpectedAt` khai `string`, qua tag `swaggertype`. Module **mới** (từ `06` trở đi) phải kèm
+> annotation ngay khi làm, để khoảng trống không tái diễn.
+
 - **Vấn đề**: ADR 011 dựng Swagger từ annotation trong code, phục vụ tại `/swagger`. Module 01 (auth) và
   module 02 (user) có `@Summary`/`@Router`; module 03 (category) và module 04 (product) **không có**, nên
   giao diện `/swagger` không liệt kê endpoint của hai module này.

@@ -58,7 +58,7 @@ type MovementResponse struct {
 // positive-whole-number rule itself is the use case's (FR-012).
 type QuantityRequest struct {
 	// Quantity is the positive whole number received or lost.
-	Quantity json.Number `json:"quantity"`
+	Quantity json.Number `json:"quantity" swaggertype:"integer"`
 	// Note is an optional free-text note for the change.
 	Note *string `json:"note"`
 }
@@ -68,7 +68,7 @@ type QuantityRequest struct {
 // stored is what gets recorded.
 type AdjustmentRequest struct {
 	// Quantity is the counted value; zero is valid.
-	Quantity json.Number `json:"quantity"`
+	Quantity json.Number `json:"quantity" swaggertype:"integer"`
 	// Note is an optional free-text note for the correction.
 	Note *string `json:"note"`
 }

@@ -151,7 +151,7 @@ type CreateProductRequest struct {
 	IsPreorder bool `json:"isPreorder"`
 	// PreorderExpectedAt is the optional expected-availability date, in the
 	// contract's date-only form. It is meaningful only together with IsPreorder.
-	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt" swaggertype:"string"`
 }
 
 // UpdateProductRequest is the administrator partial-edit body
@@ -185,7 +185,7 @@ type UpdateProductRequest struct {
 	IsPreorder *bool `json:"isPreorder"`
 	// PreorderExpectedAt is the new expected-availability date, in the
 	// contract's date-only form; nil keeps the current value.
-	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt" swaggertype:"string"`
 }
 
 // ChangeStateRequest is the administrator sell-state transition body
@@ -225,7 +225,7 @@ type AdminProductResponse struct {
 	IsPreorder bool `json:"isPreorder"`
 	// PreorderExpectedAt is the optional expected availability date, or null. It
 	// is written in the contract's date-only form (format: date).
-	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt"`
+	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt" swaggertype:"string"`
 	// ImageCount is how many pictures the product has.
 	ImageCount int `json:"imageCount"`
 	// ImageURL is the main picture's link, or null when the product has none.

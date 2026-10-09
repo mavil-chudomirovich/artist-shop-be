@@ -60,6 +60,19 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 // GetStock returns one product's physical, held and available quantities
 // (FR-007). An unknown product is 404 PRODUCT_NOT_FOUND; one that exists but has
 // never been stocked answers zero.
+//
+//	@Summary		Read a product's stock (ADMIN)
+//	@Description	Returns the physical quantity, the quantity currently held for orders being paid, and what remains available. A product that does not exist answers not-found; one that exists but has never been stocked answers zero.
+//	@Tags			Inventory
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			productId	path	string	true	"Product identifier"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/admin/inventory/{productId} [get]
 func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 	id, appErr := pathUUID(r, "productId", fieldProductID)
 	if appErr != nil {
@@ -79,6 +92,21 @@ func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 // product that does not exist is not an empty history (research D12). The window
 // is validated here — a page or size outside its range is 400 VALIDATION_ERROR
 // naming the field — and the paginated envelope carries the page metadata.
+//
+//	@Summary		Read a product's movement history (ADMIN)
+//	@Description	Returns a page of a product's physical stock changes, oldest first, with the signed amount and the resulting quantity. Pagination is reported in meta.
+//	@Tags			Inventory
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			productId	path	string	true	"Product identifier"
+//	@Param			page		query	int		false	"Page number (default 1)"
+//	@Param			pageSize	query	int		false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.MovementResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/admin/inventory/{productId}/movements [get]
 func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
 	id, appErr := pathUUID(r, "productId", fieldProductID)
 	if appErr != nil {
@@ -101,6 +129,21 @@ func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
 // Restock records goods arriving (FR-001). The acting administrator comes from
 // the session the middleware resolved, never from the body: the input carries no
 // account member and the decoder refuses an unknown one.
+//
+//	@Summary		Record goods arriving (ADMIN)
+//	@Description	Increases the product's physical quantity by a positive amount and records one ledger entry naming the administrator. The acting administrator comes from the session, never the body.
+//	@Tags			Inventory
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			request		body	httpdto.QuantityRequest	true	"Quantity to add"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/admin/inventory/{productId}/restock [post]
 func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -121,6 +164,22 @@ func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 
 // Damage records goods lost (FR-002). A decrease over the shelf is refused by the
 // use case with the insufficient-stock sentinel, which maps to 409.
+//
+//	@Summary		Record damaged goods (ADMIN)
+//	@Description	Decreases the product's physical quantity by a positive amount. A decrease over the shelf, or below what is held, is refused and changes nothing.
+//	@Tags			Inventory
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			request		body	httpdto.QuantityRequest	true	"Quantity to remove"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/inventory/{productId}/damage [post]
 func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -142,6 +201,22 @@ func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 // Adjustment corrects a product's physical stock to a recounted value (FR-003).
 // Zero is a valid counted value; correcting to what is stored changes nothing and
 // writes no movement.
+//
+//	@Summary		Correct the physical quantity (ADMIN)
+//	@Description	Sets the product's physical quantity to a recounted value and records only the difference. Correcting to the stored value changes nothing and writes no ledger entry; zero is a valid counted value.
+//	@Tags			Inventory
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			request		body	httpdto.AdjustmentRequest	true	"Counted quantity"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/inventory/{productId}/adjustment [post]
 func (h *Handler) Adjustment(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {

@@ -70,6 +70,498 @@ definitions:
       otp:
         type: string
     type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse:
+    properties:
+      createdAt:
+        description: CreatedAt is when the category was created.
+        type: string
+      description:
+        description: Description is the text shown to customers; it may be empty.
+        type: string
+      id:
+        description: ID is the category's stable identifier.
+        type: string
+      isVisible:
+        description: IsVisible reports whether a customer can see the category.
+        type: boolean
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      position:
+        description: Position is the operator's ordering preference.
+        type: integer
+      slug:
+        description: Slug is the link segment the operator wrote.
+        type: string
+      updatedAt:
+        description: UpdatedAt is when the category was last written.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.CreateCategoryRequest:
+    properties:
+      description:
+        description: |-
+          Description is optional; an omitted or empty description is stored as
+          empty.
+        type: string
+      name:
+        description: Name is required; it is trimmed before it is stored.
+        type: string
+      position:
+        description: |-
+          Position is optional and defaults to zero. Any whole number, including
+          zero and negative, is valid.
+        type: integer
+      slug:
+        description: Slug is required; it must be URL-safe and is never derived from
+          the name.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.PublicCategoryResponse:
+    properties:
+      description:
+        description: Description may be empty; an empty description is valid.
+        type: string
+      id:
+        description: ID is the category's stable public identifier.
+        type: string
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      slug:
+        description: Slug is the segment a customer-facing link is built from.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.UpdateCategoryRequest:
+    properties:
+      description:
+        description: Description is the new description; nil keeps the current value.
+        type: string
+      isVisible:
+        description: |-
+          IsVisible is the requested display state; nil keeps the current value. It
+          is routed to the hide or show transition, never assigned directly.
+        type: boolean
+      name:
+        description: Name is the new name; nil keeps the current value.
+        type: string
+      position:
+        description: Position is the new position; nil keeps the current value.
+        type: integer
+      slug:
+        description: Slug is the new slug; nil keeps the current value.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.AdjustmentRequest:
+    properties:
+      note:
+        description: Note is an optional free-text note for the correction.
+        type: string
+      quantity:
+        description: Quantity is the counted value; zero is valid.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.MovementResponse:
+    properties:
+      actorId:
+        description: |-
+          ActorID is the administrator who made a manual change, or null for a
+          system-caused sale.
+        type: string
+      createdAt:
+        description: CreatedAt is when the movement was written.
+        type: string
+      delta:
+        description: Delta is the signed change.
+        type: integer
+      id:
+        description: ID identifies the movement.
+        type: string
+      kind:
+        description: 'Kind is the kind of change: RESTOCK, DAMAGE, ADJUSTMENT or SALE.'
+        type: string
+      note:
+        description: Note is the optional note a manual change carries, or null.
+        type: string
+      productId:
+        description: ProductID is the product whose quantity changed.
+        type: string
+      resultingQuantity:
+        description: ResultingQuantity is the physical quantity after the change.
+        type: integer
+      sourceReference:
+        description: |-
+          SourceReference is the outside event's identity, or null for a manual
+          change.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.QuantityRequest:
+    properties:
+      note:
+        description: Note is an optional free-text note for the change.
+        type: string
+      quantity:
+        description: Quantity is the positive whole number received or lost.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.StockResponse:
+    properties:
+      availableQuantity:
+        description: 'AvailableQuantity is the difference: what a customer can take.'
+        type: integer
+      heldQuantity:
+        description: HeldQuantity is what active holds have set aside.
+        type: integer
+      physicalQuantity:
+        description: PhysicalQuantity is what is on the shelf.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse:
+    properties:
+      height:
+        type: integer
+      id:
+        description: ID identifies the picture.
+        type: string
+      isPrimary:
+        description: IsPrimary reports whether this is the product's main picture.
+        type: boolean
+      position:
+        description: Position is the display order.
+        type: integer
+      publicId:
+        description: PublicID is the provider's opaque identifier.
+        type: string
+      url:
+        description: URL is the displayable link.
+        type: string
+      width:
+        description: Width and Height are the stored pixel dimensions.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the product belongs to.
+        type: string
+      createdAt:
+        description: CreatedAt and UpdatedAt are the stored timestamps.
+        type: string
+      description:
+        description: Description is the text shown to customers; an empty string is
+          valid.
+        type: string
+      id:
+        description: ID is the product's stable identifier.
+        type: string
+      imageCount:
+        description: ImageCount is how many pictures the product has.
+        type: integer
+      imageUrl:
+        description: ImageURL is the main picture's link, or null when the product
+          has none.
+        type: string
+      images:
+        description: |-
+          Images holds every picture in display order. It is always an array, never
+          null.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse'
+        type: array
+      isPreorder:
+        description: IsPreorder reports whether the product is announced as a pre-order.
+        type: boolean
+      isSet:
+        description: IsSet reports whether the product is a combo set (FR-039).
+        type: boolean
+      members:
+        description: |-
+          Members holds the products inside a set, in order. It is omitted for a
+          product that is not a set.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse'
+        type: array
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      position:
+        description: Position is the operator's ordering preference.
+        type: integer
+      preorderExpectedAt:
+        description: |-
+          PreorderExpectedAt is the optional expected availability date, or null. It
+          is written in the contract's date-only form (format: date).
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the integer amount with its currency.
+      sellState:
+        description: SellState is where the product is in its selling life (FR-022).
+        type: string
+      slug:
+        description: Slug is the link segment the operator wrote.
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductResponse:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the product belongs to.
+        type: string
+      createdAt:
+        description: CreatedAt and UpdatedAt are the stored timestamps.
+        type: string
+      description:
+        description: Description is the text shown to customers; an empty string is
+          valid.
+        type: string
+      id:
+        description: ID is the product's stable identifier.
+        type: string
+      imageCount:
+        description: ImageCount is how many pictures the product has.
+        type: integer
+      imageUrl:
+        description: ImageURL is the main picture's link, or null when the product
+          has none.
+        type: string
+      isPreorder:
+        description: IsPreorder reports whether the product is announced as a pre-order.
+        type: boolean
+      isSet:
+        description: IsSet reports whether the product is a combo set (FR-039).
+        type: boolean
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      position:
+        description: Position is the operator's ordering preference.
+        type: integer
+      preorderExpectedAt:
+        description: |-
+          PreorderExpectedAt is the optional expected availability date, or null. It
+          is written in the contract's date-only form (format: date).
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the integer amount with its currency.
+      sellState:
+        description: SellState is where the product is in its selling life (FR-022).
+        type: string
+      slug:
+        description: Slug is the link segment the operator wrote.
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest:
+    properties:
+      to:
+        description: |-
+          To is the requested target state. It must be one of the four sell states;
+          the use case validates it and reports an unknown value against this member,
+          which is why it is a string here rather than the domain enum.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateProductRequest:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the product belongs to.
+        type: string
+      description:
+        description: |-
+          Description is the text shown to customers; an omitted or empty value is
+          stored empty.
+        type: string
+      isPreorder:
+        description: |-
+          IsPreorder reports whether the product is announced as a pre-order
+          (FR-040, research D9). A created product is COMING_SOON, so the label may
+          always be set here; the domain refuses it only once the product is on sale.
+        type: boolean
+      isSet:
+        description: IsSet reports whether the product is a combo set (FR-039, research
+          D10).
+        type: boolean
+      memberProductIds:
+        description: |-
+          MemberProductIDs are the products inside the set, in the order they are
+          listed. They are recorded only when IsSet is true (research D10).
+        items:
+          type: string
+        type: array
+      name:
+        description: Name is the product name.
+        type: string
+      position:
+        description: Position is the ordering preference.
+        type: integer
+      preorderExpectedAt:
+        description: |-
+          PreorderExpectedAt is the optional expected-availability date, in the
+          contract's date-only form. It is meaningful only together with IsPreorder.
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
+        description: Price is the price with its currency.
+      slug:
+        description: Slug is the public link segment.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest:
+    properties:
+      amount:
+        description: Amount is the price in the currency's minor unit.
+        type: integer
+      currency:
+        description: 'Currency is the currency code: exactly three uppercase letters.'
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse:
+    properties:
+      amount:
+        description: Amount is the price in the currency's minor unit.
+        type: integer
+      currency:
+        description: 'Currency is the currency code: exactly three uppercase letters.'
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse:
+    properties:
+      height:
+        type: integer
+      id:
+        description: ID identifies the picture.
+        type: string
+      url:
+        description: URL is the displayable link returned by the provider.
+        type: string
+      width:
+        description: Width and Height are the stored pixel dimensions.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductDetailResponse:
+    properties:
+      description:
+        description: Description may be empty; an empty description is valid.
+        type: string
+      id:
+        description: ID is the product's stable public identifier.
+        type: string
+      imageUrl:
+        description: ImageURL is the main picture's link, or null when the product
+          has none.
+        type: string
+      images:
+        description: |-
+          Images holds every picture in display order. It is always an array, never
+          null, so a product with no picture answers `[]`.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse'
+        type: array
+      isPreorder:
+        description: |-
+          IsPreorder reports whether the product is announced but not yet available.
+          Such a product is visible and not buyable (FR-002, FR-040).
+        type: boolean
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the integer amount with its currency.
+      slug:
+        description: Slug is the segment a customer-facing link is built from.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse:
+    properties:
+      id:
+        description: ID is the product's stable public identifier.
+        type: string
+      imageUrl:
+        description: ImageURL is the main picture's link, or null when the product
+          has none.
+        type: string
+      isPreorder:
+        description: |-
+          IsPreorder reports whether the product is announced but not yet available.
+          Such a product is visible and not buyable (FR-002, FR-040).
+        type: boolean
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the integer amount with its currency.
+      slug:
+        description: Slug is the segment a customer-facing link is built from.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse:
+    properties:
+      id:
+        description: ID is the member product's identifier.
+        type: string
+      name:
+        description: Name is the member product's name.
+        type: string
+      slug:
+        description: Slug is the member product's public link segment.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateProductRequest:
+    properties:
+      categoryId:
+        description: CategoryID is the new category; nil keeps the current value.
+        type: string
+      description:
+        description: |-
+          Description is the new description; nil keeps the current value, an empty
+          string clears it.
+        type: string
+      isPreorder:
+        description: |-
+          IsPreorder is the new pre-order label; nil keeps the current value. Setting
+          it false also clears PreorderExpectedAt (FR-040). The domain refuses
+          setting it true while the product is on sale, naming isPreorder.
+        type: boolean
+      isSet:
+        description: IsSet is the new combo-set flag; nil keeps the current value.
+        type: boolean
+      memberProductIds:
+        description: |-
+          MemberProductIDs replaces the whole member list when non-nil. It is
+          recorded only when the product is a set (research D10); sending an empty
+          list clears the set's members.
+        items:
+          type: string
+        type: array
+      name:
+        description: Name is the new name; nil keeps the current value.
+        type: string
+      position:
+        description: Position is the new position; nil keeps the current value.
+        type: integer
+      preorderExpectedAt:
+        description: |-
+          PreorderExpectedAt is the new expected-availability date, in the
+          contract's date-only form; nil keeps the current value.
+        type: string
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
+        description: Price is the new price; nil keeps the current value.
+      slug:
+        description: Slug is the new slug; nil keeps the current value.
+        type: string
+    type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse:
     properties:
       divisionNeedsReview:
@@ -349,6 +841,922 @@ info:
   title: Artist Shop API
   version: "1.0"
 paths:
+  /admin/categories:
+    get:
+      description: Returns a page of every category, including the ones not on display,
+        with the position and display state a customer never sees.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List every category (ADMIN)
+      tags:
+      - Category
+    post:
+      consumes:
+      - application/json
+      description: Creates a category on display. The acting administrator comes from
+        the session, never the body.
+      parameters:
+      - description: Category payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.CreateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Create a category (ADMIN)
+      tags:
+      - Category
+  /admin/categories/{categoryId}:
+    delete:
+      description: Removes a category. A category that still has products cannot be
+        removed.
+      parameters:
+      - description: Category identifier
+        in: path
+        name: categoryId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Delete a category (ADMIN)
+      tags:
+      - Category
+    get:
+      description: Returns one category, including one not on display. A malformed
+        identifier is a request error with the field named; an unknown one is not-found.
+      parameters:
+      - description: Category identifier
+        in: path
+        name: categoryId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read one category by identifier (ADMIN)
+      tags:
+      - Category
+    patch:
+      consumes:
+      - application/json
+      description: Applies a partial edit (name, slug, description, position and display
+        state). An omitted member keeps its value.
+      parameters:
+      - description: Category identifier
+        in: path
+        name: categoryId
+        required: true
+        type: string
+      - description: Category update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.UpdateCategoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Update a category (ADMIN)
+      tags:
+      - Category
+  /admin/inventory/{productId}:
+    get:
+      description: Returns the physical quantity, the quantity currently held for
+        orders being paid, and what remains available. A product that does not exist
+        answers not-found; one that exists but has never been stocked answers zero.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.StockResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read a product's stock (ADMIN)
+      tags:
+      - Inventory
+  /admin/inventory/{productId}/adjustment:
+    post:
+      consumes:
+      - application/json
+      description: Sets the product's physical quantity to a recounted value and records
+        only the difference. Correcting to the stored value changes nothing and writes
+        no ledger entry; zero is a valid counted value.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      - description: Counted quantity
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.AdjustmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.StockResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Correct the physical quantity (ADMIN)
+      tags:
+      - Inventory
+  /admin/inventory/{productId}/damage:
+    post:
+      consumes:
+      - application/json
+      description: Decreases the product's physical quantity by a positive amount.
+        A decrease over the shelf, or below what is held, is refused and changes nothing.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      - description: Quantity to remove
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.QuantityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.StockResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Record damaged goods (ADMIN)
+      tags:
+      - Inventory
+  /admin/inventory/{productId}/movements:
+    get:
+      description: Returns a page of a product's physical stock changes, oldest first,
+        with the signed amount and the resulting quantity. Pagination is reported
+        in meta.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.MovementResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read a product's movement history (ADMIN)
+      tags:
+      - Inventory
+  /admin/inventory/{productId}/restock:
+    post:
+      consumes:
+      - application/json
+      description: Increases the product's physical quantity by a positive amount
+        and records one ledger entry naming the administrator. The acting administrator
+        comes from the session, never the body.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      - description: Quantity to add
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.QuantityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.StockResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Record goods arriving (ADMIN)
+      tags:
+      - Inventory
+  /admin/products:
+    get:
+      description: Returns a page of every product, including the ones withheld from
+        customers, with the sell state, the position, the category and the picture
+        summary a customer never sees.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List every product (ADMIN)
+      tags:
+      - Product
+    post:
+      consumes:
+      - application/json
+      description: Creates a product in COMING_SOON. The acting administrator comes
+        from the session, never the body.
+      parameters:
+      - description: Product payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Create a product (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}:
+    delete:
+      description: Removes a product. Removal is a hard delete; the audit entry is
+        what survives it.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Delete a product (ADMIN)
+      tags:
+      - Product
+    get:
+      description: Returns one product, including one not visible to customers, with
+        its pictures and, for a set, its members.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read one product by identifier (ADMIN)
+      tags:
+      - Product
+    patch:
+      consumes:
+      - application/json
+      description: Applies a partial edit. An omitted member keeps its value; the
+        sell state is never changed here (it has its own transition endpoint).
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Product update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateProductRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Update a product (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/images:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores a picture for the product through the media provider. The
+        content is validated by signature, not by name or declared media type. The
+        first picture becomes the main one.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Product image (JPEG, PNG or WebP)
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Upload a product picture (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/images/{imageId}:
+    delete:
+      description: Detaches one picture from the product and releases its stored asset.
+        Removing the main picture promotes the next one by position.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Picture identifier
+        in: path
+        name: imageId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove a product picture (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/images/{imageId}/primary:
+    post:
+      description: Makes one picture the product's main one, clearing any other in
+        the same operation.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Picture identifier
+        in: path
+        name: imageId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Set the main product picture (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/state:
+    post:
+      consumes:
+      - application/json
+      description: Requests a sell-state transition. The transition table decides
+        whether the move is allowed; an invalid one is refused naming the current
+        state. The acting administrator comes from the session, never the body.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Target sell state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Move a product through its selling life (ADMIN)
+      tags:
+      - Product
   /auth/admin/probe:
     get:
       description: Returns a fixed payload and is reachable only by an ADMIN account.
@@ -720,6 +2128,69 @@ paths:
       summary: Confirm an email address
       tags:
       - Auth
+  /categories:
+    get:
+      description: Returns a page of the categories the operator has left on display,
+        in the configured order. No session is required.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.PublicCategoryResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: List the categories on display
+      tags:
+      - Category
+  /categories/{slug}:
+    get:
+      description: Returns one category on display, addressed by its slug. A withheld,
+        removed or unknown slug answers the same not-found. No session is required.
+      parameters:
+      - description: Category slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.PublicCategoryResponse'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Read one displayed category by slug
+      tags:
+      - Category
   /divisions/provinces:
     get:
       description: Returns every first-level administrative unit of the official dataset,
@@ -787,6 +2258,76 @@ paths:
       summary: List wards of a province
       tags:
       - Divisions
+  /products:
+    get:
+      description: Returns a page of the visible catalogue — on sale, or announced
+        as a pre-order, in a category on display — ordered by the operator's position.
+        The optional category filter narrows the list by category slug; a hidden or
+        unknown slug answers an empty list. No session is required.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      - description: Category slug to narrow the list to
+        in: query
+        name: category
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: List the products a customer can see
+      tags:
+      - Product
+  /products/{slug}:
+    get:
+      description: Returns one visible product with its description and every picture.
+        A hidden, retired, removed or unknown slug answers the same not-found. No
+        session is required.
+      parameters:
+      - description: Product slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductDetailResponse'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      summary: Read one product by slug
+      tags:
+      - Product
   /users/{userId}:
     get:
       description: Read-only operator view of one customer. Reachable only by an ADMIN
