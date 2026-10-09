@@ -2,7 +2,7 @@
 
 - **Trạng thái Spec Kit**: Chưa specify
 - **Spec**: _(chưa có)_
-- **Ưu tiên / Giai đoạn**: Giai đoạn 1 (lõi), mở rộng dần theo module
+- **Ưu tiên / Giai đoạn**: V1.2 (lõi), mở rộng dần theo module
 - **Phụ thuộc**: tất cả module nghiệp vụ
 
 ## Mục đích

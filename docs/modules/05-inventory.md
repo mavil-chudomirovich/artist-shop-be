@@ -9,7 +9,7 @@
   [`error-codes.md`](../../specs/007-inventory-tracking/contracts/error-codes.md)
 - **Code**: `internal/modules/inventory/{domain,application,infrastructure,presentation}`,
   `migrations/00007_inventory.sql`, `internal/contracts/product.go` (hai hợp đồng liên module)
-- **Ưu tiên / Giai đoạn**: Giai đoạn 1
+- **Ưu tiên / Giai đoạn**: V1.0
 - **Phụ thuộc**: product
 
 ## Mục đích

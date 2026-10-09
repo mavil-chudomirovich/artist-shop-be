@@ -2,7 +2,7 @@
 
 - **Trạng thái Spec Kit**: Chưa specify
 - **Spec**: _(chưa có)_
-- **Ưu tiên / Giai đoạn**: Giai đoạn 2
+- **Ưu tiên / Giai đoạn**: V1.1
 - **Phụ thuộc**: user
 
 ## Mục đích

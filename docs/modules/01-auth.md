@@ -5,7 +5,7 @@
 - **Plan**: `specs/001-user-auth/plan.md`
 - **Tasks**: `specs/001-user-auth/tasks.md`
 - **Code**: `internal/modules/auth/{domain,application,infrastructure,presentation}`, `cmd/seed`
-- **Ưu tiên / Giai đoạn**: Giai đoạn 0 — làm đầu tiên
+- **Ưu tiên / Giai đoạn**: V0 — làm đầu tiên
 - **Phụ thuộc**: cross-cutting
 
 ## Mục đích

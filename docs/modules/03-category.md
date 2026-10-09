@@ -10,7 +10,7 @@
   [`error-codes.md`](../../specs/005-category-catalog/contracts/error-codes.md)
 - **Code**: `internal/modules/category/{domain,application,infrastructure,presentation}`,
   `migrations/00005_category.sql`
-- **Ưu tiên / Giai đoạn**: Giai đoạn 0
+- **Ưu tiên / Giai đoạn**: V0
 - **Phụ thuộc**: cross-cutting
 
 ## Mục đích

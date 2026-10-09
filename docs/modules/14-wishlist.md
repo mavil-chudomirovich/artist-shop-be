@@ -2,7 +2,7 @@
 
 - **Trạng thái Spec Kit**: Chưa specify
 - **Spec**: _(chưa có)_
-- **Ưu tiên / Giai đoạn**: Giai đoạn 3 (ngoài MVP)
+- **Ưu tiên / Giai đoạn**: V2.0 (ngoài MVP)
 - **Phụ thuộc**: product, user
 
 ## Mục đích

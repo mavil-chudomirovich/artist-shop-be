@@ -10,7 +10,7 @@
 - **Code**: `internal/modules/user/{domain,application,infrastructure,presentation}`,
   `internal/share/administrative`, `internal/contracts/user.go`,
   `migrations/00004_user.sql`
-- **Ưu tiên / Giai đoạn**: Giai đoạn 0
+- **Ưu tiên / Giai đoạn**: V0
 - **Phụ thuộc**: auth
 
 ## Mục đích

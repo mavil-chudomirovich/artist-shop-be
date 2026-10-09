@@ -2,7 +2,7 @@
 
 - **Trạng thái Spec Kit**: Chưa specify
 - **Spec**: _(chưa có)_
-- **Ưu tiên / Giai đoạn**: Giai đoạn 1
+- **Ưu tiên / Giai đoạn**: V1.0
 - **Phụ thuộc**: cart, product, inventory, user
 
 ## Mục đích

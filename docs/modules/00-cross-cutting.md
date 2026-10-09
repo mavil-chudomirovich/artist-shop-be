@@ -5,7 +5,7 @@
 - **Plan**: `specs/002-cross-cutting-foundation/plan.md`
 - **Tasks**: `specs/002-cross-cutting-foundation/tasks.md`
 - **Code**: `cmd/api`, `cmd/migrate`, `internal/share/*`, `migrations/*`
-- **Ưu tiên / Giai đoạn**: Giai đoạn 0 (nền tảng dùng chung)
+- **Ưu tiên / Giai đoạn**: V0 (nền tảng dùng chung)
 - **Phụ thuộc**: —
 
 ## Mục đích

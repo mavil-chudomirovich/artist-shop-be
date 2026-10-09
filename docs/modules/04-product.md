@@ -10,7 +10,7 @@
   [`error-codes.md`](../../specs/006-product-catalog/contracts/error-codes.md)
 - **Code**: `internal/modules/product/{domain,application,infrastructure,presentation}`,
   `migrations/00006_product.sql`
-- **Ưu tiên / Giai đoạn**: Giai đoạn 1
+- **Ưu tiên / Giai đoạn**: V1.0
 - **Phụ thuộc**: category
 
 ## Mục đích
