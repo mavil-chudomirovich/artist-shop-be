@@ -1,0 +1,488 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Inventory Module
+  version: 1.0.0
+  description: >
+    A product's stock: what is on the shelf, what is set aside for an order being paid,
+    and what is therefore available. Every response uses the foundation envelope
+    (data + meta, or error) and the X-Request-Id correlation header.
+
+    Every endpoint here is an administrator's. There is no customer-facing stock
+    endpoint: a customer learns availability from the product's sell state, which this
+    module drives through the ProductAvailability contract when availability reaches or
+    leaves zero.
+
+    A quantity is a whole number and is never negative. Damaging more than is on the
+    shelf is refused. An adjustment sets the physical quantity to a counted value and
+    records only the difference; correcting to the value already stored changes nothing
+    and returns the unchanged stock.
+
+    Holding stock during checkout and applying a payment are not exposed here. They are
+    internal to the checkout flow, whose modules do not exist yet, so they carry no HTTP
+    surface.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: admin
+    description: Inventory maintenance. Administrator role required.
+paths:
+  /api/v1/admin/inventory/{productId}:
+    get:
+      tags: [admin]
+      summary: Read a product's stock
+      description: >
+        Answers the physical quantity, the quantity currently held for orders being paid,
+        and what remains available. A product that has never been stocked answers a
+        physical quantity of zero rather than a not-found.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "200":
+          description: The product's stock.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockView"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "404":
+          description: No product carries that identifier (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/inventory/{productId}/movements:
+    get:
+      tags: [admin]
+      summary: Read a product's movement history
+      description: >
+        Every physical change to the product's stock, oldest first, with the signed amount
+        and the resulting quantity so the count can be followed forward without re-summing.
+        A movement caused by an order carries the source reference of the event that
+        caused it; a manual one carries the administrator who made it. Paginated under the
+        project's list convention.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of movements, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StockMovement"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "404":
+          description: No product carries that identifier (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/inventory/{productId}/restock:
+    post:
+      tags: [admin]
+      summary: Record goods arriving
+      description: >
+        Increases the physical quantity by a positive amount. The change is recorded in the
+        ledger naming the administrator.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantityRequest"
+      responses:
+        "200":
+          description: The product's stock after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockView"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The quantity is missing, zero, negative or not a whole number (VALIDATION_ERROR,
+            with `quantity` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: No product carries that identifier (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/inventory/{productId}/damage:
+    post:
+      tags: [admin]
+      summary: Record damaged goods
+      description: >
+        Decreases the physical quantity by a positive amount. A decrease larger than what
+        is on the shelf is refused: the shelf never goes below zero. A decrease that would
+        leave less on the shelf than is currently held for orders being paid is also
+        refused, so a hold is never broken by a physical change.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantityRequest"
+      responses:
+        "200":
+          description: The product's stock after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockView"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The quantity is missing, zero, negative or not a whole number (VALIDATION_ERROR,
+            with `quantity` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: No product carries that identifier (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The decrease would take the physical quantity below zero, or below what is
+            held (INVENTORY_INSUFFICIENT_STOCK). Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/inventory/{productId}/adjustment:
+    post:
+      tags: [admin]
+      summary: Correct the quantity to a recounted value
+      description: >
+        Sets the physical quantity to the counted value and records only the signed
+        difference. Correcting to the value already stored changes nothing, writes no
+        movement, and returns the unchanged stock. A counted value of zero is valid.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustmentRequest"
+      responses:
+        "200":
+          description: The product's stock after the correction.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StockView"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The counted quantity is missing, negative or not a whole number
+            (VALIDATION_ERROR, with `quantity` named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "404":
+          description: No product carries that identifier (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The counted quantity is lower than what is currently held for orders being paid
+            (INVENTORY_INSUFFICIENT_STOCK). Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    BadRequest:
+      description: VALIDATION_ERROR (400) with the offending field named.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthenticated:
+      description: UNAUTHENTICATED (401). No token or an expired one.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: FORBIDDEN (403). A customer's session reached an administrator route.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: RATE_LIMITED (429), with Retry-After.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Internal:
+      description: INTERNAL_ERROR (500). Something unexpected failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+    PagedMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          properties:
+            page:
+              type: integer
+            pageSize:
+              type: integer
+            total:
+              type: integer
+              description: >
+                Absent when zero, because the shared envelope omits it. A client must
+                read a missing total as 0.
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        requestId:
+          type: string
+          format: uuid
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+    StockView:
+      type: object
+      required: [physicalQuantity, heldQuantity, availableQuantity]
+      description: >
+        A product's stock. `physicalQuantity` is what is on the shelf, `heldQuantity` is
+        what is set aside for orders being paid, and `availableQuantity` is the difference —
+        what a customer can take. All three are whole numbers and none is negative.
+      properties:
+        physicalQuantity:
+          type: integer
+          minimum: 0
+        heldQuantity:
+          type: integer
+          minimum: 0
+        availableQuantity:
+          type: integer
+          minimum: 0
+    StockMovement:
+      type: object
+      required: [id, productId, kind, delta, resultingQuantity, createdAt]
+      description: >
+        One physical change to a product's stock. `delta` is signed: positive for a
+        restock, negative for damage and a sale. `resultingQuantity` is the physical
+        quantity after the change. `sourceReference` is present when an outside event
+        caused the change; `actorId` is present when an administrator did.
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/MovementKind"
+        delta:
+          type: integer
+        resultingQuantity:
+          type: integer
+          minimum: 0
+        sourceReference:
+          type: [string, "null"]
+        actorId:
+          type: [string, "null"]
+          format: uuid
+        note:
+          type: [string, "null"]
+          description: >
+            An optional free-text note a manual change carries, so a damage or a correction can
+            say why. Absent for a system-caused change.
+        createdAt:
+          type: string
+          format: date-time
+    MovementKind:
+      type: string
+      enum: [RESTOCK, DAMAGE, ADJUSTMENT, SALE]
+      description: >
+        RESTOCK and DAMAGE are an administrator receiving and losing goods; ADJUSTMENT is a
+        correction to a counted quantity; SALE is a paid order's hold becoming a decrease.
+    QuantityRequest:
+      type: object
+      required: [quantity]
+      additionalProperties: false
+      description: A positive whole number of units, with an optional note.
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+        note:
+          type: string
+          description: An optional free-text note for the change.
+    AdjustmentRequest:
+      type: object
+      required: [quantity]
+      additionalProperties: false
+      description: >
+        The quantity counted on the shelf, with an optional note. Zero is valid; the difference from
+        the stored quantity is what is recorded.
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+        note:
+          type: string
+          description: An optional free-text note for the correction.
