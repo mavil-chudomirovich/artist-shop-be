@@ -18,12 +18,13 @@ import (
 )
 
 // This file is the use-case contract of US1: a successful checkout snapshots each
-// cart line and the delivery address, holds each line and clears the cart in one
-// transaction, and every refusal — empty cart, an off-sale or removed product, a
-// price that moved, a quantity above what is available, a customer with no
-// address, and a line whose hold cannot be taken — leaves nothing created
-// (FR-001 to FR-007, FR-013, FR-017). It runs the real checkout over in-memory
-// fakes of every contract, so the answers asserted are the service's own.
+// cart line — including the link segment — and the delivery address, holds each
+// line and clears the cart in one transaction, and every refusal — empty cart, an
+// off-sale or removed product, a price that moved, a quantity above what is
+// available, a customer with no address, and a line whose hold cannot be taken —
+// leaves nothing created and the cart untouched (FR-001 to FR-007, FR-013,
+// FR-017, SC-002). It runs the real checkout over in-memory fakes of every
+// contract, so the answers asserted are the service's own.
 
 // fixedNow is the deterministic instant the fixture stamps orders with.
 var fixedNow = time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
@@ -281,15 +282,37 @@ func seedAddress(f *checkoutFixture, userID uuid.UUID) contracts.CustomerAddress
 	return address
 }
 
+// assertCartUntouched proves a refused checkout left the cart exactly as the
+// customer left it: it was not cleared and still holds every one of its lines
+// (SC-002). It compares against a copy taken before the attempt, so a regression
+// that emptied or rewrote the cart on refusal is caught.
+func assertCartUntouched(t *testing.T, f *checkoutFixture, want []contracts.CartLine) {
+	t.Helper()
+	if f.cart.cleared {
+		t.Fatal("a refused checkout must leave the cart unchanged: it was cleared")
+	}
+	if len(f.cart.lines) != len(want) {
+		t.Fatalf("a refused checkout must leave the cart's lines unchanged: got %d lines, want %d", len(f.cart.lines), len(want))
+	}
+	for i := range want {
+		if f.cart.lines[i] != want[i] {
+			t.Fatalf("a refused checkout must leave line %d unchanged: got %+v, want %+v", i, f.cart.lines[i], want[i])
+		}
+	}
+}
+
 // FR-001, FR-002, FR-003, FR-007, FR-013: a successful checkout snapshots every
-// line and the address, holds every line, clears the cart and returns the order
-// awaiting payment.
+// line — including the link segment, which the fixtures deliberately set apart
+// from the name so a dropped slug cannot pass — and the address, holds every
+// line, clears the cart and returns the order awaiting payment.
 func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
 	f := newCheckoutFixture(t)
 	user := uuid.New()
 	address := seedAddress(f, user)
-	first := seedProduct(f, "Tranh sơn dầu", "tranh-son-dau", 120000, 5)
-	second := seedProduct(f, "Silk scroll", "silk-scroll", 33333, 5)
+	const firstSlug = "tranh-son-dau"
+	const secondSlug = "silk-scroll"
+	first := seedProduct(f, "Tranh sơn dầu", firstSlug, 120000, 5)
+	second := seedProduct(f, "Silk scroll", secondSlug, 33333, 5)
 	f.cart.lines = []contracts.CartLine{
 		{ProductID: first, Quantity: 2, UnitPriceAmount: 120000, Currency: "VND"},
 		{ProductID: second, Quantity: 3, UnitPriceAmount: 33333, Currency: "VND"},
@@ -309,11 +332,13 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
 	if view.ItemCount != 2 || len(view.Lines) != 2 {
 		t.Fatalf("expected 2 lines, got %+v", view.Lines)
 	}
-	if view.Lines[0].Name != "Tranh sơn dầu" || view.Lines[0].UnitPrice.Amount != 120000 ||
+	if view.Lines[0].Name != "Tranh sơn dầu" || view.Lines[0].Slug != firstSlug ||
+		view.Lines[0].UnitPrice.Amount != 120000 ||
 		view.Lines[0].LineTotal.Amount != 240000 || view.Lines[0].Quantity != 2 {
 		t.Fatalf("first line snapshot = %+v", view.Lines[0])
 	}
-	if view.Lines[1].Name != "Silk scroll" || view.Lines[1].UnitPrice.Amount != 33333 ||
+	if view.Lines[1].Name != "Silk scroll" || view.Lines[1].Slug != secondSlug ||
+		view.Lines[1].UnitPrice.Amount != 33333 ||
 		view.Lines[1].LineTotal.Amount != 99999 {
 		t.Fatalf("second line snapshot = %+v", view.Lines[1])
 	}
@@ -400,6 +425,7 @@ func TestCheckoutRefusesAnOffSaleProduct(t *testing.T) {
 	product := seedProduct(f, "Sắp ra mắt", "sap-ra-mat", 100000, 5)
 	f.catalog.products[product] = contracts.ProductSummary{ID: product, Name: "Sắp ra mắt", Slug: "sap-ra-mat", OnSale: false}
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
 	if !errors.Is(err, domainerr.ErrItemNotPurchasable) {
@@ -412,6 +438,7 @@ func TestCheckoutRefusesAnOffSaleProduct(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
+	assertCartUntouched(t, f, want)
 }
 
 // FR-004, edge case: a product removed from the catalogue refuses the checkout.
@@ -422,10 +449,12 @@ func TestCheckoutRefusesARemovedProduct(t *testing.T) {
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
 	delete(f.catalog.products, product)
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	if _, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{}); !errors.Is(err, domainerr.ErrItemNotPurchasable) {
 		t.Fatalf("expected ErrItemNotPurchasable for a removed product, got %v", err)
 	}
+	assertCartUntouched(t, f, want)
 }
 
 // FR-004: a price that moved since the customer saw it refuses the whole
@@ -436,6 +465,7 @@ func TestCheckoutRefusesAChangedPrice(t *testing.T) {
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 150000, 5)
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
 	if !errors.Is(err, domainerr.ErrItemPriceChanged) {
@@ -448,6 +478,7 @@ func TestCheckoutRefusesAChangedPrice(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
+	assertCartUntouched(t, f, want)
 }
 
 // FR-005: a quantity above what is available refuses the checkout and names the
@@ -458,6 +489,7 @@ func TestCheckoutRefusesAQuantityAboveAvailable(t *testing.T) {
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 2)
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 5, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
 	if !errors.Is(err, domainerr.ErrQuantityExceedsAvailable) {
@@ -473,6 +505,7 @@ func TestCheckoutRefusesAQuantityAboveAvailable(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
+	assertCartUntouched(t, f, want)
 }
 
 // FR-003: a customer with no delivery address is refused.
@@ -482,6 +515,7 @@ func TestCheckoutRefusesACustomerWithNoAddress(t *testing.T) {
 	f.customers.customer = contracts.Customer{ID: user}
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
 	if !errors.Is(err, domainerr.ErrNoAddress) {
@@ -490,6 +524,7 @@ func TestCheckoutRefusesACustomerWithNoAddress(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
+	assertCartUntouched(t, f, want)
 }
 
 // error-codes.md: an `addressId` that is not one of the customer's addresses is a
@@ -523,6 +558,7 @@ func TestCheckoutRefusesWhenTheLastUnitCannotBeHeld(t *testing.T) {
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 1)
 	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
 	f.reservations.failFor[product] = errors.New("another customer holds the last unit")
 	// Taking the last unit drops the shelf to zero, as the competing hold did.
 	f.reservations.onReserve = func(productID uuid.UUID) {
@@ -546,4 +582,5 @@ func TestCheckoutRefusesWhenTheLastUnitCannotBeHeld(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
+	assertCartUntouched(t, f, want)
 }

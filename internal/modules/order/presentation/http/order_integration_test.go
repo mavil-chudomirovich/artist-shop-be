@@ -256,6 +256,19 @@ func physicalStock(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 
 	return quantity
 }
 
+// productSlug reads a product's link segment straight from the table — the value
+// checkout snapshots onto the order line (FR-002). The seeded slug differs from
+// the product's name, so a dropped slug cannot pass the assertion.
+func productSlug(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
+	t.Helper()
+	var slug string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT slug FROM products WHERE id = $1`, productID).Scan(&slug); err != nil {
+		t.Fatalf("read product slug: %v", err)
+	}
+	return slug
+}
+
 // heldQuantity reads the quantity every active hold has set aside for one product.
 func heldQuantity(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 {
 	t.Helper()
@@ -297,6 +310,7 @@ func TestCheckoutCreatesTheOrderHoldsTheGoodsAndEmptiesTheCart(t *testing.T) {
 	f := newOrderIntegrationFixture(t)
 	seedOrderCustomer(t, f.pool, testCustomerID)
 	product := seedOrderProduct(t, f.pool, 120000, 10)
+	slug := productSlug(t, f.pool, product)
 	cartID := seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
 
 	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
@@ -318,7 +332,8 @@ func TestCheckoutCreatesTheOrderHoldsTheGoodsAndEmptiesTheCart(t *testing.T) {
 		t.Fatalf("expected one line, got %+v", body.Data.Lines)
 	}
 	if body.Data.Lines[0].ProductID != product || body.Data.Lines[0].Quantity != 2 ||
-		body.Data.Lines[0].UnitPrice.Amount != 120000 || body.Data.Lines[0].Name == "" {
+		body.Data.Lines[0].UnitPrice.Amount != 120000 || body.Data.Lines[0].Name == "" ||
+		body.Data.Lines[0].Slug != slug {
 		t.Fatalf("the line must carry the product's snapshot, got %+v", body.Data.Lines[0])
 	}
 	if body.Data.Address.RecipientName != "Nguyễn Văn A" || body.Data.Address.StreetAddress != "1 Đinh Tiên Hoàng" {

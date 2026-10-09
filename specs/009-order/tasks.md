@@ -290,3 +290,15 @@ Task: "Auth account adapter — T007"
 - Money is integer minor units + currency; the total is the sum of the line snapshots and carries **no** shipping fee (ADR 015 §5)
 - The paid transition is delivered and tested but has **no HTTP endpoint** (module 08 drives it) — do not add one
 - Commit after each phase once its gate is green; never push/tag without explicit authorization
+
+---
+
+## Phase 9: Convergence
+
+**Purpose**: Đóng hai lỗ hổng **bằng chứng** mà một lượt converge phát hiện giữa các success
+criterion / yêu cầu chức năng và các test đang có. Mã nguồn đã đáp ứng mọi FR-001..FR-024,
+SC-001..SC-006, quyết định trong `plan.md`/`research.md`/`data-model.md` và các nguyên tắc hiến
+pháp; hai task dưới chỉ thêm khẳng định còn thiếu, **không** sửa hành vi.
+
+- [X] T063 [US1] Thêm khẳng định **`slug`** (link segment) của dòng đơn round-trip đúng trong snapshot — đặt `Slug` **khác** `Name` ở fixture rồi khẳng định `lines[].slug` bằng giá trị đã chụp — vào `internal/modules/order/application/implement/checkout_test.go` và `internal/modules/order/presentation/http/order_integration_test.go` per FR-002, SC-001 (`partial`). Adapter postgres (`scanLine`/`lineQuery`) và mapper (`Mapper.Line`) đã lưu và ánh xạ `slug`, nhưng **không** test nào khẳng định trường này (mọi fixture đặt `Slug == Name`, và các khẳng định chỉ kiểm `name`/`unitPrice`/`quantity`), nên một hồi quy làm rơi `slug` trên đường lưu/đọc/ánh xạ sẽ không bị bắt.
+- [X] T064 [US1] Thêm khẳng định mỗi lần checkout bị từ chối — off-sale, đã xoá, giá đổi, vượt tồn, không có địa chỉ, và không giữ được hàng — **để giỏ nguyên vẹn** (`f.cart.cleared == false`, và danh sách dòng không đổi) vào `internal/modules/order/application/implement/checkout_test.go` per SC-002 (`partial`). Hiện chỉ ca giỏ rỗng khẳng định `!f.cart.cleared`; các ca từ chối còn lại chỉ khẳng định "không tạo gì", nên vế *"leaves the cart unchanged"* của SC-002 chưa được chứng minh cho chúng.
