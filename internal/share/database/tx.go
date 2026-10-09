@@ -40,7 +40,17 @@ func (d *DB) WithinTx(ctx context.Context, fn func(context.Context) error) error
 // WithTx runs fn inside a database transaction, committing on success and
 // rolling back on error or panic. The transaction is also placed in the context
 // so nested repository calls participate in the same transaction.
+//
+// When the context already carries a transaction — a nested call such as a
+// cross-module use case invoked inside an outer transaction — WithTx reuses it
+// and runs fn directly: it neither begins a second transaction nor commits or
+// rolls it back, so the outer call alone owns the boundary. A plain pool left in
+// the context is not a transaction and still starts one.
 func (d *DB) WithTx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
+	if _, ok := ctx.Value(querierKey{}).(pgx.Tx); ok {
+		return fn(ctx)
+	}
+
 	tx, err := d.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)

@@ -112,6 +112,59 @@ func TestWithinTxRollsBackOnError(t *testing.T) {
 	}
 }
 
+// A nested WithinTx joins the outer transaction rather than opening a second
+// one: the inner insert is not visible from the pool while the outer transaction
+// is still open, and it is committed exactly once when the outer commits.
+func TestWithinTxNestedJoinsOuterTransaction(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+
+	err := db.WithinTx(ctx, func(outerCtx context.Context) error {
+		if err := db.WithinTx(outerCtx, func(innerCtx context.Context) error {
+			_, err := FromContext(innerCtx, db.Pool).Exec(innerCtx, `INSERT INTO tx_items (id, name) VALUES (1, 'a')`)
+			return err
+		}); err != nil {
+			return err
+		}
+		// Still inside the outer transaction: the inner insert must not be
+		// committed yet, so a fresh pool connection cannot see it.
+		if got := countItems(t, db); got != 0 {
+			t.Fatalf("inner insert leaked before the outer commit: %d rows", got)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithinTx: %v", err)
+	}
+	if got := countItems(t, db); got != 1 {
+		t.Fatalf("expected exactly one committed row, got %d", got)
+	}
+}
+
+// When the outer transaction fails, the inner insert made through the nested
+// WithinTx is rolled back with it: the inner call must not commit on its own.
+func TestWithinTxNestedRollsBackWithOuter(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	boom := errors.New("boom")
+
+	err := db.WithinTx(ctx, func(outerCtx context.Context) error {
+		if err := db.WithinTx(outerCtx, func(innerCtx context.Context) error {
+			_, err := FromContext(innerCtx, db.Pool).Exec(innerCtx, `INSERT INTO tx_items (id, name) VALUES (1, 'a')`)
+			return err
+		}); err != nil {
+			return err
+		}
+		return boom
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected boom, got %v", err)
+	}
+	if got := countItems(t, db); got != 0 {
+		t.Fatalf("expected the inner insert to roll back with the outer, got %d rows", got)
+	}
+}
+
 func TestWithTxRollsBackOnPanic(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
