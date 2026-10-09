@@ -11,7 +11,7 @@ import (
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/domain/repository"
 )
 
-// fakeRepository implements only the three methods the adapter uses. The embedded
+// fakeRepository implements only the methods the adapter uses. The embedded
 // interface is nil on purpose: any other method called on it panics, so a test
 // that drifts from the adapter's actual dependency fails loudly instead of
 // returning a zero value.
@@ -24,6 +24,11 @@ type fakeRepository struct {
 	lines    []model.CartLine
 	linesErr error
 
+	lockCalled  bool
+	lockErr     error
+	gotLockCart uuid.UUID
+
+	linesCalled  bool
 	clearCalled  bool
 	clearErr     error
 	gotOwnerID   uuid.UUID
@@ -36,7 +41,14 @@ func (f *fakeRepository) FindByOwner(_ context.Context, userID uuid.UUID) (*mode
 	return f.cart, f.found, f.findErr
 }
 
+func (f *fakeRepository) Lock(_ context.Context, cartID uuid.UUID) error {
+	f.lockCalled = true
+	f.gotLockCart = cartID
+	return f.lockErr
+}
+
 func (f *fakeRepository) Lines(_ context.Context, cartID uuid.UUID) ([]model.CartLine, error) {
+	f.linesCalled = true
 	f.gotCartID = cartID
 	return f.lines, f.linesErr
 }
@@ -82,6 +94,55 @@ func TestCartLinesMapsTheCartLinesInOrder(t *testing.T) {
 	}
 	if got[1].ProductID != second || got[1].Quantity != 1 || got[1].UnitPriceAmount != 50000 {
 		t.Errorf("second = %+v, want %s x1 at 50000", got[1], second)
+	}
+}
+
+// The adapter locks the cart row before reading its lines, so two concurrent
+// checkouts of one cart serialise instead of each creating an order.
+func TestCartLinesLocksTheCartBeforeReadingLines(t *testing.T) {
+	owner := uuid.New()
+	cartID := uuid.New()
+
+	repo := &fakeRepository{cart: &model.Cart{ID: cartID, UserID: owner}, found: true}
+	if _, err := New(repo).CartLines(context.Background(), owner); err != nil {
+		t.Fatalf("CartLines: %v", err)
+	}
+	if !repo.lockCalled || repo.gotLockCart != cartID {
+		t.Fatalf("expected Lock(%s), got called=%v cart=%s", cartID, repo.lockCalled, repo.gotLockCart)
+	}
+	if !repo.linesCalled {
+		t.Fatal("expected the adapter to read the lines after locking the cart")
+	}
+}
+
+// A customer with no cart has no row to lock, so the adapter must not lock
+// anything and still answers the empty slice.
+func TestCartLinesDoesNotLockWhenTheCartIsMissing(t *testing.T) {
+	repo := &fakeRepository{found: false}
+	if _, err := New(repo).CartLines(context.Background(), uuid.New()); err != nil {
+		t.Fatalf("CartLines: %v", err)
+	}
+	if repo.lockCalled {
+		t.Fatal("there is no cart to lock for a customer with no cart")
+	}
+}
+
+// A failure to lock the cart is reported as itself and the lines are never read,
+// so a checkout cannot proceed on an unlocked cart.
+func TestCartLinesReportsTheLockError(t *testing.T) {
+	want := errors.New("lock unavailable")
+	owner := uuid.New()
+
+	repo := &fakeRepository{
+		cart:    &model.Cart{ID: uuid.New(), UserID: owner},
+		found:   true,
+		lockErr: want,
+	}
+	if _, err := New(repo).CartLines(context.Background(), owner); !errors.Is(err, want) {
+		t.Fatalf("expected the lock error, got %v", err)
+	}
+	if repo.linesCalled {
+		t.Fatal("the adapter must not read the lines when the lock failed")
 	}
 }
 

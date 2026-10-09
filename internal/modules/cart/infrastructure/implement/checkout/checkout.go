@@ -29,9 +29,12 @@ func New(carts domainrepo.CartRepository) *Adapter {
 }
 
 // CartLines returns the caller's cart lines as the order module needs them: one
-// entry per product, in the cart's stable order. A customer with no cart answers
-// an empty slice rather than an error, because a checkout of nothing is the order
-// module's to refuse, not the cart's to hide (FR-006, research D1).
+// entry per product, in the cart's stable order. It locks the cart row before
+// reading its lines, so two concurrent checkouts of one cart serialise: the
+// second blocks until the first commits and then finds the lines already gone. A
+// customer with no cart answers an empty slice rather than an error, because a
+// checkout of nothing is the order module's to refuse, not the cart's to hide
+// (FR-006, research D1).
 func (a *Adapter) CartLines(ctx context.Context, userID uuid.UUID) ([]contracts.CartLine, error) {
 	cart, found, err := a.Carts.FindByOwner(ctx, userID)
 	if err != nil {
@@ -39,6 +42,9 @@ func (a *Adapter) CartLines(ctx context.Context, userID uuid.UUID) ([]contracts.
 	}
 	if !found {
 		return []contracts.CartLine{}, nil
+	}
+	if err := a.Carts.Lock(ctx, cart.ID); err != nil {
+		return nil, err
 	}
 	lines, err := a.Carts.Lines(ctx, cart.ID)
 	if err != nil {
