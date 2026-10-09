@@ -31,6 +31,7 @@ const table = "stock_levels"
 const (
 	constraintLevelProduct       = "stock_levels_product_fk"
 	constraintTransactionProduct = "inventory_transactions_product_fk"
+	constraintTransactionSource  = "inventory_transactions_source_key"
 	constraintHoldProduct        = "stock_holds_product_fk"
 	constraintHoldActive         = "stock_holds_active_key"
 )
@@ -439,8 +440,11 @@ func scanHold(row baserepo.Row) (*model.Hold, error) {
 // module's sentinel. A foreign-key refusal of a missing product becomes the
 // not-found sentinel (research D2, D12); a refusal of a second active hold by the
 // partial unique index becomes ErrHoldAlreadyExists, which the reserve use case
-// treats as already applied rather than a failure (FR-019). Any other failure is
-// returned wrapped.
+// treats as already applied rather than a failure (FR-019); and a refusal of a
+// movement whose source reference another movement already carries becomes
+// ErrAlreadyApplied, which the sale use case answers as success so a concurrent
+// duplicate changes stock only once (FR-020 to FR-022, research D5). Any other
+// failure is returned wrapped.
 func classifyWriteError(operation string, err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -451,8 +455,11 @@ func classifyWriteError(operation string, err error) error {
 				return domainerr.ErrProductNotFound
 			}
 		case uniqueViolationCode:
-			if pgErr.ConstraintName == constraintHoldActive {
+			switch pgErr.ConstraintName {
+			case constraintHoldActive:
 				return domainerr.ErrHoldAlreadyExists
+			case constraintTransactionSource:
+				return domainerr.ErrAlreadyApplied
 			}
 		}
 	}

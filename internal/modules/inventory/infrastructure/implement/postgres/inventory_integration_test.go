@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
@@ -426,5 +428,125 @@ func TestHoldLifecycleAgainstPostgres(t *testing.T) {
 	}
 	if level, err := f.repo.Level(ctx, productID); err != nil || level != 5 {
 		t.Fatalf("expiring a hold must not move the shelf: %d/%v", level, err)
+	}
+}
+
+// FR-020 to FR-022, research D5: the adapter classifies the storage's refusal of a
+// duplicate source reference into the already-applied sentinel, so the sale use
+// case can answer success rather than a storage failure. This is the
+// classification a concurrent duplicate depends on.
+func TestDuplicateSourceReferenceIsClassifiedAsAlreadyApplied(t *testing.T) {
+	f := newInventoryFixture(t)
+	ctx := context.Background()
+	productID := f.insertProduct(t)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	if _, err := f.repo.Increase(ctx, productID, 5, now); err != nil {
+		t.Fatalf("seed the level: %v", err)
+	}
+
+	reference := "evt-classify-1"
+	first, err := model.NewMovement(productID, constant.MovementSale, -1, 4, nil, &reference, nil, now)
+	if err != nil {
+		t.Fatalf("NewMovement(first): %v", err)
+	}
+	if err := f.repo.InsertMovement(ctx, first); err != nil {
+		t.Fatalf("first InsertMovement: %v", err)
+	}
+
+	second, err := model.NewMovement(productID, constant.MovementSale, -1, 4, nil, &reference, nil, now)
+	if err != nil {
+		t.Fatalf("NewMovement(second): %v", err)
+	}
+	if err := f.repo.InsertMovement(ctx, second); !errors.Is(err, domainerr.ErrAlreadyApplied) {
+		t.Fatalf("expected ErrAlreadyApplied, got %v", err)
+	}
+}
+
+// FR-016, FR-020 to FR-022, SC-003, quickstart 8b/8c: two concurrent applications
+// of the same source reference change stock exactly once. The partial unique index
+// on the source reference, not an application pre-check, is what refuses the
+// second, and the use case accepts that refusal as success rather than an error.
+func TestConcurrentSaleApplicationsChangeStockExactlyOnce(t *testing.T) {
+	f := newInventoryFixture(t)
+	ctx := context.Background()
+	productID := f.insertProduct(t)
+
+	clock := &holdClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: f.repo,
+		Lookup:    existingProducts{},
+		Tx:        &database.DB{Pool: f.pool},
+		Clock:     clock,
+		Mapper:    inventorymapper.New(),
+	})
+
+	if _, err := f.repo.Increase(ctx, productID, 5, clock.Now()); err != nil {
+		t.Fatalf("seed the level: %v", err)
+	}
+	orderID := uuid.New()
+	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	in := inventorydto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-concurrent-1"}
+	var (
+		wg    sync.WaitGroup
+		errs  [2]error
+		start = make(chan struct{})
+	)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			errs[i] = svc.ApplySale(ctx, in)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("application %d: a duplicate must be accepted as success, got %v", i, err)
+		}
+	}
+
+	level, err := f.repo.Level(ctx, productID)
+	if err != nil {
+		t.Fatalf("Level: %v", err)
+	}
+	if level != 3 {
+		t.Fatalf("the shelf must fall exactly once (5-2=3), got %d", level)
+	}
+
+	var movements int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM inventory_transactions WHERE source_reference = $1`,
+		in.SourceReference).Scan(&movements); err != nil {
+		t.Fatalf("count movements by reference: %v", err)
+	}
+	if movements != 1 {
+		t.Fatalf("exactly one movement must carry the reference, got %d", movements)
+	}
+
+	var sales int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM inventory_transactions WHERE product_id = $1 AND kind = 'SALE'`,
+		productID).Scan(&sales); err != nil {
+		t.Fatalf("count SALE movements: %v", err)
+	}
+	if sales != 1 {
+		t.Fatalf("exactly one SALE movement must exist, got %d", sales)
+	}
+
+	var status string
+	if err := f.pool.QueryRow(ctx,
+		`SELECT status FROM stock_holds WHERE order_id = $1 AND product_id = $2`,
+		orderID, productID).Scan(&status); err != nil {
+		t.Fatalf("read the hold: %v", err)
+	}
+	if status != string(constant.HoldStatusConsumed) {
+		t.Fatalf("the hold must close as CONSUMED, got %s", status)
 	}
 }

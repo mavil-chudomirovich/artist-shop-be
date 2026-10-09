@@ -32,6 +32,15 @@ var (
 	// deliberately separate from ErrInvalidValue because the caller treats it as
 	// already-applied rather than as a rejected input.
 	ErrHoldAlreadyExists = errors.New("hold already exists")
+	// ErrAlreadyApplied is reported when an outside event's source reference is
+	// already carried by a movement: the partial unique index on source_reference
+	// refused a second movement. It is the storage guard FR-020 to FR-022 rest on,
+	// and an application that meets it answers success rather than a failure, so a
+	// retrying caller stops retrying and a concurrent duplicate changes stock only
+	// once (FR-021). Like ErrHoldAlreadyExists it is deliberately separate from
+	// ErrInvalidValue, because it is an outcome the caller treats as success rather
+	// than a rejected input.
+	ErrAlreadyApplied = errors.New("event already applied")
 )
 
 // InsufficientStockError carries what the refusal is about, so the response can

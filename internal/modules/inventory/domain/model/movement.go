@@ -14,6 +14,12 @@ import (
 // internal vocabulary rather than contract vocabulary.
 const FieldDelta = "delta"
 
+// FieldSourceReference is the outside-event identity named when an event arrives
+// without one. It is not a request member: the reference is what makes a physical
+// change idempotent, so a missing one is refused rather than stored as an empty
+// key on the ledger.
+const FieldSourceReference = "sourceReference"
+
 // Movement is one immutable record of a single change to a product's physical
 // stock. It is append-only: nothing edits or removes a row, so the ledger is the
 // traceable history of how a quantity came to be (FR-004, research D1).
