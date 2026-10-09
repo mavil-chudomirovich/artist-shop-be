@@ -43,6 +43,7 @@ import (
 	inventoryworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/worker"
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
+	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
@@ -364,6 +365,7 @@ func run() error {
 		Customers:    userService,
 		Tx:           db,
 		Clock:        wallClock{},
+		Audit:        orderauditor.New(auditWriter),
 		Mapper:       ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger)
@@ -423,6 +425,10 @@ func run() error {
 			// customer surface is addressed at /orders with no owner identifier
 			// behind the session guard (research D10, FR-020).
 			r.Mount("/orders", orderHandler.Router(authHooks))
+			// The operator's order desk: every order, addressed by identifier
+			// behind the administrator role guard, where ship and complete drive
+			// the order's transitions and record each act (research D10, FR-023).
+			r.Mount("/admin/orders", orderHandler.AdminRouter(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)

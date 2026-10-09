@@ -37,6 +37,18 @@ type Service interface {
 	// CancelMine cancels one of the caller's own orders that is still awaiting
 	// payment and returns it (FR-019, FR-020).
 	CancelMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
+
+	// ListAll returns one page of every order, newest first, with its owner
+	// (FR-021).
+	ListAll(ctx context.Context, in appdto.ListInput) (appdto.AdminOrderPage, error)
+	// GetByIDAdmin reads any order in full (FR-021).
+	GetByIDAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
+	// FR-023).
+	ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// CompleteByAdmin moves a shipped order to completed and records the act
+	// (FR-022, FR-023).
+	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
 }
 
 // Pagination bounds of the customer's and the operator's order lists
@@ -227,6 +239,152 @@ func (h *Handler) CancelMine(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
 }
 
+// ListAll returns a page of every order, newest first, with its owner, state and
+// total. The route is behind the administrator role guard, so the caller is
+// always an administrator; no owner filter is applied (FR-021).
+//
+//	@Summary		List every order (administrator)
+//	@Description	Returns every order, newest first, with its owner, state and total, paginated. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminOrderSummaryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		429			{object}	httpx.SwaggerError
+//	@Failure		500			{object}	httpx.SwaggerError
+//	@Router			/admin/orders [get]
+func (h *Handler) ListAll(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	page, pageSize, appErr := pageParams(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ListAll(ctx, appdto.ListInput{Page: page, PageSize: pageSize})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccessList(w, r, toAdminOrderSummaryResponses(out.Orders), out.Page, out.PageSize, out.Total)
+}
+
+// GetByIDAdmin reads any order in full, including its owner, its address and its
+// lines. An unknown identifier answers 404 ORDER_NOT_FOUND (FR-021).
+//
+//	@Summary		Read one order in full (administrator)
+//	@Description	Returns any order in full, including its owner. An unknown order answers 404 ORDER_NOT_FOUND. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId} [get]
+func (h *Handler) GetByIDAdmin(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.GetByIDAdmin(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
+// ShipByAdmin moves a paid order to shipped and records the act. A move the
+// current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID naming
+// the current state (FR-022, FR-023).
+//
+//	@Summary		Mark a paid order shipped (administrator)
+//	@Description	Moves a paid order to shipped and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/ship [post]
+func (h *Handler) ShipByAdmin(w http.ResponseWriter, r *http.Request) {
+	h.adminMove(w, r, h.svc.ShipByAdmin)
+}
+
+// CompleteByAdmin moves a shipped order to completed and records the act. A move
+// the current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID
+// naming the current state (FR-022, FR-023).
+//
+//	@Summary		Mark a shipped order completed (administrator)
+//	@Description	Moves a shipped order to completed and records the act naming the order and the administrator. The order must be shipped; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/complete [post]
+func (h *Handler) CompleteByAdmin(w http.ResponseWriter, r *http.Request) {
+	h.adminMove(w, r, h.svc.CompleteByAdmin)
+}
+
+// adminMove is the shared body of the two administrator transitions: it resolves
+// the session, reads the addressed identifier, calls the move and answers the
+// advanced order. The two moves differ only in the use case they invoke, so the
+// guard, the identifier parsing and the response are written once.
+func (h *Handler) adminMove(w http.ResponseWriter, r *http.Request,
+	move func(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := move(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
 // sessionActor returns the acting account taken from the authenticated session.
 //
 // No order route accepts an owner identifier: the session is the only source of
@@ -324,15 +482,47 @@ func toMoneyResponse(money appdto.MoneyView) httpdto.MoneyResponse {
 func toOrderSummaryResponses(summaries []appdto.OrderSummaryView) []httpdto.OrderSummaryResponse {
 	out := make([]httpdto.OrderSummaryResponse, 0, len(summaries))
 	for _, summary := range summaries {
-		out = append(out, httpdto.OrderSummaryResponse{
-			ID:        summary.ID,
-			Status:    string(summary.Status),
-			Total:     toMoneyResponse(summary.Total),
-			ItemCount: summary.ItemCount,
-			CreatedAt: summary.CreatedAt,
+		out = append(out, toOrderSummaryResponse(summary))
+	}
+	return out
+}
+
+// toOrderSummaryResponse maps one customer list row to its wire shape.
+func toOrderSummaryResponse(summary appdto.OrderSummaryView) httpdto.OrderSummaryResponse {
+	return httpdto.OrderSummaryResponse{
+		ID:        summary.ID,
+		Status:    string(summary.Status),
+		Total:     toMoneyResponse(summary.Total),
+		ItemCount: summary.ItemCount,
+		CreatedAt: summary.CreatedAt,
+	}
+}
+
+// toAdminOrderSummaryResponses maps a page of the administrator's list rows. It
+// always allocates, so an empty list serialises `data: []` rather than null, and
+// each row carries its owner.
+func toAdminOrderSummaryResponses(summaries []appdto.AdminOrderSummaryView) []httpdto.AdminOrderSummaryResponse {
+	out := make([]httpdto.AdminOrderSummaryResponse, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, httpdto.AdminOrderSummaryResponse{
+			OrderSummaryResponse: toOrderSummaryResponse(summary.OrderSummaryView),
+			UserID:               summary.UserID,
 		})
 	}
 	return out
+}
+
+// toAdminOrderResponse maps one administrator order view to its wire shape: the
+// customer detail plus the owner, so the two shapes cannot drift apart.
+func toAdminOrderResponse(view appdto.AdminOrderView) httpdto.AdminOrderResponse {
+	return httpdto.AdminOrderResponse{
+		OrderResponse: toOrderResponse(appdto.OrderView{
+			OrderSummaryView: view.OrderSummaryView,
+			Address:          view.Address,
+			Lines:            view.Lines,
+		}),
+		UserID: view.UserID,
+	}
 }
 
 // toOrderResponse maps one order view to its wire shape. It always returns a

@@ -36,6 +36,7 @@ var testLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 var (
 	testCustomerID    = uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	testCustomerTwoID = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	testAdminID       = uuid.MustParse("44444444-4444-4444-4444-444444444444")
 )
 
 // fakeCheckout is a fake of the handler's narrow service. It records the input it
@@ -57,7 +58,8 @@ func (f *fakeCheckout) Checkout(ctx context.Context, in appdto.CheckoutInput) (a
 }
 
 // orderHooks supplies the foundation authentication hooks with two fixed customer
-// identities, so a test can exercise the session guard.
+// identities and one administrator, so a test can exercise the session and the
+// role guards.
 func orderHooks() middleware.AuthHooks {
 	return middleware.AuthHooks{
 		Authenticate: func(_ context.Context, r *http.Request) (*middleware.Identity, error) {
@@ -66,6 +68,8 @@ func orderHooks() middleware.AuthHooks {
 				return &middleware.Identity{Subject: testCustomerID.String(), Role: string(access.RoleCustomer), TokenID: "customer"}, nil
 			case "Bearer customer2-token":
 				return &middleware.Identity{Subject: testCustomerTwoID.String(), Role: string(access.RoleCustomer), TokenID: "customer2"}, nil
+			case "Bearer admin-token":
+				return &middleware.Identity{Subject: testAdminID.String(), Role: string(access.RoleAdmin), TokenID: "admin"}, nil
 			default:
 				return nil, nil
 			}

@@ -54,6 +54,11 @@ type Service struct {
 	// Clock stamps the order's creation and expiry. Only "what time is it" is
 	// injected, never a rule.
 	Clock appinterface.Clock
+	// Audit records the module's administrative mutations — ship, complete and
+	// transfer — naming the acting administrator and the order (FR-023,
+	// Constitution VI). A nil auditor is tolerated so a read-only construction
+	// cannot panic on a mutation it never serves.
+	Audit appinterface.Auditor
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }

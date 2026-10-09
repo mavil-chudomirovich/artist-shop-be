@@ -24,9 +24,13 @@ import (
 	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
@@ -97,10 +101,13 @@ func (c customerAddresses) LookupCustomer(ctx context.Context, userID uuid.UUID)
 }
 
 // orderIntegrationFixture is one migrated PostgreSQL container plus the real HTTP
-// surface, so checkout can be driven through the route a customer reaches.
+// surface, so checkout can be driven through the route a customer reaches and the
+// operator's desk through the route an administrator reaches.
 type orderIntegrationFixture struct {
-	pool *pgxpool.Pool
-	root http.Handler
+	pool   *pgxpool.Pool
+	root   http.Handler
+	svc    *orderimplement.Service
+	writer *audit.Writer
 }
 
 func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
@@ -132,6 +139,16 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Mapper:    inventorymapper.New(),
 	})
 
+	// The real audit writer, so a successful administrator move leaves a row in
+	// audit_logs exactly as the composition root wires it (FR-023).
+	writer := audit.NewWriter(audit.NewRepository(pool), testLogger, 64, 1, 1)
+	writer.Start(ctx)
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		writer.Stop(stopCtx)
+	})
+
 	svc := orderimplement.New(orderimplement.Service{
 		Orders:       orderpostgres.NewOrderRepository(pool),
 		Carts:        cartcheckout.New(cartpostgres.NewCartRepository(pool)),
@@ -141,12 +158,14 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Customers:    customerAddresses{pool: pool},
 		Tx:           &database.DB{Pool: pool},
 		Clock:        orderIntegrationClock{},
+		Audit:        orderauditor.New(writer),
 		Mapper:       ordermapper.New(),
 	})
 	handler := New(svc, testLogger)
 	root := chi.NewRouter()
 	root.Mount(ordersPath, handler.Router(orderHooks()))
-	return &orderIntegrationFixture{pool: pool, root: root}
+	root.Mount(adminOrdersPath, handler.AdminRouter(orderHooks()))
+	return &orderIntegrationFixture{pool: pool, root: root, svc: svc, writer: writer}
 }
 
 // seedOrderCustomer writes the signed-in account the test hooks resolve, plus one
@@ -454,5 +473,184 @@ func TestCustomerSeesAndManagesOnlyTheirOwnOrders(t *testing.T) {
 	}
 	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
 		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	}
+}
+
+// adminAuditRow is one audit_logs row the order module wrote.
+type adminAuditRow struct {
+	actorID    *uuid.UUID
+	actorRole  string
+	targetType string
+	targetID   string
+	outcome    string
+}
+
+// waitForAuditRows waits until the given action has the expected number of
+// persisted rows, so the assertion cannot race the asynchronous writer.
+func (f *orderIntegrationFixture) waitForAuditRows(t *testing.T, action string, want int) []adminAuditRow {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rows := f.auditRows(t, action)
+		if len(rows) == want {
+			return rows
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d %s rows, got %d", want, action, len(rows))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (f *orderIntegrationFixture) auditRows(t *testing.T, action string) []adminAuditRow {
+	t.Helper()
+	const query = `
+		SELECT actor_id, actor_role, target_type, target_id, outcome
+		FROM audit_logs WHERE action = $1 ORDER BY occurred_at`
+	rows, err := f.pool.Query(context.Background(), query, action)
+	if err != nil {
+		t.Fatalf("read the audit trail: %v", err)
+	}
+	defer rows.Close()
+	var events []adminAuditRow
+	for rows.Next() {
+		var event adminAuditRow
+		if err := rows.Scan(&event.actorID, &event.actorRole, &event.targetType, &event.targetID, &event.outcome); err != nil {
+			t.Fatalf("scan an audit row: %v", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate the audit trail: %v", err)
+	}
+	return events
+}
+
+// requireAudit asserts the one row of an action names the administrator, the
+// order and a SUCCESS outcome.
+func (f *orderIntegrationFixture) requireAudit(t *testing.T, action string, orderID, adminID uuid.UUID) {
+	t.Helper()
+	rows := f.waitForAuditRows(t, action, 1)
+	row := rows[0]
+	if row.actorID == nil || *row.actorID != adminID {
+		t.Fatalf("%s: expected the administrator actor %s, got %v", action, adminID, row.actorID)
+	}
+	if row.actorRole != string(access.RoleAdmin) {
+		t.Fatalf("%s: expected the ADMIN role, got %q", action, row.actorRole)
+	}
+	if row.targetType != "order" || row.targetID != orderID.String() {
+		t.Fatalf("%s: expected the order as the target, got %q/%q", action, row.targetType, row.targetID)
+	}
+	if row.outcome != string(audit.OutcomeSuccess) {
+		t.Fatalf("%s: expected a SUCCESS outcome, got %q", action, row.outcome)
+	}
+}
+
+// SC-005, quickstart scenarios 5b/5c/5d and 6e against real PostgreSQL: the
+// operator lists every order with its owner, reads one in full, is refused an
+// illegal move naming the state, ships then completes a paid order — each act
+// leaving an audit row naming the order and the administrator — and a customer's
+// session is refused every administrator route (FR-021 to FR-023).
+func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// The paid transition has no HTTP surface — module 08 drives it — so it is
+	// driven directly, exactly as the quickstart says (scenario 5a).
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+
+	// FR-021: the administrator list carries every order with its owner, state and
+	// total.
+	rec = perform(f.root, http.MethodGet, adminOrdersPath, "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin list: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var list adminListBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode the admin list %q: %v", rec.Body.String(), err)
+	}
+	if len(list.Data) != 1 || list.Data[0].ID != orderID || list.Data[0].UserID != testCustomerID ||
+		list.Data[0].Status != "PAID" || list.Data[0].Total.Amount != 240000 {
+		t.Fatalf("the admin list must carry the order with its owner, got %+v", list.Data)
+	}
+
+	// FR-021: the administrator reads any order in full.
+	rec = perform(f.root, http.MethodGet, adminOrdersPath+"/"+orderID.String(), "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin read: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var detail adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode the admin order %q: %v", rec.Body.String(), err)
+	}
+	if detail.Data.ID != orderID || detail.Data.UserID != testCustomerID || len(detail.Data.Lines) != 1 {
+		t.Fatalf("the admin read must return the order in full, got %+v", detail.Data)
+	}
+
+	// FR-022 (quickstart 5b/5d): completing a paid order is an illegal move; it is
+	// refused naming the current state and writes nothing.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("complete before ship: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	}
+	if rows := f.auditRows(t, constant.AuditOrderCompleted); len(rows) != 0 {
+		t.Fatalf("a refused move must audit nothing, got %+v", rows)
+	}
+
+	// FR-022, FR-023 (quickstart 5c): ship then complete succeed, and each leaves
+	// an audit row naming the order and the administrator.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ship: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var shipped adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &shipped); err != nil {
+		t.Fatalf("decode the shipped order %q: %v", rec.Body.String(), err)
+	}
+	if shipped.Data.Status != "SHIPPED" {
+		t.Fatalf("the order must answer SHIPPED, got %s", shipped.Data.Status)
+	}
+	f.requireAudit(t, constant.AuditOrderShipped, orderID, testAdminID)
+
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var completed adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &completed); err != nil {
+		t.Fatalf("decode the completed order %q: %v", rec.Body.String(), err)
+	}
+	if completed.Data.Status != "COMPLETED" {
+		t.Fatalf("the order must answer COMPLETED, got %s", completed.Data.Status)
+	}
+	f.requireAudit(t, constant.AuditOrderCompleted, orderID, testAdminID)
+
+	// FR-023 (quickstart 6e): a customer's session is refused every administrator
+	// route.
+	for _, path := range []string{adminOrdersPath, adminOrdersPath + "/" + orderID.String()} {
+		rec = perform(f.root, http.MethodGet, path, "", "customer-token")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("customer on %s: expected 403, got %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
+			t.Fatalf("customer on %s: expected FORBIDDEN, got %s", path, body.Error.Code)
+		}
 	}
 }

@@ -153,13 +153,13 @@ description: "Task list for Order Checkout (module 07)"
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T041 [P] [US4] Use-case and HTTP tests `internal/modules/order/application/implement/admin_test.go` and `internal/modules/order/presentation/http/admin_test.go`: the admin list is every order, newest first, with owner, state and total; ship then complete succeed and each writes an audit entry; a customer's session is refused `403 FORBIDDEN`; an illegal move is refused naming the state
+- [X] T041 [P] [US4] Use-case and HTTP tests `internal/modules/order/application/implement/admin_test.go` and `internal/modules/order/presentation/http/admin_test.go`: the admin list is every order, newest first, with owner, state and total; ship then complete succeed and each writes an audit entry; a customer's session is refused `403 FORBIDDEN`; an illegal move is refused naming the state
 
 ### Implementation for User Story 4
 
-- [ ] T042 [US4] Create `internal/modules/order/application/implement/admin.go`: `ListAll`, `GetByIDAdmin`, `ShipByAdmin`, `CompleteByAdmin` — listing every order, and ship/complete driving the US2 transitions and writing the audit entry (via `auditor`) in the same transaction (FR-021–FR-023)
-- [ ] T043 [US4] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `GET /admin/orders`, `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship`, `POST /admin/orders/{id}/complete`, all behind the administrator-role guard
-- [ ] T044 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go`: the admin list/read, ship then complete, the resulting audit rows naming the order and the administrator, and a customer session refused (SC-005)
+- [X] T042 [US4] Create `internal/modules/order/application/implement/admin.go`: `ListAll`, `GetByIDAdmin`, `ShipByAdmin`, `CompleteByAdmin` — listing every order, and ship/complete driving the US2 transitions and writing the audit entry (via `auditor`) in the same transaction (FR-021–FR-023)
+- [X] T043 [US4] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `GET /admin/orders`, `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship`, `POST /admin/orders/{id}/complete`, all behind the administrator-role guard
+- [X] T044 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go`: the admin list/read, ship then complete, the resulting audit rows naming the order and the administrator, and a customer session refused (SC-005)
 
 **Checkpoint**: The operator's desk works; the shop can be run.
 

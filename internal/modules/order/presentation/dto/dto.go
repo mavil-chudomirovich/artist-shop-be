@@ -101,3 +101,22 @@ type OrderResponse struct {
 	// Lines are the order's snapshot lines, in position order.
 	Lines []OrderLineResponse `json:"lines"`
 }
+
+// AdminOrderSummaryResponse is one row of the administrator's order list
+// (contracts/openapi.yaml, AdminOrderSummary): the customer summary plus the
+// account that owns the order.
+type AdminOrderSummaryResponse struct {
+	// OrderSummaryResponse is the customer-facing summary.
+	OrderSummaryResponse
+	// UserID is the account that owns the order.
+	UserID uuid.UUID `json:"userId"`
+}
+
+// AdminOrderResponse is one order as the administrator reads it in full
+// (contracts/openapi.yaml, AdminOrderDetail): the customer detail plus the owner.
+type AdminOrderResponse struct {
+	// OrderResponse is the customer-facing detail.
+	OrderResponse
+	// UserID is the account that owns the order.
+	UserID uuid.UUID `json:"userId"`
+}

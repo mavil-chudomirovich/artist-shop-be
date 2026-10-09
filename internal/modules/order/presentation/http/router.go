@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
@@ -23,5 +24,23 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Post("/", h.Checkout)
 	r.Get("/{orderId}", h.GetMine)
 	r.Post("/{orderId}/cancel", h.CancelMine)
+	return r
+}
+
+// AdminRouter builds the `/admin/orders` group. Mount it under `/api/v1`.
+//
+// Every route is guarded by the administrator role (FR-023), and the denial is
+// recorded through the foundation's OnDenied hook the composition root supplies,
+// exactly as the other modules audit their own privilege denial. The operator
+// lists and reads every order and advances fulfilment; the state moves are their
+// own endpoints, because a transition is not a field edit and it can be refused
+// (research D10).
+func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
+	r.Get("/", h.ListAll)
+	r.Get("/{orderId}", h.GetByIDAdmin)
+	r.Post("/{orderId}/ship", h.ShipByAdmin)
+	r.Post("/{orderId}/complete", h.CompleteByAdmin)
 	return r
 }
