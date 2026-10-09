@@ -53,6 +53,12 @@ var (
 	// ErrTransferTargetNotFound is returned when no account carries the email a
 	// transfer names (FR-024). It maps to ORDER_TRANSFER_TARGET_NOT_FOUND (404).
 	ErrTransferTargetNotFound = errors.New("order transfer target not found")
+	// ErrInvalidValue is returned when a value fails its own rule and the
+	// response must name the member a client has to fix — for example an
+	// `addressId` that is not one of the customer's addresses (FR-003,
+	// error-codes.md). It is the single sentinel for the typed refusals built by
+	// InvalidValue. It maps to the shared VALIDATION_ERROR (400).
+	ErrInvalidValue = errors.New("invalid order value")
 )
 
 // ItemNotPurchasableError carries the product that cannot be bought, so the
@@ -158,4 +164,34 @@ func (e *StateTransitionError) Unwrap() error { return ErrStateTransitionInvalid
 // StateTransitionInvalid builds the typed refusal for one refused move.
 func StateTransitionInvalid(from, to constant.Status) error {
 	return &StateTransitionError{From: from, To: to}
+}
+
+// InvalidValueError reports which member of a request is not acceptable. It is
+// one typed carrier for ErrInvalidValue rather than a family of per-member
+// sentinels, so the module keeps a single error to map and a single one to test.
+// It mirrors the same-named error modules 05 and 06 use.
+//
+// Field holds the contract's member name, which is what presentation puts into
+// the response detail; Issue is a short, non-sensitive explanation.
+type InvalidValueError struct {
+	// Field is the contract member name, such as "addressId".
+	Field string
+	// Issue explains what is wrong with it.
+	Issue string
+}
+
+// Error implements the error interface.
+func (e *InvalidValueError) Error() string {
+	return ErrInvalidValue.Error() + ": " + e.Field + " " + e.Issue
+}
+
+// Is makes errors.Is(err, ErrInvalidValue) match this error.
+func (e *InvalidValueError) Is(target error) bool { return target == ErrInvalidValue }
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *InvalidValueError) Unwrap() error { return ErrInvalidValue }
+
+// InvalidValue builds the typed rejection for one member.
+func InvalidValue(field, issue string) error {
+	return &InvalidValueError{Field: field, Issue: issue}
 }

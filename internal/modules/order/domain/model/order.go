@@ -18,6 +18,10 @@ const (
 	FieldProductID = "productId"
 	// FieldStatus is the member carrying an order state.
 	FieldStatus = "status"
+	// FieldAddressID is the member carrying the delivery-address identifier the
+	// customer named at checkout. A malformed or foreign value is reported
+	// against it (FR-003, contracts/error-codes.md).
+	FieldAddressID = "addressId"
 )
 
 // Price is money as an integer amount in a currency's minor unit together with

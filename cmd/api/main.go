@@ -24,6 +24,7 @@ import (
 	authhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/http"
 	cartimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/implement"
 	cartmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/mapper"
+	cartcheckout "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/checkout"
 	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
 	carthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/presentation/http"
 	categoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
@@ -37,8 +38,13 @@ import (
 	inventoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/auditor"
 	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
+	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
 	inventoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/http"
 	inventoryworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/worker"
+	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
+	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
+	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
+	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	productappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
@@ -339,6 +345,28 @@ func run() error {
 	})
 	cartHandler := carthttp.New(cartService, logger)
 
+	// Module 07 (order). One customer group, /orders, carries the session guard
+	// and no owner identifier: the owner is the session, so a client never names
+	// an order's owner (FR-020). The checkout use case reaches five other modules
+	// only through internal/contracts, each supplied by the providing module's own
+	// adapter here, so the order never imports another module's internals
+	// (research D1, D2, D4, D7, Constitution I). The reservation adapter is the
+	// contract feature 007 withheld until this consumer existed (its D1), and the
+	// customer lookup reuses the user module's own service instance rather than a
+	// second lookup that could answer differently.
+	orderService := orderimplement.New(orderimplement.Service{
+		Orders:       orderpostgres.NewOrderRepository(db.Pool),
+		Carts:        cartcheckout.New(cartRepository),
+		Products:     productcatalog.New(productRepository),
+		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
+		Reservations: inventoryreservation.New(inventoryService),
+		Customers:    userService,
+		Tx:           db,
+		Clock:        wallClock{},
+		Mapper:       ordermapper.New(),
+	})
+	orderHandler := orderhttp.New(orderService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -382,6 +410,10 @@ func run() error {
 			// /cart with no identifier behind the session guard; lines are
 			// addressed by their product identifier (research D7).
 			r.Mount("/cart", cartHandler.Router(authHooks))
+			// The order: checkout turns the session's cart into an order, so the
+			// customer surface is addressed at /orders with no owner identifier
+			// behind the session guard (research D10, FR-020).
+			r.Mount("/orders", orderHandler.Router(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
