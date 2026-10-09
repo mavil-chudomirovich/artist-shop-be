@@ -53,7 +53,11 @@
 - `amount`: số nguyên, đơn vị nhỏ nhất của `currency`.
 - `currency`: ba chữ in hoa.
 
-`CartLineResponse` (8 member) — một dòng:
+`CartLineResponse` (8 member) — một dòng. `availableQuantity` **chỉ có mặt** khi dòng **còn bán nhưng
+thiếu** (tức `buyable: false`), nên hai ví dụ dưới đây tách đúng hai trường hợp.
+
+Dòng **mua được** — `buyable: true`, **không** có `availableQuantity` (khớp `docs/api-reference.md`
+§8.1):
 ```json
 {
   "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
@@ -62,7 +66,20 @@
   "quantity": 2,
   "unitPrice": { "amount": 150000, "currency": "VND" },
   "lineTotal": { "amount": 300000, "currency": "VND" },
-  "buyable": true,
+  "buyable": true
+}
+```
+
+Dòng **còn bán nhưng thiếu** — `buyable: false` **và** có `availableQuantity`:
+```json
+{
+  "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "name": "Tranh sơn dầu",
+  "slug": "tranh-son-dau",
+  "quantity": 2,
+  "unitPrice": { "amount": 150000, "currency": "VND" },
+  "lineTotal": { "amount": 300000, "currency": "VND" },
+  "buyable": false,
   "availableQuantity": 1
 }
 ```
