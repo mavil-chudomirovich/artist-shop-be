@@ -43,9 +43,12 @@ var (
 
 // httpRepository is an in-memory InventoryRepository for the transport fixture.
 // It embeds the interface so only the operations US1 reaches are implemented.
+// It counts the ledger appends so a test can prove a refused operation writes no
+// history entry (FR-009).
 type httpRepository struct {
 	domainrepo.InventoryRepository
-	physical int64
+	physical  int64
+	movements int
 }
 
 func (r *httpRepository) Level(context.Context, uuid.UUID) (int64, error) { return r.physical, nil }
@@ -65,7 +68,10 @@ func (r *httpRepository) Decrease(_ context.Context, _ uuid.UUID, amount int64, 
 
 func (r *httpRepository) LockLevel(context.Context, uuid.UUID) error { return nil }
 
-func (r *httpRepository) InsertMovement(context.Context, *model.Movement) error { return nil }
+func (r *httpRepository) InsertMovement(context.Context, *model.Movement) error {
+	r.movements++
+	return nil
+}
 
 func (r *httpRepository) ActiveHeld(context.Context, uuid.UUID, time.Time) (int64, error) {
 	return 0, nil
@@ -369,7 +375,9 @@ func TestABadQuantityIs400NamingQuantity(t *testing.T) {
 }
 
 // FR-002, FR-009, quickstart 3b-3c: damage over the shelf is 409
-// INVENTORY_INSUFFICIENT_STOCK and the shelf is unchanged on a follow-up read.
+// INVENTORY_INSUFFICIENT_STOCK, the shelf is unchanged on a follow-up read, and
+// the refusal leaves no history entry — a real refusal, not a negative number
+// that then exists (US2).
 func TestDamageOverTheShelfIs409AndLeavesTheStockUnchanged(t *testing.T) {
 	id := uuid.New()
 	router, repo, _ := newStockRouter(t, 3, true, inventoryHooks(nil))
@@ -383,6 +391,9 @@ func TestDamageOverTheShelfIs409AndLeavesTheStockUnchanged(t *testing.T) {
 	}
 	if repo.physical != 3 {
 		t.Fatalf("a refused damage changed the shelf: %d", repo.physical)
+	}
+	if repo.movements != 0 {
+		t.Fatalf("a refused damage must write no history entry, got %d", repo.movements)
 	}
 
 	read := performJSON(router, http.MethodGet, inventoryAdminPath+"/"+id.String(), "", "admin-token")

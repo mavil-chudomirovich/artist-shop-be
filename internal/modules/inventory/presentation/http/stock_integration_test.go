@@ -4,12 +4,15 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
@@ -203,5 +206,125 @@ func TestManualStockOperationsAgainstPostgres(t *testing.T) {
 		if kinds[i] != want[i] {
 			t.Fatalf("movement %d: expected %s, got %s", i, want[i], kinds[i])
 		}
+	}
+}
+
+// oversellFixture is a migrated PostgreSQL container plus the real HTTP surface,
+// so an oversell can be driven through the handler an administrator reaches.
+type oversellFixture struct {
+	pool *pgxpool.Pool
+	root http.Handler
+}
+
+// newOversellFixture starts the container, applies the migrations and mounts the
+// administrator routes over the real adapter and the real existence lookup.
+func newOversellFixture(t *testing.T) *oversellFixture {
+	t.Helper()
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	runner, err := migrate.New(dsn, 30*time.Second)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer runner.Close()
+	if err := runner.Up(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	lookup := productavailability.New(nil, productpostgres.NewProductRepository(pool))
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: inventorypostgres.NewInventoryRepository(pool),
+		Lookup:    lookup,
+		Tx:        &database.DB{Pool: pool},
+		Clock:     integrationClock{},
+		Audit:     nil,
+		Mapper:    inventorymapper.New(),
+	})
+	handler := New(svc, testLogger)
+	root := chi.NewRouter()
+	root.Mount(inventoryAdminPath, handler.AdminRouter(inventoryHooks(nil)))
+	return &oversellFixture{pool: pool, root: root}
+}
+
+// FR-010, SC-002, quickstart 11a: two damages that together exceed the shelf are
+// decided by the storage layer, not by the application. The conditional UPDATE
+// serialises the two writers, so exactly one succeeds, the other is 409, and the
+// stored quantity ends at zero and never below it. A fake cannot prove this: it
+// proves only that the fake's own guard was written once.
+func TestConcurrentDamagesCannotDriveTheStoredQuantityBelowZero(t *testing.T) {
+	f := newOversellFixture(t)
+	ctx := context.Background()
+	productID := insertInventoryProduct(t, f.pool)
+	base := inventoryAdminPath + "/" + productID.String()
+
+	// Exactly one unit on the shelf.
+	rec := performJSON(f.root, http.MethodPost, base+"/restock", `{"quantity":1}`, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restock: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Two competing damages of that one unit, released together.
+	const racers = 2
+	codes := make([]int, racers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			codes[i] = performJSON(f.root, http.MethodPost, base+"/damage", `{"quantity":1}`, "admin-token").Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded, refused := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			succeeded++
+		case http.StatusConflict:
+			refused++
+		default:
+			t.Fatalf("unexpected damage status %d", code)
+		}
+	}
+	if succeeded != 1 || refused != 1 {
+		t.Fatalf("exactly one damage must succeed and one be refused, got %d succeeded, %d refused", succeeded, refused)
+	}
+
+	var level int64
+	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE product_id = $1`, productID).Scan(&level); err != nil {
+		t.Fatalf("read the level: %v", err)
+	}
+	if level != 0 {
+		t.Fatalf("the shelf must end at zero, never below: got %d", level)
+	}
+}
+
+// FR-009, FR-010: a writer that bypasses the adapter entirely is still refused by
+// the table's own CHECK, so the non-negative rule holds at the storage layer and
+// not only in the code path. This is the last line of defence behind the
+// conditional UPDATE (research D2).
+func TestTheStockLevelCheckRefusesANegativeQuantity(t *testing.T) {
+	f := newOversellFixture(t)
+	ctx := context.Background()
+	productID := insertInventoryProduct(t, f.pool)
+
+	_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (product_id, quantity) VALUES ($1, -1)`, productID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Fatalf("the storage layer accepted a negative level: %v", err)
+	}
+	if pgErr.Code != "23514" || pgErr.ConstraintName != "stock_levels_quantity_ck" {
+		t.Fatalf("expected CHECK stock_levels_quantity_ck (23514), got %s (%s)", pgErr.ConstraintName, pgErr.Code)
 	}
 }

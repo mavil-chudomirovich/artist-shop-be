@@ -226,6 +226,41 @@ func TestDamageLargerThanTheShelfIsRefusedAndWritesNothing(t *testing.T) {
 	}
 }
 
+// FR-009, quickstart 3b, research D2: the adapter's conditional decrease is the
+// sole decision for an oversell — it matches no row and reports the
+// insufficient-stock sentinel. The use case must surface that sentinel rather than
+// a generic storage error, because presentation maps the sentinel to 409
+// INVENTORY_INSUFFICIENT_STOCK and would answer 500 for anything else. The fake
+// repository returns exactly the adapter's empty-result error, so this proves the
+// translation the handler depends on.
+func TestAnEmptyConditionalDecreaseIsReportedAsInsufficientStock(t *testing.T) {
+	repo := &fakeRepository{physical: 3}
+	audit := &fakeAuditor{}
+	svc := newTestService(repo, &fakeLookup{exists: true}, audit)
+
+	_, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 4})
+	if err == nil {
+		t.Fatal("a decrease over the shelf must be refused by the conditional update")
+	}
+	// errors.Is is what the handler's second branch relies on; a generic error
+	// would not match and would map to 500.
+	if !errors.Is(err, domainerr.ErrInsufficientStock) {
+		t.Fatalf("expected the insufficient-stock sentinel, got %v", err)
+	}
+	// errors.As is what the handler's first branch relies on to name the field.
+	var insufficient *domainerr.InsufficientStockError
+	if !errors.As(err, &insufficient) {
+		t.Fatalf("expected the typed refusal so the field can be named, got %T: %v", err, err)
+	}
+	if insufficient.Field != model.FieldQuantity {
+		t.Fatalf("the refusal must name quantity, got %q", insufficient.Field)
+	}
+	if repo.physical != 3 || len(repo.movements) != 0 || len(audit.events) != 0 {
+		t.Fatalf("a refused decrease left a trace: shelf %d, %d movements, %d audit events",
+			repo.physical, len(repo.movements), len(audit.events))
+	}
+}
+
 // FR-003, research D9: an adjustment sets the counted value and records only the
 // signed difference; correcting to the stored value writes no movement.
 func TestAdjustmentRecordsOnlyTheDifferenceAndANoOpWritesNothing(t *testing.T) {
