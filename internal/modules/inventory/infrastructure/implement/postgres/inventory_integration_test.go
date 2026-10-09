@@ -56,8 +56,8 @@ const (
 const (
 	insertMovementSQL = `
 		INSERT INTO inventory_transactions
-			(id, product_id, kind, delta, resulting_quantity, source_reference, actor_id, note, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+			(id, product_id, kind, delta, resulting_quantity, source_reference, actor_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	insertHoldSQL = `
 		INSERT INTO stock_holds
 			(id, product_id, order_id, quantity, status, expires_at, created_at, resolved_at)
