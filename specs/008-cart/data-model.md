@@ -83,7 +83,7 @@ live and absent when the product is gone; the price shown is always the stored s
 
 | Act | Writes | Refuses when |
 |---|---|---|
-| add | creates the cart if absent; **upserts** the line, summing the quantity for a product already held, capturing the current price and currency | the product does not exist or is not on sale (`PRODUCT_NOT_FOUND` / `CART_PRODUCT_NOT_PURCHASABLE`), the summed quantity would exceed what is available (`CART_QUANTITY_EXCEEDS_AVAILABLE`), or the quantity is not a positive whole number (`VALIDATION_ERROR`) |
+| add | creates the cart if absent; **upserts** the line — a new line captures the product's current price and currency, and a product already held has its quantity summed while **keeping the price captured when it was first added** (so the line's price does not move under the customer; the checkout re-checks it) | the product does not exist or is not on sale (`PRODUCT_NOT_FOUND` / `CART_PRODUCT_NOT_PURCHASABLE`), the summed quantity would exceed what is available (`CART_QUANTITY_EXCEEDS_AVAILABLE`), or the quantity is not a positive whole number (`VALIDATION_ERROR`) |
 | change quantity | sets the line's quantity | the product is not on sale, the requested quantity exceeds what is available, the quantity is not a positive whole number, or the line does not exist (`PRODUCT_NOT_FOUND`, treated as no such line in this cart) |
 | remove | deletes the line | the product is not a line of this cart (`PRODUCT_NOT_FOUND`, 404) — the same not-found an unknown product answers, so the route never confirms another cart's contents |
 
@@ -98,6 +98,7 @@ Every write runs inside the `UnitOfWork` transaction that locks the cart's row (
 | A new cross-module contract `InventoryAvailability` | `internal/contracts/inventory.go` | The cart needs what is available, which only module 05 owns; it is a new **availability read**, published because a consumer exists (research D2). It is not the **reservation** contract module 05's `deferred.md` D1 keeps open |
 | A product-side adapter | `internal/modules/product/infrastructure/implement/catalog/` | Implements `ProductCatalog` over module 04's own repository, supplied at the composition root |
 | An inventory-side adapter | `internal/modules/inventory/infrastructure/implement/availability/` | Implements `InventoryAvailability` over module 05's own repository, computing `Level − ActiveHeld` at the module's clock |
+| A bulk read on each providing repository | `internal/modules/product/.../postgres/product.go`, `internal/modules/inventory/.../postgres/inventory.go` | Each adapter answers the whole requested set in one indexed query (`= ANY(...)`), so a cart view is not one query per line (research D1, D2) |
 | A command-line wiring point | `cmd/api/main.go` | Mounts the module and wires both contracts |
 
 No column, index or constraint of an existing table is touched, and no data is backfilled.

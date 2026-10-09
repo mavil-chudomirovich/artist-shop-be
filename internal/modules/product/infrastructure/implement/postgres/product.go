@@ -331,6 +331,40 @@ func (r *ProductRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 	return r.viewWithPictures(ctx, product)
 }
 
+// FindByIDs returns every requested product that exists, without pictures, in
+// one read. It is the read behind the cross-module ProductCatalog contract
+// (specs/008-cart research D1): the whole set is answered by one indexed
+// `= ANY(...)` query rather than one query per product. An identifier no product
+// carries is simply absent from the result, which is not an error.
+func (r *ProductRepository) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Product, error) {
+	if len(ids) == 0 {
+		return []model.Product{}, nil
+	}
+	list, err := r.projection()
+	if err != nil {
+		return nil, err
+	}
+	query := fmt.Sprintf(`SELECT %s FROM products WHERE id = ANY($1)`, list)
+	rows, err := r.querier(ctx).Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("find products by ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.Product, 0, len(ids))
+	for rows.Next() {
+		product, err := scanProduct(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *product)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LockProduct takes the product's row lock inside the caller's transaction, so
 // the picture count that follows cannot be read by two concurrent uploads as the
 // same value (research D6). An unknown identifier is reported as

@@ -158,6 +158,16 @@ type ProductRepository interface {
 	// module is the only place that can. It joins the caller's transaction.
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 
+	// FindByIDs returns every requested product that exists, without pictures,
+	// in one read. It is the read behind the cross-module ProductCatalog contract
+	// (specs/008-cart research D1): a consumer needs the current name, slug,
+	// on-sale state and price of a whole set of products at once, and a
+	// per-product read would make its cost grow with the set. An identifier no
+	// product carries is absent from the result rather than an error, so the
+	// caller can tell a removed product from an available one. It joins the
+	// caller's transaction and never opens one itself.
+	FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Product, error)
+
 	// LockProduct takes the product's row lock inside the caller's transaction,
 	// so the picture count that follows cannot be read by two concurrent uploads
 	// as the same value (research D6). An unknown identifier is reported as

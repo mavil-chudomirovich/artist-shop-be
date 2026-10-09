@@ -10,6 +10,22 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/model"
 )
 
+// AvailabilityReading is one product's physical level and the quantity its active
+// holds have set aside, as a single bulk read returns them. Availability is
+// derived from the two and is never stored, so it cannot drift from the rows it
+// comes from (research D1, D2).
+type AvailabilityReading struct {
+	// ProductID identifies the product the reading belongs to.
+	ProductID uuid.UUID
+	// Level is the physical quantity on the shelf. Zero for a product whose row
+	// is absent from the result: a product that was never stocked is understood
+	// as zero (research D12).
+	Level int64
+	// Held is the quantity the product's active holds have set aside at the
+	// instant the read was made.
+	Held int64
+}
+
 // InventoryRepository persists the three inventory facts: the live physical level,
 // the append-only ledger and the holds. The concrete implementation
 // (infrastructure/implement/postgres) embeds the generic share/repository.Base and
@@ -84,6 +100,17 @@ type InventoryRepository interface {
 	// instant. An expired hold that the sweeper has not yet reached is excluded, so
 	// reads agree with the sweeper on what "expired" means (FR-018, research D6).
 	ActiveHeld(ctx context.Context, productID uuid.UUID, now time.Time) (int64, error)
+
+	// Availability returns one reading per requested product that has a level
+	// row, in one read. It is the read behind the cross-module
+	// InventoryAvailability contract (specs/008-cart research D2): the whole set
+	// is answered by one indexed `= ANY(...)` query rather than one query per
+	// product, so a cart view does not make the database work grow with the
+	// number of lines. A product with no level row is absent from the result,
+	// because it is understood as zero (research D12). The instant is passed in,
+	// never read from the database clock, so this read and the sweeper agree on
+	// what has expired (research D2, D15).
+	Availability(ctx context.Context, productIDs []uuid.UUID, now time.Time) ([]AvailabilityReading, error)
 
 	// FindActiveHold returns the active hold of one order and product, reporting
 	// whether one exists rather than a not-found, so a caller can distinguish

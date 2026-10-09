@@ -118,7 +118,10 @@ the line — rejected: more than a cart needs, and mirroring an order line's sna
 
 **Decision**: A line stores the **unit price** it was added at (`unit_price_amount` + `currency`) and
 its quantity. The product's **name and slug are read live** on every view and are absent when the
-product is gone; the **price is the stored snapshot** and is never re-read.
+product is gone; the **price is the stored snapshot** and is never re-read. Adding more of a product
+already held raises its quantity and **keeps the price captured at the first add**, so the line's
+price does not move under the customer; the checkout re-checks the price anyway, so a stale snapshot
+is never charged.
 
 **Rationale**: FR-008 makes the displayed price the one captured when the product was added, so a
 price change mid-shop does not move the total under the customer; the checkout is where the price is

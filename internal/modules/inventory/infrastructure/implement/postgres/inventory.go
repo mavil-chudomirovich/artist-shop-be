@@ -299,6 +299,50 @@ func (r *InventoryRepository) ActiveHeld(ctx context.Context, productID uuid.UUI
 	return held, nil
 }
 
+// Availability returns the physical level and the active-held quantity of each
+// requested product that has a level row, in one read. It is the read behind the
+// cross-module InventoryAvailability contract: the whole set is answered by one
+// indexed `= ANY(...)` query, so a cart view does not make the database work grow
+// with its number of lines. A product with no level row is absent from the
+// result, because it is understood as zero (research D2, D12).
+//
+// The active-held sum is computed in the same statement against the instant the
+// caller passed, never the database clock, so it agrees with the sweeper on what
+// has expired (research D15).
+func (r *InventoryRepository) Availability(ctx context.Context, productIDs []uuid.UUID, now time.Time) ([]domainrepo.AvailabilityReading, error) {
+	if len(productIDs) == 0 {
+		return []domainrepo.AvailabilityReading{}, nil
+	}
+	const query = `
+		SELECT l.product_id, l.quantity, COALESCE(h.held, 0)
+		FROM stock_levels l
+		LEFT JOIN (
+			SELECT product_id, sum(quantity) AS held
+			FROM stock_holds
+			WHERE status = 'ACTIVE' AND expires_at > $2
+			GROUP BY product_id
+		) h ON h.product_id = l.product_id
+		WHERE l.product_id = ANY($1)`
+	rows, err := r.querier(ctx).Query(ctx, query, productIDs, now)
+	if err != nil {
+		return nil, fmt.Errorf("read stock availability: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]domainrepo.AvailabilityReading, 0, len(productIDs))
+	for rows.Next() {
+		var reading domainrepo.AvailabilityReading
+		if err := rows.Scan(&reading.ProductID, &reading.Level, &reading.Held); err != nil {
+			return nil, fmt.Errorf("scan stock availability: %w", err)
+		}
+		out = append(out, reading)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FindActiveHold returns the active hold of one order and product, reporting
 // whether one exists. An expired hold is not active even before it is swept, so a
 // payment arriving after expiry finds nothing to consume (FR-015, research D6).
