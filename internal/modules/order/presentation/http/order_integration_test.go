@@ -150,13 +150,14 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 }
 
 // seedOrderCustomer writes the signed-in account the test hooks resolve, plus one
-// delivery address, so a checkout has an owner and somewhere to go.
+// delivery address, so a checkout has an owner and somewhere to go. The email is
+// derived from the identifier so two customers can be seeded in one database.
 func seedOrderCustomer(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'hash')`,
-		userID, "order-customer@example.com"); err != nil {
+		userID, "order-customer-"+userID.String()+"@example.com"); err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -362,5 +363,96 @@ func TestConcurrentCheckoutsOfOneCartCreateOneOrder(t *testing.T) {
 	}
 	if got := orderCount(t, f.pool, testCustomerID); got != 1 {
 		t.Fatalf("one cart must never make two orders, got %d", got)
+	}
+}
+
+// listOrders drives the customer list and decodes it, asserting the status.
+func listOrders(t *testing.T, root http.Handler, token string, want int) orderListBody {
+	t.Helper()
+	rec := perform(root, http.MethodGet, ordersPath, "", token)
+	if rec.Code != want {
+		t.Fatalf("list orders: expected %d, got %d (%s)", want, rec.Code, rec.Body.String())
+	}
+	var body orderListBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the order list %q: %v", rec.Body.String(), err)
+	}
+	return body
+}
+
+// SC-005, quickstart scenario 3: one owner's orders are not another's, reading
+// another's answers 404 ORDER_NOT_FOUND, and cancelling an unpaid order makes its
+// goods available again (FR-018 to FR-020).
+func TestCustomerSeesAndManagesOnlyTheirOwnOrders(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	seedOrderCustomer(t, f.pool, testCustomerTwoID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// FR-018: the caller's list carries their order; another customer's does not.
+	mine := listOrders(t, f.root, "customer-token", http.StatusOK)
+	if len(mine.Data) != 1 || mine.Data[0].ID != orderID {
+		t.Fatalf("the caller's list must carry their order, got %+v", mine.Data)
+	}
+	theirs := listOrders(t, f.root, "customer2-token", http.StatusOK)
+	if len(theirs.Data) != 0 {
+		t.Fatalf("another customer's list must not carry the order, got %+v", theirs.Data)
+	}
+
+	// FR-020: reading another customer's order answers 404 ORDER_NOT_FOUND, and
+	// the caller's own read answers 200.
+	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("another customer's read: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_FOUND" {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the caller's read: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// FR-019: the unpaid order holds its goods; cancelling returns them and
+	// answers CANCELLED without moving physical stock.
+	if got := heldQuantity(t, f.pool, product); got != 2 {
+		t.Fatalf("the order must hold the goods while unpaid, got %d", got)
+	}
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/cancel", "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var cancelled orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &cancelled); err != nil {
+		t.Fatalf("decode the cancelled order %q: %v", rec.Body.String(), err)
+	}
+	if cancelled.Data.Status != "CANCELLED" {
+		t.Fatalf("the order must answer CANCELLED, got %s", cancelled.Data.Status)
+	}
+	if got := heldQuantity(t, f.pool, product); got != 0 {
+		t.Fatalf("cancelling must make the goods available again, got %d held", got)
+	}
+	if got := physicalStock(t, f.pool, product); got != 10 {
+		t.Fatalf("cancelling must not move physical stock, got %d", got)
+	}
+
+	// A second cancel is refused, naming the current state.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/cancel", "", "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second cancel: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
 	}
 }

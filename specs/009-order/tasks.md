@@ -132,14 +132,14 @@ description: "Task list for Order Checkout (module 07)"
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T036 [P] [US3] Use-case tests `internal/modules/order/application/implement/orders_test.go`: the owner list is the caller's only, newest first, paginated; reading another owner's order answers not-found; cancelling an unpaid order returns its goods; cancelling a paid order is refused
-- [ ] T037 [P] [US3] HTTP tests `internal/modules/order/presentation/http/orders_test.go`: `401` without a session; the list and detail return only the caller's; another customer's identifier answers `404 ORDER_NOT_FOUND`; cancel returns `200` then `409 ORDER_STATE_TRANSITION_INVALID` on the second attempt
+- [X] T036 [P] [US3] Use-case tests `internal/modules/order/application/implement/orders_test.go`: the owner list is the caller's only, newest first, paginated; reading another owner's order answers not-found; cancelling an unpaid order returns its goods; cancelling a paid order is refused
+- [X] T037 [P] [US3] HTTP tests `internal/modules/order/presentation/http/orders_test.go`: `401` without a session; the list and detail return only the caller's; another customer's identifier answers `404 ORDER_NOT_FOUND`; cancel returns `200` then `409 ORDER_STATE_TRANSITION_INVALID` on the second attempt
 
 ### Implementation for User Story 3
 
-- [ ] T038 [US3] Create `internal/modules/order/application/implement/orders.go`: `ListMine`, `GetMine`, `CancelMine` — the owner taken from the session, the cross-account read answering not-found, cancellation using the US2 `Cancel` transition (FR-018–FR-020)
-- [ ] T039 [US3] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel`, session-guarded
-- [ ] T040 [US3] Extend `internal/modules/order/presentation/http/order_integration_test.go`: one owner's orders are not another's, reading another's answers `404`, and cancelling an unpaid order makes its goods available again (SC-005)
+- [X] T038 [US3] Create `internal/modules/order/application/implement/orders.go`: `ListMine`, `GetMine`, `CancelMine` — the owner taken from the session, the cross-account read answering not-found, cancellation using the US2 `Cancel` transition (FR-018–FR-020)
+- [X] T039 [US3] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel`, session-guarded
+- [X] T040 [US3] Extend `internal/modules/order/presentation/http/order_integration_test.go`: one owner's orders are not another's, reading another's answers `404`, and cancelling an unpaid order makes its goods available again (SC-005)
 
 **Checkpoint**: A customer's own orders and cancellation work independently.
 

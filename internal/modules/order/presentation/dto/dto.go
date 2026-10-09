@@ -65,6 +65,22 @@ type OrderAddressResponse struct {
 	StreetAddress string `json:"streetAddress"`
 }
 
+// OrderSummaryResponse is one row of the signed-in customer's order list
+// (contracts/openapi.yaml, OrderSummary). Money is integer minor units plus the
+// currency (FR-008).
+type OrderSummaryResponse struct {
+	// ID identifies the order.
+	ID uuid.UUID `json:"id"`
+	// Status is where the order is in its life.
+	Status string `json:"status"`
+	// Total is the committed total.
+	Total MoneyResponse `json:"total"`
+	// ItemCount is how many lines the order carries.
+	ItemCount int64 `json:"itemCount"`
+	// CreatedAt is when the order was placed.
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // OrderResponse is one order as a customer reads it in full
 // (contracts/openapi.yaml, OrderDetail). The list summary plus the address and the
 // lines; money is integer minor units plus the currency and the total carries no

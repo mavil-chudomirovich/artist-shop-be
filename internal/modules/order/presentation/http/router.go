@@ -14,10 +14,14 @@ import (
 // owner is the session, so a client never names an order's owner (research D10,
 // FR-020). Every route is behind the session guard, so a request without one is
 // UNAUTHENTICATED. Checkout is the act of creating an order from the caller's
-// cart.
+// cart; the list and detail are the caller's own orders, and cancel is the
+// transition that returns an unpaid order's goods.
 func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequireAuthentication(hooks))
+	r.Get("/", h.ListMine)
 	r.Post("/", h.Checkout)
+	r.Get("/{orderId}", h.GetMine)
+	r.Post("/{orderId}/cancel", h.CancelMine)
 	return r
 }

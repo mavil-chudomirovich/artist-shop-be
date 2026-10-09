@@ -7,7 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
@@ -25,7 +28,24 @@ import (
 type Service interface {
 	// Checkout turns the caller's cart into an order (FR-001).
 	Checkout(ctx context.Context, in appdto.CheckoutInput) (appdto.OrderView, error)
+	// ListMine returns one page of the caller's own orders, newest first
+	// (FR-018).
+	ListMine(ctx context.Context, in appdto.ListInput) (appdto.OrderPage, error)
+	// GetMine reads one of the caller's own orders in full; another customer's
+	// identifier answers not-found (FR-018, FR-020).
+	GetMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
+	// CancelMine cancels one of the caller's own orders that is still awaiting
+	// payment and returns it (FR-019, FR-020).
+	CancelMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
 }
+
+// Pagination bounds of the customer's and the operator's order lists
+// (contracts/openapi.yaml, Page/PageSize). They match the project's existing
+// convention (research D14).
+const (
+	defaultPageSize = 20
+	maxPageSize     = 100
+)
 
 // Handler adapts the order use cases to HTTP. It carries no business rule: it
 // reads the session, parses the request, calls the use case and maps the answer
@@ -94,6 +114,119 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusCreated, toOrderResponse(view))
 }
 
+// ListMine returns a page of the signed-in customer's own orders, newest first.
+// The owner is the session's, never the request's, so the list is always the
+// caller's (FR-018, FR-020).
+//
+//	@Summary		List the signed-in customer's orders
+//	@Description	Returns the caller's own orders, newest first, paginated. No request can name an owner, so the list is always the session's.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.OrderSummaryResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		429			{object}	httpx.SwaggerError
+//	@Failure		500			{object}	httpx.SwaggerError
+//	@Router			/orders [get]
+func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	page, pageSize, appErr := pageParams(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ListMine(ctx, appdto.ListInput{Page: page, PageSize: pageSize})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccessList(w, r, toOrderSummaryResponses(out.Orders), out.Page, out.PageSize, out.Total)
+}
+
+// GetMine returns one of the signed-in customer's own orders in full. An order
+// that does not exist, or belongs to another customer, answers the same
+// not-found, so the route never confirms another customer's order (FR-018,
+// FR-020).
+//
+//	@Summary		Read one of the signed-in customer's orders
+//	@Description	Returns the caller's own order in full. An unknown order, or one that belongs to another customer, answers the same not-found.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/orders/{orderId} [get]
+func (h *Handler) GetMine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.GetMine(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
+// CancelMine cancels one of the signed-in customer's own orders that is still
+// awaiting payment and returns its goods. A paid order is refused by the state
+// machine, because a paid order is transferred instead (FR-019, FR-020).
+//
+//	@Summary		Cancel the signed-in customer's unpaid order
+//	@Description	Cancels an order that is still awaiting payment and returns its goods. A paid order cannot be cancelled; the refusal names the current state.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/orders/{orderId}/cancel [post]
+func (h *Handler) CancelMine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.CancelMine(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
 // sessionActor returns the acting account taken from the authenticated session.
 //
 // No order route accepts an owner identifier: the session is the only source of
@@ -140,10 +273,66 @@ func parseUUID(raw, field string) (uuid.UUID, *httpx.AppError) {
 	return parsed, nil
 }
 
+// pathUUID reads a UUID path parameter.
+func pathUUID(r *http.Request, name, field string) (uuid.UUID, *httpx.AppError) {
+	return parseUUID(chi.URLParam(r, name), field)
+}
+
+// pageParams reads the order-list window. Pagination validation is a foundation
+// concern and stays on the shared VALIDATION_ERROR code (contracts/error-codes.md,
+// research D14).
+func pageParams(r *http.Request) (int, int, *httpx.AppError) {
+	query := r.URL.Query()
+	page, err := positiveQuery(query.Get("page"), 1)
+	if err != nil {
+		return 0, 0, fieldError(fieldPage, "must be an integer of at least 1")
+	}
+	pageSize, err := positiveQuery(query.Get("pageSize"), defaultPageSize)
+	if err != nil {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	if pageSize > maxPageSize {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	return page, pageSize, nil
+}
+
+// positiveQuery parses a query value that must be a positive integer, falling
+// back when it is absent.
+func positiveQuery(raw string, fallback int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.New("not an integer")
+	}
+	if parsed < 1 {
+		return 0, errors.New("below the lower bound")
+	}
+	return parsed, nil
+}
+
 // toMoneyResponse is the single conversion from a money DTO to its wire shape, so
 // the amount and currency cannot drift per route.
 func toMoneyResponse(money appdto.MoneyView) httpdto.MoneyResponse {
 	return httpdto.MoneyResponse{Amount: money.Amount, Currency: money.Currency}
+}
+
+// toOrderSummaryResponses maps a page of list rows. It always allocates, so an
+// empty list serialises `data: []` rather than null.
+func toOrderSummaryResponses(summaries []appdto.OrderSummaryView) []httpdto.OrderSummaryResponse {
+	out := make([]httpdto.OrderSummaryResponse, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, httpdto.OrderSummaryResponse{
+			ID:        summary.ID,
+			Status:    string(summary.Status),
+			Total:     toMoneyResponse(summary.Total),
+			ItemCount: summary.ItemCount,
+			CreatedAt: summary.CreatedAt,
+		})
+	}
+	return out
 }
 
 // toOrderResponse maps one order view to its wire shape. It always returns a
