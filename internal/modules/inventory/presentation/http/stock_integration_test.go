@@ -15,9 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	inventorydto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/dto"
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
 	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
+	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
+	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	productavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/availability"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
@@ -326,5 +329,154 @@ func TestTheStockLevelCheckRefusesANegativeQuantity(t *testing.T) {
 	}
 	if pgErr.Code != "23514" || pgErr.ConstraintName != "stock_levels_quantity_ck" {
 		t.Fatalf("expected CHECK stock_levels_quantity_ck (23514), got %s (%s)", pgErr.ConstraintName, pgErr.Code)
+	}
+}
+
+// reconciliationFixture is a migrated PostgreSQL container plus the real inventory
+// use cases wired to module 04's own availability adapter, so a stock change and
+// the sell-state change it causes share one transaction (FR-026).
+type reconciliationFixture struct {
+	pool *pgxpool.Pool
+	svc  *inventoryimplement.Service
+}
+
+// newReconciliationFixture starts the container, applies the migrations and builds
+// the inventory service over the real adapters. The product service behind the
+// adapter is real because the signal walks the product's own transitions
+// (Constitution III).
+func newReconciliationFixture(t *testing.T) *reconciliationFixture {
+	t.Helper()
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	runner, err := migrate.New(dsn, 30*time.Second)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer runner.Close()
+	if err := runner.Up(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	productRepository := productpostgres.NewProductRepository(pool)
+	productService := productimplement.New(productimplement.Service{
+		Products: productRepository,
+		Mapper:   productmapper.New(),
+	})
+	adapter := productavailability.New(productService, productRepository)
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory:    inventorypostgres.NewInventoryRepository(pool),
+		Lookup:       adapter,
+		Availability: adapter,
+		Tx:           &database.DB{Pool: pool},
+		Clock:        integrationClock{},
+		Audit:        nil,
+		Mapper:       inventorymapper.New(),
+	})
+	return &reconciliationFixture{pool: pool, svc: svc}
+}
+
+// readSellState reads a product's stored sell state straight from the table, so
+// the assertion is on what was committed rather than on a returned DTO.
+func readSellState(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
+	t.Helper()
+	var state string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT sell_state FROM products WHERE id = $1`, productID).Scan(&state); err != nil {
+		t.Fatalf("read sell_state: %v", err)
+	}
+	return state
+}
+
+// setSellState moves a product to a state directly, bypassing the product use
+// case, so a test can set up an announced or retired product without an actor.
+func setSellState(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID, state string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE products SET sell_state = $2 WHERE id = $1`, productID, state); err != nil {
+		t.Fatalf("set sell_state: %v", err)
+	}
+}
+
+// FR-024 to FR-028, SC-005, quickstart 6a-6d, 7a-7b: an availability change moves
+// the product's sell state by itself, in the same transaction as the stock change.
+// The real product adapter is reached through the contract, so this proves the
+// whole path against PostgreSQL: damaging the last unit leaves the product
+// OUT_OF_STOCK, a restock returns it to ACTIVE, an announced or retired product is
+// never moved, and a hold that takes the last available unit moves it out of stock
+// while the physical count is untouched.
+func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
+	f := newReconciliationFixture(t)
+	ctx := context.Background()
+
+	// quickstart 6a: restock one unit (zero -> positive crosses, a no-op because
+	// the product is already on sale), then damage it (positive -> zero).
+	crossing := insertInventoryProduct(t, f.pool)
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: crossing, Quantity: 1}); err != nil {
+		t.Fatalf("restock: %v", err)
+	}
+	if got := readSellState(t, f.pool, crossing); got != "ACTIVE" {
+		t.Fatalf("a restock from zero must leave an on-sale product on sale, got %s", got)
+	}
+	if _, err := f.svc.Damage(ctx, inventorydto.DamageInput{ProductID: crossing, Quantity: 1}); err != nil {
+		t.Fatalf("damage: %v", err)
+	}
+	if got := readSellState(t, f.pool, crossing); got != "OUT_OF_STOCK" {
+		t.Fatalf("damaging the last unit must move the product out of stock, got %s", got)
+	}
+
+	// quickstart 6b: a restock returns it to sale.
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: crossing, Quantity: 1}); err != nil {
+		t.Fatalf("restock back: %v", err)
+	}
+	if got := readSellState(t, f.pool, crossing); got != "ACTIVE" {
+		t.Fatalf("a restock that leaves zero must move the product back on sale, got %s", got)
+	}
+
+	// quickstart 7b: a retired product never returns to sale, however it is
+	// restocked.
+	retired := insertInventoryProduct(t, f.pool)
+	setSellState(t, f.pool, retired, "DISCONTINUED")
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: retired, Quantity: 3}); err != nil {
+		t.Fatalf("restock a retired product: %v", err)
+	}
+	if got := readSellState(t, f.pool, retired); got != "DISCONTINUED" {
+		t.Fatalf("a retired product must stay retired after a restock, got %s", got)
+	}
+
+	// quickstart 7a: an announced product is never moved by a stock crossing.
+	announced := insertInventoryProduct(t, f.pool)
+	setSellState(t, f.pool, announced, "COMING_SOON")
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: announced, Quantity: 2}); err != nil {
+		t.Fatalf("restock an announced product: %v", err)
+	}
+	if got := readSellState(t, f.pool, announced); got != "COMING_SOON" {
+		t.Fatalf("an announced product must not be put on sale by stock, got %s", got)
+	}
+
+	// quickstart 6c: holding the last available unit moves the product out of
+	// stock while the physical count is unchanged.
+	held := insertInventoryProduct(t, f.pool)
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: held, Quantity: 1}); err != nil {
+		t.Fatalf("restock held product: %v", err)
+	}
+	if err := f.svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: uuid.New(), ProductID: held, Quantity: 1}); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if got := readSellState(t, f.pool, held); got != "OUT_OF_STOCK" {
+		t.Fatalf("holding the last unit must move the product out of stock, got %s", got)
+	}
+	var physical int64
+	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE product_id = $1`, held).Scan(&physical); err != nil {
+		t.Fatalf("read the level: %v", err)
+	}
+	if physical != 1 {
+		t.Fatalf("a hold must not move the physical count, got %d", physical)
 	}
 }

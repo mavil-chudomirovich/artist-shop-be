@@ -285,23 +285,25 @@ func run() error {
 
 	// Module 05 (inventory). One administrator group, /admin/inventory, carries
 	// the administrator role guard. The module depends on module 04 through the
-	// two cross-module contracts: the availability signal it will send (US4) and
-	// the existence question a read or a decrease must ask. Both are answered by
-	// module 04's own adapter, supplied here, so inventory never imports product's
-	// internals (research D4, Constitution I). The module reuses the foundation
-	// audit writer one more time: one queue, one retry policy, one shutdown.
+	// two cross-module contracts: the availability signal it sends when stock
+	// crosses zero (US4) and the existence question a read or a decrease must ask.
+	// Both are answered by module 04's own adapter, supplied here, so inventory
+	// never imports product's internals (research D4, Constitution I). The module
+	// reuses the foundation audit writer one more time: one queue, one retry
+	// policy, one shutdown.
 	//
 	// The wall clock is the one seam that makes the hold window and the sweep
 	// testable; the manual operations only stamp rows with it (research D15).
 	productAvailability := productavailability.New(productService, productRepository)
 	inventoryRepository := inventorypostgres.NewInventoryRepository(db.Pool)
 	inventoryService := inventoryimplement.New(inventoryimplement.Service{
-		Inventory: inventoryRepository,
-		Lookup:    productAvailability,
-		Tx:        db,
-		Clock:     wallClock{},
-		Audit:     inventoryauditor.New(auditWriter),
-		Mapper:    inventorymapper.New(),
+		Inventory:    inventoryRepository,
+		Lookup:       productAvailability,
+		Availability: productAvailability,
+		Tx:           db,
+		Clock:        wallClock{},
+		Audit:        inventoryauditor.New(auditWriter),
+		Mapper:       inventorymapper.New(),
 	})
 	inventoryHandler := inventoryhttp.New(inventoryService, logger)
 

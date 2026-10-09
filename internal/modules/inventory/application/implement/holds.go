@@ -3,6 +3,9 @@ package implement
 import (
 	"context"
 	"errors"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/constant"
@@ -68,17 +71,19 @@ func (s *Service) Reserve(ctx context.Context, in dto.ReserveInput) error {
 			return domainerr.InsufficientStock(model.FieldQuantity, available, in.Quantity)
 		}
 
-		hold, err := model.NewHold(in.ProductID, in.OrderID, in.Quantity, now)
-		if err != nil {
-			return err
-		}
-		if err := s.Inventory.InsertHold(txCtx, hold); err != nil {
-			if errors.Is(err, domainerr.ErrHoldAlreadyExists) {
-				return nil
+		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
+			hold, err := model.NewHold(in.ProductID, in.OrderID, in.Quantity, now)
+			if err != nil {
+				return err
 			}
-			return err
-		}
-		return nil
+			if err := s.Inventory.InsertHold(txCtx, hold); err != nil {
+				if errors.Is(err, domainerr.ErrHoldAlreadyExists) {
+					return nil
+				}
+				return err
+			}
+			return nil
+		})
 	})
 }
 
@@ -103,7 +108,9 @@ func (s *Service) Release(ctx context.Context, in dto.ReleaseInput) error {
 		if !found {
 			return nil
 		}
-		return s.Inventory.ResolveHold(txCtx, hold.ID, constant.HoldStatusReleased, now)
+		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
+			return s.Inventory.ResolveHold(txCtx, hold.ID, constant.HoldStatusReleased, now)
+		})
 	})
 }
 
@@ -114,6 +121,11 @@ func (s *Service) Release(ctx context.Context, in dto.ReleaseInput) error {
 // sweeper and the availability sum agree on what "expired" means. A hold a
 // concurrent sweep or consume already resolved is skipped rather than failing the
 // sweep, so the operation is idempotent (FR-019).
+//
+// The holds are grouped by product so each product's availability is reconciled
+// once, from the quantity the sweep actually frees. A product whose last held unit
+// expires is moved back on sale by that reconciliation, even though the expiry
+// predicate already treated the hold as inactive (FR-025, research D6).
 func (s *Service) ExpireHolds(ctx context.Context) error {
 	now := s.now()
 	return s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
@@ -121,21 +133,67 @@ func (s *Service) ExpireHolds(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for i := range holds {
-			hold := holds[i]
-			if err := hold.Expire(now); err != nil {
-				if errors.Is(err, domainerr.ErrInvalidValue) {
-					continue
-				}
-				return err
-			}
-			if err := s.Inventory.ResolveHold(txCtx, hold.ID, constant.HoldStatusReleased, now); err != nil {
-				if errors.Is(err, domainerr.ErrInvalidValue) {
-					continue
-				}
+		for _, group := range groupExpiredHolds(holds) {
+			group := group
+			if err := s.reconcileExpiry(txCtx, group.productID, now, func() (int64, error) {
+				return s.releaseExpired(txCtx, group.holds, now)
+			}); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// expiredGroup collects one product's expired holds, so a sweep reconciles each
+// product once rather than once per hold.
+type expiredGroup struct {
+	productID uuid.UUID
+	holds     []model.Hold
+}
+
+// groupExpiredHolds groups a sweep's expired holds by product, preserving the
+// order the read returned them in so a sweep stays reproducible.
+func groupExpiredHolds(holds []model.Hold) []expiredGroup {
+	order := make([]uuid.UUID, 0, len(holds))
+	byProduct := make(map[uuid.UUID]*expiredGroup, len(holds))
+	for i := range holds {
+		hold := holds[i]
+		group, ok := byProduct[hold.ProductID]
+		if !ok {
+			group = &expiredGroup{productID: hold.ProductID}
+			byProduct[hold.ProductID] = group
+			order = append(order, hold.ProductID)
+		}
+		group.holds = append(group.holds, hold)
+	}
+	out := make([]expiredGroup, 0, len(order))
+	for _, productID := range order {
+		out = append(out, *byProduct[productID])
+	}
+	return out
+}
+
+// releaseExpired resolves one product's expired holds and returns the quantity it
+// actually freed. A hold a concurrent operation already resolved is skipped, so it
+// is not counted and the reconciliation stays honest under a race (FR-019).
+func (s *Service) releaseExpired(ctx context.Context, holds []model.Hold, now time.Time) (int64, error) {
+	var released int64
+	for i := range holds {
+		hold := holds[i]
+		if err := hold.Expire(now); err != nil {
+			if errors.Is(err, domainerr.ErrInvalidValue) {
+				continue
+			}
+			return 0, err
+		}
+		if err := s.Inventory.ResolveHold(ctx, hold.ID, constant.HoldStatusReleased, now); err != nil {
+			if errors.Is(err, domainerr.ErrInvalidValue) {
+				continue
+			}
+			return 0, err
+		}
+		released += hold.Quantity
+	}
+	return released, nil
 }

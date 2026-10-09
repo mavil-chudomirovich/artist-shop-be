@@ -33,6 +33,12 @@ type Service struct {
 	// not-found instead of fabricating a zero, which the foreign key cannot do
 	// because it only fires on a write (FR-007, research D4, D12).
 	Lookup appinterface.ProductLookup
+	// Availability is the signal the use cases send the product module when a
+	// change makes a product's availability cross zero (FR-024, FR-026). It is
+	// supplied by module 04's adapter at the composition root. A nil port is
+	// tolerated by the reconciliation, so a unit test or read-only construction
+	// still runs and only the signal is skipped.
+	Availability appinterface.ProductAvailability
 	// Tx owns the manual operations' transaction boundary. A level change and the
 	// ledger row it produces commit together or not at all (FR-011,
 	// Constitution II).
@@ -126,11 +132,13 @@ func (s *Service) Restock(ctx context.Context, in dto.RestockInput) (dto.StockOu
 
 	now := s.now()
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		resulting, err := s.Inventory.Increase(txCtx, in.ProductID, in.Quantity, now)
-		if err != nil {
-			return err
-		}
-		return s.writeMovement(txCtx, in.ProductID, constant.MovementRestock, in.Quantity, resulting, in.Note, now)
+		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
+			resulting, err := s.Inventory.Increase(txCtx, in.ProductID, in.Quantity, now)
+			if err != nil {
+				return err
+			}
+			return s.writeMovement(txCtx, in.ProductID, constant.MovementRestock, in.Quantity, resulting, in.Note, now)
+		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
@@ -165,14 +173,16 @@ func (s *Service) Damage(ctx context.Context, in dto.DamageInput) (dto.StockOutp
 		if err := s.Inventory.LockLevel(txCtx, in.ProductID); err != nil {
 			return err
 		}
-		if err := s.refuseBelowHeld(txCtx, in.ProductID, in.Quantity, now); err != nil {
-			return err
-		}
-		resulting, err := s.Inventory.Decrease(txCtx, in.ProductID, in.Quantity, now)
-		if err != nil {
-			return err
-		}
-		return s.writeMovement(txCtx, in.ProductID, constant.MovementDamage, -in.Quantity, resulting, in.Note, now)
+		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
+			if err := s.refuseBelowHeld(txCtx, in.ProductID, in.Quantity, now); err != nil {
+				return err
+			}
+			resulting, err := s.Inventory.Decrease(txCtx, in.ProductID, in.Quantity, now)
+			if err != nil {
+				return err
+			}
+			return s.writeMovement(txCtx, in.ProductID, constant.MovementDamage, -in.Quantity, resulting, in.Note, now)
+		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
@@ -209,29 +219,31 @@ func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.Stock
 		if err := s.Inventory.LockLevel(txCtx, in.ProductID); err != nil {
 			return err
 		}
-		current, err := s.Inventory.Level(txCtx, in.ProductID)
-		if err != nil {
-			return err
-		}
-		delta, err = model.AdjustmentDelta(current, in.Quantity)
-		if err != nil {
-			return err
-		}
-		if delta == 0 {
-			return nil
-		}
-		if delta > 0 {
-			_, err = s.Inventory.Increase(txCtx, in.ProductID, delta, now)
-		} else {
-			if err = s.refuseBelowHeld(txCtx, in.ProductID, -delta, now); err != nil {
+		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
+			current, err := s.Inventory.Level(txCtx, in.ProductID)
+			if err != nil {
 				return err
 			}
-			_, err = s.Inventory.Decrease(txCtx, in.ProductID, -delta, now)
-		}
-		if err != nil {
-			return err
-		}
-		return s.writeMovement(txCtx, in.ProductID, constant.MovementAdjustment, delta, in.Quantity, in.Note, now)
+			delta, err = model.AdjustmentDelta(current, in.Quantity)
+			if err != nil {
+				return err
+			}
+			if delta == 0 {
+				return nil
+			}
+			if delta > 0 {
+				_, err = s.Inventory.Increase(txCtx, in.ProductID, delta, now)
+			} else {
+				if err = s.refuseBelowHeld(txCtx, in.ProductID, -delta, now); err != nil {
+					return err
+				}
+				_, err = s.Inventory.Decrease(txCtx, in.ProductID, -delta, now)
+			}
+			if err != nil {
+				return err
+			}
+			return s.writeMovement(txCtx, in.ProductID, constant.MovementAdjustment, delta, in.Quantity, in.Note, now)
+		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
