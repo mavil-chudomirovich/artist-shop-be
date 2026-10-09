@@ -20,6 +20,18 @@ type CheckoutRequest struct {
 	AddressID *string `json:"addressId"`
 }
 
+// TransferRequest is the body of an administrator transfer
+// (contracts/openapi.yaml, TransferRequest). `email` names the recipient
+// account; no account carrying it is refused. It is a plain string so a missing
+// or malformed value is reported as VALIDATION_ERROR naming `email` rather than
+// lost to a generic decode failure. The schema is additionalProperties: false and
+// the handler decodes it with unknown members refused, so a client cannot name
+// the acting administrator or an owner.
+type TransferRequest struct {
+	// Email is the recipient account's email.
+	Email string `json:"email"`
+}
+
 // MoneyResponse is money as an integer amount in the currency's minor unit plus
 // its currency, the shape the contract shows (FR-008).
 type MoneyResponse struct {

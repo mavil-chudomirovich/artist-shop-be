@@ -42,5 +42,6 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/{orderId}", h.GetByIDAdmin)
 	r.Post("/{orderId}/ship", h.ShipByAdmin)
 	r.Post("/{orderId}/complete", h.CompleteByAdmin)
+	r.Post("/{orderId}/transfer", h.Transfer)
 	return r
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
+	authaccount "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/account"
+	authpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/postgres"
 	cartcheckout "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/checkout"
 	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
@@ -156,6 +158,7 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Availability: inventoryavailability.New(inventoryRepo, orderIntegrationClock{}),
 		Reservations: inventoryreservation.New(inventoryService),
 		Customers:    customerAddresses{pool: pool},
+		Accounts:     authaccount.New(authpostgres.NewUserRepository(pool)),
 		Tx:           &database.DB{Pool: pool},
 		Clock:        orderIntegrationClock{},
 		Audit:        orderauditor.New(writer),
@@ -652,5 +655,104 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 		if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
 			t.Fatalf("customer on %s: expected FORBIDDEN, got %s", path, body.Error.Code)
 		}
+	}
+}
+
+// SC-006, quickstart scenario 6 against real PostgreSQL: an administrator
+// transfers a paid order to another existing account through the route — the
+// order belongs to the recipient with its lines, state and total unchanged and
+// no product's physical or available stock moved — an unpaid order is refused
+// 409 ORDER_NOT_TRANSFERABLE, an email no account carries is refused 404
+// ORDER_TRANSFER_TARGET_NOT_FOUND, and the act leaves an audit row naming the
+// order and the administrator (FR-024).
+func TestTransferHandsTheOrderToAnotherAccountAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	seedOrderCustomer(t, f.pool, testCustomerTwoID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	recipientEmail := "order-customer-" + testCustomerTwoID.String() + "@example.com"
+
+	// FR-024 (quickstart 6d): an order that is not paid cannot be transferred.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/transfer",
+		`{"email":"`+recipientEmail+`"}`, "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("transfer an unpaid order: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_TRANSFERABLE" {
+		t.Fatalf("expected ORDER_NOT_TRANSFERABLE, got %s", body.Error.Code)
+	}
+
+	// The paid transition has no HTTP surface — module 08 drives it — so it is
+	// driven directly, exactly as the quickstart says (scenario 5a). Paying turns
+	// the hold into a sale: physical stock fell and the hold cleared.
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-transfer"); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	physicalAfterPaid := physicalStock(t, f.pool, product)
+	heldAfterPaid := heldQuantity(t, f.pool, product)
+
+	// FR-024 (quickstart 6c): an email no account carries is refused.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/transfer",
+		`{"email":"nobody@example.com"}`, "admin-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("transfer to an unknown email: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_TRANSFER_TARGET_NOT_FOUND" {
+		t.Fatalf("expected ORDER_TRANSFER_TARGET_NOT_FOUND, got %s", body.Error.Code)
+	}
+
+	// FR-024 (quickstart 6a): the transfer hands the order to the recipient.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/transfer",
+		`{"email":"`+recipientEmail+`"}`, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("transfer: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var transferred adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &transferred); err != nil {
+		t.Fatalf("decode the transferred order %q: %v", rec.Body.String(), err)
+	}
+	if transferred.Data.ID != orderID || transferred.Data.UserID != testCustomerTwoID {
+		t.Fatalf("the order must belong to the recipient, got %+v", transferred.Data)
+	}
+	// The lines, the state and the total are unchanged.
+	if transferred.Data.Status != "PAID" || transferred.Data.Total.Amount != 240000 || len(transferred.Data.Lines) != 1 {
+		t.Fatalf("a transfer must not change the state, the total or the lines, got %+v", transferred.Data)
+	}
+	if transferred.Data.Lines[0].ProductID != product || transferred.Data.Lines[0].Quantity != 2 {
+		t.Fatalf("the line must be unchanged, got %+v", transferred.Data.Lines[0])
+	}
+
+	// FR-024 (quickstart 6b): no product's physical or available stock moved.
+	if got := physicalStock(t, f.pool, product); got != physicalAfterPaid {
+		t.Fatalf("a transfer must not move physical stock, got %d want %d", got, physicalAfterPaid)
+	}
+	if got := heldQuantity(t, f.pool, product); got != heldAfterPaid {
+		t.Fatalf("a transfer must not change the hold, got %d want %d", got, heldAfterPaid)
+	}
+
+	// FR-023: the transfer leaves an audit row naming the order and the
+	// administrator.
+	f.requireAudit(t, constant.AuditOrderTransferred, orderID, testAdminID)
+
+	// FR-023 (quickstart 6e): a customer's session is refused the transfer route.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/transfer",
+		`{"email":"`+recipientEmail+`"}`, "customer-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("customer on transfer: expected 403, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
+		t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 	}
 }

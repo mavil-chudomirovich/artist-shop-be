@@ -19,6 +19,7 @@ const (
 	fieldOrderID   = "orderId"
 	fieldPage      = "page"
 	fieldPageSize  = "pageSize"
+	fieldEmail     = "email"
 )
 
 // coded builds a module error response with an explicit status, so a code that is

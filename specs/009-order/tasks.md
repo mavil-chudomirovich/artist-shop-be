@@ -173,13 +173,13 @@ description: "Task list for Order Checkout (module 07)"
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T045 [P] [US5] Use-case and HTTP tests `internal/modules/order/application/implement/transfer_test.go` and `internal/modules/order/presentation/http/transfer_test.go`: a paid order's owner changes with lines/state/total unchanged and no stock movement; an email no account carries answers `404 ORDER_TRANSFER_TARGET_NOT_FOUND`; an unpaid order answers `409 ORDER_NOT_TRANSFERABLE`; a customer's session is refused `403`
+- [X] T045 [P] [US5] Use-case and HTTP tests `internal/modules/order/application/implement/transfer_test.go` and `internal/modules/order/presentation/http/transfer_test.go`: a paid order's owner changes with lines/state/total unchanged and no stock movement; an email no account carries answers `404 ORDER_TRANSFER_TARGET_NOT_FOUND`; an unpaid order answers `409 ORDER_NOT_TRANSFERABLE`; a customer's session is refused `403`
 
 ### Implementation for User Story 5
 
-- [ ] T046 [US5] Create `internal/modules/order/application/implement/transfer.go`: `Transfer` — resolve the recipient through `AccountLookup` (`UserIDByEmail`), refuse a not-paid order, change only the owner, and write the `ORDER_TRANSFERRED` audit entry, all in one `UnitOfWork` (FR-024)
-- [ ] T047 [US5] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `POST /admin/orders/{id}/transfer`, administrator-only
-- [ ] T048 [US5] Extend `internal/modules/order/presentation/http/order_integration_test.go`: after a transfer the order belongs to the recipient, its lines/state/total are unchanged and no product's physical or available stock moved (SC-006)
+- [X] T046 [US5] Create `internal/modules/order/application/implement/transfer.go`: `Transfer` — resolve the recipient through `AccountLookup` (`UserIDByEmail`), refuse a not-paid order, change only the owner, and write the `ORDER_TRANSFERRED` audit entry, all in one `UnitOfWork` (FR-024)
+- [X] T047 [US5] Add to `internal/modules/order/presentation/http/{handler.go,router.go}`: `POST /admin/orders/{id}/transfer`, administrator-only
+- [X] T048 [US5] Extend `internal/modules/order/presentation/http/order_integration_test.go`: after a transfer the order belongs to the recipient, its lines/state/total are unchanged and no product's physical or available stock moved (SC-006)
 
 **Checkpoint**: All user stories are independently functional.
 

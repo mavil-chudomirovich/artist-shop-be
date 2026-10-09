@@ -48,6 +48,10 @@ type Service struct {
 	// Customers answers the customer's delivery addresses. It is supplied by
 	// module 02 at the composition root (research D7).
 	Customers appinterface.CustomerLookupService
+	// Accounts resolves a transfer recipient by email, so the order can name a
+	// recipient without reading the auth module's table. It is supplied by
+	// module 01's adapter at the composition root (research D8).
+	Accounts appinterface.AccountLookup
 	// Tx owns every transaction boundary, so the order, its lines, the held
 	// goods and the emptied cart commit together or not at all (Constitution II).
 	Tx appinterface.UnitOfWork

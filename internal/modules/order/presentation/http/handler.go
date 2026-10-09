@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -49,6 +50,9 @@ type Service interface {
 	// CompleteByAdmin moves a shipped order to completed and records the act
 	// (FR-022, FR-023).
 	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// Transfer hands a paid order to another existing account, named by email,
+	// changing only the owner, and records the act (FR-024).
+	Transfer(ctx context.Context, in appdto.TransferInput) (appdto.AdminOrderView, error)
 }
 
 // Pagination bounds of the customer's and the operator's order lists
@@ -358,6 +362,73 @@ func (h *Handler) ShipByAdmin(w http.ResponseWriter, r *http.Request) {
 //	@Router			/admin/orders/{orderId}/complete [post]
 func (h *Handler) CompleteByAdmin(w http.ResponseWriter, r *http.Request) {
 	h.adminMove(w, r, h.svc.CompleteByAdmin)
+}
+
+// Transfer hands a paid order to the account whose email is given, changing only
+// the owner. A missing or malformed `email` is a request-shape refusal naming the
+// member; an unpaid order answers 409 ORDER_NOT_TRANSFERABLE and an email no
+// account carries answers 404 ORDER_TRANSFER_TARGET_NOT_FOUND (FR-024,
+// contracts/error-codes.md).
+//
+//	@Summary		Transfer a paid order to another account (administrator)
+//	@Description	Hands a paid order to the account whose email is given, changing only the owner. The order's lines, state and total are unchanged and no stock moves. An unpaid order cannot be transferred. Administrator role required.
+//	@Tags			Orders
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Param			request	body	httpdto.TransferRequest	true	"Recipient account email"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/transfer [post]
+func (h *Handler) Transfer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	var req httpdto.TransferRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	email := strings.TrimSpace(req.Email)
+	if !validEmail(email) {
+		httpx.WriteError(w, r, fieldError(fieldEmail, "must be a valid email"), h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.Transfer(ctx, appdto.TransferInput{OrderID: orderID, Email: email})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
+// validEmail reports whether the trimmed value is a single, bare email address.
+// A missing or malformed recipient stays on the shared VALIDATION_ERROR naming
+// `email`, exactly as the contract requires, rather than reaching the use case as
+// an unknown account (contracts/error-codes.md). It requires the parsed address
+// to equal the input, so a display name is refused.
+func validEmail(raw string) bool {
+	address, err := mail.ParseAddress(raw)
+	if err != nil {
+		return false
+	}
+	return address.Address == raw
 }
 
 // adminMove is the shared body of the two administrator transitions: it resolves

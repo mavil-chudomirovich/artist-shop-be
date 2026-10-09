@@ -16,6 +16,7 @@ import (
 
 	_ "github.com/mavil-chudomirovich/artist-shop-be/docs/swagger"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/implement"
+	authaccount "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/account"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/auditor"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/email"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/postgres"
@@ -166,8 +167,9 @@ func run() error {
 	auditWriter.Start(ctx)
 	auditorAdapter := auditor.New(auditWriter)
 
+	authUsers := postgres.NewUserRepository(db.Pool)
 	authService := implement.New(implement.Service{
-		Users:         postgres.NewUserRepository(db.Pool),
+		Users:         authUsers,
 		Sessions:      postgres.NewSessionRepository(db.Pool),
 		Resets:        postgres.NewResetRepository(db.Pool),
 		OTP:           authredis.NewOTPStore(redisCache, token.Hasher{}, cfg.Auth.OTPMaxAttempts, cfg.Auth.OTPTTL, cfg.Auth.OTPBlockTTL, cfg.Auth.OTPResendCooldown),
@@ -363,6 +365,7 @@ func run() error {
 		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
 		Reservations: inventoryreservation.New(inventoryService),
 		Customers:    userService,
+		Accounts:     authaccount.New(authUsers),
 		Tx:           db,
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
