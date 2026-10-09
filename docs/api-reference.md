@@ -265,6 +265,41 @@ hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR
 > Module cart **không** ghi `audit_logs`: thao tác giỏ là hành động của chính khách, không phải một
 > mutation quản trị, nên không có action `CART_*` (Constitution VI; `specs/008-cart/plan.md`).
 
+**Riêng module order** (`internal/modules/order/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `ORDER_NOT_FOUND` | 404 | Không có đơn nào mang định danh đó, **hoặc** đơn thuộc khách khác. Hai tình huống **cố ý** trả lời giống nhau, để route không xác nhận đơn của khách khác |
+| `ORDER_CART_EMPTY` | 409 | Checkout được gọi với giỏ rỗng. Không bao giờ tạo đơn từ hư không |
+| `ORDER_ITEM_NOT_PURCHASABLE` | 409 | Sản phẩm của một dòng không đang bán, hết hàng hoặc đã bị xoá nên không đặt được. `details[].field = "productId"`, không có gì bị tạo |
+| `ORDER_ITEM_PRICE_CHANGED` | 409 | Giá sản phẩm của một dòng khác giá khách đã thấy lúc thêm vào giỏ. `details[].field = "productId"`, không có gì bị tạo; khách xem lại giỏ |
+| `ORDER_QUANTITY_EXCEEDS_AVAILABLE` | 409 | Một dòng đòi nhiều hơn tồn khả dụng, **hoặc** không giữ được hàng. `details[].field = "productId"`, `issue` nêu số khả dụng; không có gì bị tạo |
+| `ORDER_NO_ADDRESS` | 409 | Khách không có địa chỉ giao, nên đơn không có nơi đi. Không có gì bị tạo |
+| `ORDER_STATE_TRANSITION_INVALID` | 409 | Bước chuyển không được trạng thái hiện tại của đơn cho phép — huỷ đơn đã trả tiền, giao đơn chưa trả tiền. Message nêu trạng thái hiện tại |
+| `ORDER_NOT_TRANSFERABLE` | 409 | Đơn chưa trả tiền nên không chuyển nhượng được. Chuyển nhượng thay cho huỷ đơn đã trả tiền, chỉ áp dụng cho đơn đã trả tiền |
+| `ORDER_TRANSFER_TARGET_NOT_FOUND` | 404 | Không có tài khoản nào mang email mà lệnh chuyển nhượng nêu. Không có gì bị đổi |
+
+Chín mã trên đều là **conflict** (409) hoặc **not-found** (404) chứ không phải validation: request
+hợp lệ nhưng trạng thái hiện tại của giỏ/đơn/kệ khiến nó bất khả thi, và bước tiếp theo của khách
+khác hẳn — thêm hàng, xoá món, xem lại giỏ, giảm số lượng, thêm địa chỉ, hoặc đưa đơn qua một trạng
+thái hợp lệ (cùng lý luận của module 03–06).
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module order (xem
+`specs/009-order/contracts/error-codes.md`): `addressId` không phải UUID hoặc không phải địa chỉ của
+khách, `email` chuyển nhượng thiếu hoặc không phải email → `VALIDATION_ERROR` 400 với
+`error.details[].field`; định danh đường dẫn không phải UUID → `VALIDATION_ERROR` 400; body không
+parse được hoặc có member lạ → `MALFORMED_REQUEST` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401;
+`CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`); `page`/`pageSize`
+ngoài khoảng → `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến →
+`INTERNAL_ERROR` 500.
+
+> Action `audit_logs` của module dùng tiền tố `ORDER_` nhưng **không** phải mã lỗi:
+> `ORDER_SHIPPED`, `ORDER_COMPLETED`, `ORDER_TRANSFERRED` — xem
+> `internal/modules/order/domain/constant/codes.go`. Metadata của mỗi dòng chỉ nêu định danh đơn,
+> **không** mang dữ liệu giao hàng hay dữ liệu cá nhân của khách. Thao tác của khách (checkout, huỷ)
+> và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`: chúng được phản ánh trên trạng
+> thái và mốc thời gian của đơn; audit ghi các mutation quản trị (Constitution VI).
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
@@ -298,6 +333,11 @@ toàn cục, cùng lý do: mọi endpoint đều là ADMIN-only nên bề mặt 
 Nhóm `/cart` của module cart cũng **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục: giỏ dành
 cho khách **đã đăng nhập**, không phải bề mặt lạm dụng mà một hạn mức theo module tồn tại để chặn
 (`specs/008-cart/spec.md`, mục *Assumptions*).
+
+Nhóm `/orders` và `/admin/orders` của module order cũng **không** có hạn mức riêng, chỉ chịu hạn mức
+toàn cục: checkout và huỷ là hành động của khách **đã đăng nhập**, còn các endpoint của operator là
+`ADMIN`-only, nên bề mặt lạm dụng mà một hạn mức theo module tồn tại để chặn **không tồn tại**
+(`specs/009-order/spec.md`, mục *Assumptions*).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -2258,7 +2298,290 @@ Ghi chú:
 
 ---
 
-## 9. Bảng tổng hợp
+## 9. Module 07 — Order (`/api/v1`)
+
+Đơn hàng của shop: biến giỏ thành đơn, vòng đời đơn, và **bàn quản trị đơn** của operator. **Chín
+endpoint**: **bốn** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là **session**, nên không
+route nào nêu định danh chủ — và **năm** của quản trị dưới `/admin/orders`, vai trò `ADMIN`, định địa
+chỉ theo **định danh đơn**.
+
+Một đơn mang **snapshot** của thứ đã mua: mỗi dòng chụp tên, slug, đơn giá và currency của sản phẩm
+lúc checkout, cùng địa chỉ giao chụp từ địa chỉ khách chọn; nên thứ một đơn hiển thị **không** phụ
+thuộc vào việc sản phẩm hay địa chỉ còn tồn tại hay không. Tiền là **số nguyên đơn vị nhỏ nhất +
+currency**; tổng đơn là tổng của các dòng và **không** có phí ship (ADR 015 §5).
+
+Năm điều dễ đọc sai, nói ngay:
+
+- **Đơn chưa trả tiền tự huỷ sau cửa sổ giữ chỗ** (mặc định 15 phút). Một order quá `expires_at` mà
+  vẫn `PENDING_PAYMENT` sẽ tự `CANCELLED` và trả hàng về khả dụng, bởi **một sweeper nền** — khách
+  thấy trạng thái trên đơn, **không** nhận lỗi. Xem `9.1`, `9.4`.
+- **Trạng thái đơn đi qua endpoint riêng** (`cancel`, `ship`, `complete`), **không** qua một trường
+  `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu từ chối nêu trạng thái hiện tại
+  (`409 ORDER_STATE_TRANSITION_INVALID`).
+- **Không có endpoint `pay`.** Bước chuyển `PENDING_PAYMENT → PAID` đã được giao và test nhưng do
+  **module 08 Payment** điều khiển; chưa module nào gọi nó qua HTTP.
+- **Chuyển nhượng không phải một trạng thái**: nó chỉ đổi **chủ sở hữu** sang một tài khoản khác đã
+  tồn tại (nêu bằng **email**), giữ nguyên dòng, trạng thái và tổng tiền, và **không** đổi tồn kho.
+  Một đơn chưa trả tiền **không** chuyển nhượng được.
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5). Thao tác của khách và của hệ
+  thống **không** ghi `audit_logs`; chỉ `ship`/`complete`/`transfer` của admin mới ghi (§1.4).
+
+Hai danh sách (`GET /orders`, `GET /admin/orders`) phân trang theo quy ước chung: `page` mặc định `1`,
+`pageSize` mặc định `20`, khoảng `1..100`, **mới nhất trước** (`createdAt`, rồi `id`).
+
+**Hình dạng khách** — `OrderSummaryResponse` (danh sách, 5 member) và `OrderResponse` (chi tiết, 7
+member = summary + `address` + `lines`):
+
+```json
+{
+  "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+  "status": "PENDING_PAYMENT",
+  "total": { "amount": 300000, "currency": "VND" },
+  "itemCount": 2,
+  "createdAt": "2026-10-09T08:15:04Z",
+  "address": {
+    "recipientName": "Nguyễn Thị An",
+    "recipientPhone": "0912345678",
+    "provinceCode": "01",
+    "provinceName": "Hà Nội",
+    "wardCode": "00004",
+    "wardName": "Ba Đình",
+    "streetAddress": "12 Ngõ 129 Dịch Vọng"
+  },
+  "lines": [
+    {
+      "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+      "name": "Tranh sơn dầu",
+      "slug": "tranh-son-dau",
+      "quantity": 2,
+      "unitPrice": { "amount": 150000, "currency": "VND" },
+      "lineTotal": { "amount": 300000, "currency": "VND" }
+    }
+  ]
+}
+```
+
+**Hình dạng quản trị** — `AdminOrderSummaryResponse` (danh sách, 6 member = summary + `userId`) và
+`AdminOrderResponse` (chi tiết, 8 member = `OrderResponse` + `userId`). **Khác khách đúng một member
+`userId`** (chủ sở hữu đơn).
+
+### 9.1 `POST /orders`
+
+Checkout: biến giỏ của khách đang đăng nhập thành đơn **chờ thanh toán**. Mỗi dòng được **đối chiếu
+lại** với trạng thái bán và giá hiện tại của sản phẩm và với tồn khả dụng; cả lần checkout bị từ chối
+nếu bất kỳ dòng nào không đạt. Thành công thì hàng được **giữ** cho khách, giỏ được **làm rỗng**, và
+đơn trả về ở trạng thái `PENDING_PAYMENT`, tất cả trong **một transaction**.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` |
+
+Request (`CheckoutRequest`, `additionalProperties: false`)
+
+```json
+{ "addressId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e" }
+```
+
+`addressId` **tuỳ chọn** — bỏ trống hoặc `null` thì dùng **địa chỉ mặc định** của khách. Tác nhân lấy
+từ **session**, không bao giờ từ body.
+
+Response `201`: `data` = `OrderResponse` (như trên).
+
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc không phải một địa chỉ của khách —
+`details[].field = "addressId"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
+`UNAUTHENTICATED` 401 · `ORDER_CART_EMPTY` 409 · `ORDER_ITEM_NOT_PURCHASABLE` 409 ·
+`ORDER_ITEM_PRICE_CHANGED` 409 · `ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 · `ORDER_NO_ADDRESS` 409 ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- `total` **bằng đúng** tổng `quantity × unitPrice` của các dòng, ở đơn vị nhỏ nhất của currency,
+  **không** dùng số thực, **không** làm tròn, và **không** cộng phí ship (FR-008, ADR 015 §5).
+- Ba mã `ORDER_ITEM_NOT_PURCHASABLE`, `ORDER_ITEM_PRICE_CHANGED`, `ORDER_QUANTITY_EXCEEDS_AVAILABLE`
+  nêu món gây lỗi ở `details[].field = "productId"`; riêng mã số lượng, `issue` nêu số còn khả dụng.
+- Hàng được **giữ**, **không** bán: số **vật lý** không đổi, chỉ số **khả dụng** giảm. Giỏ **không**
+  giữ chỗ — việc giữ chỗ là của module 05 và xảy ra ở đây (`§7`, giữ chỗ không có bề mặt HTTP).
+- `expires_at` của đơn = thời điểm tạo + cửa sổ giữ chỗ của module 05 (`HoldTTL`, mặc định 15 phút);
+  module 07 đọc cửa sổ đó qua hợp đồng chứ không lặp lại con số (FR-016).
+- Checkout là **một** thao tác: nếu bất kỳ bước nào hỏng, **không** có đơn, **không** có giữ chỗ, giỏ
+  nguyên vẹn. Hai lần checkout **đồng thời** một giỏ chỉ sinh **đúng một** đơn; lần thứ hai nhận
+  `409 ORDER_CART_EMPTY` vì giỏ đã rỗng.
+
+### 9.2 `GET /orders`
+
+Danh sách đơn của chính khách đang đăng nhập, **mới nhất trước**, phân trang.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`).
+
+Response `200`: `data` là mảng `OrderSummaryResponse`; `meta` là khối phân trang chung. Khách chưa có
+đơn nào trả `data: []`, **không** phải `null` và **không** phải lỗi.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng; `details[].field`
+là `"page"` hoặc `"pageSize"`) · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+### 9.3 `GET /orders/{orderId}`
+
+Đọc một đơn của chính khách, đầy đủ địa chỉ và các dòng.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Path: `orderId` (UUID). Response `200`: `data` = `OrderResponse`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+> **Đơn không tồn tại, đơn của khách khác và định danh không phải UUID**: định danh sai hình dạng trả
+> `400 VALIDATION_ERROR`; còn đơn không tồn tại **hoặc** thuộc khách khác trả **cùng** `404
+> ORDER_NOT_FOUND`. Nếu có mã riêng cho "tồn tại nhưng của người khác", bất kỳ khách đã đăng nhập nào
+> cũng dò được một đơn có thật trong hệ thống (FR-020).
+
+### 9.4 `POST /orders/{orderId}/cancel`
+
+Huỷ một đơn của chính khách **còn chờ thanh toán** và trả hàng về khả dụng. Đơn **đã trả tiền không
+huỷ được** — nó được **chuyển nhượng** (`9.9`).
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn sau khi huỷ |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `OrderResponse` với
+`status: "CANCELLED"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Huỷ trả hàng về khả dụng **không** đổi số **vật lý**, áp dụng **đúng một lần**; một lần huỷ thứ hai
+  nhận `409 ORDER_STATE_TRANSITION_INVALID` nêu `CANCELLED`.
+- Đơn quá hạn tự về `CANCELLED` bởi sweeper (`9.1`); một lần huỷ sau đó cũng nhận `409`, cùng câu trả
+  lời như huỷ hai lần.
+
+### 9.5 `GET /admin/orders`
+
+Danh sách **mọi** đơn, **mới nhất trước**, kèm chủ sở hữu, trạng thái và tổng tiền, phân trang.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: như `9.2`. Response `200`: `data` là mảng `AdminOrderSummaryResponse`; `meta` là khối phân
+trang chung.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi
+`audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+### 9.6 `GET /admin/orders/{orderId}`
+
+Đọc một đơn bất kỳ, đầy đủ, kèm chủ sở hữu.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Path: `orderId` (UUID). Response `200`: `data` = `AdminOrderResponse`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+### 9.7 `POST /admin/orders/{orderId}/ship`
+
+Đưa một đơn **đã trả tiền** sang **đã giao** và ghi lại thao tác.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn ở trạng thái mới |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
+`status: "SHIPPED"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú: một bước chuyển bị từ chối **không đổi gì**; ghi `audit_logs` với action `ORDER_SHIPPED`.
+
+### 9.8 `POST /admin/orders/{orderId}/complete`
+
+Đưa một đơn **đã giao** sang **hoàn tất** (`COMPLETED`, trạng thái cuối) và ghi lại thao tác.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn ở trạng thái mới |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
+`status: "COMPLETED"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú: `COMPLETED` là **cuối** và không có đường ra; ghi `audit_logs` với action `ORDER_COMPLETED`.
+
+### 9.9 `POST /admin/orders/{orderId}/transfer`
+
+Chuyển một đơn **đã trả tiền** cho một tài khoản khác **đã tồn tại**, nêu bằng **email**. Chỉ **chủ
+sở hữu** đổi; dòng, trạng thái và tổng tiền giữ nguyên, và **không** đổi tồn kho.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn, nay thuộc tài khoản nhận |
+
+Path: `orderId` (UUID).
+
+Request (`TransferRequest`, `additionalProperties: false`)
+
+```json
+{ "email": "recipient@example.com" }
+```
+
+`email` **bắt buộc**, là email tài khoản nhận; không tài khoản nào mang email đó thì từ chối.
+
+Response `200`: `data` = `AdminOrderResponse` (với `userId` là chủ mới).
+
+Lỗi: `VALIDATION_ERROR` 400 (`email` thiếu hoặc không phải email —
+`details[].field = "email"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `ORDER_NOT_FOUND` 404 (đơn không tồn tại) ·
+`ORDER_TRANSFER_TARGET_NOT_FOUND` 404 (không tài khoản nào mang email đó) ·
+`ORDER_NOT_TRANSFERABLE` 409 (đơn chưa trả tiền) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Chuyển nhượng **thay cho** huỷ một đơn đã trả tiền (hệ thống không có luồng hoàn tiền); vì vậy nó
+  áp dụng **chỉ** cho đơn `PAID`, và một đơn chưa trả tiền nhận `409 ORDER_NOT_TRANSFERABLE`.
+- Chuyển nhượng **không** đụng tồn kho: không số **vật lý** lẫn **khả dụng** nào đổi.
+- Chuyển nhượng hai lần cho cùng một tài khoản là **idempotent** về hiệu quả (chủ đã là người nhận);
+  không có mã lỗi riêng cho việc này.
+- Ghi `audit_logs` với action `ORDER_TRANSFERRED`, nêu định danh đơn và administrator.
+
+---
+
+## 10. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -2314,10 +2637,19 @@ Ghi chú:
 | POST | `/api/v1/cart/items` | Bearer | Thêm sản phẩm vào giỏ (`409` nếu không bán được hoặc quá tồn) |
 | PATCH | `/api/v1/cart/items/{productId}` | Bearer | Đổi số lượng một dòng |
 | DELETE | `/api/v1/cart/items/{productId}` | Bearer | Xoá một dòng (204) |
+| POST | `/api/v1/orders` | Bearer | Checkout: biến giỏ thành đơn chờ thanh toán (201) |
+| GET | `/api/v1/orders` | Bearer | Đơn của chính mình (có phân trang, mới nhất trước) |
+| GET | `/api/v1/orders/{orderId}` | Bearer | Chi tiết một đơn của chính mình |
+| POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn còn chờ thanh toán, trả hàng |
+| GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang) |
+| GET | `/api/v1/admin/orders/{orderId}` | ADMIN | Chi tiết một đơn bất kỳ, kèm chủ sở hữu |
+| POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đánh dấu đơn đã trả tiền là đã giao |
+| POST | `/api/v1/admin/orders/{orderId}/complete` | ADMIN | Đánh dấu đơn đã giao là hoàn tất |
+| POST | `/api/v1/admin/orders/{orderId}/transfer` | ADMIN | Chuyển đơn đã trả tiền cho tài khoản khác |
 
 ---
 
-## 10. Quy tắc cập nhật
+## 11. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
@@ -2333,10 +2665,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 11. Change log
+## 12. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-09 | Thêm nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order): **chín** endpoint — **bốn** của khách đã đăng nhập (`POST /orders` checkout, `GET /orders` danh sách, `GET /orders/{orderId}` chi tiết, `POST /orders/{orderId}/cancel` huỷ đơn còn chờ thanh toán) và **năm** của admin (`GET /admin/orders`, `GET /admin/orders/{orderId}`, `POST /admin/orders/{orderId}/ship`, `POST /admin/orders/{orderId}/complete`, `POST /admin/orders/{orderId}/transfer`). Chủ sở hữu lấy từ **session**; đơn của khách khác trả cùng `404 ORDER_NOT_FOUND`. Bốn hình dạng response: khách `OrderSummaryResponse` **5 member** / `OrderResponse` **7 member**; quản trị `AdminOrderSummaryResponse` **6 member** / `AdminOrderResponse` **8 member** (hơn khách đúng `userId`); `OrderLineResponse` **6 member**, `OrderAddressResponse` **7 member**. Bổ sung **chín** mã `ORDER_*` vào mục 1.4 (kèm ghi rõ bốn tình huống cố ý **không** có mã: trả tiền, hết hạn, sản phẩm bị xoá, chuyển nhượng lặp) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: checkout **giữ** hàng (vật lý không đổi) và **làm rỗng** giỏ trong một transaction; tiền là số nguyên đơn vị nhỏ nhất, tổng **không** gồm phí ship; đơn chưa trả tiền **tự huỷ** sau 15 phút; trạng thái đi qua endpoint riêng; **không** có endpoint `pay` (module 08 điều khiển); chuyển nhượng chỉ đổi chủ, không đổi tồn kho. Phần 9 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 10/11/12. Xem ADR-017. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/cart` (module 06 Cart): **bốn** route của khách đã đăng nhập — đọc giỏ (`GET /cart`), thêm sản phẩm (`POST /cart/items`), đổi số lượng một dòng (`PATCH /cart/items/{productId}`) và xoá một dòng (`DELETE /cart/items/{productId}`). Giỏ là **tài nguyên đơn** định địa chỉ tại `/cart` **không kèm định danh** (chủ sở hữu là session); một dòng định địa chỉ bằng **định danh sản phẩm**. Hai hình dạng response: `CartResponse` **2 member** (`lines`, `subtotal` — `null` khi giỏ rỗng) và `CartLineResponse` **8 member** (`productId`, `name`, `slug`, `quantity`, `unitPrice`, `lineTotal`, `buyable`, `availableQuantity`). Bổ sung hai mã `CART_*` vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** cho sản phẩm không tồn tại lẫn dòng không thuộc giỏ này) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: đọc giỏ **đối chiếu lại** trạng thái bán và tồn khả dụng của từng dòng, `availableQuantity` chỉ có khi dòng còn bán nhưng thiếu; giá hiển thị là **snapshot** lúc thêm; giỏ **không** giữ chỗ tồn kho và **không** ghi `audit_logs`. Phần 8 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 9/10/11. Xem ADR-016. | `internal/modules/cart/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/admin/inventory` (module 05 Inventory): **năm** route quản trị dưới `/admin/inventory/{productId}` — đọc tồn kho, đọc lịch sử biến động (phân trang), và ba thao tác thủ công `restock`/`damage`/`adjustment` — tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: `StockView` **3 member** (`physicalQuantity`, `heldQuantity`, `availableQuantity`) và `StockMovement` **9 member**. Bổ sung mã `INVENTORY_INSUFFICIENT_STOCK` 409 vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** trên cả năm route) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm chưa từng nhập kho trả `0` chứ không `404`; điều chỉnh ghi phần chênh lệch và một lần điều chỉnh về đúng giá trị đang lưu không ghi ledger; trạng thái bán của sản phẩm tự chuyển khi khả dụng cắt qua 0 (đóng nghĩa vụ D1 của feature 006). Giữ chỗ có hạn không có bề mặt HTTP. Phần 7 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 8/9/10. Xem ADR-014. | `internal/modules/inventory/presentation/http/router.go` |
 | 2026-10-08 | Thêm nhóm `/api/v1/products` (module 04 Product): hai route công khai không cần token (`GET /products` có lọc `?category=<slug>`, `GET /products/{slug}`) và chín route quản trị dưới `/admin/products` (danh sách, tạo, đọc, sửa, xoá, đổi trạng thái, thêm/gỡ/đặt ảnh chính), tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: công khai 6 member (danh sách) / 8 member (chi tiết, thêm `description` + `images`); quản trị 15 member / 17 member (thêm `images`, `members`). Bổ sung bảy mã `PRODUCT_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm bị ẩn (kể cả do danh mục bị ẩn) và slug chưa từng tồn tại trả lời y hệt nhau (`404 PRODUCT_NOT_FOUND`); trạng thái bán đi qua endpoint riêng; giá là số nguyên + currency; `preorderExpectedAt` ghi theo `format: date`; xoá cứng. **Đổi một câu trả lời của module 03**: `DELETE /admin/categories/{categoryId}` nay trả `409 CATEGORY_IN_USE` khi còn sản phẩm (tham chiếu `ON DELETE RESTRICT` do feature này thêm), và `CATEGORY_IN_USE` được bổ sung vào bảng mã module category. Phần 6 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 7/8/9. Xem ADR-013. | `internal/modules/product/presentation/http/router.go`, `internal/modules/category/presentation/http/errors.go` |

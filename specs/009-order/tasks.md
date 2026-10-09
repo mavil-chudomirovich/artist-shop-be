@@ -189,29 +189,29 @@ description: "Task list for Order Checkout (module 07)"
 
 **Purpose**: Documentation, the frontend guide, Swagger, and the close-out gates.
 
-- [ ] T049 [P] Update `docs/api-reference.md`: the nine endpoints, their shapes and the new error codes
-- [ ] T050 [P] Update/rewrite `docs/modules/07-order.md` (the stub exists): the module's endpoints, states, the hold, the expiry and the transfer, marking that it closes feature 007's `D1`/`D2` and 006/007's `D3`, and adding module 01 (`auth`) to the module's dependency list (the transfer target lookup)
-- [ ] T051 [P] Update `docs/modules.md`: mark module 07 delivered in the V1.0 roadmap and add `auth` to module 07's dependency column (the transfer target lookup)
-- [ ] T052 [P] Create `docs/decisions/017-order-checkout.md`: the choices a reader would otherwise misread — the snapshot line and its informational `product_id`, the order-owned expiry beside module 05's hold, transfer as an owner change rather than a state, and the paid transition delivered but left for module 08 to drive
-- [ ] T053 [P] Create `specs/009-order/deferred.md`: the payment confirmation and PayOS provider (module 08), shipping fee and tracking (module 09), refunds/split orders/discount codes — each with what will close it; and note that this feature closes feature 007's `D1`/`D2` and 006/007's `D3`
+- [X] T049 [P] Update `docs/api-reference.md`: the nine endpoints, their shapes and the new error codes
+- [X] T050 [P] Update/rewrite `docs/modules/07-order.md` (the stub exists): the module's endpoints, states, the hold, the expiry and the transfer, marking that it closes feature 007's `D1`/`D2` and 006/007's `D3`, and adding module 01 (`auth`) to the module's dependency list (the transfer target lookup)
+- [X] T051 [P] Update `docs/modules.md`: mark module 07 delivered in the V1.0 roadmap and add `auth` to module 07's dependency column (the transfer target lookup)
+- [X] T052 [P] Create `docs/decisions/017-order-checkout.md`: the choices a reader would otherwise misread — the snapshot line and its informational `product_id`, the order-owned expiry beside module 05's hold, transfer as an owner change rather than a state, and the paid transition delivered but left for module 08 to drive
+- [X] T053 [P] Create `specs/009-order/deferred.md`: the payment confirmation and PayOS provider (module 08), shipping fee and tracking (module 09), refunds/split orders/discount codes — each with what will close it; and note that this feature closes feature 007's `D1`/`D2` and 006/007's `D3`
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance)*
 
-- [ ] T054 **Có đổi bề mặt client** → viết `specs/009-order/frontend-guide.md`: liệt kê từng endpoint mới (`POST /orders`, `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel`, `GET /admin/orders`, `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship`, `POST /admin/orders/{id}/complete`, `POST /admin/orders/{id}/transfer`) kèm method, path, **mới/đổi/bị xoá**, mọi trường JSON của DTO, mọi giá trị enum `OrderStatus`, và mọi mã lỗi mới
-- [ ] T055 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, có đếm số; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
+- [X] T054 **Có đổi bề mặt client** → viết `specs/009-order/frontend-guide.md`: liệt kê từng endpoint mới (`POST /orders`, `GET /orders`, `GET /orders/{id}`, `POST /orders/{id}/cancel`, `GET /admin/orders`, `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship`, `POST /admin/orders/{id}/complete`, `POST /admin/orders/{id}/transfer`) kèm method, path, **mới/đổi/bị xoá**, mọi trường JSON của DTO, mọi giá trị enum `OrderStatus`, và mọi mã lỗi mới
+- [X] T055 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, có đếm số; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
 
 ### Swagger annotations *(bắt buộc — feature có endpoint)*
 
-- [ ] T056 Thêm annotation Swagger cho **mọi** handler (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
+- [X] T056 Thêm annotation Swagger cho **mọi** handler (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T057 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/009-order/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
+- [X] T057 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/009-order/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
 
 ### Close-out
 
-- [ ] T058 Normalize the new files to UTF-8 (LF); check for BOM
-- [ ] T059 Run `make lint` and `make test`
+- [X] T058 Normalize the new files to UTF-8 (LF); check for BOM
+- [X] T059 Run `make lint` and `make test`
 - [ ] T060 Run `make test-integration` (needs Docker) and confirm it did not skip
 - [ ] T061 Run `quickstart.md` validation
 - [ ] T062 Run `make check` and confirm `swagger-check` passes

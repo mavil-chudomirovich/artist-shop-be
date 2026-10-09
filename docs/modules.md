@@ -26,7 +26,7 @@ Tài liệu tra cứu:
 | 04 | Product | [04-product.md](modules/04-product.md) | V1.0 | category | ✔ `specs/006-product-catalog` |
 | 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | V1.0 | product | ✔ `specs/007-inventory-tracking` |
 | 06 | Cart | [06-cart.md](modules/06-cart.md) | V1.0 | product, inventory | ✔ `specs/008-cart` |
-| 07 | Order | [07-order.md](modules/07-order.md) | V1.0 | cart, product, inventory, user | ⬜ |
+| 07 | Order | [07-order.md](modules/07-order.md) | V1.0 | cart, product, inventory, user, auth | ✔ `specs/009-order` |
 | 08 | Payment | [08-payment.md](modules/08-payment.md) | V1.0 | order | ⬜ |
 | 09 | Shipping | [09-shipping.md](modules/09-shipping.md) | V1.2 | order | ⬜ |
 | 10 | Commission | [10-commission.md](modules/10-commission.md) | V1.1 | user, payment | ⬜ |
@@ -40,7 +40,7 @@ Tài liệu tra cứu:
 ## Thứ tự triển khai
 
 **V0 — Nền tảng (đã xong)**: 00 cross-cutting → 01 auth → 02 user → 03 category
-**V1.0 — MVP bán hàng (Shop)**: 04 product (đã xong) → 05 inventory (đã xong) → 06 cart (đã xong) → 07 order → 08 payment (PayOS). Mục tiêu: khách mua được sản phẩm vật lý. Đơn **chỉ gồm tiền hàng** (khách trả online qua PayOS); **phí ship khách trả khi nhận hàng**; `09` (tracking) hoãn sang V1.2.
+**V1.0 — MVP bán hàng (Shop)**: 04 product (đã xong) → 05 inventory (đã xong) → 06 cart (đã xong) → 07 order (đã xong) → 08 payment (PayOS). Mục tiêu: khách mua được sản phẩm vật lý. Đơn **chỉ gồm tiền hàng** (khách trả online qua PayOS); **phí ship khách trả khi nhận hàng**; `09` (tracking) hoãn sang V1.2.
 **V1.1 — Commission**: 10 commission → 11 chat (tái dùng 08). Mục tiêu: nhận yêu cầu vẽ, báo giá, đặt cọc, thanh toán theo giai đoạn, và trao đổi với artist.
 **V1.2 — Vận hành & phụ trợ**: 09 shipping → 12 notification → 16 admin. Tracking giao hàng, thông báo, dashboard + audit.
 **V2.0 — Mở rộng**: 13 review → 14 wishlist → 15 content.
