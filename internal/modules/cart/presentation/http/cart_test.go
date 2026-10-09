@@ -41,6 +41,10 @@ var testLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 // identity the handler handed to the use case.
 var testCustomerID = uuid.MustParse("22222222-2222-2222-2222-222222222222")
 
+// testCustomerTwoID is the second signed-in customer the ownership fixture
+// resolves, so a test can prove two customers never share a cart (US3, FR-001).
+var testCustomerTwoID = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+
 // fixedHTTPNow is the instant the fixture stamps rows with.
 var fixedHTTPNow = time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 
@@ -157,15 +161,20 @@ type httpClock struct{}
 
 func (httpClock) Now() time.Time { return fixedHTTPNow }
 
-// cartHooks supplies the foundation authentication hooks with a fixed customer
-// identity, so a test can exercise the session guard.
+// cartHooks supplies the foundation authentication hooks with two fixed customer
+// identities, so a test can exercise the session guard and prove two signed-in
+// customers never reach each other's cart.
 func cartHooks(denied *bool) middleware.AuthHooks {
 	return middleware.AuthHooks{
 		Authenticate: func(_ context.Context, r *http.Request) (*middleware.Identity, error) {
-			if r.Header.Get("Authorization") == "Bearer customer-token" {
+			switch r.Header.Get("Authorization") {
+			case "Bearer customer-token":
 				return &middleware.Identity{Subject: testCustomerID.String(), Role: string(access.RoleCustomer), TokenID: "customer"}, nil
+			case "Bearer customer2-token":
+				return &middleware.Identity{Subject: testCustomerTwoID.String(), Role: string(access.RoleCustomer), TokenID: "customer2"}, nil
+			default:
+				return nil, nil
 			}
-			return nil, nil
 		},
 		OnDenied: func(context.Context, middleware.Identity, *http.Request) {
 			if denied != nil {
@@ -632,5 +641,139 @@ func TestViewCarriesBuyableAndAvailableQuantityOnlyWhenShort(t *testing.T) {
 	}
 	if line.Quantity != 3 || line.UnitPrice.Amount != 100000 {
 		t.Fatalf("a read must not change the quantity or captured price, got %+v", line)
+	}
+}
+
+// US3, FR-010, quickstart scenario 8a: every route of the /cart group refuses a
+// request with no token, so no cart is reachable without a signed-in session. The
+// guard is on the group, so the read and each write alike answer UNAUTHENTICATED.
+func TestEveryCartRouteRefusesWithoutASession(t *testing.T) {
+	router, _, _, _ := newCartRouter(t, cartHooks(nil))
+	product := uuid.New()
+
+	for _, route := range cartRoutes(product) {
+		rec := performJSON(router, route.method, route.path, route.body, "")
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d (%s)", route.method, route.path, rec.Code, rec.Body.String())
+		}
+		if body := decodeError(t, rec); body.Error.Code != "UNAUTHENTICATED" {
+			t.Fatalf("%s %s: expected UNAUTHENTICATED, got %s", route.method, route.path, body.Error.Code)
+		}
+	}
+}
+
+// US3, FR-001, FR-010, quickstart scenario 8b: two signed-in customers each build
+// a cart and neither sees the other's lines. The single repository is shared, so
+// the separation is the owner taken from the session, not a second store.
+func TestTwoCustomersEachGetTheirOwnCart(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	firstProduct := seedHTTPProduct(catalog, availability, 100000)
+	secondProduct := seedHTTPProduct(catalog, availability, 200000)
+
+	// The first customer adds one product.
+	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+firstProduct.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
+		t.Fatalf("first customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The second customer has no cart yet: a read answers an empty cart, not the
+	// first customer's.
+	rec := performJSON(router, http.MethodGet, cartPath, "", "customer2-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second customer read: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeCart(t, rec); len(body.Data.Lines) != 0 || body.Data.Subtotal != nil {
+		t.Fatalf("the second customer must start with an empty cart, got %+v", body.Data)
+	}
+
+	// The second customer adds a different product.
+	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+secondProduct.String()+`","quantity":2}`, "customer2-token"); rec.Code != http.StatusOK {
+		t.Fatalf("second customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// Each read now shows only its own line.
+	first := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer-token"))
+	if len(first.Data.Lines) != 1 || first.Data.Lines[0].ProductID != firstProduct {
+		t.Fatalf("the first customer must see only their line, got %+v", first.Data.Lines)
+	}
+	second := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer2-token"))
+	if len(second.Data.Lines) != 1 || second.Data.Lines[0].ProductID != secondProduct {
+		t.Fatalf("the second customer must see only their line, got %+v", second.Data.Lines)
+	}
+}
+
+// US3, FR-010, quickstart scenarios 8c and 8d: changing or removing a product
+// that only another customer holds answers 404 PRODUCT_NOT_FOUND, so the route
+// never confirms what is in another customer's cart. The second customer holds a
+// cart of their own, so the 404 is the missing line and not a missing cart.
+func TestChangingOrRemovingAnotherCustomersLineIs404(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	heldByFirst := seedHTTPProduct(catalog, availability, 100000)
+	heldBySecond := seedHTTPProduct(catalog, availability, 200000)
+
+	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+heldByFirst.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
+		t.Fatalf("first customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+heldBySecond.String()+`","quantity":1}`, "customer2-token"); rec.Code != http.StatusOK {
+		t.Fatalf("second customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec := performJSON(router, http.MethodPatch, cartPath+"/items/"+heldByFirst.String(), `{"quantity":2}`, "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("change another customer's line: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
+		t.Fatalf("change another customer's line: expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	}
+
+	rec = performJSON(router, http.MethodDelete, cartPath+"/items/"+heldByFirst.String(), "", "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("remove another customer's line: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
+		t.Fatalf("remove another customer's line: expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	}
+
+	// The first customer's line is untouched by the second customer's attempts.
+	first := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer-token"))
+	if len(first.Data.Lines) != 1 || first.Data.Lines[0].ProductID != heldByFirst || first.Data.Lines[0].Quantity != 1 {
+		t.Fatalf("the first customer's line must be untouched, got %+v", first.Data.Lines)
+	}
+}
+
+// US3, FR-010, research D13: no request may name an owner. The decoder refuses an
+// unknown member, so a body carrying an owner is MALFORMED_REQUEST rather than an
+// accepted caller-chosen identity.
+func TestABodyThatNamesAnOwnerIs400MalformedRequest(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
+	other := uuid.New().String()
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"add names userId", http.MethodPost, cartPath + "/items",
+			`{"productId":"` + product.String() + `","quantity":1,"userId":"` + other + `"}`},
+		{"add names ownerId", http.MethodPost, cartPath + "/items",
+			`{"productId":"` + product.String() + `","quantity":1,"ownerId":"` + other + `"}`},
+		{"change names userId", http.MethodPatch, cartPath + "/items/" + product.String(),
+			`{"quantity":1,"userId":"` + other + `"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := performJSON(router, tc.method, tc.path, tc.body, "customer-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if body := decodeError(t, rec); body.Error.Code != "MALFORMED_REQUEST" {
+				t.Fatalf("expected MALFORMED_REQUEST, got %s", body.Error.Code)
+			}
+		})
 	}
 }
