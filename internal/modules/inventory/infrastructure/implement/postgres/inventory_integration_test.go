@@ -12,7 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	inventorydto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/dto"
+	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
+	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
@@ -314,5 +319,112 @@ func TestHistoryReadIsStableAcrossTwoReadsSharingATimestamp(t *testing.T) {
 		if first[i].ID != second[i].ID {
 			t.Fatalf("the history order changed between two reads sharing a timestamp: %s vs %s", first[i].ID, second[i].ID)
 		}
+	}
+}
+
+// holdClock is the injected clock the hold integration test drives, so the
+// fifteen-minute window is observed by moving the instant rather than waiting
+// (research D15).
+type holdClock struct{ at time.Time }
+
+func (c *holdClock) Now() time.Time          { return c.at }
+func (c *holdClock) advance(d time.Duration) { c.at = c.at.Add(d) }
+
+// existingProducts answers the ProductLookup contract with "present", so the
+// hold test can focus on the hold rather than on existence (research D4).
+type existingProducts struct{}
+
+func (existingProducts) ProductExists(context.Context, uuid.UUID) (bool, error) { return true, nil }
+
+// FR-014, FR-015, FR-018, research D2, D6, D15: the hold lifecycle against real
+// PostgreSQL. A reserve leaves the stored level unchanged while the active-hold
+// sum rises; an expired hold is excluded from that sum even before it is swept;
+// and the expire use case resolves it without touching the shelf. This runs the
+// real use cases over the real adapter, because what a fake cannot prove is that
+// the SQL-level active predicate uses the injected instant rather than the
+// database clock.
+func TestHoldLifecycleAgainstPostgres(t *testing.T) {
+	f := newInventoryFixture(t)
+	ctx := context.Background()
+	productID := f.insertProduct(t)
+
+	clock := &holdClock{at: time.Now().UTC().Truncate(time.Millisecond)}
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: f.repo,
+		Lookup:    existingProducts{},
+		Tx:        &database.DB{Pool: f.pool},
+		Clock:     clock,
+		Mapper:    inventorymapper.New(),
+	})
+
+	if _, err := f.repo.Increase(ctx, productID, 5, clock.Now()); err != nil {
+		t.Fatalf("seed the level: %v", err)
+	}
+
+	orderID := uuid.New()
+	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	// The shelf did not move and the active-hold sum rose.
+	level, err := f.repo.Level(ctx, productID)
+	if err != nil {
+		t.Fatalf("Level: %v", err)
+	}
+	if level != 5 {
+		t.Fatalf("a hold must not move the shelf, got %d", level)
+	}
+	held, err := f.repo.ActiveHeld(ctx, productID, clock.Now())
+	if err != nil {
+		t.Fatalf("ActiveHeld: %v", err)
+	}
+	if held != 2 {
+		t.Fatalf("expected 2 held, got %d", held)
+	}
+
+	// Past the window, an unswept hold is already excluded from availability.
+	clock.advance(16 * time.Minute)
+	held, err = f.repo.ActiveHeld(ctx, productID, clock.Now())
+	if err != nil {
+		t.Fatalf("ActiveHeld after expiry: %v", err)
+	}
+	if held != 0 {
+		t.Fatalf("an expired hold must not be counted before it is swept, got %d", held)
+	}
+
+	var (
+		status     string
+		resolvedAt *time.Time
+	)
+	readHold := func() {
+		t.Helper()
+		if err := f.pool.QueryRow(ctx,
+			`SELECT status, resolved_at FROM stock_holds WHERE order_id = $1 AND product_id = $2`,
+			orderID, productID).Scan(&status, &resolvedAt); err != nil {
+			t.Fatalf("read the hold: %v", err)
+		}
+	}
+	readHold()
+	if status != string(constant.HoldStatusActive) || resolvedAt != nil {
+		t.Fatalf("the unswept hold must still be ACTIVE, got %s/%v", status, resolvedAt)
+	}
+
+	// The expire use case resolves it and it stays uncounted.
+	if err := svc.ExpireHolds(ctx); err != nil {
+		t.Fatalf("ExpireHolds: %v", err)
+	}
+	readHold()
+	if status != string(constant.HoldStatusReleased) || resolvedAt == nil {
+		t.Fatalf("expire must resolve the hold, got %s/%v", status, resolvedAt)
+	}
+	held, err = f.repo.ActiveHeld(ctx, productID, clock.Now())
+	if err != nil {
+		t.Fatalf("ActiveHeld after sweep: %v", err)
+	}
+	if held != 0 {
+		t.Fatalf("a resolved hold must not be counted, got %d", held)
+	}
+	if level, err := f.repo.Level(ctx, productID); err != nil || level != 5 {
+		t.Fatalf("expiring a hold must not move the shelf: %d/%v", level, err)
 	}
 }

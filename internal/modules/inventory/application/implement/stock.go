@@ -145,10 +145,13 @@ func (s *Service) Restock(ctx context.Context, in dto.RestockInput) (dto.StockOu
 // Damage decreases a product's physical stock and writes one DAMAGE movement
 // inside a single transaction (FR-002, FR-004, FR-011).
 //
-// The no-negative rule is not checked here: the repository's conditional update
+// The non-negative rule is not checked here: the repository's conditional update
 // evaluates it against the current value, and an update that matches no row is
 // reported as the insufficient-stock sentinel, which is what lets the handler
-// answer 409 rather than 500 (FR-009, FR-010, research D2).
+// answer 409 rather than 500 (FR-009, FR-010, research D2). What this path does
+// check is the cross-table relationship FR-009 names second: under the same level
+// row lock it refuses a decrease that would leave the shelf below what active
+// holds have promised (T039).
 func (s *Service) Damage(ctx context.Context, in dto.DamageInput) (dto.StockOutput, error) {
 	if in.Quantity <= 0 {
 		return dto.StockOutput{}, domainerr.InvalidValue(model.FieldQuantity, "must be a positive whole number")
@@ -159,6 +162,12 @@ func (s *Service) Damage(ctx context.Context, in dto.DamageInput) (dto.StockOutp
 
 	now := s.now()
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if err := s.Inventory.LockLevel(txCtx, in.ProductID); err != nil {
+			return err
+		}
+		if err := s.refuseBelowHeld(txCtx, in.ProductID, in.Quantity, now); err != nil {
+			return err
+		}
 		resulting, err := s.Inventory.Decrease(txCtx, in.ProductID, in.Quantity, now)
 		if err != nil {
 			return err
@@ -181,9 +190,11 @@ func (s *Service) Damage(ctx context.Context, in dto.DamageInput) (dto.StockOutp
 // The current count is read under the level's row lock, so two concurrent
 // corrections cannot each compute a difference from the same stale value. A
 // counted value equal to what is stored changes nothing and writes no movement;
-// zero is a valid counted value (FR-012, research D9). The audit entry is written
-// for the operation itself, including the no-op, because FR-006 records every
-// manual stock operation.
+// zero is a valid counted value (FR-012, research D9). A correction downward is
+// refused when it would leave the shelf below what active holds have promised,
+// under the same lock (FR-009, T039). The audit entry is written for the
+// operation itself, including the no-op, because FR-006 records every manual
+// stock operation.
 func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.StockOutput, error) {
 	if in.Quantity < 0 {
 		return dto.StockOutput{}, domainerr.InvalidValue(model.FieldQuantity, "must not be negative")
@@ -212,6 +223,9 @@ func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.Stock
 		if delta > 0 {
 			_, err = s.Inventory.Increase(txCtx, in.ProductID, delta, now)
 		} else {
+			if err = s.refuseBelowHeld(txCtx, in.ProductID, -delta, now); err != nil {
+				return err
+			}
 			_, err = s.Inventory.Decrease(txCtx, in.ProductID, -delta, now)
 		}
 		if err != nil {
@@ -227,6 +241,37 @@ func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.Stock
 		"delta": delta,
 	})
 	return s.readStock(ctx, in.ProductID)
+}
+
+// refuseBelowHeld refuses a physical decrease that would leave the shelf below
+// the quantity the product's active holds have promised (FR-009).
+//
+// It is deliberately narrow: it only intervenes when the product actually has an
+// active hold, so the non-negative rule stays the conditional update's decision
+// (T034) and no application-level read-then-write check is reintroduced for it.
+// The cross-table relationship has no single-table constraint, so it is made
+// atomic by the level row lock the caller already holds; the caller reads the
+// levels and the holds inside the same transaction.
+func (s *Service) refuseBelowHeld(ctx context.Context, productID uuid.UUID, amount int64, now time.Time) error {
+	held, err := s.Inventory.ActiveHeld(ctx, productID, now)
+	if err != nil {
+		return err
+	}
+	if held == 0 {
+		return nil
+	}
+	physical, err := s.Inventory.Level(ctx, productID)
+	if err != nil {
+		return err
+	}
+	available, err := model.Availability(physical, held)
+	if err != nil {
+		return err
+	}
+	if amount > available {
+		return domainerr.InsufficientStock(model.FieldQuantity, available, amount)
+	}
+	return nil
 }
 
 // writeMovement builds and appends one ledger row inside the caller's

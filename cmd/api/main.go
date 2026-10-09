@@ -33,6 +33,7 @@ import (
 	inventoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/auditor"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
 	inventoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/http"
+	inventoryworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/worker"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	productappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
@@ -304,6 +305,14 @@ func run() error {
 	})
 	inventoryHandler := inventoryhttp.New(inventoryService, logger)
 
+	// The hold sweeper releases every hold whose fifteen-minute window has
+	// passed. It is the only thing that frees goods for a product nobody touches
+	// again, and it carries no business rule: it calls the expire use case every
+	// interval and stops on the same context the rest of the composition shares
+	// (research D6). The wall clock the use cases read is the one above, so the
+	// sweeper and the availability sum agree on what has expired (research D15).
+	inventorySweeper := inventoryworker.New(inventoryService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -347,6 +356,11 @@ func run() error {
 	})
 	server := httpserver.New(cfg, logger, router)
 
+	// The sweeper runs beside the server and the audit writer, on the same
+	// signal-derived context: a shutdown cancels it with everything else. It
+	// blocks, so it gets its own goroutine.
+	go inventorySweeper.Start(ctx)
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start() }()
 
@@ -358,6 +372,10 @@ func run() error {
 			return err
 		}
 	}
+	// Cancel the shared context explicitly so the sweeper's loop is asked to stop
+	// even when the server returned on its own rather than on a signal; stop is
+	// idempotent with the deferred call.
+	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
@@ -366,6 +384,7 @@ func run() error {
 		logger.Error("graceful shutdown failed", slog.Any("error", err))
 	}
 	auditWriter.Stop(shutdownCtx)
+	inventorySweeper.Stop()
 	return nil
 }
 

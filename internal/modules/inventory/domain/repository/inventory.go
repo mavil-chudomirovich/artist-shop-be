@@ -74,8 +74,9 @@ type InventoryRepository interface {
 
 	// InsertHold records one active hold. The partial unique index on the active
 	// (order_id, product_id) pair is what refuses a second hold for the same order
-	// and product (FR-019); a product no row carries is reported as
-	// domainerr.ErrProductNotFound.
+	// and product, reported as domainerr.ErrHoldAlreadyExists so the reserve use
+	// case can treat it as already applied rather than as a failure (FR-019); a
+	// product no row carries is reported as domainerr.ErrProductNotFound.
 	InsertHold(ctx context.Context, hold *model.Hold) error
 
 	// ActiveHeld returns the total quantity a product's holds currently set aside:

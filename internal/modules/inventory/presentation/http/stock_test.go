@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/dto"
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/domain/error"
@@ -49,6 +50,7 @@ type httpRepository struct {
 	domainrepo.InventoryRepository
 	physical  int64
 	movements int
+	holds     []model.Hold
 }
 
 func (r *httpRepository) Level(context.Context, uuid.UUID) (int64, error) { return r.physical, nil }
@@ -73,8 +75,30 @@ func (r *httpRepository) InsertMovement(context.Context, *model.Movement) error 
 	return nil
 }
 
-func (r *httpRepository) ActiveHeld(context.Context, uuid.UUID, time.Time) (int64, error) {
-	return 0, nil
+func (r *httpRepository) ActiveHeld(_ context.Context, productID uuid.UUID, now time.Time) (int64, error) {
+	var total int64
+	for i := range r.holds {
+		hold := r.holds[i]
+		if hold.ProductID == productID && hold.IsActive(now) {
+			total += hold.Quantity
+		}
+	}
+	return total, nil
+}
+
+func (r *httpRepository) InsertHold(_ context.Context, hold *model.Hold) error {
+	r.holds = append(r.holds, *hold)
+	return nil
+}
+
+func (r *httpRepository) FindActiveHold(_ context.Context, orderID, productID uuid.UUID, now time.Time) (*model.Hold, bool, error) {
+	for i := range r.holds {
+		hold := &r.holds[i]
+		if hold.OrderID == orderID && hold.ProductID == productID && hold.IsActive(now) {
+			return hold, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // httpLookup answers the ProductLookup contract with a fixed existence.
@@ -415,5 +439,39 @@ func TestTheActorComesFromTheSessionNotTheRequestBody(t *testing.T) {
 	}
 	if body := decodeError(t, rec); body.Error.Code != "MALFORMED_REQUEST" {
 		t.Fatalf("expected MALFORMED_REQUEST, got %s", body.Error.Code)
+	}
+}
+
+// FR-014, quickstart 5a: after a hold, the read answers the held quantity and a
+// lower available quantity while the physical quantity is unchanged. Holds have
+// no HTTP surface (research D7), so the hold is placed through the use case and
+// the read is exercised over HTTP, which is the operator's view of it.
+func TestReadShowsHeldWhilePhysicalIsUnchanged(t *testing.T) {
+	id := uuid.New()
+	repo := &httpRepository{physical: 5}
+	svc := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: repo,
+		Lookup:    &httpLookup{exists: true},
+		Tx:        httpTx{},
+		Clock:     httpClock{},
+		Audit:     nil,
+		Mapper:    mapper.New(),
+	})
+
+	if err := svc.Reserve(context.Background(), appdto.ReserveInput{OrderID: uuid.New(), ProductID: id, Quantity: 2}); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+
+	handler := New(svc, testLogger)
+	root := chi.NewRouter()
+	root.Mount(inventoryAdminPath, handler.AdminRouter(inventoryHooks(nil)))
+
+	rec := performJSON(root, http.MethodGet, inventoryAdminPath+"/"+id.String(), "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read after a hold: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	stock := decodeStock(t, rec)
+	if stock.Data.PhysicalQuantity != 5 || stock.Data.HeldQuantity != 2 || stock.Data.AvailableQuantity != 3 {
+		t.Fatalf("the read must show held while physical is unchanged, got %+v", stock.Data)
 	}
 }

@@ -32,10 +32,15 @@ const (
 	constraintLevelProduct       = "stock_levels_product_fk"
 	constraintTransactionProduct = "inventory_transactions_product_fk"
 	constraintHoldProduct        = "stock_holds_product_fk"
+	constraintHoldActive         = "stock_holds_active_key"
 )
 
-// foreignKeyViolationCode is reported for a foreign-key rejection (23503).
-const foreignKeyViolationCode = "23503"
+// foreignKeyViolationCode is reported for a foreign-key rejection (23503) and
+// uniqueViolationCode for a unique-index rejection (23505).
+const (
+	foreignKeyViolationCode = "23503"
+	uniqueViolationCode     = "23505"
+)
 
 // stockColumns is the explicit projection of a level row, matching the scan arity
 // of scanStock. It declares the shape rather than following the physical table, so
@@ -430,16 +435,25 @@ func scanHold(row baserepo.Row) (*model.Hold, error) {
 	return &hold, nil
 }
 
-// classifyWriteError labels a failed write and maps the foreign-key refusal of a
-// missing product to the module's not-found sentinel, which is the storage guard
-// behind the ProductLookup contract (research D2, D12). Any other failure is
+// classifyWriteError labels a failed write and maps the storage guard to the
+// module's sentinel. A foreign-key refusal of a missing product becomes the
+// not-found sentinel (research D2, D12); a refusal of a second active hold by the
+// partial unique index becomes ErrHoldAlreadyExists, which the reserve use case
+// treats as already applied rather than a failure (FR-019). Any other failure is
 // returned wrapped.
 func classifyWriteError(operation string, err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationCode {
-		switch pgErr.ConstraintName {
-		case constraintLevelProduct, constraintTransactionProduct, constraintHoldProduct:
-			return domainerr.ErrProductNotFound
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case foreignKeyViolationCode:
+			switch pgErr.ConstraintName {
+			case constraintLevelProduct, constraintTransactionProduct, constraintHoldProduct:
+				return domainerr.ErrProductNotFound
+			}
+		case uniqueViolationCode:
+			if pgErr.ConstraintName == constraintHoldActive {
+				return domainerr.ErrHoldAlreadyExists
+			}
 		}
 	}
 	return fmt.Errorf("%s: %w", operation, err)

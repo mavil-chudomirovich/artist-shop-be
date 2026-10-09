@@ -25,6 +25,13 @@ var (
 	// field a client has to fix; presentation maps it to the shared
 	// VALIDATION_ERROR (400).
 	ErrInvalidValue = errors.New("invalid inventory value")
+	// ErrHoldAlreadyExists is reported when an order already holds a product: the
+	// partial unique index on active (order_id, product_id) refused a second hold.
+	// It is the storage guard FR-019 rests on, and a reserve that meets it is a
+	// no-op rather than a failure, so a retried checkout never holds twice. It is
+	// deliberately separate from ErrInvalidValue because the caller treats it as
+	// already-applied rather than as a rejected input.
+	ErrHoldAlreadyExists = errors.New("hold already exists")
 )
 
 // InsufficientStockError carries what the refusal is about, so the response can
