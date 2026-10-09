@@ -64,6 +64,11 @@
       `specs/<feature>/frontend-guide.md`, with behaviour before → after for each
       changed contract; a feature with no client-facing change says so in
       `tasks.md` (Constitution §Governance).
+- [ ] **Swagger annotations**: every endpoint this feature adds, changes or removes
+      carries handler annotations (`@Summary`, `@Tags`, `@Param`, `@Success`,
+      `@Failure`, `@Router`) and `docs/swagger/` is regenerated with `make swagger`
+      in the same change, so `make swagger-check` passes; a feature with no endpoint
+      says so in `tasks.md` (Constitution VIII, Definition of Done).
 
 ## Project Structure
 

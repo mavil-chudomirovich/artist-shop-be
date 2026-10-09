@@ -67,6 +67,10 @@ một thay đổi typo.
   - Tiền và tồn kho dùng **integer minor units + currency**, không dùng float.
   - Ràng buộc dữ liệu quan trọng phải có **ràng buộc ở tầng lưu trữ** (unique index,
     check constraint), không chỉ ở tầng ứng dụng.
+  - **Endpoint mới/đổi/xoá → thêm annotation Swagger** (`@Summary`, `@Tags`, `@Param`,
+    `@Success`, `@Failure`, `@Router`) cho handler và chạy `make swagger`;
+    `make swagger-check` (trong `make check`) phải xanh. Endpoint không annotation coi
+    như chưa xong (Constitution VIII).
 - **Ưu tiên target Makefile** hơn lệnh thô (xem [docs/makefile.md](docs/makefile.md)).
 - **Comment trong code và trong `.env` viết bằng tiếng Anh.** Tài liệu `docs/` và trao
   đổi với dev dùng tiếng Việt.

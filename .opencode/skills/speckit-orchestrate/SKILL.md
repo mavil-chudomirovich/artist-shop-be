@@ -68,8 +68,9 @@ elapsed time of the whole feature. Budget them.
 
 **Only when the input actually changed:**
 
-- `make swagger` — only if handler annotations changed. No annotation change, no
-  regenerated OpenAPI.
+- `make swagger` — **with any change to an HTTP handler**: add the annotations and
+  regenerate `docs/swagger` once, in the phase that adds the endpoints. No handler
+  change, no regenerated OpenAPI. `make swagger-check` runs inside `make check`.
 
 If you skip one of these, say so in the report. A silent skip reads as a pass.
 

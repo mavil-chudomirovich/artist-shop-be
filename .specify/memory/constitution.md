@@ -1,6 +1,42 @@
 <!--
 Sync Impact Report
 ==================
+Version change: 1.7.0 → 1.8.0 (MINOR)
+Bump rationale: `/swagger` is generated from handler annotations, and the Definition
+of Done named only `docs/api-reference.md`, so a module could ship every endpoint
+with no annotations and still pass every gate. Feature 006 recorded exactly that gap
+(its `deferred.md` D12), and modules 03, 04 and 05 had all drifted out of `/swagger`.
+The gap was a missing MUST, not a missing tool: `make swagger-check` compares the
+generated spec to the annotations that exist, so it cannot notice an endpoint that
+carries none. This amendment makes the handler annotations and the regenerated
+`docs/swagger/` part of the Definition of Done, so the rule lives where an agent
+already looks.
+
+Modified principles:
+- VIII. API Documentation as a Contract — a new bullet requires handler Swagger
+  annotations and a regenerated `docs/swagger/` in the same change.
+
+Changed guidance:
+- Development Workflow & Quality Gates → Definition of Done now names the
+  annotations and the regenerated spec alongside `docs/api-reference.md`.
+
+Added sections: none.
+Added Governance rules: none (this extends an existing principle and the DoD).
+
+Templates and agent files requiring updates:
+- ✅ .specify/memory/constitution.md (this file)
+- ✅ AGENTS.md §4 (endpoint → annotation + `make swagger`)
+- ✅ .specify/templates/plan-template.md (Constitution Check gains the annotation gate)
+- ✅ .specify/templates/tasks-template.md (a close-out task for annotations + `make swagger`)
+- ✅ .opencode/skills/speckit-orchestrate/SKILL.md §3 (`make swagger` with any handler change)
+- ✅ .opencode/agents/speckit-worker.md (a mandatory rule for endpoint annotations)
+
+Follow-up TODOs: none.
+-->
+
+<!--
+Sync Impact Report
+==================
 Version change: 1.6.0 → 1.7.0 (MINOR)
 Bump rationale: Adds the frontend integration guide deliverable and the way it is
 kept honest. `docs/api-reference.md` (Principle VIII) documents endpoints once, for
@@ -313,6 +349,12 @@ endpoint the service exposes. It is a deliverable, not an afterthought.
 - Adding, changing, or removing an endpoint MUST update `docs/api-reference.md` in
   the same change. An endpoint whose documentation is missing or stale is an
   incomplete implementation.
+- Every HTTP handler MUST carry the Swagger annotations the generator reads
+  (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`). Adding,
+  changing or removing an endpoint MUST regenerate `docs/swagger/` with `make
+  swagger` in the same change, and `make swagger-check` (part of `make check`) MUST
+  pass. An endpoint without annotations is an incomplete implementation, exactly as
+  an undocumented one is.
 - Each endpoint entry MUST state: method and path, authentication requirement,
   rate limit, request body, response body with an example, and the error codes it
   can return. The shared envelope, error catalogue, and conventions MUST be
@@ -406,7 +448,9 @@ more than the few minutes it takes to update a table.
 - **Definition of Done**: `gofmt`/`go vet` clean, linter clean, tests passing,
   critical-logic tests present, migrations included, and API/contract docs
   updated for the change — specifically `docs/api-reference.md` (Principle VIII)
-  whenever an endpoint was added, changed, or removed.
+  whenever an endpoint was added, changed, or removed. An endpoint change also MUST
+  carry the handler's Swagger annotations and a regenerated `docs/swagger/`
+  (`make swagger`), so `/swagger` cannot drift behind the reference.
 - **Gates are tiered by change size**; the tiers in `AGENTS.md` §3 are the single
   source of truth and MUST NOT be duplicated elsewhere. A typo does not require
   the close-out gate, and a feature phase MUST NOT skip the integration suite.
@@ -497,4 +541,4 @@ This constitution supersedes other development practices when conflicts arise.
   `[X]` will be read as unconditional. Deferring is not parking: work that turns
   out to belong to the feature moves back into `tasks.md` as a real task.
 
-**Version**: 1.7.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-07
+**Version**: 1.8.0 | **Ratified**: 2026-09-18 | **Last Amended**: 2026-10-09

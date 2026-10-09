@@ -61,6 +61,10 @@ that back to the orchestrator rather than inferring its contents.
    changes run in one transaction and write an `inventory_transactions` record.
 10. Important data constraints MUST live at the storage layer (unique index,
     check constraint), not only in application code.
+11. **Endpoint annotations**: any HTTP endpoint you add or change MUST carry Swagger
+    annotations (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`),
+    and you MUST run `make swagger` so `docs/swagger/` is regenerated. Report if
+    `make swagger-check` fails.
 
 ## Commands
 

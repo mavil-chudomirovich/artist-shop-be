@@ -172,6 +172,17 @@ Examples of foundational tasks (adjust based on your project):
       mà guide mô tả, mọi route guide liệt kê, mọi mã HTTP guide khẳng định. Sửa mọi chỗ
       lệch. Nếu không đối chiếu được một phần, ghi rõ phần nào chưa kiểm và vì sao
 
+### Swagger annotations *(bắt buộc nếu feature có endpoint)*
+
+**Giữ đúng MỘT trong hai nhánh dưới.**
+
+- [ ] TXXX **Không đổi HTTP endpoint** (không thêm/xoá/sửa route) → xoá nhánh dưới và
+      ghi rõ một dòng rằng feature không đổi bề mặt HTTP
+- [ ] TXXX **Có endpoint thêm/đổi/xoá** → thêm annotation Swagger cho **mọi** handler
+      liên quan (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) rồi
+      chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh. Endpoint
+      không annotation coi như chưa xong (Constitution VIII)
+
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
 - [ ] TXXX **Ghi vào `specs/<feature>/deferred.md`**, KHÔNG để nguyên `- [ ]` ở file này.
