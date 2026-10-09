@@ -1,0 +1,358 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Cart Module
+  version: 1.0.0
+  description: >
+    A signed-in customer's basket: the products they intend to buy, the quantity of each, and the
+    price they were shown when they added it. Every response uses the foundation envelope
+    (data + meta, or error) and the X-Request-Id correlation header.
+
+    The cart is a singleton resource addressed at /cart with no identifier: the owner is the session,
+    so a client never names a cart. A line is addressed by its product identifier, because a cart
+    holds at most one line per product.
+
+    Reading the cart re-checks each line against the product's current on-sale state and availability,
+    and reports, per line, whether it can be bought as it stands and — when the line is on sale but
+    short of what is available — the currently available quantity. The price shown is always the one
+    captured when the product was added; the checkout re-checks it before money is taken, so the cart
+    never charges a stale price silently.
+
+    The cart does not hold stock. Holding stock happens when a customer begins paying; the checkout
+    re-checks availability before an order is created.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: cart
+    description: The signed-in customer's cart. Session required.
+paths:
+  /api/v1/cart:
+    get:
+      tags: [cart]
+      summary: Read the signed-in customer's cart
+      description: >
+        Returns every line with its product, quantity, the price captured when it was added, the line
+        total and the cart subtotal, plus whether each line can currently be bought. A line whose
+        product is on sale but short of the line's quantity also carries the current available
+        quantity. An empty cart answers an empty list rather than an error.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The customer's cart.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Cart"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/cart/items:
+    post:
+      tags: [cart]
+      summary: Add a product to the cart
+      description: >
+        Adds a product with a positive whole quantity. Adding a product already in the cart raises its
+        quantity rather than creating a second line; the price captured is the product's current
+        price. The product must be on sale, and the resulting quantity must not exceed what is
+        available.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddItemRequest"
+      responses:
+        "200":
+          description: The cart after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Cart"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The body does not parse or carries an unknown field (MALFORMED_REQUEST), or the product
+            identifier is not a UUID or the quantity is missing, zero, negative or not a whole number
+            (VALIDATION_ERROR, with the offending field — `productId` or `quantity` — named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: No product carries that identifier, or it was removed (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The product is not on sale (CART_PRODUCT_NOT_PURCHASABLE), or the resulting quantity
+            exceeds what is available (CART_QUANTITY_EXCEEDS_AVAILABLE). Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/cart/items/{productId}:
+    patch:
+      tags: [cart]
+      summary: Change a line's quantity
+      description: >
+        Sets the quantity of the line for that product. The product must be on sale and the quantity
+        must not exceed what is available.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuantityRequest"
+      responses:
+        "200":
+          description: The cart after the change.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/Cart"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The body does not parse or carries an unknown field (MALFORMED_REQUEST), or the product
+            identifier in the path is not a UUID or the quantity is not a positive whole number
+            (VALIDATION_ERROR, naming `productId` or `quantity`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: >
+            The product does not exist, was removed, or is not a line of this customer's cart
+            (PRODUCT_NOT_FOUND). The two are indistinguishable, so the route never confirms what is
+            in another customer's cart.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The product is not on sale (CART_PRODUCT_NOT_PURCHASABLE), or the requested quantity
+            exceeds what is available (CART_QUANTITY_EXCEEDS_AVAILABLE). Nothing is changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+    delete:
+      tags: [cart]
+      summary: Remove a line from the cart
+      description: >
+        Removes the line for that product. The product must have been a line of this customer's cart;
+        an identifier that is not one answers not-found, so the route never confirms what is in
+        another customer's cart.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductId"
+      responses:
+        "204":
+          description: The line is removed.
+        "400":
+          description: The product identifier is not a UUID (VALIDATION_ERROR, with the field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: No such product, or it is not a line of this cart (PRODUCT_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthenticated:
+      description: UNAUTHENTICATED (401). No token or an expired one.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: RATE_LIMITED (429), with Retry-After.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Internal:
+      description: INTERNAL_ERROR (500). Something unexpected failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        requestId:
+          type: string
+          format: uuid
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+    Money:
+      type: object
+      required: [amount, currency]
+      description: >
+        Money as an integer amount in the currency's minor unit plus the currency. Never a floating
+        point number.
+      properties:
+        amount:
+          type: integer
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+    Cart:
+      type: object
+      required: [lines, subtotal]
+      description: The signed-in customer's whole cart.
+      properties:
+        lines:
+          type: array
+          description: One line per product the customer added. An empty cart is an empty array.
+          items:
+            $ref: "#/components/schemas/CartLine"
+        subtotal:
+          description: >
+            The cart total. `null` when the cart is empty: an empty cart carries no line and therefore
+            no money, so no currency is owed.
+          anyOf:
+            - $ref: "#/components/schemas/Money"
+            - type: "null"
+    CartLine:
+      type: object
+      required: [productId, quantity, unitPrice, lineTotal, buyable]
+      description: >
+        One product in the cart. `unitPrice` is the price captured when the product was added, not
+        its current price; the checkout re-checks the price. `name` and `slug` are the product's
+        current values and are null when the product is gone. `buyable` reports whether the line can
+        be bought as it stands (the product is on sale and at least `quantity` is available);
+        `availableQuantity` is present only when the line is on sale but short of `quantity`.
+      properties:
+        productId:
+          type: string
+          format: uuid
+        name:
+          type: [string, "null"]
+        slug:
+          type: [string, "null"]
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        lineTotal:
+          $ref: "#/components/schemas/Money"
+        buyable:
+          type: boolean
+        availableQuantity:
+          type: [integer, "null"]
+          minimum: 0
+    AddItemRequest:
+      type: object
+      required: [productId, quantity]
+      additionalProperties: false
+      properties:
+        productId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+    QuantityRequest:
+      type: object
+      required: [quantity]
+      additionalProperties: false
+      properties:
+        quantity:
+          type: integer
+          minimum: 1

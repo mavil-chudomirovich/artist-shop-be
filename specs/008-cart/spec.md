@@ -8,6 +8,21 @@
 
 **Input**: User description: "ok tiến hành cho v1" — module 06 Cart (`docs/modules/06-cart.md`), module đầu tiên của V1.0: cho khách tập hợp sản phẩm muốn mua trước khi thanh toán.
 
+## Clarifications
+
+### Session 2026-10-09
+
+- Q: Khi khách **xem giỏ** (đọc), giỏ có đối chiếu lại tồn kho/trạng thái bán của từng dòng
+  không, và dòng "thiếu một phần" (sản phẩm còn bán nhưng tồn hiện tại < số lượng trong dòng)
+  hiển thị thế nào → A: **Đối chiếu lại mỗi lần đọc.** Mỗi dòng mang cờ **"còn mua được"** (sản
+  phẩm đang bán **và** tồn khả dụng ≥ số lượng của dòng); khi dòng không mua được vì **còn bán
+  nhưng thiếu** (tồn < số lượng, kể cả 0), giỏ kèm thêm **tồn khả dụng hiện tại** để khách giảm
+  xuống; khi không mua được vì sản phẩm **ngừng bán hoặc đã xoá**, giỏ chỉ báo "không còn bán",
+  không kèm số. Lý do: `FR-012` vốn đã yêu cầu báo dòng không mua được thay vì âm thầm bỏ, và cho
+  khách biết hạn mức mới tốt hơn để họ tự chỉnh trước khi tới checkout. Đánh đổi được chấp nhận:
+  đọc giỏ phải đọc tồn kho/trạng thái cho mọi dòng (hình dạng hợp đồng và cách gọi thuộc plan);
+  đổi lại khách không bị chặn ở bước sau mà không hiểu vì sao.
+
 ## Scope boundary
 
 `docs/modules/06-cart.md` gives the MVP scope. This feature delivers the cart itself and the
@@ -81,14 +96,14 @@ quantity and confirm it succeeds.
 1. **Given** a product that is not on sale (announced, out of stock, or retired), **When** a customer
    tries to add it, **Then** it is refused and nothing is added.
 2. **Given** a product with three available, **When** the customer tries to add five, **Then** it is
-   refused, the product is named, and the cart is unchanged.
+   refused, the available amount is named, and the cart is unchanged.
 3. **Given** a line for a product whose available quantity later falls, **When** the customer raises
    the line's quantity beyond what is now available, **Then** the change is refused and the previous
    quantity is kept.
 4. **Given** a product with three available, **When** the customer adds exactly three, **Then** it
    succeeds — the whole available amount is reachable, only more than it is not.
 5. **Given** a product that does not exist or was removed, **When** a customer tries to add it,
-   **Then** it is refused as not available for purchase.
+   **Then** it is refused as not found, the same `PRODUCT_NOT_FOUND` an unknown product answers.
 
 ---
 
@@ -122,6 +137,9 @@ that neither can reach the other's cart by any request.
 - **A product added while on sale, then taken off sale or sold out before checkout.** The line is not
   silently dropped; the product's current availability is what the customer is told, and the checkout
   re-checks before an order is made, so an order is never created from a line that cannot be bought.
+- **A line whose quantity now exceeds what is available, while the product is still on sale.** The
+  cart reports the current available quantity for that line and marks it unbuyable as it stands, so
+  the customer can reduce it; the quantity is never silently changed for them.
 - **A product removed from the catalogue after being added.** The line can no longer be bought; the
   cart reports it as no longer available rather than presenting a product that does not exist.
 - **Two updates to the same line arriving at once.** Both are applied against the current quantity,
@@ -141,16 +159,20 @@ that neither can reach the other's cart by any request.
   Adding a product already in the cart MUST raise its quantity rather than create a second line for
   the same product.
 - **FR-003**: System MUST let a customer change a line's quantity and remove a line entirely.
-- **FR-004**: System MUST let a customer read their cart, returning each line's product, quantity,
-  the unit price captured when it was added, the line total, and the cart subtotal. An empty cart
-  MUST answer an empty cart rather than an error.
+- **FR-004**: System MUST let a customer read their cart, returning each line's product identifier,
+  the product's current name and slug (absent when the product is gone, so the customer can see and
+  reach it), the quantity, the unit price captured when it was added, the line total, and the cart
+  subtotal, plus whether each line can currently be bought (FR-012). An empty cart MUST answer an
+  empty cart, with no subtotal, rather than an error.
 - **FR-005**: A product MUST be addable, and a line MUST be changeable, only while the product is on
   sale. A product that is announced but not yet on sale, out of stock, retired, or removed MUST NOT
   be addable or buyable from the cart.
 - **FR-006**: A line's quantity MUST be a positive whole number; zero, negative or fractional
   quantities MUST be refused naming the field. Emptying a line is done by removing it.
 - **FR-007**: A line's quantity MUST NOT exceed the product's currently available quantity; a request
-  that would exceed it MUST be refused, name the product, and leave the cart unchanged.
+  that would exceed it MUST be refused, naming the quantity and the currently available amount, and
+  leave the cart unchanged. The product is the one the request names, so it is identified by the
+  request itself.
 - **FR-008**: The unit price of a line MUST be captured when the product is added and MUST be what
   the customer is shown for that line, so the cart total is stable while the customer shops. The
   checkout re-checks the price before money is taken, so a price that changed after adding is caught
@@ -164,8 +186,14 @@ that neither can reach the other's cart by any request.
 - **FR-011**: The cart MUST NOT reserve or hold stock. It checks availability; the checkout re-checks
   availability before an order is created, so an order is never created from a line that has become
   unbuyable.
-- **FR-012**: A line whose product has become unavailable MUST be reported as not currently buyable
-  rather than being silently removed, so the customer understands why checkout would refuse it.
+- **FR-012**: Reading the cart MUST re-check every line against the product's current sell state and
+  available quantity, so the cart reflects reality rather than the moment a line was added. Each
+  line MUST state whether it can be bought as it stands — the product is on sale and at least its
+  quantity is available. A line that cannot be bought because the product is still on sale but fewer
+  units are available than the line asks for MUST report the currently available quantity, so the
+  customer can reduce the line to a buyable amount; a line that cannot be bought because the product
+  is off sale or removed MUST report that it is no longer available, without a quantity. A line is
+  never silently removed and its quantity is never silently changed.
 
 ### Key Entities
 
@@ -180,14 +208,16 @@ that neither can reach the other's cart by any request.
 
 ### Measurable Outcomes
 
-- **SC-001**: A customer can add, change and remove items and see an accurate subtotal in a single
-  session, with the subtotal equal to the sum of quantity times captured price — verified by
-  automated test rather than by inspection.
+- **SC-001**: A customer can add, change and remove items and see an accurate subtotal, with the
+  lines persisting across sessions and the subtotal equal to the sum of quantity times captured price
+  — verified by automated test rather than by inspection.
 - **SC-002**: No cart can ever hold a quantity above the product's available stock, including when
   two updates arrive at once; an attempt is refused, names the product, and leaves the cart
   unchanged. Verified by automated test, including a concurrent case.
-- **SC-003**: A product that is not on sale, or removed, can never be added, and a line whose product
-  later becomes unbuyable is reported as unbuyable rather than silently kept or dropped.
+- **SC-003**: A product that is not on sale, or removed, can never be added; a line whose product
+  later becomes unbuyable is reported as unbuyable rather than silently kept or dropped, and a line
+  that is still on sale but short of what is available is reported as unbuyable **with the current
+  available quantity**, never silently reduced.
 - **SC-004**: No customer can read or change another customer's cart through any route, and a request
   without a session is refused; verified by a test that attempts cross-account access.
 - **SC-005**: A money total shown to a customer is exactly the sum its lines imply, with no rounding,
@@ -212,13 +242,15 @@ that neither can reach the other's cart by any request.
 - **The two facts the cart needs — whether a product is on sale and its price, and what is available
   — are read across a module boundary.** The product module owns the first; the inventory module owns
   the second. The cart may not read either module's tables, so how those facts are reached (the
-  contract shape, and whether the inventory module publishes an availability query) belongs to the
-  plan, and any contract this introduces follows the project's cross-module rule. The inventory
-  feature deliberately left its cross-module contract unpublished until a consumer existed — a cart
-  is such a consumer, and the plan is where that contract takes shape.
+  contract shape) belongs to the plan, and any contract this introduces follows the project's
+  cross-module rule. This feature adds a **new availability read**; the **reservation** contract
+  module 05 left unpublished until the order flow exists (its `deferred.md` D1) is a different
+  contract and stays open — this feature neither uses nor closes it.
 - **The MVP shop is single-currency.** Prices carry an explicit currency as the constitution
   requires, but the cart does not perform currency conversion and all products in one cart share a
-  currency.
+  currency, so a cart never mixes currencies. An empty cart has no line to take a currency from and no
+  money to express, so its `subtotal` is **absent** (null) rather than a zero in a currency the shop
+  would have to invent; a client reads a missing subtotal as nothing owed.
 - **No discount codes, upsell, or saved carts**, as the module document defers them; each is a
   separate feature.
 - **No dedicated rate limit is added for this module.** The shared request limit applies. The cart is
