@@ -242,6 +242,29 @@ không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400; thiế
 > mang ghi chú tự do của operator lẫn dữ liệu cá nhân của khách. `INVENTORY_SALE_APPLIED` không có
 > bề mặt HTTP: đơn thanh toán do module 07/08 chưa tồn tại nên chưa có sự kiện nào phát ra nó.
 
+**Riêng module cart** (`internal/modules/cart/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `CART_PRODUCT_NOT_PURCHASABLE` | 409 | Sản phẩm tồn tại nhưng **không đang bán** — announced, hết hàng hoặc retired — nên không thêm được và không giữ được làm dòng. `details[].field = "productId"`, `issue` nêu trạng thái. Không có gì bị đổi |
+| `CART_QUANTITY_EXCEEDS_AVAILABLE` | 409 | Số lượng yêu cầu, hoặc số lượng mà một lần thêm sẽ tạo ra, lớn hơn tồn khả dụng hiện tại. `details[].field = "quantity"`, `issue` nêu tồn khả dụng hiện tại. Không có gì bị đổi |
+
+Hai mã của cart là **conflict** chứ không phải validation: số lượng gửi lên hợp lệ và sản phẩm có
+thật; thứ khiến yêu cầu bất khả thi là trạng thái của sản phẩm/kệ, và bước tiếp theo của khách khác
+hẳn — chờ sản phẩm mở bán, hoặc giảm số lượng. Điều này cũng giữ "kệ từ chối" tách khỏi "yêu cầu sai".
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module cart (xem
+`specs/008-cart/contracts/error-codes.md`): thêm/đổi/xoá dòng cho sản phẩm không tồn tại hoặc đã xoá
+→ **tái sử dụng** `PRODUCT_NOT_FOUND` 404 của module 04; một dòng không phải của giỏ đang gọi cũng
+trả cùng `PRODUCT_NOT_FOUND` 404, để route không xác nhận nội dung giỏ của khách khác; số lượng
+thiếu, bằng 0, âm hoặc không nguyên → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh
+đường dẫn không phải UUID → `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ (kể cả
+member tên chủ sở hữu) → `MALFORMED_REQUEST` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401; quá
+hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR` 500.
+
+> Module cart **không** ghi `audit_logs`: thao tác giỏ là hành động của chính khách, không phải một
+> mutation quản trị, nên không có action `CART_*` (Constitution VI; `specs/008-cart/plan.md`).
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
@@ -271,6 +294,10 @@ gọi được — **không tồn tại** (`specs/006-product-catalog/spec.md`, 
 Nhóm `/admin/inventory` của module inventory cũng **không** có hạn mức riêng, chỉ chịu hạn mức
 toàn cục, cùng lý do: mọi endpoint đều là ADMIN-only nên bề mặt lạm dụng mà hạn mức riêng tồn tại
 để chặn **không tồn tại** (`specs/007-inventory-tracking/spec.md`, mục *Assumptions*).
+
+Nhóm `/cart` của module cart cũng **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục: giỏ dành
+cho khách **đã đăng nhập**, không phải bề mặt lạm dụng mà một hạn mức theo module tồn tại để chặn
+(`specs/008-cart/spec.md`, mục *Assumptions*).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -2060,7 +2087,178 @@ nghĩa vụ D1 mà feature 006 để lại cho module 05; hai cạnh hợp lệ 
 
 ---
 
-## 8. Bảng tổng hợp
+## 8. Module 06 — Cart (`/api/v1`)
+
+Giỏ hàng của một khách **đã đăng nhập**: những sản phẩm khách định mua, số lượng mỗi dòng, và giá
+khách được hiển thị lúc thêm. **Bốn endpoint, tất cả của khách đã đăng nhập**, dưới `/cart`. Giỏ là
+một **tài nguyên đơn**, định địa chỉ tại `/cart` và **không kèm định danh**: chủ sở hữu là session,
+nên client không bao giờ nêu tên một giỏ. Một dòng định địa chỉ bằng **định danh sản phẩm**, vì một
+giỏ chỉ có tối đa một dòng cho mỗi sản phẩm.
+
+Bốn điều dễ đọc sai, nói ngay:
+
+- **Đọc giỏ đối chiếu lại từng dòng** với trạng thái bán và tồn khả dụng hiện tại, báo mỗi dòng có
+  mua được hay không (`buyable`), và kèm `availableQuantity` khi dòng **còn bán nhưng thiếu**. Giá
+  hiển thị luôn là giá **snapshot** lúc thêm; checkout mới là nơi đối chiếu lại giá trước khi thu
+  tiền.
+- **Giỏ không giữ chỗ tồn kho.** Giữ chỗ là việc của module 05 và xảy ra khi khách bắt đầu thanh
+  toán; checkout đối chiếu lại khả dụng trước khi tạo đơn.
+- **`PRODUCT_NOT_FOUND` 404 của module 04 được tái sử dụng** cho sản phẩm không tồn tại/đã xoá
+  **và** cho một dòng không phải của giỏ đang gọi — hai tình huống trả lời giống nhau để route
+  **không bao giờ** xác nhận nội dung giỏ của khách khác.
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5). Module cũng **không** ghi
+  `audit_logs` (§1.4).
+
+Một giỏ rỗng trả `lines: []` và `subtotal: null` — trạng thái bình thường, không phải lỗi, và đọc
+một giỏ **không** tạo dòng nào trong cơ sở dữ liệu.
+
+### 8.1 `GET /cart`
+
+Đọc giỏ của khách đang đăng nhập, đối chiếu lại từng dòng.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`
+
+```json
+{
+  "data": {
+    "lines": [
+      {
+        "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+        "name": "Tranh sơn dầu",
+        "slug": "tranh-son-dau",
+        "quantity": 2,
+        "unitPrice": { "amount": 150000, "currency": "VND" },
+        "lineTotal": { "amount": 300000, "currency": "VND" },
+        "buyable": true
+      }
+    ],
+    "subtotal": { "amount": 300000, "currency": "VND" }
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+`CartResponse` có **2 member**: `lines` (mảng `CartLineResponse`; giỏ rỗng là `[]`) và `subtotal`
+(`MoneyResponse`, hoặc `null` khi giỏ rỗng).
+`CartLineResponse` có **8 member**: `productId` (UUID), `name` (`null` khi sản phẩm đã xoá), `slug`
+(`null` khi sản phẩm đã xoá), `quantity` (số nguyên ≥ 1), `unitPrice` (giá snapshot lúc thêm),
+`lineTotal` (`quantity × unitPrice`), `buyable` (luôn có), `availableQuantity` (**chỉ có** khi dòng
+còn bán nhưng thiếu — vắng mặt khi sản phẩm ngừng bán hoặc đã xoá).
+`MoneyResponse` có **2 member**: `amount` (số nguyên đơn vị nhỏ nhất) và `currency` (ba chữ in hoa).
+
+Lỗi: `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Giỏ rỗng trả `data.lines: []` cùng `data.subtotal: null`. Một khách chưa từng thêm gì nhận giỏ
+  rỗng, **không** phải `404`, và **không** có dòng `carts` nào được tạo.
+- Một dòng còn bán và đủ hàng có `buyable: true` và **không** có `availableQuantity`. Một dòng còn
+  bán nhưng `availableQuantity < quantity` (kể cả bằng 0) có `buyable: false` và mang
+  `availableQuantity`. Một dòng ngừng bán hoặc sản phẩm đã xoá có `buyable: false` và **không** có
+  `availableQuantity`.
+- Đọc **không bao giờ** xoá dòng hay đổi `quantity`/`unitPrice`.
+
+### 8.2 `POST /cart/items`
+
+Thêm một sản phẩm với số lượng nguyên dương vào giỏ.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — giỏ sau thay đổi |
+
+Request (`AddItemRequest`, `additionalProperties: false`)
+
+```json
+{ "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e", "quantity": 2 }
+```
+
+`productId` bắt buộc, UUID; `quantity` bắt buộc, số nguyên **≥ 1**. Tác nhân lấy từ **session**,
+không bao giờ từ body.
+
+Response `200`: `data` là `CartResponse` (như `8.1`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`productId` không phải UUID, hoặc `quantity` thiếu, bằng 0, âm hoặc
+không nguyên; `details[].field` chỉ đúng member) · `MALFORMED_REQUEST` 400 (body không parse được
+hoặc có member lạ, kể cả member tên chủ sở hữu) · `UNAUTHENTICATED` 401 · `PRODUCT_NOT_FOUND` 404
+(sản phẩm không tồn tại hoặc đã xoá) · `CART_PRODUCT_NOT_PURCHASABLE` 409 ·
+`CART_QUANTITY_EXCEEDS_AVAILABLE` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Thêm một sản phẩm **đã có trong giỏ** nâng số lượng của dòng đó chứ **không** tạo dòng thứ hai, và
+  giữ giá snapshot của lần thêm đầu.
+- `409 CART_PRODUCT_NOT_PURCHASABLE` khi sản phẩm tồn tại nhưng không đang bán;
+  `details[].field = "productId"`.
+- `409 CART_QUANTITY_EXCEEDS_AVAILABLE` khi số lượng **sau khi thêm** vượt tồn khả dụng;
+  `details[].field = "quantity"`, `issue` nêu tồn khả dụng hiện tại.
+- Bị từ chối thì **không có gì đổi**: giỏ giữ nguyên như trước request.
+
+### 8.3 `PATCH /cart/items/{productId}`
+
+Đặt số lượng của dòng ứng với một sản phẩm về một giá trị mới.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — giỏ sau thay đổi |
+
+Path: `productId` (UUID).
+
+Request (`QuantityRequest`, `additionalProperties: false`)
+
+```json
+{ "quantity": 5 }
+```
+
+`quantity` bắt buộc, số nguyên **≥ 1**.
+
+Response `200`: `data` là `CartResponse` (như `8.1`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`productId` không phải UUID, hoặc `quantity` thiếu, bằng 0, âm hoặc
+không nguyên) · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `PRODUCT_NOT_FOUND` 404 (sản phẩm
+không tồn tại/đã xoá, **hoặc** không phải một dòng của giỏ này) · `CART_PRODUCT_NOT_PURCHASABLE` 409 ·
+`CART_QUANTITY_EXCEEDS_AVAILABLE` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Sản phẩm nay ngừng bán → `409 CART_PRODUCT_NOT_PURCHASABLE`; số lượng mới vượt tồn khả dụng hiện
+  tại → `409 CART_QUANTITY_EXCEEDS_AVAILABLE`; **số lượng cũ được giữ** (không có gì đổi).
+- Một `productId` không phải dòng của giỏ đang gọi trả `404 PRODUCT_NOT_FOUND`, cùng câu trả lời như
+  một sản phẩm không tồn tại — route không xác nhận nội dung giỏ của khách khác.
+
+### 8.4 `DELETE /cart/items/{productId}`
+
+Xoá dòng ứng với một sản phẩm khỏi giỏ.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` |
+
+Path: `productId` (UUID). Response không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`productId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`PRODUCT_NOT_FOUND` 404 (sản phẩm không tồn tại/đã xoá, **hoặc** không phải một dòng của giỏ này) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Xoá một dòng đã xoá trước đó (hoặc không thuộc giỏ này) trả `404 PRODUCT_NOT_FOUND`, không phải
+  `204`; đây là cùng một câu trả lời với "không có sản phẩm như vậy".
+
+---
+
+## 9. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -2112,18 +2310,22 @@ nghĩa vụ D1 mà feature 006 để lại cho module 05; hai cạnh hợp lệ 
 | POST | `/api/v1/admin/inventory/{productId}/restock` | ADMIN | Nhập thêm hàng |
 | POST | `/api/v1/admin/inventory/{productId}/damage` | ADMIN | Ghi nhận hư hỏng (`409 INVENTORY_INSUFFICIENT_STOCK` nếu vượt kệ/giữ chỗ) |
 | POST | `/api/v1/admin/inventory/{productId}/adjustment` | ADMIN | Điều chỉnh về giá trị đã đếm |
+| GET | `/api/v1/cart` | Bearer | Giỏ của chính mình (đối chiếu lại từng dòng) |
+| POST | `/api/v1/cart/items` | Bearer | Thêm sản phẩm vào giỏ (`409` nếu không bán được hoặc quá tồn) |
+| PATCH | `/api/v1/cart/items/{productId}` | Bearer | Đổi số lượng một dòng |
+| DELETE | `/api/v1/cart/items/{productId}` | Bearer | Xoá một dòng (204) |
 
 ---
 
-## 9. Quy tắc cập nhật
+## 10. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 8.
-3. Thêm dòng vào Change log ở mục 10.
+2. Cập nhật bảng tổng hợp ở mục 9.
+3. Thêm dòng vào Change log ở mục 11.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
@@ -2131,10 +2333,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 10. Change log
+## 11. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-09 | Thêm nhóm `/api/v1/cart` (module 06 Cart): **bốn** route của khách đã đăng nhập — đọc giỏ (`GET /cart`), thêm sản phẩm (`POST /cart/items`), đổi số lượng một dòng (`PATCH /cart/items/{productId}`) và xoá một dòng (`DELETE /cart/items/{productId}`). Giỏ là **tài nguyên đơn** định địa chỉ tại `/cart` **không kèm định danh** (chủ sở hữu là session); một dòng định địa chỉ bằng **định danh sản phẩm**. Hai hình dạng response: `CartResponse` **2 member** (`lines`, `subtotal` — `null` khi giỏ rỗng) và `CartLineResponse` **8 member** (`productId`, `name`, `slug`, `quantity`, `unitPrice`, `lineTotal`, `buyable`, `availableQuantity`). Bổ sung hai mã `CART_*` vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** cho sản phẩm không tồn tại lẫn dòng không thuộc giỏ này) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: đọc giỏ **đối chiếu lại** trạng thái bán và tồn khả dụng của từng dòng, `availableQuantity` chỉ có khi dòng còn bán nhưng thiếu; giá hiển thị là **snapshot** lúc thêm; giỏ **không** giữ chỗ tồn kho và **không** ghi `audit_logs`. Phần 8 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 9/10/11. Xem ADR-016. | `internal/modules/cart/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/admin/inventory` (module 05 Inventory): **năm** route quản trị dưới `/admin/inventory/{productId}` — đọc tồn kho, đọc lịch sử biến động (phân trang), và ba thao tác thủ công `restock`/`damage`/`adjustment` — tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: `StockView` **3 member** (`physicalQuantity`, `heldQuantity`, `availableQuantity`) và `StockMovement` **9 member**. Bổ sung mã `INVENTORY_INSUFFICIENT_STOCK` 409 vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** trên cả năm route) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm chưa từng nhập kho trả `0` chứ không `404`; điều chỉnh ghi phần chênh lệch và một lần điều chỉnh về đúng giá trị đang lưu không ghi ledger; trạng thái bán của sản phẩm tự chuyển khi khả dụng cắt qua 0 (đóng nghĩa vụ D1 của feature 006). Giữ chỗ có hạn không có bề mặt HTTP. Phần 7 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 8/9/10. Xem ADR-014. | `internal/modules/inventory/presentation/http/router.go` |
 | 2026-10-08 | Thêm nhóm `/api/v1/products` (module 04 Product): hai route công khai không cần token (`GET /products` có lọc `?category=<slug>`, `GET /products/{slug}`) và chín route quản trị dưới `/admin/products` (danh sách, tạo, đọc, sửa, xoá, đổi trạng thái, thêm/gỡ/đặt ảnh chính), tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: công khai 6 member (danh sách) / 8 member (chi tiết, thêm `description` + `images`); quản trị 15 member / 17 member (thêm `images`, `members`). Bổ sung bảy mã `PRODUCT_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm bị ẩn (kể cả do danh mục bị ẩn) và slug chưa từng tồn tại trả lời y hệt nhau (`404 PRODUCT_NOT_FOUND`); trạng thái bán đi qua endpoint riêng; giá là số nguyên + currency; `preorderExpectedAt` ghi theo `format: date`; xoá cứng. **Đổi một câu trả lời của module 03**: `DELETE /admin/categories/{categoryId}` nay trả `409 CATEGORY_IN_USE` khi còn sản phẩm (tham chiếu `ON DELETE RESTRICT` do feature này thêm), và `CATEGORY_IN_USE` được bổ sung vào bảng mã module category. Phần 6 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 7/8/9. Xem ADR-013. | `internal/modules/product/presentation/http/router.go`, `internal/modules/category/presentation/http/errors.go` |
 | 2026-10-07 | Thêm `GET /swagger/*` (Swagger UI, gate bởi `SWAGGER_ENABLED`, mặc định tắt) và `make swagger`/`make swagger-check`. Spec sinh từ annotation trong code vào `docs/swagger/`; file này vẫn là nguồn authoritative. Xem ADR-011. | `cmd/api/main.go`, `internal/share/httpserver/routes.go`, `Makefile` |

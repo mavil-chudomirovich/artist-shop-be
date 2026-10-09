@@ -38,6 +38,15 @@ giữ một feature đã đóng trông như còn mở, hoặc ép điều kiện
 - **Ảnh hưởng tới task đã tick**: không. Các task hold (T035–T042) và sale (T048–T051) hứa giao
   **năng lực** và test nó trực tiếp, không hứa publish hợp đồng; evidence còn nguyên.
 
+> **Bổ sung (2026-10-09): module 05 nay cũng publish một hợp đồng liên module khác — một
+> _availability-read_ cho module 06 Cart — nhưng D1 ở đây vẫn MỞ.** Feature 008-cart thêm
+> `internal/contracts/inventory.go` (`InventoryAvailability`, `AvailableQuantity`) với adapter ở
+> `internal/modules/inventory/infrastructure/implement/availability/`, để giỏ đọc tồn khả dụng
+> (vật lý − giữ chỗ đang hoạt động) mà không đọc bảng của module 05. Đó là một **read** đã có
+> consumer (giỏ hàng), khác hẳn **reservation** contract của D1: nó **không** dùng và **không**
+> đóng D1. D1 vẫn chờ module 07 Order như mô tả ở trên. Xem
+> [decisions/016](../../docs/decisions/016-cart-singleton-loose-reference-and-snapshot.md).
+
 ### D2 — Không có luồng huỷ đơn đã thanh toán, và chuyển nhượng không đổi tồn kho
 
 - **Vấn đề**: `docs/modules/05-inventory.md` mô tả luồng "đơn hủy → hoàn kho". Hệ thống **không**

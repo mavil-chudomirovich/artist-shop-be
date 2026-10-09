@@ -41,6 +41,7 @@ Dùng [template.md](template.md).
 | [013](013-product-visibility-media-and-hard-delete.md) | Sản phẩm: hợp đồng hiển thị liên module (không `JOIN`), nhà chung của media, và hard delete | Accepted |
 | [014](014-inventory-hold-and-availability.md) | Tồn kho: hai hợp đồng liên module, mô hình ba bảng với level làm chốt chặn đồng thời, và sweeper nhả giữ chỗ hết hạn | Accepted |
 | [015](015-shop-first-version-plan-and-payos.md) | Tái thứ tự roadmap theo version (Shop-first) và chọn PayOS làm cổng thanh toán | Accepted |
+| [016](016-cart-singleton-loose-reference-and-snapshot.md) | Giỏ: tài nguyên đơn không định danh, tham chiếu sản phẩm lỏng, hai hợp đồng đọc bulk, và giá snapshot | Accepted |
 
 ## Khi nào phải viết ADR
 

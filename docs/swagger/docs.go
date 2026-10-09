@@ -2077,6 +2077,301 @@ const docTemplate = `{
                 }
             }
         },
+        "/cart": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every line with its product, quantity, the price captured when it was added and the line total, plus the cart subtotal. An empty cart answers an empty list with a null subtotal.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cart"
+                ],
+                "summary": "Read the signed-in customer's cart",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/cart/items": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a product with a positive whole quantity. Adding a product already in the cart raises its quantity; the captured price is the product's current price. An unknown product answers not-found.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cart"
+                ],
+                "summary": "Add a product to the cart",
+                "parameters": [
+                    {
+                        "description": "Product and quantity to add",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/cart/items/{productId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the line for that product. An identifier that is not a line of this cart answers not-found.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cart"
+                ],
+                "summary": "Remove a line from the cart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "productId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "The line is removed."
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets the quantity of the line for that product. A product that is not a line of this cart answers not-found.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Cart"
+                ],
+                "summary": "Change a line's quantity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "productId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New quantity",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.QuantityRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/categories": {
             "get": {
                 "description": "Returns a page of the categories the operator has left on display, in the configured order. No session is required.",
@@ -3111,6 +3406,106 @@ const docTemplate = `{
                 },
                 "otp": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest": {
+            "type": "object",
+            "properties": {
+                "productId": {
+                    "description": "ProductID is the product to add.",
+                    "type": "string"
+                },
+                "quantity": {
+                    "description": "Quantity is the positive whole number of units to add.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartLineResponse": {
+            "type": "object",
+            "properties": {
+                "availableQuantity": {
+                    "description": "AvailableQuantity is the currently available amount, present only when the\nline is on sale but short of its quantity.",
+                    "type": "integer"
+                },
+                "buyable": {
+                    "description": "Buyable reports whether the line can be bought as it stands.",
+                    "type": "boolean"
+                },
+                "lineTotal": {
+                    "description": "LineTotal is quantity times the captured price.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "name": {
+                    "description": "Name is the product's current name, or null when the product is gone.",
+                    "type": "string"
+                },
+                "productId": {
+                    "description": "ProductID is the product the line is for.",
+                    "type": "string"
+                },
+                "quantity": {
+                    "description": "Quantity is the whole number the customer chose.",
+                    "type": "integer"
+                },
+                "slug": {
+                    "description": "Slug is the product's current link segment, or null when the product is\ngone.",
+                    "type": "string"
+                },
+                "unitPrice": {
+                    "description": "UnitPrice is the captured price.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse": {
+            "type": "object",
+            "properties": {
+                "lines": {
+                    "description": "Lines is one entry per product the customer added; an empty cart is an\nempty array.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartLineResponse"
+                    }
+                },
+                "subtotal": {
+                    "description": "Subtotal is the cart total, or null when the cart is empty.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount in the currency's minor unit.",
+                    "type": "integer"
+                },
+                "currency": {
+                    "description": "Currency is the currency code.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.QuantityRequest": {
+            "type": "object",
+            "properties": {
+                "quantity": {
+                    "description": "Quantity is the new positive whole number for the line.",
+                    "type": "integer"
                 }
             }
         },

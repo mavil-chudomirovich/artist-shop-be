@@ -70,6 +70,78 @@ definitions:
       otp:
         type: string
     type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest:
+    properties:
+      productId:
+        description: ProductID is the product to add.
+        type: string
+      quantity:
+        description: Quantity is the positive whole number of units to add.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartLineResponse:
+    properties:
+      availableQuantity:
+        description: |-
+          AvailableQuantity is the currently available amount, present only when the
+          line is on sale but short of its quantity.
+        type: integer
+      buyable:
+        description: Buyable reports whether the line can be bought as it stands.
+        type: boolean
+      lineTotal:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
+        description: LineTotal is quantity times the captured price.
+      name:
+        description: Name is the product's current name, or null when the product
+          is gone.
+        type: string
+      productId:
+        description: ProductID is the product the line is for.
+        type: string
+      quantity:
+        description: Quantity is the whole number the customer chose.
+        type: integer
+      slug:
+        description: |-
+          Slug is the product's current link segment, or null when the product is
+          gone.
+        type: string
+      unitPrice:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
+        description: UnitPrice is the captured price.
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse:
+    properties:
+      lines:
+        description: |-
+          Lines is one entry per product the customer added; an empty cart is an
+          empty array.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartLineResponse'
+        type: array
+      subtotal:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
+        description: Subtotal is the cart total, or null when the cart is empty.
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse:
+    properties:
+      amount:
+        description: Amount is the amount in the currency's minor unit.
+        type: integer
+      currency:
+        description: Currency is the currency code.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.QuantityRequest:
+    properties:
+      quantity:
+        description: Quantity is the new positive whole number for the line.
+        type: integer
+    type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.AdminCategoryResponse:
     properties:
       createdAt:
@@ -2128,6 +2200,193 @@ paths:
       summary: Confirm an email address
       tags:
       - Auth
+  /cart:
+    get:
+      description: Returns every line with its product, quantity, the price captured
+        when it was added and the line total, plus the cart subtotal. An empty cart
+        answers an empty list with a null subtotal.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read the signed-in customer's cart
+      tags:
+      - Cart
+  /cart/items:
+    post:
+      consumes:
+      - application/json
+      description: Adds a product with a positive whole quantity. Adding a product
+        already in the cart raises its quantity; the captured price is the product's
+        current price. An unknown product answers not-found.
+      parameters:
+      - description: Product and quantity to add
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Add a product to the cart
+      tags:
+      - Cart
+  /cart/items/{productId}:
+    delete:
+      description: Removes the line for that product. An identifier that is not a
+        line of this cart answers not-found.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: The line is removed.
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove a line from the cart
+      tags:
+      - Cart
+    patch:
+      consumes:
+      - application/json
+      description: Sets the quantity of the line for that product. A product that
+        is not a line of this cart answers not-found.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: productId
+        required: true
+        type: string
+      - description: New quantity
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.QuantityRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Change a line's quantity
+      tags:
+      - Cart
   /categories:
     get:
       description: Returns a page of the categories the operator has left on display,
