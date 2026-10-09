@@ -24,7 +24,7 @@ Tài liệu tra cứu:
 | 02 | User | [02-user.md](modules/02-user.md) | 0 | auth | ✔ `specs/003-user-profile` |
 | 03 | Category | [03-category.md](modules/03-category.md) | 0 | cross-cutting | ✔ `specs/005-category-catalog` |
 | 04 | Product | [04-product.md](modules/04-product.md) | 1 | category | ✅ `specs/006-product-catalog` |
-| 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | 1 | product | ⬜ |
+| 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | 1 | product | ✅ `specs/007-inventory-tracking` |
 | 06 | Cart | [06-cart.md](modules/06-cart.md) | 1 | product | ⬜ |
 | 07 | Order | [07-order.md](modules/07-order.md) | 1 | cart, product, inventory, user | ⬜ |
 | 08 | Payment | [08-payment.md](modules/08-payment.md) | 1 | order | ⬜ |

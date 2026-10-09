@@ -28,6 +28,16 @@ Không mục nào ở đây chặn việc đóng feature này; không mục nào
 - **Ảnh hưởng tới task đã tick**: không. FR-038 nói rõ feature này không theo dõi tồn kho, nên
   không task nào của feature này bị suy yếu.
 
+> **D1 đã đóng bởi feature 007.** Module 05 Inventory đã thêm ba bảng (`stock_levels`,
+> `inventory_transactions`, `stock_holds`) và **gọi hai cạnh `ACTIVE ↔ OUT_OF_STOCK` đã có sẵn**
+> của state machine module 04 qua hợp đồng `ProductAvailability` (`internal/contracts/product.go`),
+> với adapter ở phía product (`internal/modules/product/infrastructure/implement/availability/`) và
+> một use case hệ thống riêng (`internal/modules/product/application/implement/availability.go`)
+> không cần tác nhân admin. Việc chuyển chạy **trong cùng transaction** với thay đổi kho, chỉ xảy ra
+> khi **khả dụng** cắt qua 0, và không đụng tới sản phẩm `COMING_SOON`/`DISCONTINUED`. Điều kiện
+> đóng lại của D1 đã được thoả. Xem `specs/007-inventory-tracking/spec.md` (US4, FR-024–FR-028),
+> `docs/modules/05-inventory.md`, và [decisions/014](../../docs/decisions/014-inventory-hold-and-availability.md).
+
 ### D2 — Nội dung của combo set không hiện cho khách
 
 - **Vấn đề**: một set là một sản phẩm có tên, giá và ảnh riêng, và khách **không** thấy bên

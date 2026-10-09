@@ -213,6 +213,35 @@ khoảng → `VALIDATION_ERROR` 400; body không parse được hoặc có membe
 > ảnh), **không** mang cột khoá chuẩn hoá `normalized_slug` — cột đó không bao giờ xuất hiện
 > trong response, audit hay log (`specs/006-product-catalog/data-model.md`).
 
+**Riêng module inventory** (`internal/modules/inventory/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `INVENTORY_INSUFFICIENT_STOCK` | 409 | Thao tác sẽ đẩy số lượng **vật lý** của sản phẩm xuống dưới 0, hoặc xuống dưới phần đang được **giữ** cho các đơn đang thanh toán. Không có gì bị đổi |
+
+`INVENTORY_INSUFFICIENT_STOCK` là **conflict** chứ không phải validation: số lượng gửi lên hợp lệ,
+chỉ có trạng thái hiện tại của kệ khiến thao tác bất khả thi (không đủ hàng), và bước tiếp theo của
+operator khác hẳn — nhập thêm hàng hoặc chờ giữ chỗ được giải quyết, chứ không phải sửa con số họ
+gửi.
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module inventory (xem
+`specs/007-inventory-tracking/contracts/error-codes.md`): sản phẩm không tồn tại → **tái sử dụng**
+`PRODUCT_NOT_FOUND` 404 của module 04 (sản phẩm là tài nguyên của module 04; một mã thứ hai
+gần giống sẽ buộc client rẽ nhánh trên hai mã cho cùng một tình huống — mã này vì vậy xuất hiện
+trên **cả năm** route `/admin/inventory`); số lượng thiếu, không nguyên, âm hoặc bằng 0 khi bắt
+buộc dương → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không phải
+UUID → `VALIDATION_ERROR` 400; `page`/`pageSize` ngoài khoảng → `VALIDATION_ERROR` 400; body
+không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400; thiếu hoặc sai phiên →
+`UNAUTHENTICATED` 401; `CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403; quá hạn mức →
+`RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR` 500.
+
+> Action `audit_logs` của module dùng tiền tố `INVENTORY_` nhưng **không** phải mã lỗi:
+> `INVENTORY_RESTOCKED`, `INVENTORY_DAMAGED`, `INVENTORY_ADJUSTED`, `INVENTORY_SALE_APPLIED` —
+> xem `internal/modules/inventory/domain/constant/audit.go`. Metadata của mỗi dòng chỉ mang `kind`
+> và `delta` (thao tác thủ công) hoặc `kind` và `sourceReference` (một sự kiện ngoài), và **không**
+> mang ghi chú tự do của operator lẫn dữ liệu cá nhân của khách. `INVENTORY_SALE_APPLIED` không có
+> bề mặt HTTP: đơn thanh toán do module 07/08 chưa tồn tại nên chưa có sự kiện nào phát ra nó.
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
@@ -238,6 +267,10 @@ Nhóm `/products` (công khai) và `/admin/products` (quản trị) của module
 có hạn mức riêng, chỉ chịu hạn mức toàn cục. Lý do giống module category: các endpoint ghi là
 ADMIN-only, nên bề mặt lạm dụng mà hạn mức riêng tồn tại để chặn — mọi khách đã đăng nhập đều
 gọi được — **không tồn tại** (`specs/006-product-catalog/spec.md`, mục *Assumptions*).
+
+Nhóm `/admin/inventory` của module inventory cũng **không** có hạn mức riêng, chỉ chịu hạn mức
+toàn cục, cùng lý do: mọi endpoint đều là ADMIN-only nên bề mặt lạm dụng mà hạn mức riêng tồn tại
+để chặn **không tồn tại** (`specs/007-inventory-tracking/spec.md`, mục *Assumptions*).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -1819,7 +1852,215 @@ Ghi chú:
 
 ---
 
-## 7. Bảng tổng hợp
+## 7. Module 05 — Inventory (`/api/v1`)
+
+Tồn kho của một sản phẩm: số lượng vật lý trên kệ, phần đang được giữ cho các đơn đang thanh toán,
+và phần còn lại khả dụng cho khách. **Năm endpoint, tất cả của quản trị viên** dưới
+`/admin/inventory`, địa chỉ theo **định danh sản phẩm**. Không có bề mặt tồn kho cho khách: khách
+biết còn hàng hay không qua **trạng thái bán** của sản phẩm, mà module này tự chuyển khi khả dụng
+cắt qua 0 (xem ghi chú cuối mục và §6.8).
+
+Bốn điều dễ đọc sai, nói ngay:
+
+- **Sản phẩm chưa từng nhập kho trả `0`, không phải `404`.** Một sản phẩm do module 04 tạo ra chưa
+  có dòng tồn kho nào, và đọc nó là trạng thái bình thường. Chỉ **định danh không trỏ tới sản phẩm
+  nào** mới trả `404 PRODUCT_NOT_FOUND`. Xem `7.1`.
+- **Số lượng là số nguyên, không bao giờ âm.** Một thao tác làm số lượng vật lý hoặc khả dụng
+  xuống dưới 0 bị từ chối `409 INVENTORY_INSUFFICIENT_STOCK`; một thao tác đưa đúng về 0 **thành
+  công**.
+- **Điều chỉnh ghi lại phần chênh lệch**, không phải giá trị tuyệt đối. Điều chỉnh về đúng giá trị
+  đang lưu **không đổi gì** và vẫn trả `200`.
+- **Giữ chỗ không có bề mặt HTTP.** `reserve`/`release`/hết hạn là năng lực nội bộ của luồng thanh
+  toán; module 07/08 chưa tồn tại nên không có endpoint nào. Khả dụng = vật lý − giữ chỗ đang hoạt
+  động, được tính tại thời điểm hỏi, không lưu sẵn.
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5).
+
+Lịch sử biến động phân trang theo quy ước chung: `page` mặc định `1`, `pageSize` mặc định `20`,
+khoảng `1..100`.
+
+### 7.1 `GET /admin/inventory/{productId}`
+
+Đọc số lượng vật lý, số đang giữ và số khả dụng của một sản phẩm.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`
+
+```json
+{
+  "data": {
+    "physicalQuantity": 10,
+    "heldQuantity": 2,
+    "availableQuantity": 8
+  },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+`StockView` có **3 member**: `physicalQuantity` (trên kệ), `heldQuantity` (đang giữ cho đơn đang
+thanh toán), `availableQuantity` (khác biệt — thứ khách có thể lấy). Cả ba là số nguyên không âm.
+Định danh sản phẩm nằm ở đường dẫn, **không** lặp lại trong body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`productId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
+· `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Sản phẩm **chưa từng nhập kho** trả `physicalQuantity: 0`, `heldQuantity: 0`,
+  `availableQuantity: 0`.
+- Số đang giữ là tổng các giữ chỗ **còn hiệu lực**; giữ chỗ đã hết hạn nhưng chưa được quét không
+  còn được tính.
+
+### 7.2 `GET /admin/inventory/{productId}/movements`
+
+Đọc lịch sử biến động kho của một sản phẩm, **cũ nhất trước**.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`).
+
+Response `200`: `data` là mảng `StockMovement`; `meta` là khối phân trang chung.
+
+```json
+{
+  "data": [
+    {
+      "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+      "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+      "kind": "RESTOCK",
+      "delta": 10,
+      "resultingQuantity": 10,
+      "sourceReference": null,
+      "actorId": "11111111-1111-1111-1111-111111111111",
+      "note": "hàng về kho",
+      "createdAt": "2026-10-09T08:15:04Z"
+    }
+  ],
+  "meta": { "requestId": "...", "timestamp": "...", "page": 1, "pageSize": 20, "total": 1 }
+}
+```
+
+`StockMovement` có **9 member**: `id`, `productId`, `kind`, `delta` (có dấu), `resultingQuantity`
+(số lượng vật lý sau thay đổi), `sourceReference` (`null` với thao tác thủ công), `actorId` (`null`
+với thay đổi do hệ thống), `note` (`null` khi không có), `createdAt`. `kind` là một trong **4** giá
+trị `RESTOCK`, `DAMAGE`, `ADJUSTMENT`, `SALE`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`productId` không phải UUID, hoặc `page`/`pageSize` ngoài khoảng;
+`details[].field` chỉ đúng member) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND`
+404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Sản phẩm **không có biến động** trả `data: []`, không phải lỗi.
+- `sourceReference` và `actorId` loại trừ nhau: một thao tác thủ công mang `actorId`, một sự kiện
+  ngoài mang `sourceReference`.
+
+### 7.3 `POST /admin/inventory/{productId}/restock`
+
+Ghi nhận hàng về. Tăng số lượng vật lý thêm một lượng **dương**.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — tồn kho sau thay đổi |
+
+Request (`QuantityRequest`, `additionalProperties: false`)
+
+```json
+{ "quantity": 10, "note": "hàng về kho" }
+```
+
+`quantity` bắt buộc, là số nguyên **≥ 1**; `note` tuỳ chọn. Tác nhân lấy từ **session**, không bao
+giờ từ body.
+
+Response `200`: `data` là `StockView` (như `7.1`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`quantity` thiếu, không nguyên, âm hoặc bằng 0; `details[].field` là
+`"quantity"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429 ·
+`INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Mỗi lần restock ghi một dòng ledger `kind: "RESTOCK"` (mang tác nhân và ghi chú) và một dòng
+  audit `INVENTORY_RESTOCKED` (mang tác nhân, `kind` và `delta`, **không** mang ghi chú).
+
+### 7.4 `POST /admin/inventory/{productId}/damage`
+
+Ghi nhận hàng hư hỏng. Giảm số lượng vật lý đi một lượng **dương**.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — tồn kho sau thay đổi |
+
+Request (`QuantityRequest`, `additionalProperties: false`) như `7.3`.
+
+Response `200`: `data` là `StockView`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`quantity` thiếu, không nguyên, âm hoặc bằng 0) ·
+`MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 ·
+`INVENTORY_INSUFFICIENT_STOCK` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+`409 INVENTORY_INSUFFICIENT_STOCK` xảy ra khi lượng giảm vượt quá số đang có trên kệ, **hoặc** khi
+nó để lại trên kệ ít hơn phần đang được giữ cho đơn đang thanh toán — một giữ chỗ không bao giờ bị
+phá bởi thay đổi vật lý. Bị từ chối thì **không có gì đổi** và **không** có dòng ledger mới. Ghi
+`kind: "DAMAGE"` và audit `INVENTORY_DAMAGED`.
+
+### 7.5 `POST /admin/inventory/{productId}/adjustment`
+
+Điều chỉnh số lượng vật lý về **giá trị đã đếm**, ghi lại **phần chênh lệch có dấu**.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — tồn kho sau điều chỉnh |
+
+Request (`AdjustmentRequest`, `additionalProperties: false`)
+
+```json
+{ "quantity": 7, "note": "kiểm kê" }
+```
+
+`quantity` bắt buộc, là số nguyên **≥ 0** (0 là giá trị đếm hợp lệ); `note` tuỳ chọn.
+
+Response `200`: `data` là `StockView`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`quantity` thiếu, không nguyên hoặc âm) · `MALFORMED_REQUEST` 400 ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 ·
+`INVENTORY_INSUFFICIENT_STOCK` 409 (giá trị đếm thấp hơn phần đang được giữ) · `RATE_LIMITED` 429 ·
+`INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Điều chỉnh về **đúng** giá trị đang lưu trả `200`, **không** ghi dòng ledger nào (không có gì
+  đổi), nhưng **vẫn** ghi một dòng audit `INVENTORY_ADJUSTED` cho chính thao tác.
+- Khi có chênh lệch, ledger ghi `kind: "ADJUSTMENT"` với `delta` có dấu bằng `đã đếm − đang lưu` và
+  `resultingQuantity` bằng giá trị đã đếm.
+- Ledger **không bao giờ** chứa `delta: 0`: một thay đổi không đổi gì thì không phải một thay đổi.
+
+### Quan hệ với trạng thái bán của sản phẩm (module 04)
+
+Khi khả dụng của một sản phẩm **cắt qua 0** trong cùng transaction với thay đổi, module này báo
+module 04 đổi `sellState`: về 0 → `OUT_OF_STOCK`, từ 0 lên dương → `ACTIVE`. Một thay đổi **không**
+cắt qua 0 **không** đụng tới trạng thái bán, nên nhãn `OUT_OF_STOCK` do operator đặt tay được giữ
+nguyên. Sản phẩm `COMING_SOON` và `DISCONTINUED` không bao giờ bị thay đổi bởi tồn kho. Đây là
+nghĩa vụ D1 mà feature 006 để lại cho module 05; hai cạnh hợp lệ nằm ở §6.8.
+
+---
+
+## 8. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -1866,18 +2107,23 @@ Ghi chú:
 | POST | `/api/v1/admin/products/{id}/images` | ADMIN | Gắn ảnh (multipart, ≤ 2 MB, ≤ 10 ảnh) (201) |
 | DELETE | `/api/v1/admin/products/{id}/images/{imageId}` | ADMIN | Gỡ ảnh (204) |
 | POST | `/api/v1/admin/products/{id}/images/{imageId}/primary` | ADMIN | Đặt ảnh chính |
+| GET | `/api/v1/admin/inventory/{productId}` | ADMIN | Tồn kho một sản phẩm (vật lý, đang giữ, khả dụng) |
+| GET | `/api/v1/admin/inventory/{productId}/movements` | ADMIN | Lịch sử biến động kho (có phân trang, cũ nhất trước) |
+| POST | `/api/v1/admin/inventory/{productId}/restock` | ADMIN | Nhập thêm hàng |
+| POST | `/api/v1/admin/inventory/{productId}/damage` | ADMIN | Ghi nhận hư hỏng (`409 INVENTORY_INSUFFICIENT_STOCK` nếu vượt kệ/giữ chỗ) |
+| POST | `/api/v1/admin/inventory/{productId}/adjustment` | ADMIN | Điều chỉnh về giá trị đã đếm |
 
 ---
 
-## 8. Quy tắc cập nhật
+## 9. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 7.
-3. Thêm dòng vào Change log ở mục 9.
+2. Cập nhật bảng tổng hợp ở mục 8.
+3. Thêm dòng vào Change log ở mục 10.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
@@ -1885,10 +2131,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 9. Change log
+## 10. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-09 | Thêm nhóm `/api/v1/admin/inventory` (module 05 Inventory): **năm** route quản trị dưới `/admin/inventory/{productId}` — đọc tồn kho, đọc lịch sử biến động (phân trang), và ba thao tác thủ công `restock`/`damage`/`adjustment` — tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: `StockView` **3 member** (`physicalQuantity`, `heldQuantity`, `availableQuantity`) và `StockMovement` **9 member**. Bổ sung mã `INVENTORY_INSUFFICIENT_STOCK` 409 vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** trên cả năm route) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm chưa từng nhập kho trả `0` chứ không `404`; điều chỉnh ghi phần chênh lệch và một lần điều chỉnh về đúng giá trị đang lưu không ghi ledger; trạng thái bán của sản phẩm tự chuyển khi khả dụng cắt qua 0 (đóng nghĩa vụ D1 của feature 006). Giữ chỗ có hạn không có bề mặt HTTP. Phần 7 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 8/9/10. Xem ADR-014. | `internal/modules/inventory/presentation/http/router.go` |
 | 2026-10-08 | Thêm nhóm `/api/v1/products` (module 04 Product): hai route công khai không cần token (`GET /products` có lọc `?category=<slug>`, `GET /products/{slug}`) và chín route quản trị dưới `/admin/products` (danh sách, tạo, đọc, sửa, xoá, đổi trạng thái, thêm/gỡ/đặt ảnh chính), tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: công khai 6 member (danh sách) / 8 member (chi tiết, thêm `description` + `images`); quản trị 15 member / 17 member (thêm `images`, `members`). Bổ sung bảy mã `PRODUCT_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm bị ẩn (kể cả do danh mục bị ẩn) và slug chưa từng tồn tại trả lời y hệt nhau (`404 PRODUCT_NOT_FOUND`); trạng thái bán đi qua endpoint riêng; giá là số nguyên + currency; `preorderExpectedAt` ghi theo `format: date`; xoá cứng. **Đổi một câu trả lời của module 03**: `DELETE /admin/categories/{categoryId}` nay trả `409 CATEGORY_IN_USE` khi còn sản phẩm (tham chiếu `ON DELETE RESTRICT` do feature này thêm), và `CATEGORY_IN_USE` được bổ sung vào bảng mã module category. Phần 6 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 7/8/9. Xem ADR-013. | `internal/modules/product/presentation/http/router.go`, `internal/modules/category/presentation/http/errors.go` |
 | 2026-10-07 | Thêm `GET /swagger/*` (Swagger UI, gate bởi `SWAGGER_ENABLED`, mặc định tắt) và `make swagger`/`make swagger-check`. Spec sinh từ annotation trong code vào `docs/swagger/`; file này vẫn là nguồn authoritative. Xem ADR-011. | `cmd/api/main.go`, `internal/share/httpserver/routes.go`, `Makefile` |
 | 2026-10-07 | Thêm nhóm `/api/v1/categories` (module 03 Category): hai route công khai không cần token (`GET /categories`, `GET /categories/{slug}`) và năm route quản trị dưới `/admin/categories` (danh sách, tạo, đọc, sửa, xoá), tất cả yêu cầu vai trò `ADMIN`. Hình dạng công khai chỉ có bốn member, hình dạng quản trị có thêm `position`, `isVisible`, `createdAt`, `updatedAt`. Bổ sung ba mã `CATEGORY_*` vào mục 1.4 và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: danh mục bị ẩn và slug chưa từng tồn tại trả lời y hệt nhau; va chạm tên/slug trả `409` kèm field. Phần 5 được chèn và bảng tổng hợp/change log dời xuống mục 6/8. | `internal/modules/category/presentation/http/router.go` |

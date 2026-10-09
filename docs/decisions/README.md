@@ -39,6 +39,7 @@ Dùng [template.md](template.md).
 | [011](011-swagger-from-code-annotations.md) | Swagger sinh từ annotation trong code, UI có gate, CI kiểm tra lệch | Accepted |
 | [012](012-category-folding-and-two-response-shapes.md) | Danh mục: chuẩn hoá (fold) ở tầng ứng dụng, và hai hình dạng response trên một bảng | Accepted |
 | [013](013-product-visibility-media-and-hard-delete.md) | Sản phẩm: hợp đồng hiển thị liên module (không `JOIN`), nhà chung của media, và hard delete | Accepted |
+| [014](014-inventory-hold-and-availability.md) | Tồn kho: hai hợp đồng liên module, mô hình ba bảng với level làm chốt chặn đồng thời, và sweeper nhả giữ chỗ hết hạn | Accepted |
 
 ## Khi nào phải viết ADR
 
