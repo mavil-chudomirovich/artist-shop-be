@@ -314,6 +314,44 @@ func TestReserveAfterExpiryDoesNotDoubleHold(t *testing.T) {
 	}
 }
 
+// FR-018, SC-004, US3 acceptance scenario 5: two customers contest the last
+// available unit. The first order's hold consumes it, so availability reaches
+// zero while the physical shelf is unchanged; a second order's hold for the same
+// product is then refused with ErrInsufficientStock and holds nothing. Neither
+// the shelf nor the first order's hold moves on the refusal.
+func TestTwoOrdersContestingTheLastAvailableUnit(t *testing.T) {
+	repo := &fakeHoldRepository{physical: 1}
+	clock := &movableClock{at: fixedNow}
+	svc := newHoldService(repo, clock)
+	productID := uuid.New()
+	firstOrder, secondOrder := uuid.New(), uuid.New()
+
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: firstOrder, ProductID: productID, Quantity: 1}); err != nil {
+		t.Fatalf("first Reserve: %v", err)
+	}
+	out, err := svc.Stock(context.Background(), dto.StockRefInput{ProductID: productID})
+	if err != nil {
+		t.Fatalf("Stock: %v", err)
+	}
+	if out.PhysicalQuantity != 1 || out.HeldQuantity != 1 || out.AvailableQuantity != 0 {
+		t.Fatalf("the first hold must consume the last available unit without moving the shelf: %+v", out)
+	}
+
+	err = svc.Reserve(context.Background(), dto.ReserveInput{OrderID: secondOrder, ProductID: productID, Quantity: 1})
+	if !errors.Is(err, domainerr.ErrInsufficientStock) {
+		t.Fatalf("expected ErrInsufficientStock for the contesting order, got %v", err)
+	}
+	if repo.physical != 1 {
+		t.Fatalf("a refused contest must not move the shelf, got %d", repo.physical)
+	}
+	if len(repo.holds) != 1 {
+		t.Fatalf("a refused contest must hold nothing, got %d holds", len(repo.holds))
+	}
+	if repo.holds[0].OrderID != firstOrder || repo.holds[0].Quantity != 1 || repo.holds[0].Status != constant.HoldStatusActive {
+		t.Fatalf("the first order's hold must be unchanged: %+v", repo.holds[0])
+	}
+}
+
 // FR-009: a physical decrease that would leave the shelf below what an active
 // hold has promised is refused, while a decrease down to the held floor is
 // allowed. This is the cross-table rule a single-table constraint cannot express.
