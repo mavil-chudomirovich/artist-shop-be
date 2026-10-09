@@ -296,3 +296,10 @@ With two developers:
   (US1 and US2), `presentation/http/cart_test.go` (US1, US2 and US3) and `cmd/api/main.go` — sequence them
 - This feature must **not** create a cart row on a read and must **not** hold stock: a GET answers an
   empty cart without a write, and a cart line is not a reservation (research D8, D12)
+
+---
+
+## Phase 7: Convergence
+
+- [ ] T045 Thêm ca integration (tag `integration`) chứng minh **trường hợp đồng thời** của SC-002: hai thao tác ghi vào **cùng một giỏ** gửi **cùng lúc** mà tổng vượt tồn khả dụng (ví dụ tồn khả dụng = 1, mỗi thao tác thêm 1) phải để dòng **không cao hơn** tồn khả dụng — một thao tác thành công, thao tác kia bị `409 CART_QUANTITY_EXCEEDS_AVAILABLE` và **không đổi gì**; thêm vào `internal/modules/cart/presentation/http/cart_integration_test.go` per SC-002 / T026 (partial). Hiện file này ghi rõ ca đó *cố ý không* được khẳng định (`TestConcurrentAddsConvergeToOneLineAgainstPostgres` chỉ dùng tồn = 10 cho hai add 1+1, không tiệm cận tồn; ca concurrent ở `infrastructure/implement/postgres/cart_integration_test.go` gọi thẳng `UpsertLine`, không qua kiểm tra khả dụng), nên điều kiện `quickstart.md` 9d và edge case "hai cập nhật cùng lúc không được để dòng vượt tồn khả dụng" chưa có test tự động
+- [ ] T046 Sửa ví dụ JSON của `CartLineResponse` trong `specs/008-cart/frontend-guide.md` (mục "Kiểu dữ liệu"): ví dụ hiện đặt `"buyable": true` cùng `"availableQuantity": 1`, hai giá trị **không thể cùng xuất hiện** (`availableQuantity` chỉ có khi dòng còn bán nhưng thiếu, tức `buyable: false`), trái với chính đoạn văn mô tả ngay dưới và với `docs/api-reference.md` §8.1; tách thành hai ví dụ hoặc bỏ `availableQuantity` khỏi ví dụ `buyable: true` per T044 (contradicts)

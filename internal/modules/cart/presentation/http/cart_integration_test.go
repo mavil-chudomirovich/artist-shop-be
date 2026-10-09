@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -38,10 +39,11 @@ import (
 // `go vet -tags integration ./...` covers it.
 //
 // The "two adds that together exceed availability leave the line no higher than
-// what is available" case named by tasks.md T026 rests on the availability refusal
-// and the buyable projection that are US2 (T029/T030). It is deliberately not
-// asserted here: US1 adds a product, captures its price and raises its line, and
-// never reads availability.
+// what is available" case named by tasks.md T026 (and its concurrent half, T045)
+// is asserted by TestConcurrentAddsCannotExceedAvailableAgainstPostgres below: it
+// drives two simultaneous writes through the real use cases and the real HTTP
+// surface, so what it proves is the cart's row lock (research D9) and not the
+// decision alone.
 
 // integrationClock is the production-like clock for the integration run.
 type integrationClock struct{}
@@ -287,6 +289,79 @@ func TestConcurrentAddsConvergeToOneLineAgainstPostgres(t *testing.T) {
 	}
 	if lines != 1 || quantity != 2 {
 		t.Fatalf("concurrent adds must converge to one line at quantity 2, got %d lines at quantity %d", lines, quantity)
+	}
+}
+
+// SC-002 concurrent case, quickstart 9d, the edge case "hai cập nhật cùng lúc":
+// two writes to the same cart sent at once whose combined quantity exceeds what is
+// available (available = 1, each adds 1) must leave the line no higher than what is
+// available. The cart's row lock serialises the two writes, so exactly one add
+// succeeds and the other is refused with 409 CART_QUANTITY_EXCEEDS_AVAILABLE and
+// changes nothing — it does not raise the successful line past the shelf.
+//
+// Driving this through the real use cases and the real HTTP surface is what proves
+// the lock: calling UpsertLine directly (as the adapter's own integration test
+// does) sums the two adds with no availability check, so it cannot prove SC-002's
+// ceiling.
+func TestConcurrentAddsCannotExceedAvailableAgainstPostgres(t *testing.T) {
+	f := newCartIntegrationFixture(t)
+	seedCartCustomer(t, f.pool)
+	product := seedCartProduct(t, f.pool, 100000)
+	seedStock(t, f.pool, product, 1)
+
+	const racers = 2
+	recs := make([]*httptest.ResponseRecorder, racers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			recs[i] = performJSON(f.root, http.MethodPost, cartPath+"/items", addBody(product, 1), "customer-token")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var accepted, refused int
+	for i, rec := range recs {
+		switch rec.Code {
+		case http.StatusOK:
+			accepted++
+		case http.StatusConflict:
+			body := decodeError(t, rec)
+			if body.Error.Code != "CART_QUANTITY_EXCEEDS_AVAILABLE" {
+				t.Fatalf("refused add %d: expected CART_QUANTITY_EXCEEDS_AVAILABLE, got %s (%s)", i, body.Error.Code, rec.Body.String())
+			}
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "quantity" {
+				t.Fatalf("refused add %d: expected the detail to name quantity, got %+v", i, body.Error.Details)
+			}
+			refused++
+		default:
+			t.Fatalf("add %d: expected 200 or 409, got %d (%s)", i, rec.Code, rec.Body.String())
+		}
+	}
+	if accepted != 1 || refused != 1 {
+		t.Fatalf("expected exactly one accepted add and one refused, got %d accepted and %d refused", accepted, refused)
+	}
+
+	// The line is no higher than what is available: the refused add changed
+	// nothing, it did not raise the successful line to 2.
+	rec := performJSON(f.root, http.MethodGet, cartPath, "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read after the race: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeCart(t, rec)
+	if len(body.Data.Lines) != 1 {
+		t.Fatalf("expected exactly one line, got %+v", body.Data.Lines)
+	}
+	line := body.Data.Lines[0]
+	if line.Quantity != 1 {
+		t.Fatalf("the line must be no higher than the available 1, got %d", line.Quantity)
+	}
+	if !line.Buyable {
+		t.Fatalf("a line at the available amount must be buyable, got %+v", line)
 	}
 }
 
