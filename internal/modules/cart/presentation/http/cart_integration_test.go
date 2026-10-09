@@ -289,3 +289,60 @@ func TestConcurrentAddsConvergeToOneLineAgainstPostgres(t *testing.T) {
 		t.Fatalf("concurrent adds must converge to one line at quantity 2, got %d lines at quantity %d", lines, quantity)
 	}
 }
+
+// FR-012, quickstart scenario 7: a product removed after it was added leaves its
+// line in the cart — there is no foreign key on cart_items.product_id — and that
+// line reads as not buyable with no name, no slug and no available quantity. The
+// customer can then clear it. A fake cannot prove the line survives the delete.
+func TestRemovedProductLeavesAnUnbuyableLineAgainstPostgres(t *testing.T) {
+	f := newCartIntegrationFixture(t)
+	seedCartCustomer(t, f.pool)
+	product := seedCartProduct(t, f.pool, 100000)
+	seedStock(t, f.pool, product, 5)
+
+	rec := performJSON(f.root, http.MethodPost, cartPath+"/items", addBody(product, 2), "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeCart(t, rec); len(body.Data.Lines) != 1 {
+		t.Fatalf("add: expected one line, got %+v", body.Data.Lines)
+	}
+
+	// Remove the product the way module 04 does. Its stock row cascades away; the
+	// cart line has no foreign key and must survive.
+	if _, err := f.pool.Exec(context.Background(), `DELETE FROM products WHERE id = $1`, product); err != nil {
+		t.Fatalf("delete product: %v", err)
+	}
+
+	rec = performJSON(f.root, http.MethodGet, cartPath, "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read after removal: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeCart(t, rec)
+	if len(body.Data.Lines) != 1 {
+		t.Fatalf("the line must survive its product's removal, got %+v", body.Data.Lines)
+	}
+	line := body.Data.Lines[0]
+	if line.ProductID != product {
+		t.Fatalf("unexpected line: %+v", line)
+	}
+	if line.Name != nil || line.Slug != nil {
+		t.Fatalf("a gone product must report no name and no slug, got name=%v slug=%v", line.Name, line.Slug)
+	}
+	if line.Buyable {
+		t.Fatalf("a gone line must not be buyable, got %+v", line)
+	}
+	if line.AvailableQuantity != nil {
+		t.Fatalf("a gone line must report no available quantity, got %d", *line.AvailableQuantity)
+	}
+
+	// The customer can clear the line.
+	rec = performJSON(f.root, http.MethodDelete, cartPath+"/items/"+product.String(), "", "customer-token")
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove: expected 204, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec = performJSON(f.root, http.MethodGet, cartPath, "", "customer-token")
+	if body := decodeCart(t, rec); len(body.Data.Lines) != 0 {
+		t.Fatalf("the cart must be empty after clearing the gone line, got %+v", body.Data.Lines)
+	}
+}

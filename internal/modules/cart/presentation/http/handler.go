@@ -263,15 +263,19 @@ func toMoneyResponse(money appdto.MoneyView) httpdto.MoneyResponse {
 }
 
 // toLineResponse maps one cart line. The name and slug are carried through as
-// null when the product is gone.
+// null when the product is gone; the buyable flag is always carried and the
+// available quantity only when the line is on sale but short (FR-012, research
+// D10).
 func toLineResponse(line appdto.LineView) httpdto.CartLineResponse {
 	return httpdto.CartLineResponse{
-		ProductID: line.ProductID,
-		Name:      line.Name,
-		Slug:      line.Slug,
-		Quantity:  line.Quantity,
-		UnitPrice: toMoneyResponse(line.UnitPrice),
-		LineTotal: toMoneyResponse(line.LineTotal),
+		ProductID:         line.ProductID,
+		Name:              line.Name,
+		Slug:              line.Slug,
+		Quantity:          line.Quantity,
+		UnitPrice:         toMoneyResponse(line.UnitPrice),
+		LineTotal:         toMoneyResponse(line.LineTotal),
+		Buyable:           line.Buyable,
+		AvailableQuantity: line.AvailableQuantity,
 	}
 }
 

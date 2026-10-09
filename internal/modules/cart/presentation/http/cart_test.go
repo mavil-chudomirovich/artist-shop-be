@@ -24,12 +24,14 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
-// This file is US1's transport contract: the singleton /cart group answers an
-// empty cart, the three writes answer the updated cart (or 204 for a removal), and
-// a malformed identifier or a fractional quantity is a field-level validation
-// error. It mounts the routes exactly the way the composition root mounts them,
-// over the real use cases, so the answers asserted are the service's own
-// (contracts/openapi.yaml, FR-002 to FR-004, FR-006).
+// This file is the transport contract of US1 and US2: the singleton /cart group
+// answers an empty cart, the three writes answer the updated cart (or 204 for a
+// removal), a malformed identifier or a fractional quantity is a field-level
+// validation error, and US2's refusals answer the two 409 codes with the offending
+// field named while the view carries each line's buyable flag and, when short, the
+// available quantity. It mounts the routes exactly the way the composition root
+// mounts them, over the real use cases, so the answers asserted are the service's
+// own (contracts/openapi.yaml, FR-002 to FR-007, FR-012).
 
 const cartPath = "/api/v1/cart"
 
@@ -131,13 +133,16 @@ func (f *httpCatalog) Products(_ context.Context, productIDs []uuid.UUID) ([]con
 	return out, nil
 }
 
-// httpAvailability satisfies the availability port; US1 never reaches it.
-type httpAvailability struct{}
+// httpAvailability answers the availability port from a mutable map, so a test
+// can set a product's shelf and later lower it to exercise a short line.
+type httpAvailability struct {
+	available map[uuid.UUID]int64
+}
 
-func (httpAvailability) AvailableQuantity(_ context.Context, productIDs []uuid.UUID) ([]contracts.Availability, error) {
+func (f *httpAvailability) AvailableQuantity(_ context.Context, productIDs []uuid.UUID) ([]contracts.Availability, error) {
 	out := make([]contracts.Availability, 0, len(productIDs))
 	for _, id := range productIDs {
-		out = append(out, contracts.Availability{ProductID: id, Available: 0})
+		out = append(out, contracts.Availability{ProductID: id, Available: f.available[id]})
 	}
 	return out, nil
 }
@@ -170,16 +175,21 @@ func cartHooks(denied *bool) middleware.AuthHooks {
 	}
 }
 
+// defaultHTTPAvailable is the shelf the fixture gives a seeded product unless a
+// test lowers it, so a test that is not about availability is not refused by it.
+const defaultHTTPAvailable int64 = 1000
+
 // newCartRouter builds the real use cases over the in-memory repository and mounts
 // the group the way the composition root mounts it.
-func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *httpRepo, *httpCatalog) {
+func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *httpRepo, *httpCatalog, *httpAvailability) {
 	t.Helper()
 	repo := newHTTPRepo()
 	catalog := &httpCatalog{products: map[uuid.UUID]contracts.ProductSummary{}}
+	availability := &httpAvailability{available: map[uuid.UUID]int64{}}
 	svc := cartimplement.New(cartimplement.Service{
 		Carts:        repo,
 		Products:     catalog,
-		Availability: httpAvailability{},
+		Availability: availability,
 		Tx:           httpTx{},
 		Clock:        httpClock{},
 		Mapper:       cartmapper.New(),
@@ -187,17 +197,38 @@ func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *htt
 	handler := New(svc, testLogger)
 	root := chi.NewRouter()
 	root.Mount(cartPath, handler.Router(hooks))
-	return root, repo, catalog
+	return root, repo, catalog, availability
 }
 
-// seedHTTPProduct puts one on-sale product in the fake catalogue.
-func seedHTTPProduct(catalog *httpCatalog, amount int64) uuid.UUID {
+// seedHTTPProduct puts one on-sale product in the fake catalogue with the
+// fixture's default availability.
+func seedHTTPProduct(catalog *httpCatalog, availability *httpAvailability, amount int64) uuid.UUID {
+	return seedHTTPProductState(catalog, availability, amount, true)
+}
+
+// seedHTTPProductState puts one product in the fake catalogue with the fixture's
+// default availability, on sale or not.
+func seedHTTPProductState(catalog *httpCatalog, availability *httpAvailability, amount int64, onSale bool) uuid.UUID {
 	id := uuid.New()
 	catalog.products[id] = contracts.ProductSummary{
-		ID: id, Name: "Tranh", Slug: "tranh", OnSale: true,
+		ID: id, Name: "Tranh", Slug: "tranh", OnSale: onSale,
 		Price: contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
+	availability.available[id] = defaultHTTPAvailable
 	return id
+}
+
+// seedHTTPAvailable lowers a seeded product's shelf for the fixture.
+func seedHTTPAvailable(availability *httpAvailability, productID uuid.UUID, quantity int64) {
+	availability.available[productID] = quantity
+}
+
+// markHTTPProductOffSale takes a seeded product off sale without touching its name
+// or price.
+func markHTTPProductOffSale(catalog *httpCatalog, productID uuid.UUID) {
+	summary := catalog.products[productID]
+	summary.OnSale = false
+	catalog.products[productID] = summary
 }
 
 // performJSON sends a request with an optional JSON body and bearer token.
@@ -226,12 +257,14 @@ type moneyBody struct {
 type cartBody struct {
 	Data struct {
 		Lines []struct {
-			ProductID uuid.UUID `json:"productId"`
-			Name      *string   `json:"name"`
-			Slug      *string   `json:"slug"`
-			Quantity  int64     `json:"quantity"`
-			UnitPrice moneyBody `json:"unitPrice"`
-			LineTotal moneyBody `json:"lineTotal"`
+			ProductID         uuid.UUID `json:"productId"`
+			Name              *string   `json:"name"`
+			Slug              *string   `json:"slug"`
+			Quantity          int64     `json:"quantity"`
+			UnitPrice         moneyBody `json:"unitPrice"`
+			LineTotal         moneyBody `json:"lineTotal"`
+			Buyable           bool      `json:"buyable"`
+			AvailableQuantity *int64    `json:"availableQuantity"`
 		} `json:"lines"`
 		Subtotal *moneyBody `json:"subtotal"`
 	} `json:"data"`
@@ -289,7 +322,7 @@ func cartRoutes(productID uuid.UUID) []struct {
 // quickstart scenario 1a: an empty cart answers 200 with `lines: []` and
 // `subtotal: null`, not an error and not a created row.
 func TestGetEmptyCartAnswersEmptyWithNullSubtotal(t *testing.T) {
-	router, repo, _ := newCartRouter(t, cartHooks(nil))
+	router, repo, _, _ := newCartRouter(t, cartHooks(nil))
 
 	rec := performJSON(router, http.MethodGet, cartPath, "", "customer-token")
 	if rec.Code != http.StatusOK {
@@ -313,8 +346,8 @@ func TestGetEmptyCartAnswersEmptyWithNullSubtotal(t *testing.T) {
 // quickstart scenario 2: adding a product answers the updated cart with the line
 // and the subtotal.
 func TestAddAnswersTheUpdatedCart(t *testing.T) {
-	router, _, catalog := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, 120000)
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 120000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
 		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
@@ -340,8 +373,8 @@ func TestAddAnswersTheUpdatedCart(t *testing.T) {
 // quickstart scenario 4: changing a line's quantity answers the updated cart and
 // removing it answers 204 with the line gone.
 func TestChangeAndRemoveBehaveAsTheContractDeclares(t *testing.T) {
-	router, _, catalog := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, 100000)
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
 		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
@@ -371,7 +404,7 @@ func TestChangeAndRemoveBehaveAsTheContractDeclares(t *testing.T) {
 // contracts/openapi.yaml: a product identifier that is not a UUID is 400
 // VALIDATION_ERROR naming `productId`, in the body and in the path alike.
 func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
-	router, _, _ := newCartRouter(t, cartHooks(nil))
+	router, _, _, _ := newCartRouter(t, cartHooks(nil))
 
 	cases := []struct {
 		name   string
@@ -403,8 +436,8 @@ func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
 // contracts/openapi.yaml: a fractional quantity is a field error, not a decode
 // failure. The request DTO decodes `quantity` as a json.Number, as module 05 does.
 func TestFractionalQuantityIs400NamingQuantity(t *testing.T) {
-	router, _, catalog := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, 100000)
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
 
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
 		`{"productId":"`+product.String()+`","quantity":1.5}`, "customer-token"); rec.Code != http.StatusBadRequest {
@@ -425,7 +458,7 @@ func TestFractionalQuantityIs400NamingQuantity(t *testing.T) {
 
 // A product absent from the catalogue is the shared PRODUCT_NOT_FOUND (404).
 func TestAddUnknownProductIs404(t *testing.T) {
-	router, _, _ := newCartRouter(t, cartHooks(nil))
+	router, _, _, _ := newCartRouter(t, cartHooks(nil))
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
 		`{"productId":"`+uuid.New().String()+`","quantity":1}`, "customer-token")
@@ -434,5 +467,170 @@ func TestAddUnknownProductIs404(t *testing.T) {
 	}
 	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
 		t.Fatalf("expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// US2, FR-005, error-codes.md: adding a product that is not on sale is 409
+// CART_PRODUCT_NOT_PURCHASABLE and its detail names `productId`.
+func TestAddOffSaleProductIs409NamingProduct(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProductState(catalog, availability, 100000, false)
+
+	rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":1}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != "CART_PRODUCT_NOT_PURCHASABLE" {
+		t.Fatalf("expected CART_PRODUCT_NOT_PURCHASABLE, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
+		t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
+	}
+}
+
+// US2, FR-007, error-codes.md: adding more than is available is 409
+// CART_QUANTITY_EXCEEDS_AVAILABLE and its detail names `quantity` with the
+// available amount in the issue.
+func TestAddOverAvailableIs409NamingQuantity(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
+	seedHTTPAvailable(availability, product, 3)
+
+	rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":5}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != "CART_QUANTITY_EXCEEDS_AVAILABLE" {
+		t.Fatalf("expected CART_QUANTITY_EXCEEDS_AVAILABLE, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "quantity" {
+		t.Fatalf("expected the detail to name quantity, got %+v", body.Error.Details)
+	}
+	if !strings.Contains(body.Error.Details[0].Issue, "3") {
+		t.Fatalf("the issue must state the available amount, got %q", body.Error.Details[0].Issue)
+	}
+
+	// The whole available amount is reachable.
+	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":3}`, "customer-token"); rec.Code != http.StatusOK {
+		t.Fatalf("adding exactly the available amount: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// US2, FR-005: a PATCH onto a line whose product has gone off sale is the same
+// 409 CART_PRODUCT_NOT_PURCHASABLE, naming productId, and the previous quantity is
+// kept.
+func TestPatchOffSaleIs409NamingProduct(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
+
+	rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	markHTTPProductOffSale(catalog, product)
+
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":5}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != "CART_PRODUCT_NOT_PURCHASABLE" {
+		t.Fatalf("expected CART_PRODUCT_NOT_PURCHASABLE, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
+		t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
+	}
+
+	// The previous quantity is untouched.
+	rec = performJSON(router, http.MethodGet, cartPath, "", "customer-token")
+	if cart := decodeCart(t, rec); len(cart.Data.Lines) != 1 || cart.Data.Lines[0].Quantity != 2 {
+		t.Fatalf("a refused change must keep the previous quantity, got %+v", cart.Data.Lines)
+	}
+}
+
+// US2, FR-007: a PATCH above what is now available is 409
+// CART_QUANTITY_EXCEEDS_AVAILABLE, naming quantity, and the previous quantity is
+// kept; reducing to the available amount succeeds and reads buyable again.
+func TestPatchOverAvailableIs409NamingQuantity(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
+
+	rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":1}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	seedHTTPAvailable(availability, product, 2)
+
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":5}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != "CART_QUANTITY_EXCEEDS_AVAILABLE" {
+		t.Fatalf("expected CART_QUANTITY_EXCEEDS_AVAILABLE, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "quantity" {
+		t.Fatalf("expected the detail to name quantity, got %+v", body.Error.Details)
+	}
+
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":2}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reducing to the available amount: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	cart := decodeCart(t, rec)
+	if len(cart.Data.Lines) != 1 || cart.Data.Lines[0].Quantity != 2 || !cart.Data.Lines[0].Buyable {
+		t.Fatalf("the reduced line must be buyable at quantity 2, got %+v", cart.Data.Lines)
+	}
+}
+
+// US2, FR-012, research D10: the view always carries `buyable`, and carries
+// `availableQuantity` only when the line is on sale but short of its quantity.
+func TestViewCarriesBuyableAndAvailableQuantityOnlyWhenShort(t *testing.T) {
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
+	seedHTTPAvailable(availability, product, 3)
+
+	rec := performJSON(router, http.MethodPost, cartPath+"/items",
+		`{"productId":"`+product.String()+`","quantity":3}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeCart(t, rec)
+	if len(body.Data.Lines) != 1 {
+		t.Fatalf("expected one line, got %+v", body.Data.Lines)
+	}
+	if !body.Data.Lines[0].Buyable {
+		t.Fatalf("a fully available line must be buyable, got %+v", body.Data.Lines[0])
+	}
+	if body.Data.Lines[0].AvailableQuantity != nil {
+		t.Fatalf("a buyable line must not report an available quantity, got %d", *body.Data.Lines[0].AvailableQuantity)
+	}
+	if strings.Contains(rec.Body.String(), "availableQuantity") {
+		t.Fatalf("a fully available line must not carry availableQuantity, got %s", rec.Body.String())
+	}
+
+	// Damage the shelf so the line is now short.
+	seedHTTPAvailable(availability, product, 1)
+	rec = performJSON(router, http.MethodGet, cartPath, "", "customer-token")
+	body = decodeCart(t, rec)
+	if len(body.Data.Lines) != 1 {
+		t.Fatalf("expected one line, got %+v", body.Data.Lines)
+	}
+	line := body.Data.Lines[0]
+	if line.Buyable {
+		t.Fatalf("a short line must not be buyable, got %+v", line)
+	}
+	if line.AvailableQuantity == nil || *line.AvailableQuantity != 1 {
+		t.Fatalf("a short line must report available=1, got %+v", line.AvailableQuantity)
+	}
+	if line.Quantity != 3 || line.UnitPrice.Amount != 100000 {
+		t.Fatalf("a read must not change the quantity or captured price, got %+v", line)
 	}
 }

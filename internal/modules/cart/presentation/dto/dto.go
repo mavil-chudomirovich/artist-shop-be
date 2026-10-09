@@ -18,7 +18,10 @@ type MoneyResponse struct {
 // CartLineResponse is one cart line as a client reads it (contracts/openapi.yaml,
 // CartLine). The unit price is the one captured when the product was added; the
 // name and slug are the product's current values and are null when the product is
-// gone (FR-004). The buyable flag and the optional available quantity are US2's.
+// gone (FR-004). Buyable reports whether the line can be bought as it stands, and
+// it is always carried; AvailableQuantity is carried only when the line is on
+// sale but short of its quantity, so a client knows how far to reduce it (FR-012,
+// research D10).
 type CartLineResponse struct {
 	// ProductID is the product the line is for.
 	ProductID uuid.UUID `json:"productId"`
@@ -33,6 +36,11 @@ type CartLineResponse struct {
 	UnitPrice MoneyResponse `json:"unitPrice"`
 	// LineTotal is quantity times the captured price.
 	LineTotal MoneyResponse `json:"lineTotal"`
+	// Buyable reports whether the line can be bought as it stands.
+	Buyable bool `json:"buyable"`
+	// AvailableQuantity is the currently available amount, present only when the
+	// line is on sale but short of its quantity.
+	AvailableQuantity *int64 `json:"availableQuantity,omitempty"`
 }
 
 // CartResponse is the caller's whole cart (contracts/openapi.yaml, Cart). Subtotal

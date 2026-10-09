@@ -12,8 +12,8 @@ import (
 // reaches a handler without one (research D7, FR-010).
 
 func TestTheUS1CartPathsResolve(t *testing.T) {
-	router, _, catalog := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, 100000)
+	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
+	product := seedHTTPProduct(catalog, availability, 100000)
 
 	if rec := performJSON(router, http.MethodGet, cartPath, "", "customer-token"); rec.Code != http.StatusOK {
 		t.Fatalf("GET /cart: expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -40,7 +40,7 @@ func TestTheUS1CartPathsResolve(t *testing.T) {
 // reaching a handler, which is what proves the session guard is installed on the
 // group and not on the individual routes only.
 func TestTheCartGroupRequiresASession(t *testing.T) {
-	router, _, _ := newCartRouter(t, cartHooks(nil))
+	router, _, _, _ := newCartRouter(t, cartHooks(nil))
 	product := uuid.New()
 
 	for _, route := range cartRoutes(product) {
