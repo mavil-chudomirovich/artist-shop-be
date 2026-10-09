@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
@@ -27,10 +28,16 @@ import (
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
 	categoryvisibility "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/visibility"
 	categoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/presentation/http"
+	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
+	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
+	inventoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/auditor"
+	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
+	inventoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/http"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	productappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	productauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/auditor"
+	productavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/availability"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
 	producthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
@@ -275,6 +282,28 @@ func run() error {
 	})
 	productHandler := producthttp.New(productService, productConfig, logger)
 
+	// Module 05 (inventory). One administrator group, /admin/inventory, carries
+	// the administrator role guard. The module depends on module 04 through the
+	// two cross-module contracts: the availability signal it will send (US4) and
+	// the existence question a read or a decrease must ask. Both are answered by
+	// module 04's own adapter, supplied here, so inventory never imports product's
+	// internals (research D4, Constitution I). The module reuses the foundation
+	// audit writer one more time: one queue, one retry policy, one shutdown.
+	//
+	// The wall clock is the one seam that makes the hold window and the sweep
+	// testable; the manual operations only stamp rows with it (research D15).
+	productAvailability := productavailability.New(productService, productRepository)
+	inventoryRepository := inventorypostgres.NewInventoryRepository(db.Pool)
+	inventoryService := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: inventoryRepository,
+		Lookup:    productAvailability,
+		Tx:        db,
+		Clock:     wallClock{},
+		Audit:     inventoryauditor.New(auditWriter),
+		Mapper:    inventorymapper.New(),
+	})
+	inventoryHandler := inventoryhttp.New(inventoryService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -310,6 +339,10 @@ func run() error {
 			// identifier behind the administrator role guard (research D11).
 			r.Mount("/products", productHandler.Router(authHooks))
 			r.Mount("/admin/products", productHandler.AdminRouter(authHooks))
+			// The inventory administrator surface: one product's stock and its
+			// manual operations, addressed by identifier behind the administrator
+			// role guard (research D8).
+			r.Mount("/admin/inventory", inventoryHandler.AdminRouter(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
@@ -335,3 +368,11 @@ func run() error {
 	auditWriter.Stop(shutdownCtx)
 	return nil
 }
+
+// wallClock is the production Clock the inventory module reads time through: the
+// system's wall clock in UTC. Injecting it here is what lets the hold window and
+// the sweep be driven by a deterministic clock in tests (research D15).
+type wallClock struct{}
+
+// Now returns the current instant in UTC.
+func (wallClock) Now() time.Time { return time.Now().UTC() }
