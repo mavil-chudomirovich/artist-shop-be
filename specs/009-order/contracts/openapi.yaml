@@ -1,0 +1,666 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Order Module
+  version: 1.0.0
+  description: >
+    The order a customer commits to: turning the cart into an order, the order's selling life, and
+    the operator's order desk. Every response uses the foundation envelope (data + meta, or error) and
+    the X-Request-Id correlation header.
+
+    An order carries a snapshot of what was bought — each line's product name, price and currency,
+    and the delivery address — so nothing an order shows depends on a product or an address still
+    existing. Money is an integer amount in the currency's minor unit plus the currency; the total is
+    the sum of the lines and carries no shipping fee.
+
+    Where an order is in its life is changed through its own endpoints (cancel, ship, complete), never
+    by sending a status on an update: a move is a transition that can be refused, and the refusal
+    names the state that made it invalid. There is no pay endpoint — a real payment is module 08's.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: orders
+    description: The signed-in customer's own orders. Session required.
+  - name: admin
+    description: The order desk. Administrator role required.
+paths:
+  /api/v1/orders:
+    post:
+      tags: [orders]
+      summary: Check out the cart into an order
+      description: >
+        Turns the caller's cart into an order. Every line is re-checked against the product's current
+        sale state and price and against what is available; the whole checkout is refused if any line
+        fails. On success the goods are held for the customer, the cart is emptied, and the order is
+        returned awaiting payment.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CheckoutRequest"
+      responses:
+        "201":
+          description: The new order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The body does not parse or carries an unknown field (MALFORMED_REQUEST), or `addressId` is
+            not a UUID or is not one of the customer's addresses (VALIDATION_ERROR, with the field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          description: >
+            The checkout was refused and nothing was created: the cart is empty (ORDER_CART_EMPTY); a
+            line's product is off sale or removed (ORDER_ITEM_NOT_PURCHASABLE); a line's price changed
+            since it was added (ORDER_ITEM_PRICE_CHANGED); a line asks for more than is available, or
+            the goods could not be held (ORDER_QUANTITY_EXCEEDS_AVAILABLE); or the customer has no
+            delivery address (ORDER_NO_ADDRESS). The offending item is named in `error.details`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+    get:
+      tags: [orders]
+      summary: List the signed-in customer's orders
+      description: Returns the caller's own orders, newest first, paginated.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of the customer's orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OrderSummary"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/orders/{orderId}:
+    get:
+      tags: [orders]
+      summary: Read one of the signed-in customer's orders
+      description: >
+        Returns the caller's own order in full. An order that does not exist, or belongs to another
+        customer, answers the same not-found, so the route never confirms another customer's order.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: No such order, or it is not the caller's (ORDER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/orders/{orderId}/cancel:
+    post:
+      tags: [orders]
+      summary: Cancel the signed-in customer's unpaid order
+      description: >
+        Cancels an order that is still awaiting payment and returns its goods. A paid order cannot be
+        cancelled, because the system has no "cancel a paid order".
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The cancelled order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/OrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          description: No such order, or it is not the caller's (ORDER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The order is not awaiting payment, so it cannot be cancelled
+            (ORDER_STATE_TRANSITION_INVALID, naming the current state). A paid order is transferred
+            instead.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/orders:
+    get:
+      tags: [admin]
+      summary: List every order (ADMIN)
+      description: Returns every order, newest first, with its owner, state and total, paginated.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminOrderSummary"
+                  meta:
+                    $ref: "#/components/schemas/PagedMeta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/orders/{orderId}:
+    get:
+      tags: [admin]
+      summary: Read one order in full (ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The order, including its owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminOrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No order carries that identifier (ORDER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/orders/{orderId}/ship:
+    post:
+      tags: [admin]
+      summary: Mark a paid order shipped (ADMIN)
+      description: Moves a paid order to shipped and records the act.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The shipped order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminOrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No order carries that identifier (ORDER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The order is not paid, so it cannot be shipped (ORDER_STATE_TRANSITION_INVALID, naming the
+            current state).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/orders/{orderId}/complete:
+    post:
+      tags: [admin]
+      summary: Mark a shipped order completed (ADMIN)
+      description: Moves a shipped order to completed and records the act.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The completed order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminOrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No order carries that identifier (ORDER_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The order is not shipped, so it cannot be completed (ORDER_STATE_TRANSITION_INVALID,
+            naming the current state).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+  /api/v1/admin/orders/{orderId}/transfer:
+    post:
+      tags: [admin]
+      summary: Transfer a paid order to another account (ADMIN)
+      description: >
+        Hands a paid order to the account whose email is given, changing only the owner. The order's
+        lines, state and total are unchanged and no stock moves. An unpaid order cannot be transferred.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
+      responses:
+        "200":
+          description: The order, now owned by the recipient.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AdminOrderDetail"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          description: >
+            The body does not parse or carries an unknown field (MALFORMED_REQUEST), or `email` is
+            missing or not an email (VALIDATION_ERROR, with the field named).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: >
+            No order carries that identifier, or no account carries that email
+            (ORDER_NOT_FOUND / ORDER_TRANSFER_TARGET_NOT_FOUND).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "409":
+          description: >
+            The order is not paid, so it cannot be transferred (ORDER_NOT_TRANSFERABLE).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/Internal"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  responses:
+    BadRequest:
+      description: VALIDATION_ERROR (400) with the offending field named.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthenticated:
+      description: UNAUTHENTICATED (401). No token or an expired one.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: FORBIDDEN (403). A customer's session reached an administrator route.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: RATE_LIMITED (429), with Retry-After.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Internal:
+      description: INTERNAL_ERROR (500). Something unexpected failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+    PagedMeta:
+      allOf:
+        - $ref: "#/components/schemas/Meta"
+        - type: object
+          properties:
+            page:
+              type: integer
+            pageSize:
+              type: integer
+            total:
+              type: integer
+              description: >
+                Absent when zero, because the shared envelope omits it. A client must read a missing
+                total as 0.
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        requestId:
+          type: string
+          format: uuid
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/Error"
+    Money:
+      type: object
+      required: [amount, currency]
+      description: >
+        Money as an integer amount in the currency's minor unit plus the currency. Never a floating
+        point number.
+      properties:
+        amount:
+          type: integer
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+    OrderStatus:
+      type: string
+      enum: [PENDING_PAYMENT, PAID, SHIPPED, COMPLETED, CANCELLED]
+      description: >
+        Where the order is in its life. PENDING_PAYMENT becomes PAID on a confirmed payment, then
+        SHIPPED and COMPLETED; PENDING_PAYMENT becomes CANCELLED by the customer or by expiry.
+        CANCELLED is terminal.
+    OrderSummary:
+      type: object
+      required: [id, status, total, itemCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        total:
+          $ref: "#/components/schemas/Money"
+        itemCount:
+          type: integer
+          description: How many lines the order carries.
+        createdAt:
+          type: string
+          format: date-time
+    AdminOrderSummary:
+      allOf:
+        - $ref: "#/components/schemas/OrderSummary"
+        - type: object
+          required: [userId]
+          properties:
+            userId:
+              type: string
+              format: uuid
+              description: The account that owns the order.
+    OrderAddress:
+      type: object
+      required:
+        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress]
+      description: The delivery address as it was captured at checkout.
+      properties:
+        recipientName:
+          type: string
+        recipientPhone:
+          type: string
+        provinceCode:
+          type: string
+        provinceName:
+          type: string
+        wardCode:
+          type: string
+        wardName:
+          type: string
+        streetAddress:
+          type: string
+    OrderLine:
+      type: object
+      required: [productId, name, slug, quantity, unitPrice, lineTotal]
+      description: >
+        One item of an order, a snapshot taken at checkout. `name`, `slug` and `unitPrice` are the
+        product's values as they were then, not read again; `productId` is the product recorded, not a
+        live reference.
+      properties:
+        productId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          $ref: "#/components/schemas/Money"
+        lineTotal:
+          $ref: "#/components/schemas/Money"
+    OrderDetail:
+      allOf:
+        - $ref: "#/components/schemas/OrderSummary"
+        - type: object
+          required: [address, lines]
+          properties:
+            address:
+              $ref: "#/components/schemas/OrderAddress"
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrderLine"
+    AdminOrderDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminOrderSummary"
+        - type: object
+          required: [address, lines]
+          properties:
+            address:
+              $ref: "#/components/schemas/OrderAddress"
+            lines:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrderLine"
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        The address to deliver to. Omitted or null uses the customer's default address; a customer with
+        no address is refused.
+      properties:
+        addressId:
+          type: [string, "null"]
+          format: uuid
+    TransferRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
