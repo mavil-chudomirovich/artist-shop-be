@@ -99,12 +99,29 @@ type reserveCall struct {
 	quantity  int64
 }
 
+// saleCall records one hold consumed into a sale, with the per-line source
+// reference the payment event produced (FR-014, research D5).
+type saleCall struct {
+	orderID   uuid.UUID
+	productID uuid.UUID
+	reference string
+}
+
+// releaseCall records one hold returned to availability (FR-015).
+type releaseCall struct {
+	orderID   uuid.UUID
+	productID uuid.UUID
+}
+
 // fakeReservation answers the InventoryReservation contract. It records every
-// hold and can be made to fail for one product, so a test can exercise FR-017:
-// another customer's hold took the last unit. onReserve runs before the decision,
-// letting a test lower the shelf exactly as a competing hold would.
+// hold, sale and release and can be made to fail for one product, so a test can
+// exercise FR-017: another customer's hold took the last unit. onReserve runs
+// before the decision, letting a test lower the shelf exactly as a competing hold
+// would.
 type fakeReservation struct {
 	calls     []reserveCall
+	sales     []saleCall
+	releases  []releaseCall
 	failFor   map[uuid.UUID]error
 	onReserve func(productID uuid.UUID)
 	window    time.Duration
@@ -121,9 +138,15 @@ func (f *fakeReservation) Reserve(_ context.Context, orderID, productID uuid.UUI
 	return nil
 }
 
-func (f *fakeReservation) Release(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+func (f *fakeReservation) Release(_ context.Context, orderID, productID uuid.UUID) error {
+	f.releases = append(f.releases, releaseCall{orderID: orderID, productID: productID})
+	return nil
+}
 
-func (f *fakeReservation) ApplySale(context.Context, uuid.UUID, uuid.UUID, string) error { return nil }
+func (f *fakeReservation) ApplySale(_ context.Context, orderID, productID uuid.UUID, reference string) error {
+	f.sales = append(f.sales, saleCall{orderID: orderID, productID: productID, reference: reference})
+	return nil
+}
 
 func (f *fakeReservation) HoldWindow() time.Duration {
 	if f.window == 0 {

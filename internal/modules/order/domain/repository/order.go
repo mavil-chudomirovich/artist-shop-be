@@ -53,6 +53,14 @@ type OrderRepository interface {
 	// transaction.
 	ListAll(ctx context.Context, page, size int) ([]model.OrderSummary, int64, error)
 
+	// ListExpiredPending returns the identifiers of the orders still awaiting
+	// payment whose window has passed at the given instant, oldest deadline
+	// first, so the expiry sweep is reproducible (FR-012, research D6). The
+	// comparison is against the instant the caller passed, never the database
+	// clock, so the order's sweep and the inventory's agree on what has expired.
+	// It joins the caller's transaction.
+	ListExpiredPending(ctx context.Context, now time.Time) ([]uuid.UUID, error)
+
 	// LockByID returns one order with its lines under the order's row lock, for a
 	// transition. The lock serialises two concurrent moves on the same order so
 	// the domain transition reads the current state under it (FR-010, research

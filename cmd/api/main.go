@@ -45,6 +45,7 @@ import (
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
+	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	productappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
@@ -367,6 +368,14 @@ func run() error {
 	})
 	orderHandler := orderhttp.New(orderService, logger)
 
+	// The order expiry sweeper cancels every awaiting-payment order whose
+	// fifteen-minute hold window has passed and returns its goods, so an unpaid
+	// order cannot hold stock forever. It is the project's second sweeper,
+	// mirroring module 05's: it carries no business rule, calls the expire use
+	// case every interval, and stops on the same context the rest of the
+	// composition shares (FR-012, research D6).
+	orderSweeper := orderworker.New(orderService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -418,10 +427,11 @@ func run() error {
 	})
 	server := httpserver.New(cfg, logger, router)
 
-	// The sweeper runs beside the server and the audit writer, on the same
-	// signal-derived context: a shutdown cancels it with everything else. It
-	// blocks, so it gets its own goroutine.
+	// The sweepers run beside the server and the audit writer, on the same
+	// signal-derived context: a shutdown cancels them with everything else. They
+	// block, so each gets its own goroutine.
 	go inventorySweeper.Start(ctx)
+	go orderSweeper.Start(ctx)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start() }()
@@ -447,6 +457,7 @@ func run() error {
 	}
 	auditWriter.Stop(shutdownCtx)
 	inventorySweeper.Stop()
+	orderSweeper.Stop()
 	return nil
 }
 

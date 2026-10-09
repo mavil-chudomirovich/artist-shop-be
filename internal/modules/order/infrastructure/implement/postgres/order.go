@@ -275,6 +275,33 @@ func (r *OrderRepository) listSummaries(ctx context.Context, ownerID uuid.UUID, 
 	return out, total, nil
 }
 
+// ListExpiredPending returns the identifiers of the orders still awaiting payment
+// whose window has passed at the given instant, oldest deadline first, so a sweep
+// is reproducible. It uses orders_expiry_idx (status, expires_at) and compares
+// against the instant the caller passed, never the database clock, so the order's
+// sweep and the inventory's agree on what has expired (FR-012, research D6).
+func (r *OrderRepository) ListExpiredPending(ctx context.Context, now time.Time) ([]uuid.UUID, error) {
+	const query = `SELECT id FROM orders WHERE status = $1 AND expires_at <= $2 ORDER BY expires_at, id`
+	rows, err := r.querier(ctx).Query(ctx, query, string(constant.StatusPendingPayment), now)
+	if err != nil {
+		return nil, fmt.Errorf("list expired orders: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan expired order id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UpdateStatus writes one order's state and touches its updated_at. The state is
 // written only after the domain transition has accepted the move, so the row
 // always carries a state the domain allows (FR-010).

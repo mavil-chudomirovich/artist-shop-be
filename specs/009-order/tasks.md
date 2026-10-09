@@ -86,17 +86,17 @@ description: "Task list for Order Checkout (module 07)"
 
 ### Tests for User Story 1 ⚠️
 
-- [ ] T022 [P] [US1] Use-case tests `internal/modules/order/application/implement/checkout_test.go`: a successful checkout snapshots each line and the address, holds each line, and clears the cart in one transaction; and the refusals — empty cart, an off-sale/removed product, a price that changed after adding, a quantity above what is available (naming the available amount), a customer with no address, and a line whose hold cannot be taken because another customer holds the last unit (FR-017, `Reserve` returning an error) — each leaving nothing created
-- [ ] T023 [P] [US1] HTTP tests `internal/modules/order/presentation/http/checkout_test.go`: `POST /orders` returns `201` with the created order, `401` without a session, and each `409`/`400` code from `contracts/error-codes.md`
-- [ ] T024 [P] [US1] Error-mapping test `internal/modules/order/presentation/http/errors_test.go`: each domain sentinel maps to its documented status and code, and an unknown failure maps to `INTERNAL_ERROR`
+- [X] T022 [P] [US1] Use-case tests `internal/modules/order/application/implement/checkout_test.go`: a successful checkout snapshots each line and the address, holds each line, and clears the cart in one transaction; and the refusals — empty cart, an off-sale/removed product, a price that changed after adding, a quantity above what is available (naming the available amount), a customer with no address, and a line whose hold cannot be taken because another customer holds the last unit (FR-017, `Reserve` returning an error) — each leaving nothing created
+- [X] T023 [P] [US1] HTTP tests `internal/modules/order/presentation/http/checkout_test.go`: `POST /orders` returns `201` with the created order, `401` without a session, and each `409`/`400` code from `contracts/error-codes.md`
+- [X] T024 [P] [US1] Error-mapping test `internal/modules/order/presentation/http/errors_test.go`: each domain sentinel maps to its documented status and code, and an unknown failure maps to `INTERNAL_ERROR`
 
 ### Implementation for User Story 1
 
-- [ ] T025 [US1] Create `internal/modules/order/application/implement/checkout.go`: the checkout use case — read the cart through `CartCheckout`, re-read each line's current facts through `ProductCatalog` and `InventoryAvailability`, refuse on any unbuyable/changed/over-available line or missing address, snapshot the lines and address (via `CustomerLookupService`), create the order with `expires_at = now + InventoryReservation.HoldWindow()`, hold every line through `InventoryReservation`, and clear the cart — all inside one `UnitOfWork` (FR-001–FR-007, FR-013, FR-016, FR-017)
-- [ ] T026 [US1] Create `internal/modules/order/presentation/dto/dto.go`: the request/response shapes for `POST /orders`
-- [ ] T027 [US1] Create `internal/modules/order/presentation/http/{handler.go,router.go,errors.go}`: the checkout handler and its route, the error mapping, and the actor-from-session extraction (FR-020)
-- [ ] T028 [US1] In `cmd/api/main.go`: mount the order module behind `/api/v1`, wire the `CartCheckout`, `ProductCatalog`, `InventoryAvailability`, `InventoryReservation`, `CustomerLookupService` and `AccountLookup` adapters into the order service, and depend on nothing else
-- [ ] T029 [US1] Create `internal/modules/order/presentation/http/order_integration_test.go`: checkout end-to-end against real PostgreSQL — the order is created with its snapshots and address, the goods are held (available fell, physical unchanged), the cart is empty, and **two concurrent checkouts of one cart produce exactly one order** (SC-001, SC-002)
+- [X] T025 [US1] Create `internal/modules/order/application/implement/checkout.go`: the checkout use case — read the cart through `CartCheckout`, re-read each line's current facts through `ProductCatalog` and `InventoryAvailability`, refuse on any unbuyable/changed/over-available line or missing address, snapshot the lines and address (via `CustomerLookupService`), create the order with `expires_at = now + InventoryReservation.HoldWindow()`, hold every line through `InventoryReservation`, and clear the cart — all inside one `UnitOfWork` (FR-001–FR-007, FR-013, FR-016, FR-017)
+- [X] T026 [US1] Create `internal/modules/order/presentation/dto/dto.go`: the request/response shapes for `POST /orders`
+- [X] T027 [US1] Create `internal/modules/order/presentation/http/{handler.go,router.go,errors.go}`: the checkout handler and its route, the error mapping, and the actor-from-session extraction (FR-020)
+- [X] T028 [US1] In `cmd/api/main.go`: mount the order module behind `/api/v1`, wire the `CartCheckout`, `ProductCatalog`, `InventoryAvailability`, `InventoryReservation`, `CustomerLookupService` and `AccountLookup` adapters into the order service, and depend on nothing else
+- [X] T029 [US1] Create `internal/modules/order/presentation/http/order_integration_test.go`: checkout end-to-end against real PostgreSQL — the order is created with its snapshots and address, the goods are held (available fell, physical unchanged), the cart is empty, and **two concurrent checkouts of one cart produce exactly one order** (SC-001, SC-002)
 
 **Checkpoint**: User Story 1 is fully functional and testable on its own — a cart becomes an order.
 
@@ -110,15 +110,15 @@ description: "Task list for Order Checkout (module 07)"
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T030 [P] [US2] Use-case tests `internal/modules/order/application/implement/lifecycle_test.go`: `MarkPaid` turns the hold into a sale through `InventoryReservation.ApplySale` with the per-line source reference, exactly once even when replayed; `Cancel` returns the hold through `Release`, exactly once; `Ship`/`Complete` call the transitions and refuse an illegal move naming the state
-- [ ] T031 [P] [US2] Sweeper tests `internal/modules/order/presentation/worker/sweeper_test.go` with an injected clock: an unpaid order past its window becomes `CANCELLED` and its goods are released, once; a paid/other order is untouched
+- [X] T030 [P] [US2] Use-case tests `internal/modules/order/application/implement/lifecycle_test.go`: `MarkPaid` turns the hold into a sale through `InventoryReservation.ApplySale` with the per-line source reference, exactly once even when replayed; `Cancel` returns the hold through `Release`, exactly once; `Ship`/`Complete` call the transitions and refuse an illegal move naming the state
+- [X] T031 [P] [US2] Sweeper tests `internal/modules/order/presentation/worker/sweeper_test.go` with an injected clock: an unpaid order past its window becomes `CANCELLED` and its goods are released, once; a paid/other order is untouched
 
 ### Implementation for User Story 2
 
-- [ ] T032 [US2] Create `internal/modules/order/application/implement/lifecycle.go`: `MarkPaid`, `Cancel`, `Ship`, `Complete` — each in a `UnitOfWork`, locking the order (`LockByID`), driving the domain transition, and calling module 05 (`ApplySale` on pay, `Release` on cancel) in the same transaction (FR-009–FR-012, FR-014, FR-015)
-- [ ] T033 [US2] Create `internal/modules/order/presentation/worker/sweeper.go`: the expiry sweep — find unpaid orders past `expires_at` (`orders_expiry_idx`) and cancel then release each, idempotent against module 05's own sweep (FR-012, research D6)
-- [ ] T034 [US2] In `cmd/api/main.go`: start and stop the expiry sweeper with the application lifecycle, mirroring module 05's
-- [ ] T035 [US2] Create `internal/modules/order/application/implement/lifecycle_integration_test.go`: against real PostgreSQL — the status check rejects an unlisted state, confirming payment twice sells the held quantity **once**, and an expired order frees its goods **exactly once** across both the order and inventory sweeps (SC-003, SC-004)
+- [X] T032 [US2] Create `internal/modules/order/application/implement/lifecycle.go`: `MarkPaid`, `Cancel`, `Ship`, `Complete` — each in a `UnitOfWork`, locking the order (`LockByID`), driving the domain transition, and calling module 05 (`ApplySale` on pay, `Release` on cancel) in the same transaction (FR-009–FR-012, FR-014, FR-015)
+- [X] T033 [US2] Create `internal/modules/order/presentation/worker/sweeper.go`: the expiry sweep — find unpaid orders past `expires_at` (`orders_expiry_idx`) and cancel then release each, idempotent against module 05's own sweep (FR-012, research D6)
+- [X] T034 [US2] In `cmd/api/main.go`: start and stop the expiry sweeper with the application lifecycle, mirroring module 05's
+- [X] T035 [US2] Create `internal/modules/order/application/implement/lifecycle_integration_test.go`: against real PostgreSQL — the status check rejects an unlisted state, confirming payment twice sells the held quantity **once**, and an expired order frees its goods **exactly once** across both the order and inventory sweeps (SC-003, SC-004)
 
 **Checkpoint**: User Story 1 and 2 both work; the states and the hold are trustworthy.
 

@@ -103,6 +103,11 @@ type OrderService interface {
 	// Complete moves a shipped order to completed (FR-022).
 	Complete(ctx context.Context, orderID uuid.UUID) error
 
+	// ExpireOrders cancels every awaiting-payment order whose window has passed
+	// and returns its goods, exactly once, so an unpaid order cannot hold stock
+	// forever. It is the use case the expiry sweeper calls (FR-012, research D6).
+	ExpireOrders(ctx context.Context) error
+
 	// ListMine returns one page of the caller's own orders, newest first
 	// (FR-018).
 	ListMine(ctx context.Context, in dto.ListInput) (dto.OrderPage, error)
