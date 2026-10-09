@@ -212,9 +212,9 @@ description: "Task list for Order Checkout (module 07)"
 
 - [X] T058 Normalize the new files to UTF-8 (LF); check for BOM
 - [X] T059 Run `make lint` and `make test`
-- [ ] T060 Run `make test-integration` (needs Docker) and confirm it did not skip
-- [ ] T061 Run `quickstart.md` validation
-- [ ] T062 Run `make check` and confirm `swagger-check` passes
+- [X] T060 Run `make test-integration` (needs Docker) and confirm it did not skip
+- [X] T061 Run `quickstart.md` validation
+- [X] T062 Run `make check` and confirm `swagger-check` passes
 
 ---
 
