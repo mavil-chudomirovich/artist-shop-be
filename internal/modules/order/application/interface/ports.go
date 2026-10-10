@@ -100,9 +100,9 @@ type Notifier interface {
 // module 08 drives it (research D13).
 type OrderService interface {
 	// Checkout turns the caller's cart into an order: it re-checks every line,
-	// snapshots the lines and the delivery address, holds the goods, creates the
-	// order and empties the cart, all in one transaction (FR-001 to FR-007,
-	// FR-013, FR-017).
+	// snapshots the lines and the delivery address, creates the order and empties
+	// the cart, all in one transaction. It holds no goods; the goods are held only
+	// when the artist confirms it (FR-001 to FR-007, FR-013, FR-017).
 	Checkout(ctx context.Context, in dto.CheckoutInput) (dto.OrderView, error)
 
 	// MarkPaid turns an awaiting-payment order into a paid one, consuming its
