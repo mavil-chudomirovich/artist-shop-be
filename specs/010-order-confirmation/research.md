@@ -103,7 +103,10 @@ edit bumps `order_version` and writes an `order_edit_history` row (before/after 
 
 **Rationale**: FR-012/FR-015/FR-017 and the user's choice of whole-order replacement. Reusing
 `addressId` keeps one address model (checkout's) rather than inventing free-text editing. Refusing an
-empty order keeps the existing invariant that an order has at least one line and a positive total.
+empty order keeps the existing invariant that an order has at least one line and a positive total. Each
+line's snapshot (name, slug, unit price, currency) is **re-taken from the product's current values**,
+because the customer is choosing the items again: a price that changed since the order was placed is
+**not** refused, unlike checkout, where the cart held a price the customer had already seen.
 
 **Alternatives considered**: Per-line endpoints — rejected by the user (more endpoints, more races).
 Free-text address editing — rejected: it would fork the address model from checkout. Allowing an empty

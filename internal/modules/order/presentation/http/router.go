@@ -23,6 +23,7 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/", h.ListMine)
 	r.Post("/", h.Checkout)
 	r.Get("/{orderId}", h.GetMine)
+	r.Put("/{orderId}", h.EditMine)
 	r.Post("/{orderId}/cancel", h.CancelMine)
 	return r
 }

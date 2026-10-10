@@ -107,7 +107,7 @@ paths:
         '404': { $ref: '#/components/responses/OrderNotFound' }
         '409':
           description: >
-            ORDER_NOT_EDITABLE, ORDER_EMPTY, ORDER_ITEM_NOT_PURCHASABLE, ORDER_ITEM_PRICE_CHANGED or
+            ORDER_NOT_EDITABLE, ORDER_EMPTY, ORDER_ITEM_NOT_PURCHASABLE or
             ORDER_QUANTITY_EXCEEDS_AVAILABLE
           content:
             application/json:
@@ -450,7 +450,6 @@ components:
     EditOrderRequest:
       type: object
       additionalProperties: false
-      required: [lines]
       properties:
         addressId:
           type: string
@@ -459,6 +458,7 @@ components:
           description: A saved address to deliver to; omitted or null keeps the current address.
         lines:
           type: array
+          description: The desired line set. An absent or empty array is refused with ORDER_EMPTY.
           items: { $ref: '#/components/schemas/EditLine' }
 
     TransferRequest:

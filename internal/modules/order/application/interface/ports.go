@@ -130,6 +130,11 @@ type OrderService interface {
 	// CancelMine cancels one of the caller's own orders that is still awaiting
 	// payment, and returns it (FR-019, FR-020).
 	CancelMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error)
+	// EditMine replaces one of the caller's own orders' lines and, when named,
+	// its delivery address while it awaits the artist or payment; editing an
+	// awaiting-payment order releases its goods and returns it to awaiting
+	// confirmation (FR-012 to FR-017).
+	EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).

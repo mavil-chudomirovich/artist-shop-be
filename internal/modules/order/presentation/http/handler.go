@@ -38,6 +38,10 @@ type Service interface {
 	// CancelMine cancels one of the caller's own orders that is still awaiting
 	// payment and returns it (FR-019, FR-020).
 	CancelMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
+	// EditMine replaces one of the caller's own orders' lines and, when named,
+	// its delivery address while it awaits the artist or payment (FR-012 to
+	// FR-017).
+	EditMine(ctx context.Context, in appdto.EditInput) (appdto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).
@@ -240,6 +244,79 @@ func (h *Handler) CancelMine(w http.ResponseWriter, r *http.Request) {
 
 	ctx := appinterface.WithActor(r.Context(), actor)
 	view, err := h.svc.CancelMine(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
+// EditMine changes one of the signed-in customer's own orders while it awaits the
+// artist or payment: it replaces the order's lines and, when named, its delivery
+// address, re-snapshots each line's current price, recomputes the total and bumps
+// the content version. An order awaiting payment is returned to awaiting
+// confirmation and its goods are released, so the artist must confirm the new
+// content afresh; an order awaiting the artist stays awaiting the artist.
+//
+//	@Summary		Change the signed-in customer's order before paying
+//	@Description	Replaces the order's lines and, when named, its delivery address while the order awaits the artist or payment. Each line is re-checked and re-priced at its current value, the total is recomputed and the content version is bumped. An awaiting-payment order is returned to PENDING and its goods are released; a paid order is refused 409 ORDER_NOT_EDITABLE and an edit that would leave no lines is refused 409 ORDER_EMPTY.
+//	@Tags			Orders
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path		string				true	"Order identifier"
+//	@Param			request	body		httpdto.EditOrderRequest	true	"New lines and optional addressId"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/orders/{orderId} [put]
+func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	var req httpdto.EditOrderRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+
+	var addressID *uuid.UUID
+	if req.AddressID != nil {
+		parsed, appErr := parseUUID(*req.AddressID, fieldAddressID)
+		if appErr != nil {
+			httpx.WriteError(w, r, appErr, h.logger)
+			return
+		}
+		addressID = &parsed
+	}
+
+	lines := make([]appdto.EditLineInput, 0, len(req.Lines))
+	for _, line := range req.Lines {
+		productID, appErr := parseUUID(line.ProductID, fieldProductID)
+		if appErr != nil {
+			httpx.WriteError(w, r, appErr, h.logger)
+			return
+		}
+		if line.Quantity < 1 {
+			httpx.WriteError(w, r, fieldError(fieldQuantity, "must be at least 1"), h.logger)
+			return
+		}
+		lines = append(lines, appdto.EditLineInput{ProductID: productID, Quantity: line.Quantity})
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.EditMine(ctx, appdto.EditInput{OrderID: orderID, AddressID: addressID, Lines: lines})
 	if err != nil {
 		h.fail(w, r, err)
 		return

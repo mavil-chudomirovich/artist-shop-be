@@ -24,7 +24,6 @@ the modules before it used.
 | Confirming or rejecting an order that is not awaiting confirmation | `ORDER_STATE_TRANSITION_INVALID` (409), naming the current state | The move is a transition and the state is what makes it invalid — the same situation `009` already named |
 | Confirming an order when a line cannot be held (a competing hold took the last unit) | `ORDER_QUANTITY_EXCEEDS_AVAILABLE` (409), `details[].field = "productId"` with the available amount | It is the same shortage `009` names at checkout; a second code for "short at confirmation" would be the same fact |
 | Editing a line whose product is off sale or removed | `ORDER_ITEM_NOT_PURCHASABLE` (409), `details[].field = "productId"` | Same situation as checkout |
-| Editing a line whose price changed since it was snapshotted | `ORDER_ITEM_PRICE_CHANGED` (409), `details[].field = "productId"` | Same situation as checkout |
 | Editing a line above what is available | `ORDER_QUANTITY_EXCEEDS_AVAILABLE` (409), with the available amount | Same situation as checkout |
 | The order does not exist, or is another customer's | `ORDER_NOT_FOUND` (404) | The route never confirms another customer's order (`009`) |
 | `addressId` is not a UUID, or names an address that is not the customer's | `VALIDATION_ERROR` (400), `details[].field = "addressId"` | Request shape, exactly as checkout |
@@ -50,3 +49,4 @@ the modules before it used.
 | An awaiting-payment order passes its 60-minute window | It is not an error: the order cancels itself, which the customer sees on the order, not as a failed request |
 | A payment callback arrives for an order edited since the payment attempt | Module 08 rejects it by comparing the order version; there is no HTTP surface for it here (research D7) |
 | A customer edits an order to exactly its current content | It is a no-op edit; it still bumps the version and records history, but answers success, not an error |
+| A product's price changed since the order was placed, when editing | It is not an error: editing **re-snapshots** the current price, because the customer is choosing the items again (unlike checkout, whose cart held a price the customer had seen) |

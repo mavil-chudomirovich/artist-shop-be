@@ -828,3 +828,117 @@ func TestTransferHandsTheOrderToAnotherAccountAgainstPostgres(t *testing.T) {
 		t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 	}
 }
+
+// editHistoryCount reads how many edit-history rows one order has.
+func editHistoryCount(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM order_edit_history WHERE order_id = $1`, orderID).Scan(&count); err != nil {
+		t.Fatalf("read edit history count: %v", err)
+	}
+	return count
+}
+
+// SC-003, FR-012 to FR-017, quickstart scenario 4 against real PostgreSQL: a
+// customer edits an order awaiting confirmation (its lines are replaced, the total
+// is recomputed and it stays PENDING, holding nothing), an empty edit is refused
+// 409 ORDER_EMPTY, and editing an awaiting-payment order releases its hold exactly
+// once, returns it to PENDING and leaves an edit-history row — so an accepted
+// order must be re-confirmed. Another customer's edit answers 404 ORDER_NOT_FOUND.
+func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	firstProduct := seedOrderProduct(t, f.pool, 120000, 10)
+	secondProduct := seedOrderProduct(t, f.pool, 50000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, firstProduct, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// FR-012, FR-013: editing a PENDING order replaces its lines, recomputes the
+	// total and leaves it awaiting the artist, holding nothing.
+	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
+		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":3}]}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var edited orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &edited); err != nil {
+		t.Fatalf("decode the edited order %q: %v", rec.Body.String(), err)
+	}
+	if edited.Data.Status != "PENDING" {
+		t.Fatalf("editing an order awaiting the artist must leave it PENDING, got %s", edited.Data.Status)
+	}
+	if len(edited.Data.Lines) != 1 || edited.Data.Lines[0].ProductID != secondProduct || edited.Data.Lines[0].Quantity != 3 {
+		t.Fatalf("the line set must be replaced, got %+v", edited.Data.Lines)
+	}
+	if edited.Data.Total.Amount != 3*50000 {
+		t.Fatalf("the total must be recomputed, got %+v", edited.Data.Total)
+	}
+	if got := heldQuantity(t, f.pool, secondProduct); got != 0 {
+		t.Fatalf("editing an order awaiting the artist must hold nothing, got %d held", got)
+	}
+	if got := editHistoryCount(t, f.pool, orderID); got != 1 {
+		t.Fatalf("an accepted edit must leave one history row, got %d", got)
+	}
+
+	// FR-015: an edit that would leave the order empty is refused.
+	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(), `{"lines":[]}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("empty edit: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_EMPTY" {
+		t.Fatalf("expected ORDER_EMPTY, got %s", body.Error.Code)
+	}
+
+	// FR-005: the artist confirms, holding the edited quantity.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := heldQuantity(t, f.pool, secondProduct); got != 3 {
+		t.Fatalf("confirmation must hold the edited quantity, got %d", got)
+	}
+
+	// FR-014, SC-003: editing the awaiting-payment order releases its hold exactly
+	// once and returns it to awaiting confirmation; nothing physical moves.
+	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
+		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":1}]}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit a confirmed order: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var reEdited orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &reEdited); err != nil {
+		t.Fatalf("decode the re-edited order %q: %v", rec.Body.String(), err)
+	}
+	if reEdited.Data.Status != "PENDING" {
+		t.Fatalf("editing an awaiting-payment order must return it to PENDING, got %s", reEdited.Data.Status)
+	}
+	if got := heldQuantity(t, f.pool, secondProduct); got != 0 {
+		t.Fatalf("editing an awaiting-payment order must release the hold exactly once, got %d held", got)
+	}
+	if got := physicalStock(t, f.pool, secondProduct); got != 10 {
+		t.Fatalf("an edit must not move physical stock, got %d", got)
+	}
+	if got := editHistoryCount(t, f.pool, orderID); got != 2 {
+		t.Fatalf("the second accepted edit must leave a second history row, got %d", got)
+	}
+
+	// FR-022: another customer's edit answers 404 ORDER_NOT_FOUND.
+	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
+		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":1}]}`, "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("another customer's edit: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_FOUND" {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}

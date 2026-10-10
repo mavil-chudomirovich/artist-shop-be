@@ -77,7 +77,7 @@ Khách sửa nội dung/địa chỉ đơn khi đang chờ xác nhận hoặc ch
 
 1. **Given** đơn chờ xác nhận, **When** khách sửa dòng/địa chỉ hợp lệ, **Then** đơn cập nhật, tổng tính lại, **vẫn** chờ xác nhận, không đụng tồn.
 2. **Given** đơn chờ thanh toán, **When** khách sửa, **Then** hàng cũ được trả về **đúng một lần**, đơn **quay lại chờ xác nhận**, xác nhận/phiên thanh toán cũ mất hiệu lực.
-3. **Given** một dòng sau khi sửa không còn bán/đã xoá/giá đổi/vượt tồn, **When** khách sửa, **Then** từ chối, nêu dòng, đơn **không đổi**.
+3. **Given** một dòng sau khi sửa không còn bán/đã xoá/vượt tồn, **When** khách sửa, **Then** từ chối, nêu dòng, đơn **không đổi**. Giá mỗi dòng được **chụp lại theo giá hiện tại** khi sửa (khách chọn lại món nên nhận giá hiện tại).
 4. **Given** đơn đã trả tiền hoặc xa hơn, **When** khách sửa, **Then** từ chối.
 5. **Given** đơn của khách khác, **When** khách sửa, **Then** từ chối như không tìm thấy.
 
@@ -168,7 +168,7 @@ Artist được báo khi có đơn **cần xác nhận** (đơn mới hoặc đ�
 - **FR-012**: Khách MUST sửa được **nội dung dòng** (thêm/bớt/đổi số lượng) và **địa chỉ giao** của đơn khi đơn đang **chờ xác nhận** hoặc **chờ thanh toán**. Địa chỉ giao MUST được chọn từ **địa chỉ đã lưu** của khách bằng mã địa chỉ (như checkout); khi khách không nêu địa chỉ, đơn MUST **giữ nguyên** địa chỉ hiện tại.
 - **FR-013**: Sửa đơn đang chờ xác nhận MUST giữ đơn ở trạng thái chờ xác nhận.
 - **FR-014**: Sửa đơn đang chờ thanh toán MUST trả hàng đã giữ về khả dụng **đúng một lần**, làm **mất hiệu lực** xác nhận/phiên thanh toán cho nội dung cũ, và đưa đơn **quay lại chờ xác nhận** (artist phải xác nhận lại).
-- **FR-015**: Mỗi lần sửa MUST **đối chiếu lại** từng dòng với trạng thái bán/giá hiện tại và tồn khả dụng, **tính lại tổng**, và MUST **từ chối** (không đổi gì) nếu một dòng không còn bán/đã xoá, giá đã đổi, hoặc vượt tồn — nêu dòng đó. Một lần sửa để lại **0 dòng** MUST bị từ chối: một đơn luôn có **≥1 dòng**.
+- **FR-015**: Mỗi lần sửa MUST **đối chiếu lại** từng dòng với trạng thái bán và tồn khả dụng hiện tại, **chụp lại giá hiện tại** của mỗi dòng, **tính lại tổng**, và MUST **từ chối** (không đổi gì) nếu một dòng không còn bán/đã xoá hoặc vượt tồn — nêu dòng đó. Một lần sửa để lại **0 dòng** MUST bị từ chối: một đơn luôn có **≥1 dòng**.
 - **FR-016**: Sửa đơn **đã trả tiền** hoặc ở trạng thái xa hơn MUST bị từ chối.
 - **FR-017**: Mọi lần sửa MUST được **ghi lại** (nội dung cũ/mới, người sửa, thời điểm) và **tăng phiên bản** đơn. Việc artist **xác nhận** cũng MUST **tăng phiên bản** đơn, để module 08 đối chiếu nội dung đã chốt.
 

@@ -20,6 +20,34 @@ type CheckoutRequest struct {
 	AddressID *string `json:"addressId"`
 }
 
+// EditLineRequest is one line of an edit request (contracts/openapi.yaml,
+// EditLine). `productId` is a string rather than a uuid.UUID so a value that is
+// not a UUID is reported as VALIDATION_ERROR naming `productId` rather than lost
+// to a generic decode failure. `quantity` must be at least 1, exactly as the
+// contract's minimum requires.
+type EditLineRequest struct {
+	// ProductID is the product the line is for.
+	ProductID string `json:"productId"`
+	// Quantity is how many, at least 1.
+	Quantity int64 `json:"quantity"`
+}
+
+// EditOrderRequest is the body of a customer edit (contracts/openapi.yaml,
+// EditOrderRequest). `lines` is required and replaces the order's whole line set;
+// an empty set is refused. `addressId` is a string rather than a uuid.UUID so a
+// value that is not a UUID is reported against `addressId`; it is a pointer so an
+// omitted or null member is distinguishable and both mean "keep the current
+// address" (FR-012, FR-015).
+//
+// The schema is additionalProperties: false and the handler decodes it with
+// unknown members refused, so a client cannot name the acting account.
+type EditOrderRequest struct {
+	// AddressID is a saved address to deliver to; nil keeps the current one.
+	AddressID *string `json:"addressId"`
+	// Lines are the order's new lines; an empty set is refused.
+	Lines []EditLineRequest `json:"lines"`
+}
+
 // TransferRequest is the body of an administrator transfer
 // (contracts/openapi.yaml, TransferRequest). `email` names the recipient
 // account; no account carrying it is refused. It is a plain string so a missing

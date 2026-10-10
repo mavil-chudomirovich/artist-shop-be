@@ -17,6 +17,7 @@ const (
 	fieldProductID = "productId"
 	fieldAddressID = "addressId"
 	fieldOrderID   = "orderId"
+	fieldQuantity  = "quantity"
 	fieldPage      = "page"
 	fieldPageSize  = "pageSize"
 	fieldEmail     = "email"
