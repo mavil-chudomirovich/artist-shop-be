@@ -41,11 +41,11 @@ import (
 // This file drives US1 end to end against a real PostgreSQL container: the real
 // order adapter, the real cart checkout adapter, the real product facts and
 // availability over modules 04 and 05, the real reservation use cases, and the
-// real HTTP surface. Its centre of gravity is quickstart scenarios 2 and 4 — a
-// cart becomes an order carrying a snapshot of both lines and the address, the
-// goods are held (available fell, physical did not move) and the cart is empty —
-// and the concurrent case: two checkouts of one cart at once produce exactly one
-// order (SC-001, SC-002, FR-013, FR-017).
+// real HTTP surface. Its centre of gravity is quickstart scenarios 1 and 2 — a
+// cart becomes an order awaiting the artist holding nothing, the artist confirms
+// so the goods are held (available fell, physical did not move), and paying sells
+// the hold once — and the concurrent case: two checkouts of one cart at once
+// produce exactly one order (SC-001, FR-001, FR-002, FR-004, FR-005).
 //
 // Docker is required to run it; the file still compiles without a container so
 // `go vet -tags integration ./...` covers it.
@@ -303,10 +303,11 @@ func orderCount(t *testing.T, pool *pgxpool.Pool, ownerID uuid.UUID) int64 {
 	return count
 }
 
-// SC-001, quickstart scenario 2: a customer checks out through the route, the
-// order carries the snapshot and the address, the goods are held (available fell,
-// physical did not move) and the cart is empty.
-func TestCheckoutCreatesTheOrderHoldsTheGoodsAndEmptiesTheCart(t *testing.T) {
+// SC-001, quickstart scenarios 1 and 2: a customer checks out through the route,
+// the order carries the snapshot and the address, the artist confirms so the goods
+// are held (available fell, physical did not move), and paying turns the hold into
+// a sale exactly once. The order holds nothing until the artist confirms it.
+func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.T) {
 	f := newOrderIntegrationFixture(t)
 	seedOrderCustomer(t, f.pool, testCustomerID)
 	product := seedOrderProduct(t, f.pool, 120000, 10)
@@ -322,8 +323,8 @@ func TestCheckoutCreatesTheOrderHoldsTheGoodsAndEmptiesTheCart(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
 	}
-	if body.Data.Status != "PENDING_PAYMENT" {
-		t.Fatalf("the order must be awaiting payment, got %s", body.Data.Status)
+	if body.Data.Status != "PENDING" {
+		t.Fatalf("the order must await the artist's confirmation, got %s", body.Data.Status)
 	}
 	if body.Data.Total.Amount != 240000 || body.Data.Total.Currency != "VND" {
 		t.Fatalf("total = %+v, want 240000 VND", body.Data.Total)
@@ -343,21 +344,59 @@ func TestCheckoutCreatesTheOrderHoldsTheGoodsAndEmptiesTheCart(t *testing.T) {
 		t.Fatalf("the total must equal the exact sum of the lines, got %d", body.Data.Total.Amount)
 	}
 
-	// FR-013: the goods are held, not sold — physical stock did not move, the
-	// held quantity rose.
+	orderID := body.Data.ID
+
+	// FR-001, FR-002: checkout holds nothing — physical stock did not move and no
+	// hold was taken; the cart is empty and one order exists.
 	if got := physicalStock(t, f.pool, product); got != 10 {
 		t.Fatalf("checkout must not move physical stock: got %d, want 10", got)
 	}
-	if got := heldQuantity(t, f.pool, product); got != 2 {
-		t.Fatalf("checkout must hold the ordered quantity: got %d, want 2", got)
+	if got := heldQuantity(t, f.pool, product); got != 0 {
+		t.Fatalf("checkout must hold nothing, got %d held", got)
 	}
-
-	// FR-007: the cart is emptied.
 	if got := cartLineCount(t, f.pool, cartID); got != 0 {
 		t.Fatalf("the cart must be empty after checkout, got %d lines", got)
 	}
 	if got := orderCount(t, f.pool, testCustomerID); got != 1 {
 		t.Fatalf("expected exactly one order, got %d", got)
+	}
+
+	// FR-004, FR-005, quickstart scenario 2: the artist confirms; the goods are
+	// held (available fell, physical unchanged) and the order awaits payment.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var confirmed adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &confirmed); err != nil {
+		t.Fatalf("decode the confirmed order %q: %v", rec.Body.String(), err)
+	}
+	if confirmed.Data.Status != "PAYMENT_PENDING" {
+		t.Fatalf("a confirmed order must await payment, got %s", confirmed.Data.Status)
+	}
+	if got := physicalStock(t, f.pool, product); got != 10 {
+		t.Fatalf("confirmation must not move physical stock: got %d, want 10", got)
+	}
+	if got := heldQuantity(t, f.pool, product); got != 2 {
+		t.Fatalf("confirmation must hold the ordered quantity: got %d, want 2", got)
+	}
+
+	// FR-014: paying turns the hold into a sale exactly once; replaying the
+	// payment sells nothing a second time.
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	if got := physicalStock(t, f.pool, product); got != 8 {
+		t.Fatalf("paying must sell the held goods, got %d physical, want 8", got)
+	}
+	if got := heldQuantity(t, f.pool, product); got != 0 {
+		t.Fatalf("paying must clear the hold, got %d held", got)
+	}
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+		t.Fatalf("a replayed payment must be a no-op success, got %v", err)
+	}
+	if got := physicalStock(t, f.pool, product); got != 8 {
+		t.Fatalf("a replayed payment must not sell again, got %d physical, want 8", got)
 	}
 }
 
@@ -461,10 +500,14 @@ func TestCustomerSeesAndManagesOnlyTheirOwnOrders(t *testing.T) {
 		t.Fatalf("the caller's read: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	// FR-019: the unpaid order holds its goods; cancelling returns them and
-	// answers CANCELLED without moving physical stock.
+	// FR-019: once the artist confirms, the order holds its goods; cancelling
+	// returns them and answers CANCELLED without moving physical stock.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
 	if got := heldQuantity(t, f.pool, product); got != 2 {
-		t.Fatalf("the order must hold the goods while unpaid, got %d", got)
+		t.Fatalf("the confirmed order must hold the goods while unpaid, got %d", got)
 	}
 	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/cancel", "", "customer-token")
 	if rec.Code != http.StatusOK {
@@ -584,6 +627,13 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
 	}
 	orderID := created.Data.ID
+
+	// FR-005: checkout holds nothing, so the artist confirms first; the order then
+	// awaits payment and is ready for the paid transition.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
 
 	// The paid transition has no HTTP surface — module 08 drives it — so it is
 	// driven directly, exactly as the quickstart says (scenario 5a).
@@ -707,6 +757,13 @@ func TestTransferHandsTheOrderToAnotherAccountAgainstPostgres(t *testing.T) {
 	}
 	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_TRANSFERABLE" {
 		t.Fatalf("expected ORDER_NOT_TRANSFERABLE, got %s", body.Error.Code)
+	}
+
+	// FR-005: checkout holds nothing, so the artist confirms first; the order then
+	// awaits payment and the paid transition turns the hold into a sale.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
 	// The paid transition has no HTTP surface — module 08 drives it — so it is

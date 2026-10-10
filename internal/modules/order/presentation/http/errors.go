@@ -43,16 +43,17 @@ func fieldError(field, issue string) *httpx.AppError {
 }
 
 // mapError translates the module's sentinel errors into the codes and statuses of
-// specs/009-order/contracts/error-codes.md.
+// specs/010-order-confirmation/contracts/error-codes.md.
 //
 // The three item refusals are conflicts (409) that name `productId` in their
 // detail — the item the customer must change — and the quantity code's issue also
 // states what remained available. A state move the order's current state forbids
-// answers ORDER_STATE_TRANSITION_INVALID naming the current state. A malformed or
-// foreign `addressId` stays on the shared VALIDATION_ERROR and names the field. A
-// shared AppError the transport produced (a malformed request, an authentication
-// failure) passes through unchanged; anything else is hidden behind INTERNAL_ERROR
-// so storage detail is never leaked.
+// answers ORDER_STATE_TRANSITION_INVALID naming the current state. An order that
+// may not be edited or an edit that would empty it answers ORDER_NOT_EDITABLE or
+// ORDER_EMPTY (both 409). A malformed or foreign `addressId` stays on the shared
+// VALIDATION_ERROR and names the field. A shared AppError the transport produced
+// (a malformed request, an authentication failure) passes through unchanged;
+// anything else is hidden behind INTERNAL_ERROR so storage detail is never leaked.
 func mapError(err error) *httpx.AppError {
 	var notPurchasable *domainerr.ItemNotPurchasableError
 	var priceChanged *domainerr.ItemPriceChangedError
@@ -106,6 +107,10 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeNotTransferable, http.StatusConflict, "Order is not transferable")
 	case errors.Is(err, domainerr.ErrTransferTargetNotFound):
 		return coded(constant.CodeTransferTargetNotFound, http.StatusNotFound, "Order transfer target not found")
+	case errors.Is(err, domainerr.ErrNotEditable):
+		return coded(constant.CodeNotEditable, http.StatusConflict, "Order is not editable")
+	case errors.Is(err, domainerr.ErrEmptyOrder):
+		return coded(constant.CodeEmptyOrder, http.StatusConflict, "Order would be left empty")
 	case errors.As(err, &invalid):
 		return fieldError(invalid.Field, invalid.Issue)
 	case errors.Is(err, domainerr.ErrInvalidValue):

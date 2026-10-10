@@ -44,6 +44,9 @@ type Service interface {
 	ListAll(ctx context.Context, in appdto.ListInput) (appdto.AdminOrderPage, error)
 	// GetByIDAdmin reads any order in full (FR-021).
 	GetByIDAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// ConfirmByAdmin accepts an order awaiting the artist, holds the whole order
+	// and opens the payment window (FR-004, FR-005).
+	ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
 	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
 	// FR-023).
 	ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
@@ -81,12 +84,13 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	httpx.WriteError(w, r, mapError(err), h.logger)
 }
 
-// Checkout turns the signed-in customer's cart into an order awaiting payment: a
-// snapshot of every line and the delivery address, the goods held for the
-// customer, and the cart emptied, all in one operation.
+// Checkout turns the signed-in customer's cart into an order awaiting the
+// artist's confirmation: a snapshot of every line and the delivery address, no
+// goods held, and the cart emptied, all in one operation. The order becomes
+// payable only once the artist confirms it.
 //
-//	@Summary		Check out the cart into an order
-//	@Description	Turns the caller's cart into an order. Every line is re-checked against the product's current sale state and price and against what is available; the whole checkout is refused if any line fails. On success the goods are held, the cart is emptied, and the order is returned awaiting payment.
+//	@Summary		Check out the cart into an order awaiting the artist's confirmation
+//	@Description	Turns the caller's cart into an order awaiting the artist's confirmation, holding no goods. Every line is re-checked against the product's current sale state and price and against what is available; the whole checkout is refused if any line fails. On success the cart is emptied and the order is returned in PENDING; the goods are held only when the artist confirms it.
 //	@Tags			Orders
 //	@Accept			json
 //	@Produce		json
@@ -316,6 +320,32 @@ func (h *Handler) GetByIDAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
+// ConfirmByAdmin accepts an order awaiting the artist: it holds the whole order
+// all-or-nothing and opens the payment window, moving it to PAYMENT_PENDING. A
+// move the current state does not allow answers 409
+// ORDER_STATE_TRANSITION_INVALID naming the current state; a line that cannot be
+// held answers 409 ORDER_QUANTITY_EXCEEDS_AVAILABLE naming the item (FR-004,
+// FR-005, contracts/error-codes.md).
+//
+//	@Summary		Confirm an order awaiting the artist (administrator)
+//	@Description	Holds the whole order all-or-nothing and opens the payment window, moving it to PAYMENT_PENDING. A wrong state answers 409 ORDER_STATE_TRANSITION_INVALID; a line that cannot be held answers 409 ORDER_QUANTITY_EXCEEDS_AVAILABLE. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/confirm [post]
+func (h *Handler) ConfirmByAdmin(w http.ResponseWriter, r *http.Request) {
+	h.adminMove(w, r, h.svc.ConfirmByAdmin)
 }
 
 // ShipByAdmin moves a paid order to shipped and records the act. A move the

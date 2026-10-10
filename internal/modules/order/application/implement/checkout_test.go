@@ -18,13 +18,13 @@ import (
 )
 
 // This file is the use-case contract of US1: a successful checkout snapshots each
-// cart line — including the link segment — and the delivery address, holds each
-// line and clears the cart in one transaction, and every refusal — empty cart, an
-// off-sale or removed product, a price that moved, a quantity above what is
-// available, a customer with no address, and a line whose hold cannot be taken —
-// leaves nothing created and the cart untouched (FR-001 to FR-007, FR-013,
-// FR-017, SC-002). It runs the real checkout over in-memory fakes of every
-// contract, so the answers asserted are the service's own.
+// cart line — including the link segment — and the delivery address, creates the
+// order awaiting the artist holding nothing, and clears the cart in one
+// transaction, and every refusal — empty cart, an off-sale or removed product, a
+// price that moved, a quantity above what is available, and a customer with no
+// address — leaves nothing created and the cart untouched (FR-001 to FR-007,
+// SC-002). It runs the real checkout over in-memory fakes of every contract, so
+// the answers asserted are the service's own.
 
 // fixedNow is the deterministic instant the fixture stamps orders with.
 var fixedNow = time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
@@ -115,26 +115,16 @@ type releaseCall struct {
 }
 
 // fakeReservation answers the InventoryReservation contract. It records every
-// hold, sale and release and can be made to fail for one product, so a test can
-// exercise FR-017: another customer's hold took the last unit. onReserve runs
-// before the decision, letting a test lower the shelf exactly as a competing hold
-// would.
+// hold, sale and release so a test can prove which lines were touched and that
+// the same line's effect is applied exactly once.
 type fakeReservation struct {
-	calls     []reserveCall
-	sales     []saleCall
-	releases  []releaseCall
-	failFor   map[uuid.UUID]error
-	onReserve func(productID uuid.UUID)
-	window    time.Duration
+	calls    []reserveCall
+	sales    []saleCall
+	releases []releaseCall
+	window   time.Duration
 }
 
 func (f *fakeReservation) Reserve(_ context.Context, orderID, productID uuid.UUID, quantity int64) error {
-	if f.onReserve != nil {
-		f.onReserve(productID)
-	}
-	if err, ok := f.failFor[productID]; ok {
-		return err
-	}
 	f.calls = append(f.calls, reserveCall{orderID: orderID, productID: productID, quantity: quantity})
 	return nil
 }
@@ -219,7 +209,7 @@ func newCheckoutFixture(t *testing.T) *checkoutFixture {
 	cart := &fakeCart{}
 	catalog := &fakeCatalog{products: map[uuid.UUID]contracts.ProductSummary{}}
 	availability := &fakeAvailability{available: map[uuid.UUID]int64{}}
-	reservations := &fakeReservation{failFor: map[uuid.UUID]error{}}
+	reservations := &fakeReservation{}
 	customers := &fakeCustomers{}
 	orders := &memoryOrders{}
 	svc := New(Service{
@@ -301,11 +291,12 @@ func assertCartUntouched(t *testing.T, f *checkoutFixture, want []contracts.Cart
 	}
 }
 
-// FR-001, FR-002, FR-003, FR-007, FR-013: a successful checkout snapshots every
-// line — including the link segment, which the fixtures deliberately set apart
-// from the name so a dropped slug cannot pass — and the address, holds every
-// line, clears the cart and returns the order awaiting payment.
-func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
+// FR-001, FR-002, FR-003, FR-007: a successful checkout snapshots every line —
+// including the link segment, which the fixtures deliberately set apart from the
+// name so a dropped slug cannot pass — and the address, creates the order
+// awaiting the artist holding nothing, clears the cart and returns the order in
+// PENDING (FR-001, FR-002, FR-003, FR-007).
+func TestCheckoutSnapshotsLinesAndAddressAndHoldsNothing(t *testing.T) {
 	f := newCheckoutFixture(t)
 	user := uuid.New()
 	address := seedAddress(f, user)
@@ -366,12 +357,10 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
 		}
 	}
 
-	if len(f.reservations.calls) != 2 {
-		t.Fatalf("expected a hold for every line, got %+v", f.reservations.calls)
-	}
-	if f.reservations.calls[0].orderID != created.ID || f.reservations.calls[0].productID != first ||
-		f.reservations.calls[0].quantity != 2 {
-		t.Fatalf("first hold = %+v, want order %s product %s x2", f.reservations.calls[0], created.ID, first)
+	// FR-001, FR-002: checkout holds nothing — the goods are set aside only when
+	// the artist confirms, so no line may reach module 05 here.
+	if len(f.reservations.calls) != 0 {
+		t.Fatalf("checkout must hold nothing, got %+v", f.reservations.calls)
 	}
 
 	if !f.cart.cleared || f.cart.clearFor != user {
@@ -551,39 +540,4 @@ func TestCheckoutRefusesAForeignAddressID(t *testing.T) {
 	if len(f.orders.created) != 0 {
 		t.Fatal("a refused checkout must create nothing")
 	}
-}
-
-// FR-017: a line whose hold cannot be taken — another customer holds the last
-// unit — refuses the checkout and names the item and what remained available.
-func TestCheckoutRefusesWhenTheLastUnitCannotBeHeld(t *testing.T) {
-	f := newCheckoutFixture(t)
-	user := uuid.New()
-	seedAddress(f, user)
-	product := seedProduct(f, "Tranh", "tranh", 100000, 1)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
-	want := append([]contracts.CartLine(nil), f.cart.lines...)
-	f.reservations.failFor[product] = errors.New("another customer holds the last unit")
-	// Taking the last unit drops the shelf to zero, as the competing hold did.
-	f.reservations.onReserve = func(productID uuid.UUID) {
-		f.availability.available[productID] = 0
-	}
-
-	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
-	if !errors.Is(err, domainerr.ErrQuantityExceedsAvailable) {
-		t.Fatalf("expected ErrQuantityExceedsAvailable, got %v", err)
-	}
-	var refusal *domainerr.QuantityExceedsAvailableError
-	if !errors.As(err, &refusal) {
-		t.Fatalf("expected the typed refusal, got %v", err)
-	}
-	if refusal.ProductID != product {
-		t.Fatalf("the refusal must name the item, got %+v", refusal)
-	}
-	if refusal.Available != 0 || refusal.Requested != 1 {
-		t.Fatalf("the refusal must name the remaining amount, got %+v", refusal)
-	}
-	if len(f.orders.created) != 0 {
-		t.Fatal("a refused checkout must create nothing")
-	}
-	assertCartUntouched(t, f, want)
 }

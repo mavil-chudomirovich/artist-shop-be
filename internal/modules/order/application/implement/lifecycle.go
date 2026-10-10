@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
@@ -48,7 +49,7 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 			// so a retrying caller stops retrying (FR-014).
 			return nil
 		}
-		// Only PENDING_PAYMENT reaches the edge and transitions; a cancelled
+		// Only PAYMENT_PENDING reaches the edge and transitions; a cancelled
 		// order is refused by the state machine naming the current state.
 		if err := order.MarkPaid(); err != nil {
 			return err
@@ -84,6 +85,59 @@ func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 		}
 		return s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now())
 	})
+}
+
+// ConfirmByAdmin accepts an order awaiting the artist: in one transaction it locks
+// the order, drives the PENDING → PAYMENT_PENDING transition, holds every line
+// through module 05, opens the payment window from the hold window, bumps the
+// content version, persists the confirmation and records the act. Holding every
+// line in this one transaction is what makes the hold all-or-nothing: a line that
+// cannot be held returns the shortage and rolls the whole hold back, leaving the
+// order PENDING with no line held (FR-004, FR-005, FR-006, FR-010, FR-024,
+// research D3).
+func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+	actor, err := s.actor(ctx)
+	if err != nil {
+		return appdto.AdminOrderView{}, err
+	}
+
+	var view appdto.AdminOrderView
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		order, err := s.Orders.LockByID(txCtx, in.OrderID)
+		if err != nil {
+			return err
+		}
+		if err := order.Confirm(); err != nil {
+			return err
+		}
+		// Hold every line in this same transaction; a line that cannot be held
+		// rolls the whole hold back, so the order stays PENDING (FR-005, FR-024).
+		for _, line := range order.Lines {
+			if err := s.Reservations.Reserve(txCtx, order.ID, line.ProductID, line.Quantity); err != nil {
+				var available int64
+				if fresh, readErr := s.available(txCtx, line.ProductID); readErr == nil {
+					available = fresh
+				}
+				return domainerr.QuantityExceedsAvailable(line.ProductID, available, line.Quantity)
+			}
+		}
+		now := s.now()
+		order.ConfirmedAt = &now
+		expires := now.Add(s.Reservations.HoldWindow())
+		order.PaymentExpiresAt = &expires
+		// Confirmation marks the exact content that was accepted and opened for
+		// payment, so it bumps the version (research D10).
+		order.Version++
+		if err := s.Orders.SaveConfirm(txCtx, order, now); err != nil {
+			return err
+		}
+		s.record(txCtx, constant.AuditOrderConfirmed, actor, order.ID)
+		view = s.Mapper.AdminOrder(*order)
+		return nil
+	}); err != nil {
+		return appdto.AdminOrderView{}, err
+	}
+	return view, nil
 }
 
 // Ship moves a paid order to shipped (FR-022). It is driven by an administrator;

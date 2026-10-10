@@ -63,6 +63,14 @@ type Service struct {
 	// Constitution VI). A nil auditor is tolerated so a read-only construction
 	// cannot panic on a mutation it never serves.
 	Audit appinterface.Auditor
+	// Notifier sends the module's emails: the artist's confirmation-needed note
+	// and the customer's status-change note. Sending is best-effort and runs
+	// after the transaction commits, so it never fails a business operation
+	// (FR-019 to FR-021, research D9). A nil notifier is tolerated.
+	Notifier appinterface.Notifier
+	// ArtistEmail is the shop operator's address, the recipient of the
+	// confirmation-needed note (research D9).
+	ArtistEmail string
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }
@@ -88,12 +96,13 @@ func (s *Service) actor(ctx context.Context) (appinterface.Actor, error) {
 	return actor, nil
 }
 
-// Checkout turns the caller's cart into an order: it re-checks every line against
-// the product's current sale state and price and against what is available, picks
-// the delivery address, snapshots the lines and the address, holds every line, and
-// empties the cart — all inside one UnitOfWork transaction, so nothing is created
-// from a partly-recorded cart (FR-001 to FR-008, FR-013, FR-017). The owner is the
-// session's, never an input (FR-020).
+// Checkout turns the caller's cart into an order awaiting the artist's
+// confirmation: it re-checks every line against the product's current sale state
+// and price and against what is available, picks the delivery address, snapshots
+// the lines and the address, creates the order holding nothing, and empties the
+// cart — all inside one UnitOfWork transaction, so nothing is created from a
+// partly-recorded cart (FR-001 to FR-008). The owner is the session's, never an
+// input (FR-020).
 func (s *Service) Checkout(ctx context.Context, in dto.CheckoutInput) (dto.OrderView, error) {
 	actor, err := s.actor(ctx)
 	if err != nil {
@@ -186,19 +195,9 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 		return nil, err
 	}
 
-	// Hold every line for the order. A hold that cannot be taken — another
-	// customer's hold has taken the last unit — refuses the whole checkout and
-	// names the item and what remained available (FR-013, FR-017).
-	for _, line := range order.Lines {
-		if err := s.Reservations.Reserve(ctx, order.ID, line.ProductID, line.Quantity); err != nil {
-			available := availableByID[line.ProductID]
-			if fresh, readErr := s.available(ctx, line.ProductID); readErr == nil {
-				available = fresh
-			}
-			return nil, domainerr.QuantityExceedsAvailable(line.ProductID, available, line.Quantity)
-		}
-	}
-
+	// Checkout holds nothing: the order waits for the artist's confirmation and
+	// the goods are set aside only then, all-or-nothing (FR-001, FR-002, research
+	// D2). Clearing the cart completes the checkout.
 	if err := s.Carts.ClearCart(ctx, ownerID); err != nil {
 		return nil, err
 	}

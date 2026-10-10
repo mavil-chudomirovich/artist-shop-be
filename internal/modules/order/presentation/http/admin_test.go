@@ -43,6 +43,8 @@ type fakeAdmin struct {
 	shipErr      error
 	completeView appdto.AdminOrderView
 	completeErr  error
+	confirmView  appdto.AdminOrderView
+	confirmErr   error
 
 	gotListInput  appdto.ListInput
 	gotListActor  appinterface.Actor
@@ -50,6 +52,7 @@ type fakeAdmin struct {
 	gotRefActor   appinterface.Actor
 	shipCalls     int
 	completeCalls int
+	confirmCalls  int
 }
 
 func (f *fakeAdmin) ListAll(ctx context.Context, in appdto.ListInput) (appdto.AdminOrderPage, error) {
@@ -76,6 +79,13 @@ func (f *fakeAdmin) CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput
 	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
 	f.completeCalls++
 	return f.completeView, f.completeErr
+}
+
+func (f *fakeAdmin) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+	f.gotRefInput = in
+	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
+	f.confirmCalls++
+	return f.confirmView, f.confirmErr
 }
 
 // adminSummaryData is one row of the administrator's order list as the contract
@@ -249,12 +259,94 @@ func TestAdminMoveRefusesAnIllegalMove(t *testing.T) {
 	}
 }
 
+// FR-004, FR-005, quickstart scenario 2: `POST /admin/orders/{id}/confirm` answers
+// 200 with the order awaiting payment, and the session's actor and the addressed
+// identifier are passed through.
+func TestAdminConfirmReturnsTheConfirmedOrder(t *testing.T) {
+	confirmed := sampleAdminView()
+	confirmed.Status = constant.StatusPaymentPending
+	fake := &fakeAdmin{confirmView: confirmed}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+confirmed.ID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the confirmed order %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.ID != confirmed.ID || body.Data.Status != "PAYMENT_PENDING" {
+		t.Fatalf("the confirmed order must await payment, got %+v", body.Data)
+	}
+	if fake.gotRefInput.OrderID != confirmed.ID || fake.gotRefActor.ID != testAdminID {
+		t.Fatalf("the session's actor and the addressed id must be passed through, got %+v / %+v", fake.gotRefActor, fake.gotRefInput)
+	}
+}
+
+// FR-005, contracts/error-codes.md: confirming an order that is not awaiting the
+// artist answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state, and
+// a shortage at confirmation answers 409 ORDER_QUANTITY_EXCEEDS_AVAILABLE.
+func TestAdminConfirmMapsItsRefusals(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		code  string
+		field string
+	}{
+		{
+			name: "confirming a wrong-state order",
+			err:  domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusPaymentPending),
+			code: constant.CodeStateTransitionInvalid,
+		},
+		{
+			name:  "a line that cannot be held",
+			err:   domainerr.QuantityExceedsAvailable(uuid.New(), 1, 2),
+			code:  constant.CodeQuantityExceedsAvailable,
+			field: "productId",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAdmin{confirmErr: tc.err}
+			router := newOrderAdminRouter(fake)
+			rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/confirm", "", "admin-token")
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			body := decodeError(t, rec)
+			if body.Error.Code != tc.code {
+				t.Fatalf("expected %s, got %s", tc.code, body.Error.Code)
+			}
+			if tc.field != "" && (len(body.Error.Details) != 1 || body.Error.Details[0].Field != tc.field) {
+				t.Fatalf("expected a detail naming %s, got %+v", tc.field, body.Error.Details)
+			}
+		})
+	}
+}
+
 // contracts/error-codes.md: an unknown order answers 404 ORDER_NOT_FOUND.
 func TestAdminDetailAnswersNotFoundForAnUnknownOrder(t *testing.T) {
 	fake := &fakeAdmin{detailErr: domainerr.ErrNotFound}
 	router := newOrderAdminRouter(fake)
 
 	rec := perform(router, http.MethodGet, adminOrdersPath+"/"+uuid.New().String(), "", "admin-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// contracts/error-codes.md: confirming an unknown order answers 404
+// ORDER_NOT_FOUND.
+func TestAdminConfirmAnswersNotFoundForAnUnknownOrder(t *testing.T) {
+	fake := &fakeAdmin{confirmErr: domainerr.ErrNotFound}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/confirm", "", "admin-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -272,6 +364,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 	}{
 		{http.MethodGet, adminOrdersPath},
 		{http.MethodGet, adminOrdersPath + "/" + uuid.New().String()},
+		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/confirm"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/ship"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/complete"},
 	}
@@ -287,7 +380,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
 				t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 			}
-			if fake.shipCalls != 0 || fake.completeCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.shipCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("a forbidden request must not reach the use case")
 			}
 		})
@@ -318,7 +411,7 @@ func TestAdminRoutesRejectAMalformedOrderIdentifier(t *testing.T) {
 	fake := &fakeAdmin{}
 	router := newOrderAdminRouter(fake)
 
-	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship"} {
+	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship", adminOrdersPath + "/not-a-uuid/confirm"} {
 		method := http.MethodGet
 		if path != adminOrdersPath+"/not-a-uuid" {
 			method = http.MethodPost
@@ -345,6 +438,10 @@ func (f *fakeCheckout) ListAll(context.Context, appdto.ListInput) (appdto.AdminO
 }
 
 func (f *fakeCheckout) GetByIDAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+	return appdto.AdminOrderView{}, nil
+}
+
+func (f *fakeCheckout) ConfirmByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
 }
 

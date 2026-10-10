@@ -121,6 +121,18 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			status: http.StatusNotFound,
 		},
 		{
+			name:   "an order that may not be changed is a not-editable conflict",
+			err:    domainerr.ErrNotEditable,
+			code:   constant.CodeNotEditable,
+			status: http.StatusConflict,
+		},
+		{
+			name:   "an edit that would empty the order is a conflict",
+			err:    domainerr.ErrEmptyOrder,
+			code:   constant.CodeEmptyOrder,
+			status: http.StatusConflict,
+		},
+		{
 			name:    "a foreign addressId is a validation error naming the field",
 			err:     domainerr.InvalidValue(model.FieldAddressID, "is not one of the customer's addresses"),
 			code:    string(httpx.CodeValidation),

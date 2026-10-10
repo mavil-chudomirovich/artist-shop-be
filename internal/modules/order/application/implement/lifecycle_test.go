@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
@@ -32,15 +33,17 @@ type statusWrite struct {
 }
 
 // lifecycleOrders is the in-memory OrderRepository the lifecycle uses. It holds
-// orders by identifier, answers the row lock, records every state write, and
-// answers the expiry read from a fixed set. Embedding the interface makes any
-// method the use cases drift into panic loudly rather than silently pass.
+// orders by identifier, answers the row lock, records every state write and every
+// confirmation, and answers the expiry read from a fixed set. Embedding the
+// interface makes any method the use cases drift into panic loudly rather than
+// silently pass.
 type lifecycleOrders struct {
 	appinterface.OrderRepository
-	orders  map[uuid.UUID]*model.Order
-	locked  []uuid.UUID
-	updates []statusWrite
-	expired []uuid.UUID
+	orders    map[uuid.UUID]*model.Order
+	locked    []uuid.UUID
+	updates   []statusWrite
+	confirmed []*model.Order
+	expired   []uuid.UUID
 }
 
 func (r *lifecycleOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Order, error) {
@@ -56,6 +59,17 @@ func (r *lifecycleOrders) UpdateStatus(_ context.Context, id uuid.UUID, status c
 	r.updates = append(r.updates, statusWrite{id: id, status: status})
 	if order, ok := r.orders[id]; ok {
 		order.Status = status
+	}
+	return nil
+}
+
+func (r *lifecycleOrders) SaveConfirm(_ context.Context, order *model.Order, _ time.Time) error {
+	r.confirmed = append(r.confirmed, order)
+	if stored, ok := r.orders[order.ID]; ok {
+		stored.Status = order.Status
+		stored.Version = order.Version
+		stored.ConfirmedAt = order.ConfirmedAt
+		stored.PaymentExpiresAt = order.PaymentExpiresAt
 	}
 	return nil
 }
@@ -332,5 +346,118 @@ func TestExpireOrdersCancelsExpiredOrdersOnce(t *testing.T) {
 	}
 	if len(f.reservations.releases) != 1 {
 		t.Fatalf("a retried sweep must not release again, got %+v", f.reservations.releases)
+	}
+}
+
+// FR-004, FR-005, FR-006, FR-010, FR-024, research D3: confirming an order
+// awaiting the artist holds every line in the same transaction, opens the payment
+// window from the injected clock, bumps the content version and reaches
+// PAYMENT_PENDING.
+func TestConfirmHoldsEveryLineAndOpensThePaymentWindow(t *testing.T) {
+	first, second := uuid.New(), uuid.New()
+	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+		[]model.OrderLine{line(first, 1000, 2), line(second, 2000, 1)}, fixedNow)
+	if order.Status != constant.StatusPending {
+		t.Fatalf("a fresh order must await the artist, got %s", order.Status)
+	}
+	f := newLifecycleFixture(order)
+
+	if _, err := f.svc.ConfirmByAdmin(actorContext(uuid.New()), appdto.OrderRefInput{OrderID: order.ID}); err != nil {
+		t.Fatalf("ConfirmByAdmin: %v", err)
+	}
+
+	if order.Status != constant.StatusPaymentPending {
+		t.Fatalf("status = %s, want PAYMENT_PENDING", order.Status)
+	}
+	if order.Version != 2 {
+		t.Fatalf("confirmation must bump the content version, got %d", order.Version)
+	}
+	if order.ConfirmedAt == nil || !order.ConfirmedAt.Equal(fixedNow) {
+		t.Fatalf("confirmation must stamp the confirmation instant, got %v", order.ConfirmedAt)
+	}
+	if order.PaymentExpiresAt == nil || !order.PaymentExpiresAt.Equal(fixedNow.Add(holdWindow)) {
+		t.Fatalf("confirmation must open the payment window from the hold window, got %v", order.PaymentExpiresAt)
+	}
+	if len(f.orders.confirmed) != 1 {
+		t.Fatalf("the confirmed order must be persisted once, got %d", len(f.orders.confirmed))
+	}
+	if len(f.reservations.calls) != 2 {
+		t.Fatalf("expected a hold for every line, got %+v", f.reservations.calls)
+	}
+	held := map[uuid.UUID]int64{}
+	for _, call := range f.reservations.calls {
+		if call.orderID != order.ID {
+			t.Errorf("a hold names order %s, want %s", call.orderID, order.ID)
+		}
+		held[call.productID] = call.quantity
+	}
+	if held[first] != 2 || held[second] != 1 {
+		t.Fatalf("every line must be held for its quantity, got %+v", held)
+	}
+	if len(f.orders.updates) != 0 {
+		t.Fatalf("confirmation must persist through SaveConfirm, not UpdateStatus, got %+v", f.orders.updates)
+	}
+}
+
+// FR-010, FR-011: confirming an order that is not awaiting the artist is refused
+// naming the current state, holds nothing and persists nothing.
+func TestConfirmRefusesAnOrderNotAwaitingTheArtist(t *testing.T) {
+	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	f := newLifecycleFixture(order)
+
+	_, err := f.svc.ConfirmByAdmin(actorContext(uuid.New()), appdto.OrderRefInput{OrderID: order.ID})
+	var refusal *domainerr.StateTransitionError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("confirming a confirmed order must be refused, got %v", err)
+	}
+	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusPaymentPending {
+		t.Fatalf("the refusal must name the current state, got %+v", refusal)
+	}
+	if order.Status != constant.StatusPaymentPending {
+		t.Fatalf("a refused confirm must leave the order untouched, got %s", order.Status)
+	}
+	if len(f.reservations.calls) != 0 || len(f.orders.confirmed) != 0 {
+		t.Fatalf("a refused confirm must hold and persist nothing, got %+v / %d",
+			f.reservations.calls, len(f.orders.confirmed))
+	}
+}
+
+// FR-011: cancel is allowed from PENDING (no goods held) and PAYMENT_PENDING
+// (releasing the hold exactly once), and refused from PAID.
+func TestCancelFromPendingHoldsNothingAndFromPaidIsRefused(t *testing.T) {
+	product := uuid.New()
+	pending := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+		[]model.OrderLine{line(product, 1000, 1)}, fixedNow)
+	f := newLifecycleFixture(pending)
+
+	if err := f.svc.Cancel(context.Background(), pending.ID); err != nil {
+		t.Fatalf("Cancel from PENDING: %v", err)
+	}
+	if pending.Status != constant.StatusCancelled {
+		t.Fatalf("a cancelled order must be CANCELLED, got %s", pending.Status)
+	}
+	// The use case asks module 05 to release each line; a line that was never
+	// held has no hold to return, and module 05's release is idempotent, so no
+	// goods move. What must never happen is a sale.
+	if len(f.reservations.sales) != 0 {
+		t.Fatalf("cancelling an order awaiting the artist must not sell anything, got %+v", f.reservations.sales)
+	}
+
+	paid := paymentPendingOrder(uuid.New(), line(product, 1000, 1))
+	paid.Status = constant.StatusPaid
+	f2 := newLifecycleFixture(paid)
+	err := f2.svc.Cancel(context.Background(), paid.ID)
+	var refusal *domainerr.StateTransitionError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("cancelling a paid order must be refused, got %v", err)
+	}
+	if refusal.From != constant.StatusPaid {
+		t.Fatalf("the refusal must name PAID, got %+v", refusal)
+	}
+	if paid.Status != constant.StatusPaid {
+		t.Fatalf("a refused cancel must leave the order untouched, got %s", paid.Status)
+	}
+	if len(f2.reservations.releases) != 0 {
+		t.Fatalf("a refused cancel must release nothing, got %+v", f2.reservations.releases)
 	}
 }

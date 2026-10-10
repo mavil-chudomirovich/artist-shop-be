@@ -45,6 +45,7 @@ import (
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
+	ordernotifier "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/notifier"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
@@ -70,6 +71,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpserver"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
@@ -358,6 +360,16 @@ func run() error {
 	// contract feature 007 withheld until this consumer existed (its D1), and the
 	// customer lookup reuses the user module's own service instance rather than a
 	// second lookup that could answer differently.
+	// The order notifier sends the module's emails through the shared mailer: the
+	// artist's confirmation-needed note and the customer's status-change note.
+	// Sending is best-effort (the adapter logs a failure and swallows it), so
+	// email can never fail an order operation (FR-019 to FR-021, research D9). The
+	// mailer reads the same SMTP settings module 01 uses and falls back to a
+	// logging sender when no host is configured, so a developer needs no SMTP sink.
+	orderSender := mailer.NewSender(cfg.Auth.SMTPHost, cfg.Auth.SMTPPort,
+		cfg.Auth.SMTPUsername, cfg.Auth.SMTPPassword, cfg.Auth.SMTPFrom, logger)
+	orderNotifier := ordernotifier.New(orderSender, logger)
+
 	orderService := orderimplement.New(orderimplement.Service{
 		Orders:       orderpostgres.NewOrderRepository(db.Pool),
 		Carts:        cartcheckout.New(cartRepository),
@@ -369,6 +381,8 @@ func run() error {
 		Tx:           db,
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
+		Notifier:     orderNotifier,
+		ArtistEmail:  cfg.Auth.AdminEmail,
 		Mapper:       ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger)

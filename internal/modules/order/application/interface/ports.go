@@ -136,6 +136,10 @@ type OrderService interface {
 	ListAll(ctx context.Context, in dto.ListInput) (dto.AdminOrderPage, error)
 	// GetByIDAdmin reads any order in full (FR-021).
 	GetByIDAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
+	// ConfirmByAdmin accepts an order awaiting the artist, holds the whole order
+	// all-or-nothing, opens the payment window and records the act (FR-004,
+	// FR-005, FR-024).
+	ConfirmByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
 	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
 	// FR-023).
 	ShipByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)

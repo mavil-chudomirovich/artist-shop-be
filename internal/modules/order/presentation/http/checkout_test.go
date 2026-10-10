@@ -178,10 +178,12 @@ func sampleView() appdto.OrderView {
 	}
 }
 
-// contracts/openapi.yaml: a successful checkout answers 201 with the created order
-// and the owner is the session's, never the request's (FR-020).
+// contracts/openapi.yaml: a successful checkout answers 201 with the order
+// awaiting the artist's confirmation, and the owner is the session's, never the
+// request's (FR-020).
 func TestCheckoutReturns201WithTheCreatedOrder(t *testing.T) {
 	view := sampleView()
+	view.Status = constant.StatusPending
 	fake := &fakeCheckout{view: view}
 	router := newOrderRouter(fake)
 
@@ -193,8 +195,8 @@ func TestCheckoutReturns201WithTheCreatedOrder(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
 	}
-	if body.Data.ID != view.ID || body.Data.Status != "PAYMENT_PENDING" {
-		t.Fatalf("unexpected order: %+v", body.Data)
+	if body.Data.ID != view.ID || body.Data.Status != "PENDING" {
+		t.Fatalf("the fresh order must await the artist, got %+v", body.Data)
 	}
 	if body.Data.Total.Amount != 240000 || body.Data.Total.Currency != "VND" {
 		t.Fatalf("unexpected total: %+v", body.Data.Total)
