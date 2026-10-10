@@ -45,7 +45,7 @@ func (r *adminOrders) FindByID(_ context.Context, id uuid.UUID) (*model.Order, e
 	return order, nil
 }
 
-func (r *adminOrders) ListAll(_ context.Context, page, size int) ([]model.OrderSummary, int64, error) {
+func (r *adminOrders) ListAll(_ context.Context, page, size int, _ *constant.Status, _ constant.OrderListSort) ([]model.OrderSummary, int64, error) {
 	total := int64(len(r.ordered))
 	start := (page - 1) * size
 	if start > len(r.ordered) {
@@ -172,7 +172,7 @@ func TestListAllReturnsEveryOrderNewestFirstWithItsOwner(t *testing.T) {
 	if page.Orders[0].UserID != owner || page.Orders[1].UserID != other {
 		t.Fatalf("each row must carry its owner, got %+v", page.Orders)
 	}
-	if page.Orders[0].Status != constant.StatusPendingPayment || page.Orders[0].Total.Amount != 3000 {
+	if page.Orders[0].Status != constant.StatusPending || page.Orders[0].Total.Amount != 3000 {
 		t.Fatalf("each row must carry its state and total, got %+v", page.Orders[0])
 	}
 }
@@ -254,10 +254,10 @@ func TestAdminMoveRefusesAnIllegalMoveAndRecordsNothing(t *testing.T) {
 	if !errors.As(err, &refusal) {
 		t.Fatalf("shipping an unpaid order must be refused with a state transition error, got %v", err)
 	}
-	if refusal.From != constant.StatusPendingPayment || refusal.To != constant.StatusShipped {
-		t.Fatalf("the refusal must name PENDING_PAYMENT, got %+v", refusal)
+	if refusal.From != constant.StatusPending || refusal.To != constant.StatusShipped {
+		t.Fatalf("the refusal must name PENDING, got %+v", refusal)
 	}
-	if order.Status != constant.StatusPendingPayment {
+	if order.Status != constant.StatusPending {
 		t.Fatalf("a refused move must leave the order untouched, got %s", order.Status)
 	}
 	if len(f.orders.updates) != 0 {

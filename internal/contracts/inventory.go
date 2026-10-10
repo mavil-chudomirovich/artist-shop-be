@@ -70,8 +70,8 @@ type InventoryReservation interface {
 	ApplySale(ctx context.Context, orderID, productID uuid.UUID, sourceReference string) error
 
 	// HoldWindow returns the fixed window module 05 sets goods aside for an order
-	// (its HoldTTL). The order derives its own expires_at from it, so the window
-	// has a single owner and the order never repeats the fifteen minutes
+	// (its HoldTTL). The order derives its own payment deadline from it, so the
+	// window has a single owner and the order never repeats the sixty minutes
 	// (FR-016, research D4, D6).
 	HoldWindow() time.Duration
 }

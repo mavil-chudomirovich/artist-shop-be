@@ -7,7 +7,12 @@ import "time"
 // per-order setting (spec Assumption): whether it should be configurable is a
 // later concern, not a reason to leave the behaviour open. It is the one value
 // the whole holding behaviour turns on, so it is named once here.
-const HoldTTL = 15 * time.Minute
+//
+// It is sixty minutes so a hold never lapses before the customer pays: feature 010
+// gives a confirmed order a sixty-minute payment window and the order reads this
+// same window through InventoryReservation.HoldWindow, so the two stay in step
+// (FR-008 of 010, research D13).
+const HoldTTL = 60 * time.Minute
 
 // HoldStatus is where a hold is in its short life: active, or resolved one of the
 // three ways. It is stored as constrained text in stock_holds.status and is only

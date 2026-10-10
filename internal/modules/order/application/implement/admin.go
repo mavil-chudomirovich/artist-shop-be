@@ -30,7 +30,7 @@ const targetTypeOrder = "order"
 // the caller reached it behind the administrator role guard.
 func (s *Service) ListAll(ctx context.Context, in dto.ListInput) (dto.AdminOrderPage, error) {
 	page, size := orderListWindow(in.Page, in.PageSize)
-	summaries, total, err := s.Orders.ListAll(ctx, page, size)
+	summaries, total, err := s.Orders.ListAll(ctx, page, size, in.Status, in.Sort)
 	if err != nil {
 		return dto.AdminOrderPage{}, err
 	}

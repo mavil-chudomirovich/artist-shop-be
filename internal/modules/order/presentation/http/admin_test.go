@@ -157,7 +157,7 @@ func TestAdminListReturnsEveryOrderWithItsOwner(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the admin list body %q: %v", rec.Body.String(), err)
 	}
-	if len(body.Data) != 1 || body.Data[0].UserID != testCustomerID || body.Data[0].Status != "PENDING_PAYMENT" {
+	if len(body.Data) != 1 || body.Data[0].UserID != testCustomerID || body.Data[0].Status != "PAYMENT_PENDING" {
 		t.Fatalf("unexpected admin list: %+v", body.Data)
 	}
 	if body.Meta.Page != 1 || body.Meta.PageSize != 20 || body.Meta.Total != 1 {
@@ -237,7 +237,7 @@ func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
 // contracts/error-codes.md: an illegal move answers 409
 // ORDER_STATE_TRANSITION_INVALID.
 func TestAdminMoveRefusesAnIllegalMove(t *testing.T) {
-	fake := &fakeAdmin{shipErr: domainerr.StateTransitionInvalid(constant.StatusPendingPayment, constant.StatusShipped)}
+	fake := &fakeAdmin{shipErr: domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusShipped)}
 	router := newOrderAdminRouter(fake)
 
 	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", "", "admin-token")

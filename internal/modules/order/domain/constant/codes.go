@@ -1,44 +1,65 @@
-// Package constant holds the order module's business constants: the five order
-// states, the machine-readable error codes and the audit actions.
+// Package constant holds the order module's business constants: the six order
+// states, the machine-readable error codes, the list sort orders and the audit
+// actions.
 //
 // A code or state value is part of the module's public contract: renaming one
 // breaks every client that already handles it, so the values here mirror
-// specs/009-order/contracts/error-codes.md and
-// specs/009-order/contracts/openapi.yaml exactly.
+// specs/010-order-confirmation/contracts/error-codes.md and
+// specs/010-order-confirmation/contracts/openapi.yaml exactly. Feature 010
+// supersedes specs/009-order's five-state set: PENDING_PAYMENT is renamed
+// PAYMENT_PENDING and a new PENDING is added (research D1).
 package constant
 
 // Status is where an order is in its life. It is stored as constrained text in
 // orders.status and is only ever changed through the order entity's transition
-// methods (FR-009, FR-010).
+// methods (FR-001, FR-010).
 type Status string
 
 const (
-	// StatusPendingPayment is an order whose goods are held while the customer
-	// pays. It is the state every fresh order starts in.
-	StatusPendingPayment Status = "PENDING_PAYMENT"
+	// StatusPending is an order awaiting the artist's confirmation. It holds no
+	// goods and carries no deadline; every fresh order starts here (FR-001,
+	// research D2).
+	StatusPending Status = "PENDING"
+	// StatusPaymentPending is an order the artist has confirmed: its goods are
+	// held, all-or-nothing, while the customer pays within the payment window
+	// (FR-005, FR-006, research D1, D3).
+	StatusPaymentPending Status = "PAYMENT_PENDING"
 	// StatusPaid is an order a confirmed payment has turned its hold into a
-	// sale. Module 08 drives this transition (research D13).
+	// sale. Module 08 drives this transition (research D13 of 009).
 	StatusPaid Status = "PAID"
 	// StatusShipped is a paid order an administrator has marked shipped.
 	StatusShipped Status = "SHIPPED"
 	// StatusCompleted is a shipped order an administrator has marked completed.
 	// It is terminal.
 	StatusCompleted Status = "COMPLETED"
-	// StatusCancelled is an order the customer cancelled or that expired unpaid.
-	// It is terminal.
+	// StatusCancelled is an order the customer cancelled, the artist declined, or
+	// that expired unpaid. It is terminal.
 	StatusCancelled Status = "CANCELLED"
 )
 
-// IsValidStatus reports whether value is one of the five order states. It mirrors
+// IsValidStatus reports whether value is one of the six order states. It mirrors
 // the orders_status_ck check so the domain and the storage agree on the set.
 func IsValidStatus(value Status) bool {
 	switch value {
-	case StatusPendingPayment, StatusPaid, StatusShipped, StatusCompleted, StatusCancelled:
+	case StatusPending, StatusPaymentPending, StatusPaid, StatusShipped, StatusCompleted, StatusCancelled:
 		return true
 	default:
 		return false
 	}
 }
+
+// OrderListSort is how an administrator order list is ordered. The zero value is
+// SortNewest, the list's default; SortOldest is the FIFO confirmation queue
+// (FR-026, research D11).
+type OrderListSort string
+
+const (
+	// SortNewest returns the most recently placed orders first.
+	SortNewest OrderListSort = "newest"
+	// SortOldest returns the oldest orders first, so the confirmation queue is
+	// FIFO by creation time.
+	SortOldest OrderListSort = "oldest"
+)
 
 // Stable, machine-readable error codes of the order module. They mirror
 // specs/009-order/contracts/error-codes.md and are mapped to HTTP status codes by
@@ -73,8 +94,16 @@ const (
 	// transferred (FR-024).
 	CodeNotTransferable = "ORDER_NOT_TRANSFERABLE"
 	// CodeTransferTargetNotFound reports that no account carries the email the
-	// transfer names (FR-024).
+	// transfer names (FR-024 of 009).
 	CodeTransferTargetNotFound = "ORDER_TRANSFER_TARGET_NOT_FOUND"
+	// CodeNotEditable reports that the order is not in a state the customer may
+	// change — it is paid or beyond. Only an order awaiting the artist or
+	// awaiting payment can be edited (FR-012).
+	CodeNotEditable = "ORDER_NOT_EDITABLE"
+	// CodeEmptyOrder reports that an edit would leave the order with no line. An
+	// order always carries at least one line; the customer cancels instead
+	// (FR-015).
+	CodeEmptyOrder = "ORDER_EMPTY"
 )
 
 // Audit actions emitted by the order module. The values are the action names
@@ -84,6 +113,12 @@ const (
 // Outcomes (SUCCESS / FAILURE) are not defined here; the shared audit package owns
 // them so every module spells them the same way.
 const (
+	// AuditOrderConfirmed is recorded when an administrator confirms an order
+	// awaiting the artist, holding the whole order (FR-024).
+	AuditOrderConfirmed = "ORDER_CONFIRMED"
+	// AuditOrderRejected is recorded when an administrator declines an order
+	// awaiting the artist (FR-018).
+	AuditOrderRejected = "ORDER_REJECTED"
 	// AuditOrderShipped is recorded when an administrator marks a paid order
 	// shipped (FR-022, FR-023).
 	AuditOrderShipped = "ORDER_SHIPPED"

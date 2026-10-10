@@ -59,6 +59,14 @@ var (
 	// error-codes.md). It is the single sentinel for the typed refusals built by
 	// InvalidValue. It maps to the shared VALIDATION_ERROR (400).
 	ErrInvalidValue = errors.New("invalid order value")
+	// ErrNotEditable is returned when a customer tries to change an order that is
+	// neither awaiting the artist nor awaiting payment — it is paid or beyond
+	// (FR-012). It maps to ORDER_NOT_EDITABLE (409).
+	ErrNotEditable = errors.New("order is not editable")
+	// ErrEmptyOrder is returned when an edit would leave the order with no line.
+	// An order always carries at least one line; the customer cancels instead
+	// (FR-015). It maps to ORDER_EMPTY (409).
+	ErrEmptyOrder = errors.New("order is empty")
 )
 
 // ItemNotPurchasableError carries the product that cannot be bought, so the

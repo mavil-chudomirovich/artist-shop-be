@@ -323,8 +323,8 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
 		t.Fatalf("Checkout: %v", err)
 	}
 
-	if view.ID == uuid.Nil || view.Status != "PENDING_PAYMENT" {
-		t.Fatalf("expected an awaiting-payment order, got %+v", view)
+	if view.ID == uuid.Nil || view.Status != "PENDING" {
+		t.Fatalf("expected an order awaiting the artist's confirmation, got %+v", view)
 	}
 	if view.Total.Amount != 2*120000+3*33333 || view.Total.Currency != "VND" {
 		t.Fatalf("total = %+v, want the exact sum 339999 VND", view.Total)
@@ -354,8 +354,11 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsTheGoods(t *testing.T) {
 	if created.UserID != user {
 		t.Fatalf("owner = %s, want the session's %s", created.UserID, user)
 	}
-	if !created.ExpiresAt.Equal(fixedNow.Add(holdWindow)) {
-		t.Fatalf("expires_at = %v, want now + the hold window %v", created.ExpiresAt, fixedNow.Add(holdWindow))
+	if created.Version != 1 {
+		t.Fatalf("a fresh order must carry version 1, got %d", created.Version)
+	}
+	if created.ConfirmedAt != nil || created.PaymentExpiresAt != nil {
+		t.Fatalf("a fresh order must carry no confirmation instant and no deadline, got %v/%v", created.ConfirmedAt, created.PaymentExpiresAt)
 	}
 	for i, line := range created.Lines {
 		if line.OrderID != created.ID {

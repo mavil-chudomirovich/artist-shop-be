@@ -141,8 +141,8 @@ func TestSweeperNeverRunsTwoSweepsAtOnce(t *testing.T) {
 }
 
 // sweepOrders is a minimal OrderRepository for the expiry test. It reports the
-// orders still awaiting payment whose expiry has passed at the instant it is
-// handed, records the row locks, and persists a state write.
+// orders awaiting payment whose deadline has passed at the instant it is handed,
+// records the row locks, and persists a state write.
 type sweepOrders struct {
 	appinterface.OrderRepository
 	orders  []*model.Order
@@ -153,7 +153,7 @@ type sweepOrders struct {
 func (r *sweepOrders) ListExpiredPending(_ context.Context, now time.Time) ([]uuid.UUID, error) {
 	out := make([]uuid.UUID, 0)
 	for _, order := range r.orders {
-		if order.Status == constant.StatusPendingPayment && !order.ExpiresAt.After(now) {
+		if order.Status == constant.StatusPaymentPending && order.PaymentExpiresAt != nil && !order.PaymentExpiresAt.After(now) {
 			out = append(out, order.ID)
 		}
 	}
@@ -215,8 +215,11 @@ func TestExpireOrdersCancelsOnlyTheExpiredUnpaidOrder(t *testing.T) {
 		}}
 	}
 	address := model.Address{RecipientName: "Nguyễn Văn A"}
-	expired := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Second), now.Add(-time.Minute))
-	paid := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Second), now.Add(-time.Minute))
+	past := now.Add(-time.Second)
+	expired := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Minute))
+	expired.Status = constant.StatusPaymentPending
+	expired.PaymentExpiresAt = &past
+	paid := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Minute))
 	paid.Status = constant.StatusPaid
 
 	orders := &sweepOrders{orders: []*model.Order{expired, paid}}

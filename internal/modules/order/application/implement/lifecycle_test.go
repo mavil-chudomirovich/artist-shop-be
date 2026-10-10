@@ -98,11 +98,13 @@ func newLifecycleFixture(orders ...*model.Order) *lifecycleFixture {
 	return &lifecycleFixture{svc: svc, orders: store, reservations: reservations}
 }
 
-// pendingOrder builds a fresh awaiting-payment order over the given lines, using
-// the domain constructor so its identifier, line links and total are the same
-// ones a checkout would produce.
-func pendingOrder(owner uuid.UUID, lines ...model.OrderLine) *model.Order {
-	return model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, fixedNow.Add(holdWindow), fixedNow)
+// paymentPendingOrder builds a confirmed, awaiting-payment order over the given
+// lines, using the domain constructor so its identifier, line links and total are
+// the same ones a checkout-and-confirm would produce.
+func paymentPendingOrder(owner uuid.UUID, lines ...model.OrderLine) *model.Order {
+	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, fixedNow)
+	order.Status = constant.StatusPaymentPending
+	return order
 }
 
 // line builds one snapshot line for a lifecycle test.
@@ -122,7 +124,7 @@ func line(productID uuid.UUID, amount, quantity int64) model.OrderLine {
 // not sell a second time.
 func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
-	order := pendingOrder(uuid.New(), line(first, 120000, 2), line(second, 33333, 1))
+	order := paymentPendingOrder(uuid.New(), line(first, 120000, 2), line(second, 33333, 1))
 	f := newLifecycleFixture(order)
 
 	const event = "payment-event-1"
@@ -172,7 +174,7 @@ func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 // already-applied outcomes. It neither transitions the order nor sells anything.
 func TestMarkPaidIsANoOpOnceTheOrderIsPastAwaitingPayment(t *testing.T) {
 	for _, status := range []constant.Status{constant.StatusPaid, constant.StatusShipped, constant.StatusCompleted} {
-		order := pendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+		order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 		order.Status = status
 		f := newLifecycleFixture(order)
 
@@ -194,7 +196,7 @@ func TestMarkPaidIsANoOpOnceTheOrderIsPastAwaitingPayment(t *testing.T) {
 // FR-009, FR-011: a payment arriving after cancellation is a real anomaly, not a
 // replay, so it is refused naming the cancelled state and sells nothing.
 func TestMarkPaidRefusesACancelledOrder(t *testing.T) {
-	order := pendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 	order.Status = constant.StatusCancelled
 	f := newLifecycleFixture(order)
 
@@ -219,7 +221,7 @@ func TestMarkPaidRefusesACancelledOrder(t *testing.T) {
 // cancelled.
 func TestCancelReturnsTheHoldExactlyOnce(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
-	order := pendingOrder(uuid.New(), line(first, 1000, 1), line(second, 2000, 3))
+	order := paymentPendingOrder(uuid.New(), line(first, 1000, 1), line(second, 2000, 3))
 	f := newLifecycleFixture(order)
 
 	if err := f.svc.Cancel(context.Background(), order.ID); err != nil {
@@ -257,7 +259,7 @@ func TestCancelReturnsTheHoldExactlyOnce(t *testing.T) {
 // the current state does not allow is refused naming that state and leaves the
 // order exactly as it was.
 func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) {
-	order := pendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 	f := newLifecycleFixture(order)
 	ctx := context.Background()
 
@@ -267,10 +269,10 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 	if !errors.As(err, &refusal) {
 		t.Fatalf("shipping an unpaid order must be refused with a state transition error, got %v", err)
 	}
-	if refusal.From != constant.StatusPendingPayment || refusal.To != constant.StatusShipped {
-		t.Fatalf("the refusal must name PENDING_PAYMENT, got %+v", refusal)
+	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusShipped {
+		t.Fatalf("the refusal must name PAYMENT_PENDING, got %+v", refusal)
 	}
-	if order.Status != constant.StatusPendingPayment {
+	if order.Status != constant.StatusPaymentPending {
 		t.Fatalf("a refused move must leave the order untouched, got %s", order.Status)
 	}
 	if len(f.orders.updates) != 0 {
@@ -309,7 +311,7 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 // its repository reports past the window, and a retried sweep never releases a
 // second time.
 func TestExpireOrdersCancelsExpiredOrdersOnce(t *testing.T) {
-	expired := pendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	expired := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 	f := newLifecycleFixture(expired)
 	f.orders.expired = []uuid.UUID{expired.ID}
 

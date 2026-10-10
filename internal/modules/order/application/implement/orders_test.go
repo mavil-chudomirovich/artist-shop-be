@@ -113,11 +113,11 @@ func newOrdersFixture(orders ...*model.Order) *ordersFixture {
 	return &ordersFixture{svc: svc, store: store, reservations: reservations}
 }
 
-// orderAt builds an awaiting-payment order placed at the given instant, using
-// the domain constructor so its identifier, line links and total are the ones a
-// checkout would produce.
+// orderAt builds an order awaiting the artist's confirmation, placed at the given
+// instant, using the domain constructor so its identifier, line links and total
+// are the ones a checkout would produce.
 func orderAt(owner uuid.UUID, createdAt time.Time, lines ...model.OrderLine) *model.Order {
-	return model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, createdAt.Add(holdWindow), createdAt)
+	return model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, createdAt)
 }
 
 // FR-018, FR-020: the list is the caller's only, newest first and paginated —
@@ -263,7 +263,7 @@ func TestCancelMineRefusesAnotherOwnersOrder(t *testing.T) {
 	if !errors.Is(err, domainerr.ErrNotFound) {
 		t.Fatalf("cancelling another customer's order must answer not-found, got %v", err)
 	}
-	if order.Status != constant.StatusPendingPayment {
+	if order.Status != constant.StatusPending {
 		t.Fatalf("a foreign cancel must leave the order untouched, got %s", order.Status)
 	}
 	if len(f.reservations.releases) != 0 {

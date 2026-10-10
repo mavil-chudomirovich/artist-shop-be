@@ -25,8 +25,8 @@ func newHold(t *testing.T, at time.Time) *Hold {
 	return hold
 }
 
-// spec Assumption: a hold lasts a fixed fifteen minutes.
-func TestNewHoldSetsTheFifteenMinuteWindow(t *testing.T) {
+// spec Assumption: a hold lasts a fixed sixty minutes.
+func TestNewHoldSetsTheSixtyMinuteWindow(t *testing.T) {
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	hold := newHold(t, now)
 

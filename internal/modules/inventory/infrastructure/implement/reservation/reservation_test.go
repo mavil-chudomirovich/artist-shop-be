@@ -91,7 +91,7 @@ func TestApplySaleMapsToTheInventoryUseCase(t *testing.T) {
 }
 
 // FR-016, research D4, D6: the window comes from module 05's single constant, so
-// the order never repeats the fifteen minutes.
+// the order never repeats the sixty minutes.
 func TestHoldWindowIsModule05sWindow(t *testing.T) {
 	if got := New(&fakeService{}).HoldWindow(); got != constant.HoldTTL {
 		t.Fatalf("HoldWindow = %v, want %v", got, constant.HoldTTL)

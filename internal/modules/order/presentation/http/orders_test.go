@@ -98,7 +98,7 @@ func TestListMineReturnsTheCallersOrders(t *testing.T) {
 			Orders: []appdto.OrderSummaryView{
 				{
 					ID:        uuid.New(),
-					Status:    constant.StatusPendingPayment,
+					Status:    constant.StatusPaymentPending,
 					Total:     appdto.MoneyView{Amount: 240000, Currency: "VND"},
 					ItemCount: 1,
 					CreatedAt: sampleView().CreatedAt,
@@ -119,7 +119,7 @@ func TestListMineReturnsTheCallersOrders(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the list body %q: %v", rec.Body.String(), err)
 	}
-	if len(body.Data) != 1 || body.Data[0].Status != "PENDING_PAYMENT" || body.Data[0].Total.Amount != 240000 {
+	if len(body.Data) != 1 || body.Data[0].Status != "PAYMENT_PENDING" || body.Data[0].Total.Amount != 240000 {
 		t.Fatalf("unexpected list: %+v", body.Data)
 	}
 	if body.Meta.Page != 1 || body.Meta.PageSize != 2 || body.Meta.Total != 1 {

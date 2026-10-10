@@ -102,18 +102,23 @@ func testAddress() model.Address {
 	}
 }
 
-// buildOrder builds an order over the given lines, stamping the lines with their
-// identifiers, the order's identifier and the created instant. It does not use
-// model.NewOrder because the ordering test needs to control each line's position.
+// buildOrder builds an awaiting-payment order over the given lines, stamping the
+// lines with their identifiers, the order's identifier and the created instant. It
+// does not use model.NewOrder because the ordering test needs to control each
+// line's position.
 func buildOrder(owner uuid.UUID, at time.Time, lines []model.OrderLine) *model.Order {
+	confirmedAt := at
+	paymentDeadline := at.Add(60 * time.Minute)
 	order := &model.Order{
-		ID:        uuid.New(),
-		UserID:    owner,
-		Status:    constant.StatusPendingPayment,
-		Address:   testAddress(),
-		ExpiresAt: at.Add(15 * time.Minute),
-		CreatedAt: at,
-		UpdatedAt: at,
+		ID:               uuid.New(),
+		UserID:           owner,
+		Status:           constant.StatusPaymentPending,
+		Version:          1,
+		Address:          testAddress(),
+		ConfirmedAt:      &confirmedAt,
+		PaymentExpiresAt: &paymentDeadline,
+		CreatedAt:        at,
+		UpdatedAt:        at,
 	}
 	for i := range lines {
 		lines[i].ID = uuid.New()
@@ -158,8 +163,8 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindByID: %v", err)
 	}
-	if got.Status != constant.StatusPendingPayment {
-		t.Errorf("status = %s, want PENDING_PAYMENT", got.Status)
+	if got.Status != constant.StatusPaymentPending {
+		t.Errorf("status = %s, want PAYMENT_PENDING", got.Status)
 	}
 	if got.UserID != owner {
 		t.Errorf("owner = %s, want %s", got.UserID, owner)
@@ -177,8 +182,14 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 		got.Lines[0].UnitPrice.Amount != 120000 || got.Lines[0].Quantity != 2 {
 		t.Errorf("first line does not round-trip: %+v", got.Lines[0])
 	}
-	if !got.ExpiresAt.Equal(order.ExpiresAt) {
-		t.Errorf("expires_at = %v, want %v", got.ExpiresAt, order.ExpiresAt)
+	if got.Version != 1 {
+		t.Errorf("order_version = %d, want 1", got.Version)
+	}
+	if got.ConfirmedAt == nil || !got.ConfirmedAt.Equal(*order.ConfirmedAt) {
+		t.Errorf("confirmed_at = %v, want %v", got.ConfirmedAt, order.ConfirmedAt)
+	}
+	if got.PaymentExpiresAt == nil || !got.PaymentExpiresAt.Equal(*order.PaymentExpiresAt) {
+		t.Errorf("payment_expires_at = %v, want %v", got.PaymentExpiresAt, order.PaymentExpiresAt)
 	}
 }
 
@@ -272,7 +283,7 @@ func TestAdminListIsEveryOrderNewestFirst(t *testing.T) {
 		}
 	}
 
-	got, total, err := f.repo.ListAll(ctx, 1, 20)
+	got, total, err := f.repo.ListAll(ctx, 1, 20, nil, constant.SortNewest)
 	if err != nil {
 		t.Fatalf("ListAll: %v", err)
 	}
@@ -335,5 +346,209 @@ func TestRemovedProductLeavesTheLine(t *testing.T) {
 	line := got.Lines[0]
 	if line.ProductID != product || line.Name != "Gone" || line.UnitPrice.Amount != 120000 || line.Quantity != 2 {
 		t.Fatalf("the snapshot must be unchanged: %+v", line)
+	}
+}
+
+// FR-015, FR-016, research D6: ReplaceLines replaces the order's line set — it
+// drops the old set, inserts the new one and persists the order's total, version
+// and state — and the replacement still holds the one-line-per-product rule. The
+// lines come back in position order whatever order they were written in.
+func TestReplaceLinesReplacesTheSetAndKeepsOneLinePerProduct(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	first, second, third := f.insertProduct(t), f.insertProduct(t), f.insertProduct(t)
+	at := time.Now().UTC().Truncate(time.Millisecond)
+
+	order := buildOrder(uuid.New(), at, []model.OrderLine{
+		newLine(first, "first", 1000, 1, 0),
+		newLine(second, "second", 2000, 1, 1),
+	})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Replace with a new set: drop `second`, add `third`, change first's quantity.
+	// Written deliberately out of position order.
+	order.Lines = []model.OrderLine{
+		newLine(third, "third", 3000, 2, 1),
+		newLine(first, "first", 1000, 5, 0),
+	}
+	order.Total = model.LinesTotal(order.Lines)
+	order.Version = 2
+	order.Status = constant.StatusPending
+	now := at.Add(time.Hour)
+	if err := f.repo.ReplaceLines(ctx, order, now); err != nil {
+		t.Fatalf("ReplaceLines: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(got.Lines) != 2 {
+		t.Fatalf("expected the replaced set of 2 lines, got %d", len(got.Lines))
+	}
+	if got.Lines[0].ProductID != first || got.Lines[0].Quantity != 5 || got.Lines[0].Position != 0 {
+		t.Fatalf("first replaced line does not come first: %+v", got.Lines[0])
+	}
+	if got.Lines[1].ProductID != third || got.Lines[1].Quantity != 2 || got.Lines[1].Position != 1 {
+		t.Fatalf("second replaced line is out of position: %+v", got.Lines[1])
+	}
+	if got.Total.Amount != 5*1000+2*3000 || got.Version != 2 || got.Status != constant.StatusPending {
+		t.Fatalf("the replaced order did not persist its total/version/state: %+v", got)
+	}
+
+	// The unique (order_id, product_id) still holds: a duplicate product on one
+	// order is refused by the database.
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO order_items
+			(id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, 'dup', 'dup', 1000, 'VND', 1, 2, now())`,
+		uuid.New(), order.ID, first); err == nil {
+		t.Fatal("the storage must refuse a duplicate product on one order")
+	}
+}
+
+// FR-017, research D14: an accepted edit writes an order_edit_history row carrying
+// the version the edit produced and the actor; a non-positive version is refused by
+// the storage check; and deleting the order cascades to its history.
+func TestEditHistoryIsRecordedAndCascades(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	order := buildOrder(uuid.New(), at, []model.OrderLine{newLine(product, "first", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	actor := uuid.New()
+
+	record := model.EditHistory{
+		OrderID:   order.ID,
+		Version:   2,
+		ActorID:   actor,
+		Before:    model.EditSnapshot{Address: testAddress(), Lines: order.Lines},
+		After:     model.EditSnapshot{Address: testAddress(), Lines: order.Lines},
+		CreatedAt: at.Add(time.Minute),
+	}
+	if err := f.repo.InsertEditHistory(ctx, record); err != nil {
+		t.Fatalf("InsertEditHistory: %v", err)
+	}
+
+	var (
+		version     int64
+		storedActor uuid.UUID
+		beforeLen   int
+		afterLen    int
+	)
+	if err := f.pool.QueryRow(ctx,
+		`SELECT version, actor_id, octet_length("before"), octet_length("after")
+		 FROM order_edit_history WHERE order_id = $1`, order.ID).
+		Scan(&version, &storedActor, &beforeLen, &afterLen); err != nil {
+		t.Fatalf("read edit history: %v", err)
+	}
+	if version != 2 || storedActor != actor || beforeLen == 0 || afterLen == 0 {
+		t.Fatalf("edit history = version %d actor %s before %d after %d", version, storedActor, beforeLen, afterLen)
+	}
+
+	// A version below 1 is refused by the storage check (FR-017).
+	if err := f.repo.InsertEditHistory(ctx, model.EditHistory{
+		OrderID: order.ID, Version: 0, ActorID: actor, CreatedAt: at,
+	}); err == nil {
+		t.Fatal("the storage must refuse an edit-history version below 1")
+	}
+
+	// Deleting the order takes its history with it (ON DELETE CASCADE).
+	if _, err := f.pool.Exec(ctx, `DELETE FROM orders WHERE id = $1`, order.ID); err != nil {
+		t.Fatalf("delete order: %v", err)
+	}
+	var remaining int64
+	if err := f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM order_edit_history WHERE order_id = $1`, order.ID).Scan(&remaining); err != nil {
+		t.Fatalf("count edit history: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("deleting the order must cascade to its edit history, %d rows remain", remaining)
+	}
+}
+
+// FR-008, FR-009, research D5: ListExpiredPending selects only awaiting-payment
+// orders whose payment deadline has passed; an order awaiting the artist (no
+// deadline) and one whose deadline is still in the future are never selected.
+func TestListExpiredPendingSelectsOnlyAwaitingPaymentPastTheDeadline(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+
+	expired := buildOrder(uuid.New(), now.Add(-2*time.Hour), []model.OrderLine{newLine(product, "expired", 1000, 1, 0)})
+	expired.PaymentExpiresAt = &past
+	fresh := buildOrder(uuid.New(), now.Add(-2*time.Hour), []model.OrderLine{newLine(product, "fresh", 1000, 1, 0)})
+	fresh.PaymentExpiresAt = &future
+	awaitingArtist := buildOrder(uuid.New(), now.Add(-2*time.Hour), []model.OrderLine{newLine(product, "pending", 1000, 1, 0)})
+	awaitingArtist.Status = constant.StatusPending
+	awaitingArtist.ConfirmedAt = nil
+	awaitingArtist.PaymentExpiresAt = nil
+
+	for _, order := range []*model.Order{expired, fresh, awaitingArtist} {
+		if err := f.repo.Create(ctx, order); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	ids, err := f.repo.ListExpiredPending(ctx, now)
+	if err != nil {
+		t.Fatalf("ListExpiredPending: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != expired.ID {
+		t.Fatalf("ListExpiredPending = %v, want only the past-deadline awaiting-payment order %s", ids, expired.ID)
+	}
+}
+
+// FR-021, FR-026, research D11: the administrator list filters by state and orders
+// oldest-first on request — status=PENDING&sort=oldest is the FIFO confirmation
+// queue — while the default remains newest-first over every order.
+func TestAdminListFiltersByStatusAndSortsOldestFirst(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	base := time.Now().UTC().Truncate(time.Millisecond)
+
+	olderPending := buildOrder(uuid.New(), base.Add(-2*time.Hour), []model.OrderLine{newLine(product, "p1", 1000, 1, 0)})
+	olderPending.Status = constant.StatusPending
+	newerPending := buildOrder(uuid.New(), base.Add(-time.Hour), []model.OrderLine{newLine(product, "p2", 1000, 1, 0)})
+	newerPending.Status = constant.StatusPending
+	paid := buildOrder(uuid.New(), base, []model.OrderLine{newLine(product, "paid", 1000, 1, 0)})
+	paid.Status = constant.StatusPaid
+
+	for _, order := range []*model.Order{newerPending, paid, olderPending} {
+		if err := f.repo.Create(ctx, order); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	pendingStatus := constant.StatusPending
+	got, total, err := f.repo.ListAll(ctx, 1, 20, &pendingStatus, constant.SortOldest)
+	if err != nil {
+		t.Fatalf("ListAll(PENDING, oldest): %v", err)
+	}
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("the status filter must return exactly the two PENDING orders, got %d/%d", total, len(got))
+	}
+	if got[0].ID != olderPending.ID || got[1].ID != newerPending.ID {
+		t.Fatalf("status=PENDING&sort=oldest must be FIFO, got %s then %s", got[0].ID, got[1].ID)
+	}
+
+	all, allTotal, err := f.repo.ListAll(ctx, 1, 20, nil, constant.SortNewest)
+	if err != nil {
+		t.Fatalf("ListAll(default): %v", err)
+	}
+	if allTotal != 3 || len(all) != 3 {
+		t.Fatalf("an unfiltered list must return every order, got %d/%d", allTotal, len(all))
+	}
+	if all[0].ID != paid.ID {
+		t.Fatalf("the default list must be newest first, got %s first", all[0].ID)
 	}
 }

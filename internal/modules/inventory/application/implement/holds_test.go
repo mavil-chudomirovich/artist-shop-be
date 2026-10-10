@@ -19,13 +19,13 @@ import (
 
 // This file is US3's use-case contract: the hold lifecycle exercised through the
 // real Service over an in-memory repository and a movable clock. The clock is the
-// seam that makes "fifteen minutes pass" an instant rather than a wait, and the
+// seam that makes "sixty minutes pass" an instant rather than a wait, and the
 // in-memory holds are what let the tests assert that reserving, releasing and
 // expiring move availability without ever touching the shelf (FR-014, FR-015,
 // FR-017, FR-018, FR-019, research D15).
 
 // movableClock is the injected Clock with an instant a test can advance, so the
-// fifteen-minute window is observed without sleeping (research D15).
+// sixty-minute window is observed without sleeping (research D15).
 type movableClock struct{ at time.Time }
 
 func (c *movableClock) Now() time.Time { return c.at }

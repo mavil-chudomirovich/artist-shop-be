@@ -100,7 +100,8 @@ func (m *Mapper) AdminSummaries(summaries []model.OrderSummary) []dto.AdminOrder
 
 // Order maps a whole order to the customer's detail shape. The line count is the
 // number of lines the order carries, so the summary and the detail cannot
-// disagree.
+// disagree. The order's content version is deliberately not mapped: it is an
+// internal seam for module 08, never a client-facing value (research D10).
 func (m *Mapper) Order(order model.Order) dto.OrderView {
 	return dto.OrderView{
 		OrderSummaryView: dto.OrderSummaryView{

@@ -77,6 +77,19 @@ type Auditor interface {
 	Record(ctx context.Context, action, outcome string, actorID *uuid.UUID, actorRole, targetType, targetID string, metadata map[string]any)
 }
 
+// Notifier sends the order module's emails: the artist's confirmation-needed note
+// (on checkout and on an edit that leaves the order awaiting confirmation) and the
+// customer's status-change note. Sending is best-effort: it runs after the
+// transaction has committed, and a failure is logged by the adapter, never
+// propagated, so email can never fail a business operation (FR-019 to FR-021,
+// research D9).
+type Notifier interface {
+	// Send delivers one message to the given recipient. The adapter logs a failure
+	// instead of returning it, so a caller never fails an operation because an
+	// email could not be delivered (FR-021).
+	Send(ctx context.Context, to, subject, body string) error
+}
+
 // OrderService is the module's use-case surface.
 //
 // Every method that reads or changes a customer's order takes the acting account

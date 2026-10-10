@@ -160,7 +160,7 @@ func sampleView() appdto.OrderView {
 	return appdto.OrderView{
 		OrderSummaryView: appdto.OrderSummaryView{
 			ID:        uuid.New(),
-			Status:    constant.StatusPendingPayment,
+			Status:    constant.StatusPaymentPending,
 			Total:     appdto.MoneyView{Amount: 240000, Currency: "VND"},
 			ItemCount: 1,
 			CreatedAt: time.Date(2026, time.October, 10, 12, 0, 0, 0, time.UTC),
@@ -193,7 +193,7 @@ func TestCheckoutReturns201WithTheCreatedOrder(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
 	}
-	if body.Data.ID != view.ID || body.Data.Status != "PENDING_PAYMENT" {
+	if body.Data.ID != view.ID || body.Data.Status != "PAYMENT_PENDING" {
 		t.Fatalf("unexpected order: %+v", body.Data)
 	}
 	if body.Data.Total.Amount != 240000 || body.Data.Total.Currency != "VND" {

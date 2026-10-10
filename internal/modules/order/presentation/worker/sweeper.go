@@ -8,9 +8,10 @@ import (
 	"time"
 )
 
-// DefaultInterval is how often the sweeper cancels expired orders. Fifteen
-// minutes is the order's hold window; a sweep every thirty seconds keeps eventual
-// cancellation tight without turning the loop into a busy wait (research D6).
+// DefaultInterval is how often the sweeper cancels expired orders. Sixty
+// minutes is the order's payment window; a sweep every thirty seconds keeps
+// eventual cancellation tight without turning the loop into a busy wait
+// (research D5).
 const DefaultInterval = 30 * time.Second
 
 // ExpireUseCase is the one application capability the sweeper drives. Declaring

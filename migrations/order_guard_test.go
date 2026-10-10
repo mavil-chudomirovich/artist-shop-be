@@ -8,24 +8,36 @@ import (
 // orderMigration introduces the two order tables of module 07.
 const orderMigration = "00009_order.sql"
 
+// orderConfirmationMigration reshapes orders for feature 010's six-state machine
+// (status set, renamed nullable deadline, version, confirmation instant) and adds
+// order_edit_history.
+const orderConfirmationMigration = "00011_order_confirmation.sql"
+
 // readOrderMigration returns the Up and Down halves of the migration, split on the
 // goose marker. It fails the test when the file or either section is missing, so
 // the assertions below can assume both are present.
 func readOrderMigration(t *testing.T) (upSection, downSection string) {
 	t.Helper()
+	return readMigration(t, orderMigration)
+}
 
-	raw, err := FS.ReadFile(orderMigration)
+// readMigration returns the Up and Down halves of a migration, split on the goose
+// marker. It fails the test when the file or either section is missing.
+func readMigration(t *testing.T, name string) (upSection, downSection string) {
+	t.Helper()
+
+	raw, err := FS.ReadFile(name)
 	if err != nil {
-		t.Fatalf("read %s: %v", orderMigration, err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 	content := string(raw)
 
 	if !strings.Contains(content, "-- +goose Up") {
-		t.Fatalf("%s: missing '-- +goose Up' section", orderMigration)
+		t.Fatalf("%s: missing '-- +goose Up' section", name)
 	}
 	downIndex := strings.Index(content, "-- +goose Down")
 	if downIndex < 0 {
-		t.Fatalf("%s: missing '-- +goose Down' section (rollback path required)", orderMigration)
+		t.Fatalf("%s: missing '-- +goose Down' section (rollback path required)", name)
 	}
 	return content[:downIndex], content[downIndex:]
 }
@@ -226,5 +238,114 @@ func TestOrderMigrationDeclaresTheColumns(t *testing.T) {
 		if !strings.Contains(upSection, column) {
 			t.Errorf("%s: Up section does not declare column %q", orderMigration, strings.TrimSpace(column))
 		}
+	}
+}
+
+// TestOrderConfirmationMigrationBackfillsAndReshapes guards the storage-level
+// invariants feature 010 rests on (FR-006, FR-008, FR-017, FR-018): the old
+// PENDING_PAYMENT value is backfilled BEFORE the check is widened, the six-state
+// check is installed, the deadline is renamed and made nullable, the version and
+// confirmation columns are added, and the history table is created — each created
+// in the Up section and reverted in the Down section, so the migration stays
+// reversible.
+func TestOrderConfirmationMigrationBackfillsAndReshapes(t *testing.T) {
+	up, down := readMigration(t, orderConfirmationMigration)
+
+	upNeeds := []string{
+		"UPDATE orders SET status = 'PAYMENT_PENDING' WHERE status = 'PENDING_PAYMENT'",
+		"DROP CONSTRAINT orders_status_ck",
+		"ALTER TABLE orders ADD CONSTRAINT orders_status_ck CHECK",
+		"'PENDING', 'PAYMENT_PENDING', 'PAID', 'SHIPPED', 'COMPLETED', 'CANCELLED'",
+		"RENAME COLUMN expires_at TO payment_expires_at",
+		"ALTER COLUMN payment_expires_at DROP NOT NULL",
+		"ADD COLUMN order_version bigint NOT NULL DEFAULT 1",
+		"orders_version_ck CHECK (order_version >= 1)",
+		"ADD COLUMN confirmed_at timestamptz",
+		"DROP INDEX orders_expiry_idx",
+		"CREATE INDEX orders_expiry_idx ON orders (status, payment_expires_at)",
+		"CREATE TABLE order_edit_history",
+		"order_edit_history_order_fk FOREIGN KEY (order_id)",
+		"REFERENCES orders(id) ON DELETE CASCADE",
+		"order_edit_history_version_ck CHECK (version >= 1)",
+		"CREATE INDEX order_edit_history_order_idx ON order_edit_history (order_id, version)",
+	}
+	for _, needle := range upNeeds {
+		if !strings.Contains(up, needle) {
+			t.Errorf("%s: Up section is missing %q", orderConfirmationMigration, needle)
+		}
+	}
+
+	// The backfill must come before the widened check, or a database holding the
+	// old value would fail the new check (research D1).
+	if backfill, widen := strings.Index(up, "UPDATE orders SET status = 'PAYMENT_PENDING'"),
+		strings.Index(up, "ADD CONSTRAINT orders_status_ck"); backfill < 0 || widen < 0 || backfill > widen {
+		t.Errorf("%s: the PENDING_PAYMENT backfill must precede the widened status check", orderConfirmationMigration)
+	}
+
+	downNeeds := []string{
+		"DROP TABLE order_edit_history",
+		"DROP CONSTRAINT order_edit_history_order_fk",
+		"DROP CONSTRAINT order_edit_history_version_ck",
+		"DROP INDEX order_edit_history_order_idx",
+		"DROP INDEX orders_expiry_idx",
+		"RENAME COLUMN payment_expires_at TO expires_at",
+		"CREATE INDEX orders_expiry_idx ON orders (status, expires_at)",
+		"DROP COLUMN confirmed_at",
+		"DROP CONSTRAINT orders_version_ck",
+		"DROP COLUMN order_version",
+		"DROP CONSTRAINT orders_status_ck",
+	}
+	for _, needle := range downNeeds {
+		if !strings.Contains(down, needle) {
+			t.Errorf("%s: Down section is missing %q", orderConfirmationMigration, needle)
+		}
+	}
+}
+
+// TestOrderConfirmationMigrationListsTheSixStates checks the widened check lists
+// exactly the six states and no longer the renamed PENDING_PAYMENT (FR-001,
+// FR-018, research D1).
+func TestOrderConfirmationMigrationListsTheSixStates(t *testing.T) {
+	up, _ := readMigration(t, orderConfirmationMigration)
+
+	index := strings.Index(up, "orders_status_ck CHECK")
+	if index < 0 {
+		t.Fatalf("%s: Up section does not declare the widened orders_status_ck", orderConfirmationMigration)
+	}
+	window := up[index:]
+	if end := strings.Index(window, ";"); end >= 0 {
+		window = window[:end]
+	}
+	for _, status := range []string{
+		"'PENDING'", "'PAYMENT_PENDING'", "'PAID'", "'SHIPPED'", "'COMPLETED'", "'CANCELLED'",
+	} {
+		if !strings.Contains(window, status) {
+			t.Errorf("%s: the widened check does not list the state %s", orderConfirmationMigration, status)
+		}
+	}
+	if strings.Contains(window, "'PENDING_PAYMENT'") {
+		t.Errorf("%s: the widened check must not list the renamed PENDING_PAYMENT", orderConfirmationMigration)
+	}
+}
+
+// TestOrderEditHistoryCascadesAndChecksVersion pins the history table's storage
+// invariants (FR-017): a removed order takes its history with it, and the version
+// is the order's positive counter.
+func TestOrderEditHistoryCascadesAndChecksVersion(t *testing.T) {
+	up, _ := readMigration(t, orderConfirmationMigration)
+
+	index := strings.Index(up, "order_edit_history_order_fk FOREIGN KEY")
+	if index < 0 {
+		t.Fatalf("%s: Up section does not declare order_edit_history_order_fk", orderConfirmationMigration)
+	}
+	window := up[index:]
+	if end := strings.Index(window, ";"); end >= 0 {
+		window = window[:end+1]
+	}
+	if !strings.Contains(window, "REFERENCES orders(id) ON DELETE CASCADE") {
+		t.Errorf("%s: order_edit_history_order_fk must reference orders(id) with ON DELETE CASCADE", orderConfirmationMigration)
+	}
+	if !strings.Contains(up, "order_edit_history_version_ck CHECK (version >= 1)") {
+		t.Errorf("%s: Up section must constrain order_edit_history.version >= 1", orderConfirmationMigration)
 	}
 }

@@ -325,7 +325,7 @@ func TestHistoryReadIsStableAcrossTwoReadsSharingATimestamp(t *testing.T) {
 }
 
 // holdClock is the injected clock the hold integration test drives, so the
-// fifteen-minute window is observed by moving the instant rather than waiting
+// sixty-minute window is observed by moving the instant rather than waiting
 // (research D15).
 type holdClock struct{ at time.Time }
 
@@ -385,7 +385,7 @@ func TestHoldLifecycleAgainstPostgres(t *testing.T) {
 	}
 
 	// Past the window, an unswept hold is already excluded from availability.
-	clock.advance(16 * time.Minute)
+	clock.advance(constant.HoldTTL + time.Minute)
 	held, err = f.repo.ActiveHeld(ctx, productID, clock.Now())
 	if err != nil {
 		t.Fatalf("ActiveHeld after expiry: %v", err)

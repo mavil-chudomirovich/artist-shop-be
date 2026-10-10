@@ -135,10 +135,12 @@ func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64)
 	return productID
 }
 
-// createOrder inserts one order over the given lines and returns it.
-func (f *lifecycleDBFixture) createOrder(t *testing.T, owner uuid.UUID, expiresAt time.Time, lines ...model.OrderLine) *model.Order {
+// createOrder inserts one order over the given lines and returns it. The order is
+// placed in PAYMENT_PENDING, the state the paid and expiry paths act on.
+func (f *lifecycleDBFixture) createOrder(t *testing.T, owner uuid.UUID, _ time.Time, lines ...model.OrderLine) *model.Order {
 	t.Helper()
-	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, expiresAt, time.Now().UTC())
+	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, time.Now().UTC())
+	order.Status = constant.StatusPaymentPending
 	if err := f.svc.Orders.Create(context.Background(), order); err != nil {
 		t.Fatalf("create order: %v", err)
 	}
@@ -196,7 +198,7 @@ func (f *lifecycleDBFixture) statusOf(t *testing.T, orderID uuid.UUID) constant.
 	return order.Status
 }
 
-// FR-009, research D9: the storage state check refuses a value outside the five,
+// FR-009, research D9: the storage state check refuses a value outside the six,
 // so the domain's transition table cannot be bypassed by writing one.
 func TestStorageRefusesAnUnlistedOrderState(t *testing.T) {
 	f := newLifecycleDBFixture(t)
@@ -208,7 +210,7 @@ func TestStorageRefusesAnUnlistedOrderState(t *testing.T) {
 
 	if _, err := f.pool.Exec(context.Background(),
 		`UPDATE orders SET status = 'BOGUS' WHERE id = $1`, order.ID); err == nil {
-		t.Fatal("the storage must refuse a status outside the five")
+		t.Fatal("the storage must refuse a status outside the six")
 	}
 }
 
@@ -268,8 +270,8 @@ func TestExpiredOrderFreesItsGoodsExactlyOnceAcrossBothSweeps(t *testing.T) {
 	// Drive the order and its hold past the window, so the order's sweep and
 	// module 05's both see the same expired deadline.
 	past := time.Now().Add(-time.Minute)
-	if _, err := f.pool.Exec(context.Background(), `UPDATE orders SET expires_at = $2 WHERE id = $1`, order.ID, past); err != nil {
-		t.Fatalf("backdate the order's expiry: %v", err)
+	if _, err := f.pool.Exec(context.Background(), `UPDATE orders SET payment_expires_at = $2 WHERE id = $1`, order.ID, past); err != nil {
+		t.Fatalf("backdate the order's payment deadline: %v", err)
 	}
 	if _, err := f.pool.Exec(context.Background(), `UPDATE stock_holds SET expires_at = $2 WHERE order_id = $1`, order.ID, past); err != nil {
 		t.Fatalf("backdate the hold's expiry: %v", err)

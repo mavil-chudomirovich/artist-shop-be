@@ -180,8 +180,7 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 	}
 
 	now := s.now()
-	expiresAt := now.Add(s.Reservations.HoldWindow())
-	order := model.NewOrder(ownerID, address, snapshot, expiresAt, now)
+	order := model.NewOrder(ownerID, address, snapshot, now)
 
 	if err := s.Orders.Create(ctx, order); err != nil {
 		return nil, err

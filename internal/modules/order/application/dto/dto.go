@@ -31,13 +31,42 @@ type OrderRefInput struct {
 	OrderID uuid.UUID
 }
 
+// EditLineInput is one line of an edit: the product and how many of it the order
+// should hold. The whole line set is replaced, so a product the edit omits is
+// removed from the order (FR-015, research D6).
+type EditLineInput struct {
+	// ProductID is the product the line is for.
+	ProductID uuid.UUID
+	// Quantity is how many, at least 1.
+	Quantity int64
+}
+
+// EditInput replaces the caller's order content. The owner is taken from the
+// session, never from this input (FR-012, FR-020).
+type EditInput struct {
+	// OrderID is the order being changed.
+	OrderID uuid.UUID
+	// AddressID is a saved address to deliver to; nil keeps the current address
+	// (FR-015, research D6).
+	AddressID *uuid.UUID
+	// Lines are the order's new lines. An empty set is refused: an order always
+	// carries at least one line (FR-015, research D6).
+	Lines []EditLineInput
+}
+
 // ListInput pages through an order list. Both lists follow the project's
-// existing convention (research D14).
+// existing convention (research D14 of 009).
 type ListInput struct {
 	// Page is 1-based.
 	Page int
 	// PageSize is the number of orders per page.
 	PageSize int
+	// Status, when set, returns only orders in that state. It is the operator's
+	// confirmation-queue filter (FR-026, research D11).
+	Status *constant.Status
+	// Sort is the order rows are returned in; the zero value is newest first
+	// (FR-026, research D11).
+	Sort constant.OrderListSort
 }
 
 // TransferInput hands a paid order to another account, named by its email. The

@@ -48,17 +48,20 @@ type OrderRepository interface {
 	// caller's transaction.
 	ListOwner(ctx context.Context, ownerID uuid.UUID, page, size int) ([]model.OrderSummary, int64, error)
 
-	// ListAll returns one page of every order, newest first (created_at then id),
-	// and the total number of them (FR-021, research D14). It joins the caller's
-	// transaction.
-	ListAll(ctx context.Context, page, size int) ([]model.OrderSummary, int64, error)
+	// ListAll returns one page of every order, optionally narrowed to one state
+	// and ordered as asked, and the total number of them. The default (no status,
+	// SortNewest) is newest first (created_at then id), the operator's general
+	// list; status=StatusPending with SortOldest is the FIFO confirmation queue
+	// (FR-021, FR-026, research D11). It joins the caller's transaction.
+	ListAll(ctx context.Context, page, size int, status *constant.Status, sort constant.OrderListSort) ([]model.OrderSummary, int64, error)
 
-	// ListExpiredPending returns the identifiers of the orders still awaiting
-	// payment whose window has passed at the given instant, oldest deadline
-	// first, so the expiry sweep is reproducible (FR-012, research D6). The
-	// comparison is against the instant the caller passed, never the database
-	// clock, so the order's sweep and the inventory's agree on what has expired.
-	// It joins the caller's transaction.
+	// ListExpiredPending returns the identifiers of the orders awaiting payment
+	// (PAYMENT_PENDING) whose deadline (payment_expires_at) has passed at the
+	// given instant, oldest deadline first, so the expiry sweep is reproducible.
+	// An order awaiting the artist has no deadline and is never selected
+	// (FR-008, FR-009, research D5). The comparison is against the instant the
+	// caller passed, never the database clock, so the order's sweep and the
+	// inventory's agree on what has expired. It joins the caller's transaction.
 	ListExpiredPending(ctx context.Context, now time.Time) ([]uuid.UUID, error)
 
 	// LockByID returns one order with its lines under the order's row lock, for a
@@ -72,6 +75,24 @@ type OrderRepository interface {
 	// has accepted the move, so the row always carries a state the domain allows
 	// (FR-010). It joins the caller's transaction.
 	UpdateStatus(ctx context.Context, id uuid.UUID, status constant.Status, now time.Time) error
+
+	// SaveConfirm persists a confirmed order: its new state, its bumped content
+	// version, the confirmation instant and the payment deadline, touching
+	// updated_at. It is the confirmation's single write, after every line has
+	// been held in the same transaction (FR-005, FR-006, research D3). It joins
+	// the caller's transaction.
+	SaveConfirm(ctx context.Context, order *model.Order, now time.Time) error
+
+	// ReplaceLines replaces one order's lines with the given set (delete the old
+	// set, insert the new one) and persists the order's total, address, state,
+	// content version and deadline, touching updated_at. It is the edit's single
+	// write (FR-015, FR-016, research D6). It joins the caller's transaction.
+	ReplaceLines(ctx context.Context, order *model.Order, now time.Time) error
+
+	// InsertEditHistory records one accepted edit's before/after content snapshot,
+	// the actor and the version, in the same transaction as the edit (FR-017,
+	// research D14). It joins the caller's transaction.
+	InsertEditHistory(ctx context.Context, record model.EditHistory) error
 
 	// UpdateOwner changes one order's owner and touches its updated_at. A
 	// transfer changes only the owner; the state, the lines and the totals are
