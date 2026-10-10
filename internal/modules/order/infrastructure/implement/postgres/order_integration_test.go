@@ -442,7 +442,7 @@ func TestEditHistoryIsRecordedAndCascades(t *testing.T) {
 		afterLen    int
 	)
 	if err := f.pool.QueryRow(ctx,
-		`SELECT version, actor_id, octet_length("before"), octet_length("after")
+		`SELECT version, actor_id, pg_column_size("before"), pg_column_size("after")
 		 FROM order_edit_history WHERE order_id = $1`, order.ID).
 		Scan(&version, &storedActor, &beforeLen, &afterLen); err != nil {
 		t.Fatalf("read edit history: %v", err)
