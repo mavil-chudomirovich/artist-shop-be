@@ -38,7 +38,8 @@ import (
 // arriving after cancellation is a real anomaly, not a replay, so it is refused
 // by the state machine naming the cancelled state (FR-009, FR-011).
 func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string) error {
-	return s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+	var paid *model.Order
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, orderID)
 		if err != nil {
 			return err
@@ -60,8 +61,21 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 				return err
 			}
 		}
-		return s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now())
-	})
+		if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
+			return err
+		}
+		paid = order
+		return nil
+	}); err != nil {
+		return err
+	}
+	// The customer is told the order is paid. Sent after commit, best-effort
+	// (FR-020, FR-021, research D9). A replayed payment is a no-op above and
+	// sends nothing.
+	if paid != nil {
+		s.notifyCustomerStatusChange(ctx, paid)
+	}
+	return nil
 }
 
 // Cancel cancels an awaiting-payment order and returns the hold of every line to
@@ -70,7 +84,8 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 // the move and names the current state, because a paid order is transferred
 // instead (FR-009, FR-024).
 func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
-	return s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+	var cancelled *model.Order
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, orderID)
 		if err != nil {
 			return err
@@ -83,8 +98,19 @@ func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 				return err
 			}
 		}
-		return s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now())
-	})
+		if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
+			return err
+		}
+		cancelled = order
+		return nil
+	}); err != nil {
+		return err
+	}
+	// The customer is told the order was cancelled. Sent after commit,
+	// best-effort (FR-020, FR-021, research D9). This covers both the customer's
+	// own cancel and the expiry sweep, which calls this use case.
+	s.notifyCustomerStatusChange(ctx, cancelled)
+	return nil
 }
 
 // ConfirmByAdmin accepts an order awaiting the artist: in one transaction it locks
@@ -102,6 +128,7 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	}
 
 	var view appdto.AdminOrderView
+	var confirmed *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, in.OrderID)
 		if err != nil {
@@ -132,11 +159,15 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 			return err
 		}
 		s.record(txCtx, constant.AuditOrderConfirmed, actor, order.ID)
+		confirmed = order
 		view = s.Mapper.AdminOrder(*order)
 		return nil
 	}); err != nil {
 		return appdto.AdminOrderView{}, err
 	}
+	// The customer is told the order was confirmed. Sent after commit,
+	// best-effort (FR-020, FR-021, research D9).
+	s.notifyCustomerStatusChange(ctx, confirmed)
 	return view, nil
 }
 
@@ -158,7 +189,8 @@ func (s *Service) Complete(ctx context.Context, orderID uuid.UUID) error {
 // writer of the state, so an illegal move is refused with the current state named
 // and never reaches storage (FR-009, FR-010, FR-011).
 func (s *Service) transition(ctx context.Context, orderID uuid.UUID, move func(*model.Order) error) error {
-	return s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+	var moved *model.Order
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, orderID)
 		if err != nil {
 			return err
@@ -166,8 +198,18 @@ func (s *Service) transition(ctx context.Context, orderID uuid.UUID, move func(*
 		if err := move(order); err != nil {
 			return err
 		}
-		return s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now())
-	})
+		if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
+			return err
+		}
+		moved = order
+		return nil
+	}); err != nil {
+		return err
+	}
+	// The customer is told the order advanced to its new state. Sent after
+	// commit, best-effort (FR-020, FR-021, research D9).
+	s.notifyCustomerStatusChange(ctx, moved)
+	return nil
 }
 
 // ExpireOrders cancels every awaiting-payment order whose window has passed and

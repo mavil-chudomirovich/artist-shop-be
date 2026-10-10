@@ -110,16 +110,22 @@ func (s *Service) Checkout(ctx context.Context, in dto.CheckoutInput) (dto.Order
 	}
 
 	var view dto.OrderView
+	var created *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.checkout(txCtx, actor.ID, in)
 		if err != nil {
 			return err
 		}
+		created = order
 		view = s.Mapper.Order(*order)
 		return nil
 	}); err != nil {
 		return dto.OrderView{}, err
 	}
+	// The artist is told the new order needs confirmation. The note is sent after
+	// the transaction committed and is best-effort, so a delivery failure never
+	// fails the checkout (FR-019, FR-021, research D9).
+	s.notifyArtistConfirmationNeeded(ctx, created)
 	return view, nil
 }
 

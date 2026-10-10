@@ -65,9 +65,9 @@ func (s *Service) CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dt
 
 // RejectByAdmin declines an order awaiting the artist (FR-018). The order moves
 // to CANCELLED; no goods were held, so nothing is returned. The act is recorded
-// naming the order and the administrator. An order that is not awaiting the
-// artist is refused by the state machine, naming its current state. Notifying
-// the customer is a later user story (US5).
+// naming the order and the administrator, and the customer is notified of the
+// status change (FR-020, FR-021). An order that is not awaiting the artist is
+// refused by the state machine, naming its current state.
 func (s *Service) RejectByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error) {
 	return s.adminMove(ctx, in, constant.AuditOrderRejected, (*model.Order).Reject)
 }
@@ -89,6 +89,7 @@ func (s *Service) adminMove(ctx context.Context, in dto.OrderRefInput, action st
 	}
 
 	var view dto.AdminOrderView
+	var moved *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, in.OrderID)
 		if err != nil {
@@ -105,11 +106,15 @@ func (s *Service) adminMove(ctx context.Context, in dto.OrderRefInput, action st
 		// writer queues it and never fails the business operation (FR-023,
 		// Constitution VI).
 		s.record(txCtx, action, actor, order.ID)
+		moved = order
 		view = s.Mapper.AdminOrder(*order)
 		return nil
 	}); err != nil {
 		return dto.AdminOrderView{}, err
 	}
+	// The customer is told the order changed state (rejected, shipped or
+	// completed). Sent after commit, best-effort (FR-020, FR-021, research D9).
+	s.notifyCustomerStatusChange(ctx, moved)
 	return view, nil
 }
 

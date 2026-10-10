@@ -46,6 +46,8 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 	}
 
 	var view dto.OrderView
+	var edited *model.Order
+	var previousStatus constant.Status
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, in.OrderID)
 		if err != nil {
@@ -60,6 +62,7 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 		if !order.IsEditable() {
 			return domainerr.ErrNotEditable
 		}
+		previousStatus = order.Status
 
 		before := model.EditSnapshot{
 			Address: order.Address,
@@ -131,10 +134,20 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 			return err
 		}
 
+		edited = order
 		view = s.Mapper.Order(*order)
 		return nil
 	}); err != nil {
 		return dto.OrderView{}, err
+	}
+	// An accepted edit leaves the order awaiting confirmation, so the artist is
+	// told it needs confirming afresh. The customer is told only when the edit
+	// changed the status (a PAYMENT_PENDING edit returns it to PENDING); an edit
+	// that kept the status unchanged does not email the customer (FR-019, FR-020,
+	// FR-021, research D9).
+	s.notifyArtistConfirmationNeeded(ctx, edited)
+	if edited.Status != previousStatus {
+		s.notifyCustomerStatusChange(ctx, edited)
 	}
 	return view, nil
 }

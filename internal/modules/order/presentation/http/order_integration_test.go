@@ -5,7 +5,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,10 +73,17 @@ func (p productExists) ProductExists(ctx context.Context, productID uuid.UUID) (
 
 // customerAddresses answers the CustomerLookupService contract over the addresses
 // table, default-first, so checkout can snapshot the delivery address. It is a
-// test-local adapter for the same reason as productExists.
+// test-local adapter for the same reason as productExists. It also carries the
+// account's email, read from the users table, so the order module can address a
+// status-change notification to the customer (FR-020, research D9).
 type customerAddresses struct{ pool *pgxpool.Pool }
 
 func (c customerAddresses) LookupCustomer(ctx context.Context, userID uuid.UUID) (contracts.Customer, error) {
+	var email string
+	if err := c.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
+		return contracts.Customer{}, err
+	}
+
 	rows, err := c.pool.Query(ctx, `
 		SELECT id, recipient_name, recipient_phone, province_code, province_name,
 		       ward_code, ward_name, street_address, is_default
@@ -99,17 +108,79 @@ func (c customerAddresses) LookupCustomer(ctx context.Context, userID uuid.UUID)
 	if err := rows.Err(); err != nil {
 		return contracts.Customer{}, err
 	}
-	return contracts.Customer{ID: userID, Addresses: addresses}, nil
+	return contracts.Customer{ID: userID, Email: email, Addresses: addresses}, nil
+}
+
+// integrationArtistEmail is the shop operator's address the integration run wires
+// into the order service, so a test can read the artist's notifications.
+const integrationArtistEmail = "shop@example.com"
+
+// notifyMessage is one email the recording notifier captured.
+type notifyMessage struct {
+	to      string
+	subject string
+	body    string
+}
+
+// recordingNotifier is the integration run's in-memory Notifier. It records every
+// message so a test can prove the artist is told an order needs confirmation and
+// the customer is told each status change; fail makes Send return an error so a
+// test can prove a delivery failure never fails the order operation (FR-019 to
+// FR-021, research D9).
+type recordingNotifier struct {
+	mu   sync.Mutex
+	sent []notifyMessage
+	fail bool
+}
+
+func (n *recordingNotifier) Send(_ context.Context, to, subject, body string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.fail {
+		return errors.New("smtp unavailable")
+	}
+	n.sent = append(n.sent, notifyMessage{to: to, subject: subject, body: body})
+	return nil
+}
+
+// messagesTo returns every captured message addressed to one mailbox.
+func (n *recordingNotifier) messagesTo(to string) []notifyMessage {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]notifyMessage, 0, len(n.sent))
+	for _, message := range n.sent {
+		if message.to == to {
+			out = append(out, message)
+		}
+	}
+	return out
+}
+
+// snapshot copies every captured message, so an assertion can report the whole
+// mailbox without holding the lock.
+func (n *recordingNotifier) snapshot() []notifyMessage {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return append([]notifyMessage(nil), n.sent...)
+}
+
+// setFail makes the notifier refuse every subsequent send, so a test can prove a
+// delivery failure never fails the order operation (FR-021).
+func (n *recordingNotifier) setFail(fail bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.fail = fail
 }
 
 // orderIntegrationFixture is one migrated PostgreSQL container plus the real HTTP
 // surface, so checkout can be driven through the route a customer reaches and the
 // operator's desk through the route an administrator reaches.
 type orderIntegrationFixture struct {
-	pool   *pgxpool.Pool
-	root   http.Handler
-	svc    *orderimplement.Service
-	writer *audit.Writer
+	pool     *pgxpool.Pool
+	root     http.Handler
+	svc      *orderimplement.Service
+	writer   *audit.Writer
+	notifier *recordingNotifier
 }
 
 func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
@@ -151,6 +222,11 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		writer.Stop(stopCtx)
 	})
 
+	// A recording notifier, wired exactly as the composition root wires the real
+	// one, so a test can observe the artist's and the customer's emails (FR-019
+	// to FR-021).
+	notifier := &recordingNotifier{}
+
 	svc := orderimplement.New(orderimplement.Service{
 		Orders:       orderpostgres.NewOrderRepository(pool),
 		Carts:        cartcheckout.New(cartpostgres.NewCartRepository(pool)),
@@ -162,13 +238,15 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Tx:           &database.DB{Pool: pool},
 		Clock:        orderIntegrationClock{},
 		Audit:        orderauditor.New(writer),
+		Notifier:     notifier,
+		ArtistEmail:  integrationArtistEmail,
 		Mapper:       ordermapper.New(),
 	})
 	handler := New(svc, testLogger)
 	root := chi.NewRouter()
 	root.Mount(ordersPath, handler.Router(orderHooks()))
 	root.Mount(adminOrdersPath, handler.AdminRouter(orderHooks()))
-	return &orderIntegrationFixture{pool: pool, root: root, svc: svc, writer: writer}
+	return &orderIntegrationFixture{pool: pool, root: root, svc: svc, writer: writer, notifier: notifier}
 }
 
 // seedOrderCustomer writes the signed-in account the test hooks resolve, plus one
@@ -1010,5 +1088,65 @@ func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
 	}
 	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_FOUND" {
 		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// SC-006, FR-019 to FR-021, quickstart scenarios 1d and 2c against real
+// PostgreSQL: checkout emails the artist that the order needs confirmation, the
+// artist's confirmation emails the customer the new state, and a notifier that
+// fails leaves the order operation correct — cancelling still succeeds and the
+// order is CANCELLED.
+func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// FR-019: the artist is told the new order needs confirmation.
+	artist := f.notifier.messagesTo(integrationArtistEmail)
+	if len(artist) != 1 {
+		t.Fatalf("checkout must email the artist once, got %+v", f.notifier.snapshot())
+	}
+	if !strings.Contains(artist[0].body, string(constant.StatusPending)) {
+		t.Fatalf("the artist's note must name PENDING, got %q", artist[0].body)
+	}
+
+	// FR-020: confirming emails the customer the new state.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	customerEmail := "order-customer-" + testCustomerID.String() + "@example.com"
+	customer := f.notifier.messagesTo(customerEmail)
+	if len(customer) != 1 {
+		t.Fatalf("confirming must email the customer once, got %+v", f.notifier.snapshot())
+	}
+	if !strings.Contains(customer[0].body, string(constant.StatusPaymentPending)) {
+		t.Fatalf("the customer's note must name PAYMENT_PENDING, got %q", customer[0].body)
+	}
+
+	// FR-021: with the notifier failing, cancelling still succeeds and the order
+	// is CANCELLED — a delivery failure never fails the order operation.
+	f.notifier.setFail(true)
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/cancel", "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel over a failing notifier: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var status string
+	if err := f.pool.QueryRow(context.Background(), `SELECT status FROM orders WHERE id = $1`, orderID).Scan(&status); err != nil {
+		t.Fatalf("read the order status: %v", err)
+	}
+	if status != string(constant.StatusCancelled) {
+		t.Fatalf("the order must still be CANCELLED, got %s", status)
 	}
 }

@@ -158,12 +158,12 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T036 [P] [US5] Use-case tests `internal/modules/order/application/implement/notify_test.go` (over a fake notifier): the artist is notified when an order enters `PENDING` (checkout and edit); the customer is notified on every status change (confirm, reject, paid, ship, complete, cancel, expire); a notifier error does not fail the operation (FR-019, FR-020, FR-021)
+- [X] T036 [P] [US5] Use-case tests `internal/modules/order/application/implement/notify_test.go` (over a fake notifier): the artist is notified when an order enters `PENDING` (checkout and edit); the customer is notified on every status change (confirm, reject, paid, ship, complete, cancel, expire); a notifier error does not fail the operation (FR-019, FR-020, FR-021)
 
 ### Implementation for User Story 5
 
-- [ ] T037 [US5] In `internal/modules/order/application/implement/{checkout.go,lifecycle.go,admin.go,edit.go}`: compose and send the notifications after the transaction commits (best-effort, errors logged) — the artist on entering `PENDING`, the customer on each status change — reading the customer email through `CustomerLookupService` and the artist email from the service's configured value (FR-019, FR-020, FR-021, research D9)
-- [ ] T038 [US5] Extend the HTTP/integration tests to assert the notifications fire for the customer's status changes and that a failing notifier leaves the order correct
+- [X] T037 [US5] In `internal/modules/order/application/implement/{checkout.go,lifecycle.go,admin.go,edit.go}`: compose and send the notifications after the transaction commits (best-effort, errors logged) — the artist on entering `PENDING`, the customer on each status change — reading the customer email through `CustomerLookupService` and the artist email from the service's configured value (FR-019, FR-020, FR-021, research D9)
+- [X] T038 [US5] Extend the HTTP/integration tests to assert the notifications fire for the customer's status changes and that a failing notifier leaves the order correct
 
 **Checkpoint**: Both sides are notified, and email never breaks an order operation.
 
