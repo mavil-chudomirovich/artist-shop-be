@@ -104,7 +104,7 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			request	body		httpdto.CheckoutRequest	true	"Delivery address to use (optional addressId; omit for the default)"
+//	@Param			request	body		httpdto.CheckoutRequest	false	"Delivery address to use (optional addressId; omit for the default)"
 //	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError

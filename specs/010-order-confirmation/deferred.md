@@ -62,26 +62,12 @@ làm giả.
   thông báo, và không có các email khác của hệ thống.
 - **Vì sao ngoài phạm vi**: Kênh thông báo là **module 12 Notification**, chưa tồn tại (V1.2). Spec
   `010` khẳng định thông báo **chỉ qua email** và in-app thuộc module 12 (spec Assumptions).
-- **Gỡ bằng cách nào**: **Module 12** dựng kênh in-app (và có thể hợp nhất hai mailer — xem D5), rồi
+- **Gỡ bằng cách nào**: **Module 12** dựng kênh in-app (và có thể hợp nhất hai mailer — xem D4), rồi
   consumer của các trạng thái đơn chuyển sang đó.
 - **Ảnh hưởng tới task đã tick**: **T036** (test notify), **T037** (gửi thông báo), **T038** (test HTTP
   notify) — đã giao **email**; in-app chưa có nên không nằm trong bằng chứng của chúng.
 
-### D4 — Comment trong code của module order còn nói "awaiting payment" (ngoài phạm vi task tài liệu)
-
-- **Vấn đề**: `internal/modules/order/presentation/http/handler.go` còn hai comment lỗi thời so với hành
-  vi đã giao: comment của `CancelMine` và comment của method `CancelMine` trong interface `Service` vẫn
-  nói đơn "still awaiting payment", trong khi từ feature 010 huỷ được **cả** `PENDING` lẫn
-  `PAYMENT_PENDING`.
-- **Vì sao ngoài phạm vi**: Phạm vi lần này **chỉ sửa tài liệu** (`docs/**`, `specs/**`); mọi tệp dưới
-  `internal/**` bị loại trừ tường minh. Đây là lệch giữa **comment** và code, không phải lệch hành vi.
-- **Gỡ bằng cách nào**: Sửa hai comment trong `internal/modules/order/presentation/http/handler.go` cho
-  khớp hành vi (`PENDING` hoặc `PAYMENT_PENDING`); thuộc thay đổi code của module order, không phải thay
-  đổi tài liệu này.
-- **Ảnh hưởng tới task đã tick**: không. `[X]` của các task tài liệu (`T042`, `T043`) vẫn đúng vì tài
-  liệu **docs** phản ánh đúng code; chỉ comment **trong code** còn cũ.
-
-### D5 — `docs/modules/05-inventory.md` còn xếp phần "đơn hàng điều khiển" vào chưa giao
+### D4 — `docs/modules/05-inventory.md` còn xếp phần "đơn hàng điều khiển" vào chưa giao
 
 - **Vấn đề**: Mục *Phần chưa giao* của `docs/modules/05-inventory.md` vẫn nói nửa tự động do đơn hàng
   điều khiển **chưa giao** vì "Order (07) và Payment (08) chưa tồn tại", trong khi module 07 đã tồn tại
@@ -92,5 +78,5 @@ làm giả.
   thuộc về lần cập nhật module 05 khi module 07/08 hoàn tất.
 - **Gỡ bằng cách nào**: Cập nhật bảng *Phần chưa giao* của `docs/modules/05-inventory.md` để phản ánh
   module 07 đã wire nửa đơn hàng và chỉ module 08 còn thiếu; đối chiếu `specs/007-inventory-tracking/deferred.md` D1.
-- **Ảnh hưởng tới task đã tick**: không. `T044` vẫn đúng phần nó được giao (cửa sổ 60 phút); mục D5 là
+- **Ảnh hưởng tới task đã tick**: không. `T044` vẫn đúng phần nó được giao (cửa sổ 60 phút); mục D4 là
   phần tài liệu module 05 **không** thuộc phạm vi lần này.

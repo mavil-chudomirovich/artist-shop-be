@@ -57,11 +57,11 @@ func (s *Service) GetMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderV
 	return s.Mapper.Order(*order), nil
 }
 
-// CancelMine cancels one of the caller's own orders that is still awaiting
-// payment and returns it. The ownership check answers the same not-found an
-// unknown order does, and then the US2 Cancel transition returns the hold of
-// every line; both run in one transaction, so the order and the returned goods
-// commit together or not at all (FR-019, FR-020).
+// CancelMine cancels one of the caller's own orders before it is paid — while it
+// awaits the artist's confirmation or payment — and returns it. The ownership
+// check answers the same not-found an unknown order does, and then the US2 Cancel
+// transition releases any hold of every line; both run in one transaction, so the
+// order and the released goods commit together or not at all (FR-019, FR-020).
 func (s *Service) CancelMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error) {
 	actor, err := s.actor(ctx)
 	if err != nil {

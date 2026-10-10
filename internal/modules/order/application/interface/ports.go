@@ -108,8 +108,9 @@ type OrderService interface {
 	// MarkPaid turns an awaiting-payment order into a paid one, consuming its
 	// hold into a sale exactly once (FR-014, research D13).
 	MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string) error
-	// Cancel cancels an awaiting-payment order and returns its goods exactly once
-	// (FR-015, FR-019).
+	// Cancel cancels an order before it is paid — while it awaits the artist's
+	// confirmation or payment — and returns any held goods exactly once (FR-015,
+	// FR-019).
 	Cancel(ctx context.Context, orderID uuid.UUID) error
 	// Ship moves a paid order to shipped (FR-022).
 	Ship(ctx context.Context, orderID uuid.UUID) error
@@ -127,8 +128,9 @@ type OrderService interface {
 	// GetMine reads one of the caller's own orders in full; another customer's
 	// identifier answers not-found (FR-018, FR-020).
 	GetMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error)
-	// CancelMine cancels one of the caller's own orders that is still awaiting
-	// payment, and returns it (FR-019, FR-020).
+	// CancelMine cancels one of the caller's own orders before it is paid — while
+	// it awaits the artist's confirmation or payment — and returns it (FR-019,
+	// FR-020).
 	CancelMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error)
 	// EditMine replaces one of the caller's own orders' lines and, when named,
 	// its delivery address while it awaits the artist or payment; editing an
@@ -145,6 +147,9 @@ type OrderService interface {
 	// all-or-nothing, opens the payment window and records the act (FR-004,
 	// FR-005, FR-024).
 	ConfirmByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
+	// RejectByAdmin declines an order awaiting the artist, moving it to
+	// cancelled; no goods were held, so nothing is returned (FR-018).
+	RejectByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
 	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
 	// FR-023).
 	ShipByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)

@@ -3316,7 +3316,6 @@ const docTemplate = `{
                         "description": "Delivery address to use (optional addressId; omit for the default)",
                         "name": "request",
                         "in": "body",
-                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.CheckoutRequest"
                         }

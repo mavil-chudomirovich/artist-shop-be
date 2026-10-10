@@ -353,7 +353,7 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 	f := newLifecycleFixture(order)
 	ctx := context.Background()
 
-	// Shipping an awaiting-payment order is refused, naming PENDING_PAYMENT.
+	// Shipping an awaiting-payment order is refused, naming PAYMENT_PENDING.
 	err := f.svc.Ship(ctx, order.ID)
 	var refusal *domainerr.StateTransitionError
 	if !errors.As(err, &refusal) {

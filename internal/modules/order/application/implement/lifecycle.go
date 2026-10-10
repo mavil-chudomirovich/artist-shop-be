@@ -78,11 +78,12 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 	return nil
 }
 
-// Cancel cancels an awaiting-payment order and returns the hold of every line to
-// availability, exactly once (FR-015, FR-019). It is driven by the customer and
-// by the expiry sweep. A paid order is not cancellable: the state machine refuses
-// the move and names the current state, because a paid order is transferred
-// instead (FR-009, FR-024).
+// Cancel cancels an order before it is paid — while it awaits the artist's
+// confirmation or payment — and returns any hold of every line to availability,
+// exactly once (FR-015, FR-019). It is driven by the customer and by the expiry
+// sweep. A paid order is not cancellable: the state machine refuses the move and
+// names the current state, because a paid order is transferred instead (FR-009,
+// FR-024).
 func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 	var cancelled *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {

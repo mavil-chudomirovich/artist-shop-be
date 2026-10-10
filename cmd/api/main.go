@@ -325,7 +325,7 @@ func run() error {
 	})
 	inventoryHandler := inventoryhttp.New(inventoryService, logger)
 
-	// The hold sweeper releases every hold whose fifteen-minute window has
+	// The hold sweeper releases every hold whose 60-minute window has
 	// passed. It is the only thing that frees goods for a product nobody touches
 	// again, and it carries no business rule: it calls the expire use case every
 	// interval and stops on the same context the rest of the composition shares
@@ -388,7 +388,7 @@ func run() error {
 	orderHandler := orderhttp.New(orderService, logger)
 
 	// The order expiry sweeper cancels every awaiting-payment order whose
-	// fifteen-minute hold window has passed and returns its goods, so an unpaid
+	// 60-minute hold window has passed and returns its goods, so an unpaid
 	// order cannot hold stock forever. It is the project's second sweeper,
 	// mirroring module 05's: it carries no business rule, calls the expire use
 	// case every interval, and stops on the same context the rest of the
