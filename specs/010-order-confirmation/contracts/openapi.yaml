@@ -1,0 +1,550 @@
+openapi: 3.0.3
+info:
+  title: Artist Shop — Order confirmation & editing (module 07)
+  version: 2.0.0
+  description: >
+    Extends feature 009-order. An order is created awaiting the artist's confirmation and holds no
+    goods; the artist confirms (holding the whole order and opening a 60-minute payment window) or
+    rejects; the customer may edit an order before paying, and editing an awaiting-payment order
+    returns it to awaiting confirmation. The paid transition has no endpoint (module 08 drives it).
+    This file supersedes specs/009-order/contracts/openapi.yaml.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: orders
+    description: The signed-in customer's own orders (owner from the session).
+  - name: admin
+    description: The operator's order desk (ADMIN role required).
+
+paths:
+  /orders:
+    post:
+      tags: [orders]
+      summary: Check out the caller's cart into an order awaiting the artist's confirmation
+      operationId: checkout
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutRequest' }
+      responses:
+        '201':
+          description: The created order, awaiting the artist's confirmation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '409':
+          description: >
+            ORDER_CART_EMPTY, ORDER_ITEM_NOT_PURCHASABLE, ORDER_ITEM_PRICE_CHANGED,
+            ORDER_QUANTITY_EXCEEDS_AVAILABLE or ORDER_NO_ADDRESS
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [orders]
+      summary: List the caller's own orders
+      operationId: listOrders
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+      responses:
+        '200':
+          description: A page of the caller's orders, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderPageEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /orders/{orderId}:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    get:
+      tags: [orders]
+      summary: Read one of the caller's own orders
+      operationId: getOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The order in full
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [orders]
+      summary: Change an order that is awaiting confirmation or payment
+      description: >
+        Replaces the order's lines (and, when named, its delivery address). An edit of an
+        awaiting-payment order returns it to awaiting confirmation and releases its goods.
+      operationId: editOrder
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EditOrderRequest' }
+      responses:
+        '200':
+          description: The order after the edit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: >
+            ORDER_NOT_EDITABLE, ORDER_EMPTY, ORDER_ITEM_NOT_PURCHASABLE, ORDER_ITEM_PRICE_CHANGED or
+            ORDER_QUANTITY_EXCEEDS_AVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /orders/{orderId}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [orders]
+      summary: Cancel the caller's own order before it is paid
+      description: Allowed while the order awaits confirmation or payment; a paid order is refused.
+      operationId: cancelOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The cancelled order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders:
+    get:
+      tags: [admin]
+      summary: List every order (optionally the confirmation queue)
+      description: >
+        Newest first by default. `status=PENDING&sort=oldest` returns the confirmation queue
+        oldest-first (FIFO by creation time).
+      operationId: listAllOrders
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: sort
+          in: query
+          required: false
+          schema: { type: string, enum: [newest, oldest], default: newest }
+      responses:
+        '200':
+          description: A page of every order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderPageEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    get:
+      tags: [admin]
+      summary: Read any order in full
+      operationId: getOrderAdmin
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The order in full, with its owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/confirm:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Confirm an order awaiting the artist's confirmation
+      description: Holds the whole order (all-or-nothing) and opens the payment window.
+      operationId: confirmOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The confirmed order, awaiting payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID or ORDER_QUANTITY_EXCEEDS_AVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/reject:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Decline an order awaiting the artist's confirmation
+      operationId: rejectOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The declined (cancelled) order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/ship:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Mark a paid order shipped
+      operationId: shipOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The shipped order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/complete:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Mark a shipped order completed
+      operationId: completeOrder
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The completed order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/transfer:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Transfer a paid order to another account
+      operationId: transferOrder
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransferRequest' }
+      responses:
+        '200':
+          description: The transferred order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: ORDER_NOT_FOUND or ORDER_TRANSFER_TARGET_NOT_FOUND
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: ORDER_NOT_TRANSFERABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  schemas:
+    OrderStatus:
+      type: string
+      description: >
+        PENDING — awaiting the artist's confirmation (no goods held). PAYMENT_PENDING — confirmed,
+        goods held, awaiting payment. PAID, SHIPPED, COMPLETED — after payment. CANCELLED — declined,
+        cancelled or expired.
+      enum: [PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED, CANCELLED]
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64, description: "Amount in the currency's minor unit" }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+
+    OrderLine:
+      type: object
+      required: [productId, name, slug, quantity, unitPrice, lineTotal]
+      properties:
+        productId: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        lineTotal: { $ref: '#/components/schemas/Money' }
+
+    OrderAddress:
+      type: object
+      required:
+        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress]
+      properties:
+        recipientName: { type: string }
+        recipientPhone: { type: string }
+        provinceCode: { type: string }
+        provinceName: { type: string }
+        wardCode: { type: string }
+        wardName: { type: string }
+        streetAddress: { type: string }
+
+    OrderSummary:
+      type: object
+      required: [id, status, total, itemCount, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        total: { $ref: '#/components/schemas/Money' }
+        itemCount: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+
+    OrderDetail:
+      allOf:
+        - $ref: '#/components/schemas/OrderSummary'
+        - type: object
+          required: [address, lines]
+          properties:
+            address: { $ref: '#/components/schemas/OrderAddress' }
+            lines:
+              type: array
+              items: { $ref: '#/components/schemas/OrderLine' }
+
+    AdminOrderSummary:
+      allOf:
+        - $ref: '#/components/schemas/OrderSummary'
+        - type: object
+          required: [userId]
+          properties:
+            userId: { type: string, format: uuid }
+
+    AdminOrderDetail:
+      allOf:
+        - $ref: '#/components/schemas/OrderDetail'
+        - type: object
+          required: [userId]
+          properties:
+            userId: { type: string, format: uuid }
+
+    CheckoutRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        addressId:
+          type: string
+          format: uuid
+          nullable: true
+          description: The address to deliver to; omitted or null uses the customer's default.
+
+    EditLine:
+      type: object
+      additionalProperties: false
+      required: [productId, quantity]
+      properties:
+        productId: { type: string, format: uuid }
+        quantity: { type: integer, format: int64, minimum: 1 }
+
+    EditOrderRequest:
+      type: object
+      additionalProperties: false
+      required: [lines]
+      properties:
+        addressId:
+          type: string
+          format: uuid
+          nullable: true
+          description: A saved address to deliver to; omitted or null keeps the current address.
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/EditLine' }
+
+    TransferRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email }
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  issue: { type: string }
+
+    OrderEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/OrderDetail' }
+    AdminOrderEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/AdminOrderDetail' }
+    OrderPageEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/OrderSummary' }
+        meta:
+          type: object
+          properties:
+            page: { type: integer }
+            pageSize: { type: integer }
+            total: { type: integer, format: int64 }
+    AdminOrderPageEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AdminOrderSummary' }
+        meta:
+          type: object
+          properties:
+            page: { type: integer }
+            pageSize: { type: integer }
+            total: { type: integer, format: int64 }
+
+  responses:
+    ValidationError:
+      description: VALIDATION_ERROR — a request value is malformed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthenticated:
+      description: UNAUTHENTICATED — no valid session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: FORBIDDEN — the session lacks the ADMIN role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    OrderNotFound:
+      description: ORDER_NOT_FOUND — no such order, or another customer's
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: RATE_LIMITED — too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: INTERNAL_ERROR — an unexpected failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
