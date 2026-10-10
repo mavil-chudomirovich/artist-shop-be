@@ -215,9 +215,9 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 - [X] T051 Normalize the new files to UTF-8 (LF); check for BOM
 - [X] T052 Run `make lint` and `make test`
-- [ ] T053 Run `make test-integration` (needs Docker) and confirm it did not skip
-- [ ] T054 Run `quickstart.md` validation
-- [ ] T055 Run `make check` and confirm `swagger-check` passes
+- [X] T053 Run `make test-integration` (needs Docker) and confirm it did not skip
+- [X] T054 Run `quickstart.md` validation
+- [X] T055 Run `make check` and confirm `swagger-check` passes
 
 ---
 
