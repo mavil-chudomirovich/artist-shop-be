@@ -116,15 +116,21 @@ type releaseCall struct {
 
 // fakeReservation answers the InventoryReservation contract. It records every
 // hold, sale and release so a test can prove which lines were touched and that
-// the same line's effect is applied exactly once.
+// the same line's effect is applied exactly once. failOn makes Reserve refuse the
+// named product, so a test can force a partial hold to be rolled back (FR-005,
+// FR-024).
 type fakeReservation struct {
 	calls    []reserveCall
 	sales    []saleCall
 	releases []releaseCall
 	window   time.Duration
+	failOn   map[uuid.UUID]error
 }
 
 func (f *fakeReservation) Reserve(_ context.Context, orderID, productID uuid.UUID, quantity int64) error {
+	if err, ok := f.failOn[productID]; ok {
+		return err
+	}
 	f.calls = append(f.calls, reserveCall{orderID: orderID, productID: productID, quantity: quantity})
 	return nil
 }

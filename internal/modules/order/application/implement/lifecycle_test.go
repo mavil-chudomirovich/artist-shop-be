@@ -78,6 +78,26 @@ func (r *lifecycleOrders) ListExpiredPending(_ context.Context, _ time.Time) ([]
 	return r.expired, nil
 }
 
+// snapshot copies the stored orders by value, so a rollback can put every field
+// back the way it was.
+func (r *lifecycleOrders) snapshot() map[uuid.UUID]model.Order {
+	out := make(map[uuid.UUID]model.Order, len(r.orders))
+	for id, order := range r.orders {
+		out[id] = *order
+	}
+	return out
+}
+
+// restore puts each stored order back to its snapshot, discarding the mutations a
+// failed transaction made before it rolled back.
+func (r *lifecycleOrders) restore(snapshot map[uuid.UUID]model.Order) {
+	for id, order := range snapshot {
+		if stored, ok := r.orders[id]; ok {
+			*stored = order
+		}
+	}
+}
+
 // passthroughTx is the in-memory UnitOfWork. It runs the function without a real
 // transaction: the lifecycle tests refuse a move before any write, so there is
 // nothing to roll back, and the point under test is which transition ran and
@@ -86,6 +106,31 @@ type passthroughTx struct{}
 
 func (passthroughTx) WithinTx(ctx context.Context, fn func(context.Context) error) error {
 	return fn(ctx)
+}
+
+// rollbackTx is the in-memory UnitOfWork the all-or-nothing confirmation test
+// uses. Like the real transaction the use case opens, it discards the holds taken
+// and the order writes made when the function fails, so a shortage on one line
+// leaves the order and every line exactly as they were (FR-005, FR-024, research
+// D3).
+type rollbackTx struct {
+	orders       *lifecycleOrders
+	reservations *fakeReservation
+}
+
+func (t rollbackTx) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	heldBefore := len(t.reservations.calls)
+	confirmedBefore := len(t.orders.confirmed)
+	updatesBefore := len(t.orders.updates)
+	snapshot := t.orders.snapshot()
+	if err := fn(ctx); err != nil {
+		t.reservations.calls = t.reservations.calls[:heldBefore]
+		t.orders.confirmed = t.orders.confirmed[:confirmedBefore]
+		t.orders.updates = t.orders.updates[:updatesBefore]
+		t.orders.restore(snapshot)
+		return err
+	}
+	return nil
 }
 
 // lifecycleFixture is the real lifecycle use cases over in-memory fakes.
@@ -106,6 +151,27 @@ func newLifecycleFixture(orders ...*model.Order) *lifecycleFixture {
 		Orders:       store,
 		Reservations: reservations,
 		Tx:           passthroughTx{},
+		Clock:        memoryClock{},
+		Mapper:       mapper.New(),
+	})
+	return &lifecycleFixture{svc: svc, orders: store, reservations: reservations}
+}
+
+// newRollbackFixture is newLifecycleFixture over a UnitOfWork that rolls back on
+// failure and an availability read the confirmation names the shortage with, so a
+// test can prove that one line that cannot be held leaves no line held.
+func newRollbackFixture(available map[uuid.UUID]int64, orders ...*model.Order) *lifecycleFixture {
+	byID := make(map[uuid.UUID]*model.Order, len(orders))
+	for _, order := range orders {
+		byID[order.ID] = order
+	}
+	store := &lifecycleOrders{orders: byID}
+	reservations := &fakeReservation{}
+	svc := New(Service{
+		Orders:       store,
+		Availability: &fakeAvailability{available: available},
+		Reservations: reservations,
+		Tx:           rollbackTx{orders: store, reservations: reservations},
 		Clock:        memoryClock{},
 		Mapper:       mapper.New(),
 	})
@@ -459,5 +525,58 @@ func TestCancelFromPendingHoldsNothingAndFromPaidIsRefused(t *testing.T) {
 	}
 	if len(f2.reservations.releases) != 0 {
 		t.Fatalf("a refused cancel must release nothing, got %+v", f2.reservations.releases)
+	}
+}
+
+// FR-005, FR-024, SC-002, SC-005, research D3: confirming a multi-line order
+// whose one line cannot be held is refused with the shortage naming that line;
+// the order stays awaiting the artist, and no line is left held because the
+// transaction rolled the partial hold back. This is the all-or-nothing guarantee
+// the storage-level integration test proves against real PostgreSQL; here the
+// rollback is the fake transaction's, so the use case's own answer is asserted.
+func TestConfirmRefusesAndHoldsNothingWhenAnyLineCannotBeHeld(t *testing.T) {
+	held := uuid.New()
+	short := uuid.New()
+	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+		[]model.OrderLine{line(held, 1000, 2), line(short, 2000, 1)}, fixedNow)
+	if order.Status != constant.StatusPending {
+		t.Fatalf("a fresh order must await the artist, got %s", order.Status)
+	}
+	f := newRollbackFixture(map[uuid.UUID]int64{short: 0}, order)
+	// Module 05 refuses the second line: the last unit was taken by a competing
+	// hold, so the confirmation must take nothing at all (FR-024).
+	f.reservations.failOn = map[uuid.UUID]error{short: errors.New("insufficient stock")}
+
+	_, err := f.svc.ConfirmByAdmin(actorContext(uuid.New()), appdto.OrderRefInput{OrderID: order.ID})
+
+	var refusal *domainerr.QuantityExceedsAvailableError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("a line that cannot be held must refuse the confirmation, got %v", err)
+	}
+	if !errors.Is(err, domainerr.ErrQuantityExceedsAvailable) {
+		t.Fatalf("the refusal must map to ORDER_QUANTITY_EXCEEDS_AVAILABLE, got %v", err)
+	}
+	if refusal.ProductID != short {
+		t.Fatalf("the refusal must name the short line %s, got %s", short, refusal.ProductID)
+	}
+
+	// The order is exactly as it was: still awaiting the artist, unversioned and
+	// without a confirmation instant or a payment deadline (FR-005).
+	if order.Status != constant.StatusPending {
+		t.Fatalf("a refused confirmation must leave the order awaiting the artist, got %s", order.Status)
+	}
+	if order.Version != 1 || order.ConfirmedAt != nil || order.PaymentExpiresAt != nil {
+		t.Fatalf("a refused confirmation must not version or stamp the order, got v%d %v/%v",
+			order.Version, order.ConfirmedAt, order.PaymentExpiresAt)
+	}
+
+	// No line is held — the successful hold on the first line was rolled back —
+	// and nothing was persisted (FR-005, SC-002).
+	if len(f.reservations.calls) != 0 {
+		t.Fatalf("no line may stay held when a sibling line is short, got %+v", f.reservations.calls)
+	}
+	if len(f.orders.confirmed) != 0 || len(f.orders.updates) != 0 {
+		t.Fatalf("a refused confirmation must persist nothing, got confirmed=%d updates=%d",
+			len(f.orders.confirmed), len(f.orders.updates))
 	}
 }

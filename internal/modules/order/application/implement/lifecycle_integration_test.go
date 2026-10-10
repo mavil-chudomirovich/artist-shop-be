@@ -4,6 +4,8 @@ package implement
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,10 +14,13 @@ import (
 
 	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
 	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
+	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
 	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
+	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
@@ -91,6 +96,7 @@ func newLifecycleDBFixture(t *testing.T) *lifecycleDBFixture {
 	})
 	svc := New(Service{
 		Orders:       orderpostgres.NewOrderRepository(pool),
+		Availability: inventoryavailability.New(inventoryRepo, lifecycleClock{}),
 		Reservations: inventoryreservation.New(inventoryService),
 		Tx:           &database.DB{Pool: pool},
 		Clock:        lifecycleClock{},
@@ -309,5 +315,91 @@ func TestExpiredOrderFreesItsGoodsExactlyOnceAcrossBothSweeps(t *testing.T) {
 	}
 	if got := f.physicalStock(t, product); got != 10 {
 		t.Fatalf("physical = %d after a replay, want 10", got)
+	}
+}
+
+// FR-005, FR-024, SC-002, SC-005, quickstart scenario 7c: two PENDING orders
+// competing for the last unit. Confirmation holds every line in the order's own
+// transaction and module 05's Reserve serialises the two on the level row lock, so
+// exactly one commits and the other is refused naming the shortage; the available
+// quantity stays at zero and never goes negative.
+func TestTwoConfirmationsForTheLastUnitConfirmAtMostOne(t *testing.T) {
+	f := newLifecycleDBFixture(t)
+	product := f.insertProduct(t, 120000, 1)
+	orderLine := model.OrderLine{
+		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 1,
+	}
+	first := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+		[]model.OrderLine{orderLine}, time.Now().UTC())
+	second := model.NewOrder(uuid.New(), model.Address{RecipientName: "Trần Thị B"},
+		[]model.OrderLine{orderLine}, time.Now().UTC())
+	orders := []*model.Order{first, second}
+	for _, order := range orders {
+		if err := f.svc.Orders.Create(context.Background(), order); err != nil {
+			t.Fatalf("create order: %v", err)
+		}
+	}
+
+	// Confirm both at once, so they genuinely compete for the last unit.
+	results := make([]error, len(orders))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, order := range orders {
+		wg.Add(1)
+		go func(i int, orderID uuid.UUID) {
+			defer wg.Done()
+			<-start
+			_, results[i] = f.svc.ConfirmByAdmin(actorContext(uuid.New()), appdto.OrderRefInput{OrderID: orderID})
+		}(i, order.ID)
+	}
+	close(start)
+	wg.Wait()
+
+	confirmed, short := 0, 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			confirmed++
+		case errors.Is(err, domainerr.ErrQuantityExceedsAvailable):
+			short++
+		default:
+			t.Fatalf("unexpected confirmation outcome: %v", err)
+		}
+	}
+	if confirmed != 1 || short != 1 {
+		t.Fatalf("exactly one confirmation must commit, got %d confirmed and %d refused", confirmed, short)
+	}
+
+	// The winner is PAYMENT_PENDING; the loser stayed PENDING, holding nothing.
+	paymentPending, pending := 0, 0
+	for _, order := range orders {
+		switch f.statusOf(t, order.ID) {
+		case constant.StatusPaymentPending:
+			paymentPending++
+		case constant.StatusPending:
+			pending++
+		default:
+			t.Fatalf("unexpected order status %s", f.statusOf(t, order.ID))
+		}
+	}
+	if paymentPending != 1 || pending != 1 {
+		t.Fatalf("expected one PAYMENT_PENDING and one PENDING, got %d and %d", paymentPending, pending)
+	}
+
+	// Availability never went negative: one unit is physical, exactly one is held,
+	// so zero remains available (SC-002, SC-005).
+	if got := f.physicalStock(t, product); got != 1 {
+		t.Fatalf("physical stock = %d, want 1 — confirmation never moves the shelf", got)
+	}
+	if got := f.heldQuantity(t, product); got != 1 {
+		t.Fatalf("held = %d, want exactly 1 — the losing confirmation held nothing", got)
+	}
+	available, err := f.svc.Availability.AvailableQuantity(context.Background(), []uuid.UUID{product})
+	if err != nil {
+		t.Fatalf("read availability: %v", err)
+	}
+	if len(available) != 1 || available[0].Available != 0 {
+		t.Fatalf("available = %+v, want one entry at 0 — never negative", available)
 	}
 }

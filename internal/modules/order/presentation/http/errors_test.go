@@ -187,6 +187,27 @@ func TestQuantityRefusalNamesTheAvailableAmount(t *testing.T) {
 	}
 }
 
+// T027, FR-005, FR-024, research D12: the shortage a confirmation answers when a
+// line cannot be held reuses 009's ORDER_QUANTITY_EXCEEDS_AVAILABLE (409), naming
+// the short item and the amount that remained, so a client sees the same code at
+// checkout and at confirmation (contracts/error-codes.md).
+func TestConfirmShortageMapsToTheReusedQuantityCode(t *testing.T) {
+	product := uuid.New()
+	appErr := mapError(domainerr.QuantityExceedsAvailable(product, 0, 1))
+	if string(appErr.Code) != constant.CodeQuantityExceedsAvailable {
+		t.Fatalf("expected the reused code %s, got %s", constant.CodeQuantityExceedsAvailable, appErr.Code)
+	}
+	if appErr.Status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", appErr.Status)
+	}
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldProductID {
+		t.Fatalf("expected one detail naming productId, got %+v", appErr.Details)
+	}
+	if !strings.Contains(appErr.Details[0].Issue, product.String()) {
+		t.Fatalf("the detail must name the short item, got %q", appErr.Details[0].Issue)
+	}
+}
+
 // A refused state move names the current state in its message (FR-011).
 func TestTransitionRefusalNamesTheCurrentState(t *testing.T) {
 	appErr := mapError(domainerr.StateTransitionInvalid(constant.StatusShipped, constant.StatusCompleted))

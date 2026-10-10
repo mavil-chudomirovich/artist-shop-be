@@ -102,9 +102,9 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T025 [P] [US2] Use-case test in `internal/modules/order/application/implement/lifecycle_test.go`: `ConfirmByAdmin` on a multi-line order whose one line is short is refused (`ORDER_QUANTITY_EXCEEDS_AVAILABLE`, the item named), the order stays `PENDING`, and **no** line is held
-- [ ] T026 [P] [US2] Integration test in `internal/modules/order/application/implement/lifecycle_integration_test.go`: two `PENDING` orders competing for the last unit — exactly one confirmation commits and the other is refused; the available quantity never goes negative (FR-024, SC-002, SC-005)
-- [ ] T027 [US2] Ensure the confirm shortage maps to `ORDER_QUANTITY_EXCEEDS_AVAILABLE` in `internal/modules/order/presentation/http/errors.go` and cover it in `errors_test.go` (reuse the `009` code, research D12)
+- [X] T025 [P] [US2] Use-case test in `internal/modules/order/application/implement/lifecycle_test.go`: `ConfirmByAdmin` on a multi-line order whose one line is short is refused (`ORDER_QUANTITY_EXCEEDS_AVAILABLE`, the item named), the order stays `PENDING`, and **no** line is held
+- [X] T026 [P] [US2] Integration test in `internal/modules/order/application/implement/lifecycle_integration_test.go`: two `PENDING` orders competing for the last unit — exactly one confirmation commits and the other is refused; the available quantity never goes negative (FR-024, SC-002, SC-005)
+- [X] T027 [US2] Ensure the confirm shortage maps to `ORDER_QUANTITY_EXCEEDS_AVAILABLE` in `internal/modules/order/presentation/http/errors.go` and cover it in `errors_test.go` (reuse the `009` code, research D12)
 
 **Checkpoint**: The hold is provably all-or-nothing and never oversells.
 
