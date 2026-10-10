@@ -278,27 +278,31 @@ hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR
 | `ORDER_STATE_TRANSITION_INVALID` | 409 | Bước chuyển không được trạng thái hiện tại của đơn cho phép — huỷ đơn đã trả tiền, giao đơn chưa trả tiền. Message nêu trạng thái hiện tại |
 | `ORDER_NOT_TRANSFERABLE` | 409 | Đơn chưa trả tiền nên không chuyển nhượng được. Chuyển nhượng thay cho huỷ đơn đã trả tiền, chỉ áp dụng cho đơn đã trả tiền |
 | `ORDER_TRANSFER_TARGET_NOT_FOUND` | 404 | Không có tài khoản nào mang email mà lệnh chuyển nhượng nêu. Không có gì bị đổi |
+| `ORDER_NOT_EDITABLE` | 409 | Đơn không ở trạng thái khách được sửa — đã trả tiền hoặc xa hơn. Chỉ sửa được khi đơn **chờ artist xác nhận** hoặc **chờ thanh toán**. Không có gì bị đổi |
+| `ORDER_EMPTY` | 409 | Một lần sửa để đơn **còn 0 dòng**. Một đơn luôn có **≥1 dòng**; khách muốn bỏ hết thì **huỷ đơn**. Không có gì bị đổi |
 
-Chín mã trên đều là **conflict** (409) hoặc **not-found** (404) chứ không phải validation: request
+Mười một mã trên đều là **conflict** (409) hoặc **not-found** (404) chứ không phải validation: request
 hợp lệ nhưng trạng thái hiện tại của giỏ/đơn/kệ khiến nó bất khả thi, và bước tiếp theo của khách
-khác hẳn — thêm hàng, xoá món, xem lại giỏ, giảm số lượng, thêm địa chỉ, hoặc đưa đơn qua một trạng
-thái hợp lệ (cùng lý luận của module 03–06).
+khác hẳn — thêm hàng, xoá món, xem lại giỏ, giảm số lượng, thêm địa chỉ, sửa đơn, hoặc đưa đơn qua
+một trạng thái hợp lệ (cùng lý luận của module 03–06).
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module order (xem
-`specs/009-order/contracts/error-codes.md`): `addressId` không phải UUID hoặc không phải địa chỉ của
-khách, `email` chuyển nhượng thiếu hoặc không phải email → `VALIDATION_ERROR` 400 với
-`error.details[].field`; định danh đường dẫn không phải UUID → `VALIDATION_ERROR` 400; body không
-parse được hoặc có member lạ → `MALFORMED_REQUEST` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401;
-`CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`); `page`/`pageSize`
-ngoài khoảng → `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến →
-`INTERNAL_ERROR` 500.
+`specs/010-order-confirmation/contracts/error-codes.md`): `addressId` không phải UUID hoặc không phải
+địa chỉ của khách, `email` chuyển nhượng thiếu hoặc không phải email, một dòng sửa thiếu `productId`
+hoặc `quantity < 1` → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không
+phải UUID → `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400;
+thiếu hoặc sai phiên → `UNAUTHENTICATED` 401; `CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi
+`AUTH_PRIVILEGE_DENIED`); `page`/`pageSize` ngoài khoảng, `status` không thuộc sáu trạng thái hoặc
+`sort` khác `newest`/`oldest` → `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự
+kiến → `INTERNAL_ERROR` 500.
 
 > Action `audit_logs` của module dùng tiền tố `ORDER_` nhưng **không** phải mã lỗi:
-> `ORDER_SHIPPED`, `ORDER_COMPLETED`, `ORDER_TRANSFERRED` — xem
+> `ORDER_CONFIRMED`, `ORDER_REJECTED`, `ORDER_SHIPPED`, `ORDER_COMPLETED`, `ORDER_TRANSFERRED` — xem
 > `internal/modules/order/domain/constant/codes.go`. Metadata của mỗi dòng chỉ nêu định danh đơn,
-> **không** mang dữ liệu giao hàng hay dữ liệu cá nhân của khách. Thao tác của khách (checkout, huỷ)
-> và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`: chúng được phản ánh trên trạng
-> thái và mốc thời gian của đơn; audit ghi các mutation quản trị (Constitution VI).
+> **không** mang dữ liệu giao hàng hay dữ liệu cá nhân của khách. Thao tác của khách (checkout, sửa,
+> huỷ) và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`: chúng được phản ánh trên
+> trạng thái, phiên bản và mốc thời gian của đơn (mỗi lần sửa để lại một dòng `order_edit_history`);
+> audit ghi các mutation quản trị (Constitution VI).
 
 ### 1.5 Rate limit
 
@@ -2300,34 +2304,47 @@ Ghi chú:
 
 ## 9. Module 07 — Order (`/api/v1`)
 
-Đơn hàng của shop: biến giỏ thành đơn, vòng đời đơn, và **bàn quản trị đơn** của operator. **Chín
-endpoint**: **bốn** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là **session**, nên không
-route nào nêu định danh chủ — và **năm** của quản trị dưới `/admin/orders`, vai trò `ADMIN`, định địa
-chỉ theo **định danh đơn**.
+Đơn hàng của shop: biến giỏ thành đơn, artist xác nhận đơn, vòng đời đơn, và **bàn quản trị đơn** của
+operator. **Mười hai endpoint**: **năm** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là
+**session**, nên không route nào nêu định danh chủ — và **bảy** của quản trị dưới `/admin/orders`, vai
+trò `ADMIN`, định địa chỉ theo **định danh đơn**.
 
 Một đơn mang **snapshot** của thứ đã mua: mỗi dòng chụp tên, slug, đơn giá và currency của sản phẩm
 lúc checkout, cùng địa chỉ giao chụp từ địa chỉ khách chọn; nên thứ một đơn hiển thị **không** phụ
 thuộc vào việc sản phẩm hay địa chỉ còn tồn tại hay không. Tiền là **số nguyên đơn vị nhỏ nhất +
 currency**; tổng đơn là tổng của các dòng và **không** có phí ship (ADR 015 §5).
 
-Năm điều dễ đọc sai, nói ngay:
+Tám điều dễ đọc sai, nói ngay:
 
-- **Đơn chưa trả tiền tự huỷ sau cửa sổ giữ chỗ** (mặc định 15 phút). Một order quá `expires_at` mà
-  vẫn `PENDING_PAYMENT` sẽ tự `CANCELLED` và trả hàng về khả dụng, bởi **một sweeper nền** — khách
-  thấy trạng thái trên đơn, **không** nhận lỗi. Xem `9.1`, `9.4`.
-- **Trạng thái đơn đi qua endpoint riêng** (`cancel`, `ship`, `complete`), **không** qua một trường
-  `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu từ chối nêu trạng thái hiện tại
-  (`409 ORDER_STATE_TRANSITION_INVALID`).
-- **Không có endpoint `pay`.** Bước chuyển `PENDING_PAYMENT → PAID` đã được giao và test nhưng do
+- **Đặt hàng không giữ hàng.** Checkout tạo đơn ở `PENDING` (**chờ artist xác nhận**) và **không** giữ
+  hàng: tồn khả dụng **không đổi**. Hàng chỉ được giữ khi artist **xác nhận** đơn.
+- **Artist xác nhận → giữ hàng toàn bộ (all-or-nothing)** và đơn chuyển sang `PAYMENT_PENDING` (chờ
+  thanh toán). Nếu bất kỳ dòng nào không đủ hàng, cả lần xác nhận bị từ chối, đơn giữ nguyên `PENDING`
+  và **không** giữ dòng nào (`409 ORDER_QUANTITY_EXCEEDS_AVAILABLE`).
+- **Đơn chờ thanh toán tự huỷ sau 60 phút** kể từ lúc xác nhận. Một order quá `payment_expires_at` mà
+  vẫn `PAYMENT_PENDING` sẽ tự `CANCELLED` và trả hàng về khả dụng, bởi **một sweeper nền** — khách thấy
+  trạng thái trên đơn, **không** nhận lỗi. Đơn còn **chờ artist xác nhận** (`PENDING`) **không** hết
+  hạn theo thời gian. Xem `9.1`, `9.5`.
+- **Khách sửa được đơn trước khi trả tiền** (`PUT /orders/{orderId}`, `9.4`) khi đơn đang `PENDING` hoặc
+  `PAYMENT_PENDING`. Sửa đơn đang `PAYMENT_PENDING` **trả hàng** và đưa đơn **quay lại `PENDING`**
+  (artist phải xác nhận lại); sửa đơn `PENDING` giữ nguyên `PENDING`.
+- **Trạng thái đơn đi qua endpoint riêng** (`confirm`, `reject`, `cancel`, `ship`, `complete`), **không**
+  qua một trường `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu từ chối nêu trạng thái
+  hiện tại (`409 ORDER_STATE_TRANSITION_INVALID`).
+- **Không có endpoint `pay`.** Bước chuyển `PAYMENT_PENDING → PAID` đã được giao và test nhưng do
   **module 08 Payment** điều khiển; chưa module nào gọi nó qua HTTP.
 - **Chuyển nhượng không phải một trạng thái**: nó chỉ đổi **chủ sở hữu** sang một tài khoản khác đã
   tồn tại (nêu bằng **email**), giữ nguyên dòng, trạng thái và tổng tiền, và **không** đổi tồn kho.
   Một đơn chưa trả tiền **không** chuyển nhượng được.
-- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5). Thao tác của khách và của hệ
-  thống **không** ghi `audit_logs`; chỉ `ship`/`complete`/`transfer` của admin mới ghi (§1.4).
+- Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5). Thao tác của khách (checkout,
+  sửa, huỷ) và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`; chỉ
+  `confirm`/`reject`/`ship`/`complete`/`transfer` của admin mới ghi (§1.4).
 
 Hai danh sách (`GET /orders`, `GET /admin/orders`) phân trang theo quy ước chung: `page` mặc định `1`,
-`pageSize` mặc định `20`, khoảng `1..100`, **mới nhất trước** (`createdAt`, rồi `id`).
+`pageSize` mặc định `20`, khoảng `1..100`, **mới nhất trước** (`createdAt`, rồi `id`). Danh sách quản
+trị nhận thêm hai tham số **tuỳ chọn**: `status` (lọc theo một trong sáu trạng thái) và `sort`
+(`newest` mặc định, hoặc `oldest`) — `status=PENDING&sort=oldest` là **hàng đợi xác nhận FIFO** của
+artist (`GET /admin/orders`, `9.6`).
 
 **Hình dạng khách** — `OrderSummaryResponse` (danh sách, 5 member) và `OrderResponse` (chi tiết, 7
 member = summary + `address` + `lines`):
@@ -2335,7 +2352,7 @@ member = summary + `address` + `lines`):
 ```json
 {
   "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
-  "status": "PENDING_PAYMENT",
+  "status": "PENDING",
   "total": { "amount": 300000, "currency": "VND" },
   "itemCount": 2,
   "createdAt": "2026-10-09T08:15:04Z",
@@ -2365,12 +2382,28 @@ member = summary + `address` + `lines`):
 `AdminOrderResponse` (chi tiết, 8 member = `OrderResponse` + `userId`). **Khác khách đúng một member
 `userId`** (chủ sở hữu đơn).
 
+**Sáu trạng thái đơn** — `status` là một trong sáu giá trị:
+
+| Giá trị | Nghĩa | Vào bằng |
+|---|---|---|
+| `PENDING` | Chờ artist xác nhận; **chưa** giữ hàng | Checkout tạo đơn |
+| `PAYMENT_PENDING` | Chờ thanh toán; hàng đang **giữ** | Artist `confirm` |
+| `PAID` | Đã trả tiền; giữ chỗ thành **bán** | Module 08 xác nhận thanh toán (không có HTTP) |
+| `SHIPPED` | Đã giao | Admin `ship` |
+| `COMPLETED` | Hoàn tất (cuối) | Admin `complete` |
+| `CANCELLED` | Đã huỷ/từ chối/hết hạn (cuối) | Khách `cancel`, admin `reject`, hoặc sweeper |
+
+> `PENDING_PAYMENT` của feature 009 **đã được đổi tên** thành `PAYMENT_PENDING`; không còn giá trị enum
+> nào tên `PENDING_PAYMENT`. Đơn vẫn **không** có trường trạng thái thanh toán riêng; `PAID` chính là
+> đã xác nhận thanh toán.
+
 ### 9.1 `POST /orders`
 
-Checkout: biến giỏ của khách đang đăng nhập thành đơn **chờ thanh toán**. Mỗi dòng được **đối chiếu
-lại** với trạng thái bán và giá hiện tại của sản phẩm và với tồn khả dụng; cả lần checkout bị từ chối
-nếu bất kỳ dòng nào không đạt. Thành công thì hàng được **giữ** cho khách, giỏ được **làm rỗng**, và
-đơn trả về ở trạng thái `PENDING_PAYMENT`, tất cả trong **một transaction**.
+Checkout: biến giỏ của khách đang đăng nhập thành đơn **chờ artist xác nhận** (`PENDING`). Mỗi dòng
+được **đối chiếu lại** với trạng thái bán và giá hiện tại của sản phẩm và với tồn khả dụng; cả lần
+checkout bị từ chối nếu bất kỳ dòng nào không đạt. Thành công thì giỏ được **làm rỗng** và đơn trả về
+ở trạng thái `PENDING`; **không** có hàng nào bị giữ (tồn khả dụng **không đổi**) — hàng chỉ được giữ
+khi artist **xác nhận** (`9.8`), tất cả trong **một transaction**.
 
 | | |
 |---|---|
@@ -2387,7 +2420,7 @@ Request (`CheckoutRequest`, `additionalProperties: false`)
 `addressId` **tuỳ chọn** — bỏ trống hoặc `null` thì dùng **địa chỉ mặc định** của khách. Tác nhân lấy
 từ **session**, không bao giờ từ body.
 
-Response `201`: `data` = `OrderResponse` (như trên).
+Response `201`: `data` = `OrderResponse` với `status: "PENDING"` (như trên).
 
 Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc không phải một địa chỉ của khách —
 `details[].field = "addressId"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
@@ -2401,13 +2434,13 @@ Ghi chú:
   **không** dùng số thực, **không** làm tròn, và **không** cộng phí ship (FR-008, ADR 015 §5).
 - Ba mã `ORDER_ITEM_NOT_PURCHASABLE`, `ORDER_ITEM_PRICE_CHANGED`, `ORDER_QUANTITY_EXCEEDS_AVAILABLE`
   nêu món gây lỗi ở `details[].field = "productId"`; riêng mã số lượng, `issue` nêu số còn khả dụng.
-- Hàng được **giữ**, **không** bán: số **vật lý** không đổi, chỉ số **khả dụng** giảm. Giỏ **không**
-  giữ chỗ — việc giữ chỗ là của module 05 và xảy ra ở đây (`§7`, giữ chỗ không có bề mặt HTTP).
-- `expires_at` của đơn = thời điểm tạo + cửa sổ giữ chỗ của module 05 (`HoldTTL`, mặc định 15 phút);
-  module 07 đọc cửa sổ đó qua hợp đồng chứ không lặp lại con số (FR-016).
-- Checkout là **một** thao tác: nếu bất kỳ bước nào hỏng, **không** có đơn, **không** có giữ chỗ, giỏ
-  nguyên vẹn. Hai lần checkout **đồng thời** một giỏ chỉ sinh **đúng một** đơn; lần thứ hai nhận
-  `409 ORDER_CART_EMPTY` vì giỏ đã rỗng.
+- **Không** giữ hàng ở bước này: số **vật lý** và số **khả dụng** đều **không đổi**. Việc giữ hàng là
+  của module 05 và xảy ra ở bước artist xác nhận (`9.8`); đơn `PENDING` mang **không** hạn thanh toán.
+- Checkout là **một** thao tác: nếu bất kỳ bước nào hỏng, **không** có đơn, giỏ nguyên vẹn. Hai lần
+  checkout **đồng thời** một giỏ chỉ sinh **đúng một** đơn; lần thứ hai nhận `409 ORDER_CART_EMPTY` vì
+  giỏ đã rỗng.
+- Artist được **thông báo** (email) rằng có một đơn cần xác nhận (gửi là best-effort, lỗi gửi
+  **không** làm hỏng checkout).
 
 ### 9.2 `GET /orders`
 
@@ -2447,10 +2480,65 @@ Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED
 > ORDER_NOT_FOUND`. Nếu có mã riêng cho "tồn tại nhưng của người khác", bất kỳ khách đã đăng nhập nào
 > cũng dò được một đơn có thật trong hệ thống (FR-020).
 
-### 9.4 `POST /orders/{orderId}/cancel`
+### 9.4 `PUT /orders/{orderId}`
 
-Huỷ một đơn của chính khách **còn chờ thanh toán** và trả hàng về khả dụng. Đơn **đã trả tiền không
-huỷ được** — nó được **chuyển nhượng** (`9.9`).
+Sửa một đơn của chính khách khi đơn đang **chờ artist xác nhận** (`PENDING`) hoặc **chờ thanh toán**
+(`PAYMENT_PENDING`): thay **toàn bộ** tập dòng (thêm/bớt/đổi số lượng) và, khi nêu, **địa chỉ giao**
+(chọn từ địa chỉ đã lưu bằng `addressId`, như checkout). Mỗi dòng được **đối chiếu lại** và **chụp lại
+giá hiện tại**; tổng được **tính lại** và **phiên bản nội dung** của đơn tăng. Sửa đơn đang
+`PAYMENT_PENDING` **trả hàng** đã giữ và đưa đơn **quay lại `PENDING`** (artist phải xác nhận lại, và
+xác nhận/phiên thanh toán cũ mất hiệu lực); sửa đơn `PENDING` giữ nguyên `PENDING`.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn sau khi sửa |
+
+Path: `orderId` (UUID).
+
+Request (`EditOrderRequest`, `additionalProperties: false`)
+
+```json
+{
+  "addressId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "lines": [
+    { "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e", "quantity": 3 }
+  ]
+}
+```
+
+`lines` **bắt buộc** và **thay thế toàn bộ** tập dòng; mỗi phần tử là `EditLineRequest` (`productId`,
+`quantity ≥ 1`). `addressId` **tuỳ chọn** — bỏ trống hoặc `null` thì **giữ nguyên** địa chỉ hiện tại của
+đơn. Tác nhân lấy từ **session**, không bao giờ từ body.
+
+Response `200`: `data` = `OrderResponse`; `status` là `PENDING` sau khi sửa (một đơn vốn `PAYMENT_PENDING`
+cũng về `PENDING`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID hoặc không phải địa chỉ của khách; `productId`
+không phải UUID; `quantity < 1` — `details[].field` nêu member) · `MALFORMED_REQUEST` 400 (body không
+parse được hoặc có member lạ) · `UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 · `ORDER_NOT_EDITABLE`
+409 (đơn đã trả tiền hoặc xa hơn) · `ORDER_EMPTY` 409 (tập dòng rỗng) · `ORDER_ITEM_NOT_PURCHASABLE`
+409 · `ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Đơn **đã trả tiền** (hoặc xa hơn) **không** sửa được → `409 ORDER_NOT_EDITABLE`; một tập dòng để đơn
+  **còn 0 dòng** → `409 ORDER_EMPTY` (khách muốn bỏ hết thì **huỷ đơn**, `9.5`).
+- Mỗi dòng sửa được **chụp lại giá hiện tại** (khách chọn lại món), nên một lần đổi giá kể từ lúc đặt
+  **không** bị từ chối — khác checkout, nơi giá trong giỏ là giá khách đã thấy.
+- Sửa đơn `PAYMENT_PENDING` trả hàng về khả dụng **đúng một lần** và **bỏ** hạn thanh toán; đơn về
+  `PENDING`. Mọi lần sửa ghi một dòng **lịch sử sửa** (nội dung trước/sau, người sửa, thời điểm) và
+  tăng **phiên bản** đơn (phiên bản là seam nội bộ cho module 08, **không** lộ ra response).
+- Mọi lần sửa đều **thành công** dù nội dung y hệt: vẫn tăng phiên bản và ghi lịch sử, không đổi trạng
+  thái và không đụng tồn.
+- Artist được **thông báo** (email) rằng đơn cần xác nhận lại (gửi best-effort, không làm hỏng sửa).
+
+### 9.5 `POST /orders/{orderId}/cancel`
+
+Huỷ một đơn của chính khách **chưa trả tiền** — cả **chờ artist xác nhận** (`PENDING`) và **chờ thanh
+toán** (`PAYMENT_PENDING`) — và trả hàng đã giữ về khả dụng. Đơn **đã trả tiền không huỷ được** — nó
+được **chuyển nhượng** (`9.12`).
 
 | | |
 |---|---|
@@ -2467,14 +2555,18 @@ Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED
 
 Ghi chú:
 
-- Huỷ trả hàng về khả dụng **không** đổi số **vật lý**, áp dụng **đúng một lần**; một lần huỷ thứ hai
-  nhận `409 ORDER_STATE_TRANSITION_INVALID` nêu `CANCELLED`.
-- Đơn quá hạn tự về `CANCELLED` bởi sweeper (`9.1`); một lần huỷ sau đó cũng nhận `409`, cùng câu trả
-  lời như huỷ hai lần.
+- Huỷ đơn `PAYMENT_PENDING` trả hàng về khả dụng **không** đổi số **vật lý**, áp dụng **đúng một lần**;
+  huỷ đơn `PENDING` **không** có hàng nào để trả (chưa từng giữ). Một lần huỷ thứ hai nhận `409
+  ORDER_STATE_TRANSITION_INVALID` nêu `CANCELLED`.
+- Đơn `PAYMENT_PENDING` quá hạn tự về `CANCELLED` bởi sweeper (`9.1`); một lần huỷ sau đó cũng nhận
+  `409`, cùng câu trả lời như huỷ hai lần.
+- Khách được **thông báo** (email) khi đơn đổi trạng thái (gửi best-effort).
 
-### 9.5 `GET /admin/orders`
+### 9.6 `GET /admin/orders`
 
-Danh sách **mọi** đơn, **mới nhất trước**, kèm chủ sở hữu, trạng thái và tổng tiền, phân trang.
+Danh sách **mọi** đơn, kèm chủ sở hữu, trạng thái và tổng tiền, phân trang. **Mới nhất trước** theo mặc
+định; hai tham số **tuỳ chọn** `status` (lọc một trong sáu trạng thái) và `sort` (`newest` mặc định,
+hoặc `oldest`) khiến `status=PENDING&sort=oldest` thành **hàng đợi xác nhận FIFO** của artist.
 
 | | |
 |---|---|
@@ -2482,13 +2574,15 @@ Danh sách **mọi** đơn, **mới nhất trước**, kèm chủ sở hữu, tr
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Query: như `9.2`. Response `200`: `data` là mảng `AdminOrderSummaryResponse`; `meta` là khối phân
-trang chung.
+Query: `page`/`pageSize` như `9.2`, cộng `status` và `sort` (cả hai **tuỳ chọn**). Response `200`: `data`
+là mảng `AdminOrderSummaryResponse`; `meta` là khối phân trang chung.
 
-Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi
-`audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+Lỗi: `VALIDATION_ERROR` 400 (`page`/`pageSize` ngoài khoảng; `status` không thuộc sáu trạng thái; `sort`
+khác `newest`/`oldest` — `details[].field` là `"page"`, `"pageSize"`, `"status"` hoặc `"sort"`) ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
-### 9.6 `GET /admin/orders/{orderId}`
+### 9.7 `GET /admin/orders/{orderId}`
 
 Đọc một đơn bất kỳ, đầy đủ, kèm chủ sở hữu.
 
@@ -2503,7 +2597,59 @@ Path: `orderId` (UUID). Response `200`: `data` = `AdminOrderResponse`.
 Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
 `ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
-### 9.7 `POST /admin/orders/{orderId}/ship`
+### 9.8 `POST /admin/orders/{orderId}/confirm`
+
+Artist **xác nhận** một đơn đang **chờ artist xác nhận** (`PENDING`): hệ thống **giữ toàn bộ** các dòng
+trong **một bước all-or-nothing** (nếu bất kỳ dòng nào không giữ được, cả lần xác nhận bị từ chối, đơn
+giữ nguyên `PENDING` và **không** giữ dòng nào), đặt mốc xác nhận, **mở hạn thanh toán 60 phút** và đưa
+đơn sang **chờ thanh toán** (`PAYMENT_PENDING`). Ghi `audit_logs` action `ORDER_CONFIRMED`, và **thông
+báo** khách (email) khi trạng thái đổi.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn ở trạng thái mới |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
+`status: "PAYMENT_PENDING"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (đơn không ở `PENDING`; message nêu trạng
+thái hiện tại) · `ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 (một dòng không giữ được; `details[].field =
+"productId"`) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- **Chỉ khi artist xác nhận** hàng mới được giữ: số **vật lý** không đổi, số **khả dụng** giảm.
+- Giữ hàng là **all-or-nothing**: hai đơn tranh đơn vị cuối cùng thì **nhiều nhất một** đơn được xác
+  nhận; đơn kia bị từ chối và **không** oversell.
+- Xác nhận một đơn **không** ở `PENDING` (đã xác nhận, đã huỷ, đã trả tiền) → `409
+  ORDER_STATE_TRANSITION_INVALID` nêu trạng thái hiện tại; đơn **nguyên vẹn**.
+
+### 9.9 `POST /admin/orders/{orderId}/reject`
+
+Artist **từ chối** một đơn đang **chờ artist xác nhận** (`PENDING`); đơn chuyển sang **đã huỷ**
+(`CANCELLED`). Không có hàng nào đã bị giữ nên **không** cần trả. Ghi `audit_logs` action
+`ORDER_REJECTED`, và **thông báo** khách (email) khi trạng thái đổi.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn sau khi từ chối |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
+`status: "CANCELLED"`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (đơn không ở `PENDING`; message nêu trạng
+thái hiện tại) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú: từ chối một đơn không ở `PENDING` → `409 ORDER_STATE_TRANSITION_INVALID` nêu trạng thái hiện
+tại; đơn **nguyên vẹn**, tồn kho **không đổi**.
+
+### 9.10 `POST /admin/orders/{orderId}/ship`
 
 Đưa một đơn **đã trả tiền** sang **đã giao** và ghi lại thao tác.
 
@@ -2522,7 +2668,7 @@ Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED
 
 Ghi chú: một bước chuyển bị từ chối **không đổi gì**; ghi `audit_logs` với action `ORDER_SHIPPED`.
 
-### 9.8 `POST /admin/orders/{orderId}/complete`
+### 9.11 `POST /admin/orders/{orderId}/complete`
 
 Đưa một đơn **đã giao** sang **hoàn tất** (`COMPLETED`, trạng thái cuối) và ghi lại thao tác.
 
@@ -2541,7 +2687,7 @@ Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED
 
 Ghi chú: `COMPLETED` là **cuối** và không có đường ra; ghi `audit_logs` với action `ORDER_COMPLETED`.
 
-### 9.9 `POST /admin/orders/{orderId}/transfer`
+### 9.12 `POST /admin/orders/{orderId}/transfer`
 
 Chuyển một đơn **đã trả tiền** cho một tài khoản khác **đã tồn tại**, nêu bằng **email**. Chỉ **chủ
 sở hữu** đổi; dòng, trạng thái và tổng tiền giữ nguyên, và **không** đổi tồn kho.
@@ -2637,12 +2783,15 @@ Ghi chú:
 | POST | `/api/v1/cart/items` | Bearer | Thêm sản phẩm vào giỏ (`409` nếu không bán được hoặc quá tồn) |
 | PATCH | `/api/v1/cart/items/{productId}` | Bearer | Đổi số lượng một dòng |
 | DELETE | `/api/v1/cart/items/{productId}` | Bearer | Xoá một dòng (204) |
-| POST | `/api/v1/orders` | Bearer | Checkout: biến giỏ thành đơn chờ thanh toán (201) |
+| POST | `/api/v1/orders` | Bearer | Checkout: biến giỏ thành đơn chờ artist xác nhận (201; không giữ hàng) |
 | GET | `/api/v1/orders` | Bearer | Đơn của chính mình (có phân trang, mới nhất trước) |
 | GET | `/api/v1/orders/{orderId}` | Bearer | Chi tiết một đơn của chính mình |
-| POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn còn chờ thanh toán, trả hàng |
-| GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang) |
+| PUT | `/api/v1/orders/{orderId}` | Bearer | Sửa đơn chưa trả tiền (thay dòng + địa chỉ) |
+| POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn chưa trả tiền, trả hàng đã giữ |
+| GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang, lọc `status`, sắp xếp `sort`) |
 | GET | `/api/v1/admin/orders/{orderId}` | ADMIN | Chi tiết một đơn bất kỳ, kèm chủ sở hữu |
+| POST | `/api/v1/admin/orders/{orderId}/confirm` | ADMIN | Artist xác nhận: giữ toàn bộ hàng, mở hạn thanh toán |
+| POST | `/api/v1/admin/orders/{orderId}/reject` | ADMIN | Artist từ chối đơn chờ xác nhận |
 | POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đánh dấu đơn đã trả tiền là đã giao |
 | POST | `/api/v1/admin/orders/{orderId}/complete` | ADMIN | Đánh dấu đơn đã giao là hoàn tất |
 | POST | `/api/v1/admin/orders/{orderId}/transfer` | ADMIN | Chuyển đơn đã trả tiền cho tài khoản khác |
@@ -2669,6 +2818,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-10 | Bổ sung luồng **xác nhận đơn & chỉnh sửa** cho nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order, feature 010): **ba** endpoint mới — `PUT /orders/{orderId}` (khách sửa đơn chưa trả tiền), `POST /admin/orders/{orderId}/confirm` (artist xác nhận: giữ **toàn bộ** hàng all-or-nothing, mở hạn thanh toán) và `POST /admin/orders/{orderId}/reject` (artist từ chối) — nâng module lên **mười hai**: **năm** route của khách dưới `/orders` (thêm `PUT`), **bảy** của admin. **Đổi hành vi**: `POST /orders` nay tạo đơn `PENDING` (**chờ artist xác nhận**) và **không** giữ hàng; `POST /orders/{orderId}/cancel` nay huỷ được cả `PENDING` lẫn `PAYMENT_PENDING`; `GET /admin/orders` nhận thêm `status`/`sort` (tuỳ chọn; `status=PENDING&sort=oldest` = hàng đợi xác nhận FIFO). **Đổi enum**: `PENDING_PAYMENT` **đổi tên** thành `PAYMENT_PENDING`, thêm `PENDING` — thành **sáu** giá trị. Bổ sung hai mã `ORDER_*` (`ORDER_NOT_EDITABLE`, `ORDER_EMPTY`) vào mục 1.4, ghi chú `ORDER_CONFIRMED`/`ORDER_REJECTED` vào nhóm action audit, và hạn **giữ chỗ 15 → 60 phút**. Sửa §9 (enum, endpoint, ghi chú) và bảng tổng hợp §10. Xem ADR-018. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order): **chín** endpoint — **bốn** của khách đã đăng nhập (`POST /orders` checkout, `GET /orders` danh sách, `GET /orders/{orderId}` chi tiết, `POST /orders/{orderId}/cancel` huỷ đơn còn chờ thanh toán) và **năm** của admin (`GET /admin/orders`, `GET /admin/orders/{orderId}`, `POST /admin/orders/{orderId}/ship`, `POST /admin/orders/{orderId}/complete`, `POST /admin/orders/{orderId}/transfer`). Chủ sở hữu lấy từ **session**; đơn của khách khác trả cùng `404 ORDER_NOT_FOUND`. Bốn hình dạng response: khách `OrderSummaryResponse` **5 member** / `OrderResponse` **7 member**; quản trị `AdminOrderSummaryResponse` **6 member** / `AdminOrderResponse` **8 member** (hơn khách đúng `userId`); `OrderLineResponse` **6 member**, `OrderAddressResponse` **7 member**. Bổ sung **chín** mã `ORDER_*` vào mục 1.4 (kèm ghi rõ bốn tình huống cố ý **không** có mã: trả tiền, hết hạn, sản phẩm bị xoá, chuyển nhượng lặp) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: checkout **giữ** hàng (vật lý không đổi) và **làm rỗng** giỏ trong một transaction; tiền là số nguyên đơn vị nhỏ nhất, tổng **không** gồm phí ship; đơn chưa trả tiền **tự huỷ** sau 15 phút; trạng thái đi qua endpoint riêng; **không** có endpoint `pay` (module 08 điều khiển); chuyển nhượng chỉ đổi chủ, không đổi tồn kho. Phần 9 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 10/11/12. Xem ADR-017. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/cart` (module 06 Cart): **bốn** route của khách đã đăng nhập — đọc giỏ (`GET /cart`), thêm sản phẩm (`POST /cart/items`), đổi số lượng một dòng (`PATCH /cart/items/{productId}`) và xoá một dòng (`DELETE /cart/items/{productId}`). Giỏ là **tài nguyên đơn** định địa chỉ tại `/cart` **không kèm định danh** (chủ sở hữu là session); một dòng định địa chỉ bằng **định danh sản phẩm**. Hai hình dạng response: `CartResponse` **2 member** (`lines`, `subtotal` — `null` khi giỏ rỗng) và `CartLineResponse` **8 member** (`productId`, `name`, `slug`, `quantity`, `unitPrice`, `lineTotal`, `buyable`, `availableQuantity`). Bổ sung hai mã `CART_*` vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** cho sản phẩm không tồn tại lẫn dòng không thuộc giỏ này) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: đọc giỏ **đối chiếu lại** trạng thái bán và tồn khả dụng của từng dòng, `availableQuantity` chỉ có khi dòng còn bán nhưng thiếu; giá hiển thị là **snapshot** lúc thêm; giỏ **không** giữ chỗ tồn kho và **không** ghi `audit_logs`. Phần 8 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 9/10/11. Xem ADR-016. | `internal/modules/cart/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/admin/inventory` (module 05 Inventory): **năm** route quản trị dưới `/admin/inventory/{productId}` — đọc tồn kho, đọc lịch sử biến động (phân trang), và ba thao tác thủ công `restock`/`damage`/`adjustment` — tất cả yêu cầu vai trò `ADMIN`. Hai hình dạng response: `StockView` **3 member** (`physicalQuantity`, `heldQuantity`, `availableQuantity`) và `StockMovement` **9 member**. Bổ sung mã `INVENTORY_INSUFFICIENT_STOCK` 409 vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** trên cả năm route) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: sản phẩm chưa từng nhập kho trả `0` chứ không `404`; điều chỉnh ghi phần chênh lệch và một lần điều chỉnh về đúng giá trị đang lưu không ghi ledger; trạng thái bán của sản phẩm tự chuyển khi khả dụng cắt qua 0 (đóng nghĩa vụ D1 của feature 006). Giữ chỗ có hạn không có bề mặt HTTP. Phần 7 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 8/9/10. Xem ADR-014. | `internal/modules/inventory/presentation/http/router.go` |

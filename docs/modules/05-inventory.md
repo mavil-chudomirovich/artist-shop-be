@@ -1,7 +1,8 @@
 # Module 05 — Inventory
 
 - **Trạng thái Spec Kit**: Hoàn tất phần giao được (implement + converge; nửa tự động do đơn hàng
-  điều khiển **chưa** giao vì module sinh ra nó chưa tồn tại — nêu rõ ở phần "Phần chưa giao")
+  điều khiển **chưa** giao hết — Order (07) đã giao và wire reserve/release, chỉ còn bước "đã thanh
+  toán" chờ Payment (08) — nêu rõ ở phần "Phần chưa giao")
 - **Spec**: [`specs/007-inventory-tracking/spec.md`](../../specs/007-inventory-tracking/spec.md)
 - **Plan**: [`specs/007-inventory-tracking/plan.md`](../../specs/007-inventory-tracking/plan.md)
 - **Tasks**: [`specs/007-inventory-tracking/tasks.md`](../../specs/007-inventory-tracking/tasks.md)
@@ -34,7 +35,7 @@ Không (hoãn):
   "không âm" được thực thi trên đó (`UPDATE ... WHERE quantity >= $n`).
 - `inventory_transactions`: sản phẩm, loại biến động, số lượng thay đổi, số lượng kết quả, tham
   chiếu nguồn (đơn/điều chỉnh), ghi chú, người thao tác, thời gian. Append-only.
-- `stock_holds`: phần đang được giữ cho một đơn đang thanh toán, có hạn 15 phút. **Không** phải
+- `stock_holds`: phần đang được giữ cho một đơn đang thanh toán, có hạn 60 phút. **Không** phải
   biến động vật lý nên không nằm trong ledger.
 
 Khả dụng = `stock_levels.quantity` − tổng `stock_holds` đang hoạt động; được **tính**, không lưu.
@@ -72,16 +73,21 @@ Năm endpoint quản trị (`GET`/`POST /api/v1/admin/inventory/{productId}...`)
 
 ### Phần chưa giao
 
-Đây là phần module doc mô tả nhưng feature này **không giao được end to end**, **không** phải phần
-đã xong. Ghi rõ ở đây để một luật chưa xong không trở nên vô hình khi module được đánh dấu hoàn tất:
+Đây là phần module doc mô tả nhưng feature 007 **không** giao được end to end; feature 009 (Order)
+và 010 (Order confirmation) đã giao phần lớn, phần còn lại chỉ chờ module 08 (Payment). Ghi rõ ở
+đây để một luật chưa xong không trở nên vô hình khi module được đánh dấu hoàn tất:
 [`specs/007-inventory-tracking/deferred.md`](../../specs/007-inventory-tracking/deferred.md).
 
 | Điểm chưa giao | Vì sao | Gỡ ở đâu |
 |---|---|---|
-| **Nửa tự động do đơn hàng điều khiển**: đơn đã thanh toán → giảm kho; đơn hủy → hoàn kho (nhả giữ chỗ) | Order (07) và Payment (08) chưa tồn tại — không có gì trong hệ thống có thể bắt đầu checkout, thanh toán hay hủy đơn. **Năng lực** (reserve/release/expire/consume + idempotent theo source reference) đã được giao và test trực tiếp, nhưng **nguồn sự kiện** chưa có | **Module 07 Order / 08 Payment** wire và test end to end; hợp đồng liên module để chúng gọi sẽ được thêm khi Order được specify. `deferred.md` D1 |
-| **Hợp đồng `InventoryReservation` liên module** | Chưa có consumer. Viết bây giờ là thiết kế theo yêu cầu đoán mò (Constitution VII) | Khi module 07 Order được specify. `deferred.md` D1 |
-| **Xóa mềm/history sống ngoài sản phẩm** | Product xóa cứng; `stock_levels`/`inventory_transactions`/`stock_holds` cascade theo sản phẩm. Lịch sử không sống ngoài vòng đời sản phẩm | Cùng module 07, khi quyết định xóa sản phẩm. `deferred.md` D3 |
+| **Nửa tự động do đơn hàng điều khiển**: đơn **đã thanh toán** → giảm kho | Order (07) đã giao (feature 009, 010): nó **đặt chỗ** khi xác nhận, **nhả giữ chỗ** khi hủy, và đã có bước `MarkPaid` gọi `ApplySale` cho từng dòng. Nhưng bước "đã thanh toán" chỉ chạy được qua đường dùng trực tiếp trong test, vì **Payment (08)** — bên phát sự kiện thanh toán — chưa tồn tại | **Module 08 Payment** gọi `MarkPaid` với một định danh sự kiện ổn định; module 07 không đổi. `deferred.md` D1 |
 | **Ngưỡng cảnh báo tồn kho thấp, kho nhiều địa điểm** | Module doc tự hoãn "cảnh báo tự động nâng cao" và "kho nhiều địa điểm"; spec trả lời câu hỏi mở về ngưỡng: **không** ở MVP (FR-029) | Feature riêng khi có nhu cầu. `deferred.md` D4 |
+
+Hai mục từng nằm ở đây đã được feature 009 (Order) đóng: hợp đồng liên module
+`InventoryReservation` (`internal/contracts/inventory.go`) đã được publish và module 07 là consumer
+đầu tiên; và câu hỏi "dòng đơn làm gì khi sản phẩm bị xoá cứng" đã được chốt — module 07 **chụp**
+sản phẩm vào `order_items`, sản phẩm vẫn xoá cứng nên lịch sử kho vẫn cascade theo sản phẩm (hành
+vi đã chấp nhận cho MVP).
 
 ## Ghi chú / câu hỏi mở
 

@@ -36,8 +36,9 @@ type Service interface {
 	// GetMine reads one of the caller's own orders in full; another customer's
 	// identifier answers not-found (FR-018, FR-020).
 	GetMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
-	// CancelMine cancels one of the caller's own orders that is still awaiting
-	// payment and returns it (FR-019, FR-020).
+	// CancelMine cancels one of the caller's own orders before it is paid —
+	// while it awaits the artist's confirmation or payment — and returns it
+	// (FR-019, FR-020).
 	CancelMine(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
 	// EditMine replaces one of the caller's own orders' lines and, when named,
 	// its delivery address while it awaits the artist or payment (FR-012 to
@@ -217,12 +218,13 @@ func (h *Handler) GetMine(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
 }
 
-// CancelMine cancels one of the signed-in customer's own orders that is still
-// awaiting payment and returns its goods. A paid order is refused by the state
-// machine, because a paid order is transferred instead (FR-019, FR-020).
+// CancelMine cancels one of the signed-in customer's own orders before it is
+// paid — while it awaits the artist's confirmation or payment — and returns its
+// goods. A paid order is refused by the state machine, because a paid order is
+// transferred instead (FR-019, FR-020).
 //
 //	@Summary		Cancel the signed-in customer's unpaid order
-//	@Description	Cancels an order that is still awaiting payment and returns its goods. A paid order cannot be cancelled; the refusal names the current state.
+//	@Description	Cancels an order before it is paid — while it awaits the artist's confirmation or payment — and returns its goods. A paid order cannot be cancelled; the refusal names the current state.
 //	@Tags			Orders
 //	@Produce		json
 //	@Security		BearerAuth

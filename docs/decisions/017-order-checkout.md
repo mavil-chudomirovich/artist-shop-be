@@ -133,3 +133,12 @@ và nghĩa vụ `sourceReference` ổn định phải được đáp); hoặc kh
 | `WithTx` luôn mở transaction mới | Checkout liên module sẽ có nhiều transaction rời, và ghi đơn có thể commit khi giữ hàng rollback — phá Constitution II |
 | Đọc bảng của module khác thay vì dùng hợp đồng | Constitution I cấm; checkout chạm năm module, tất cả qua `internal/contracts` |
 | Nêu người nhận chuyển nhượng bằng định danh thay vì email | Clarification chốt **email**; operator biết email khách hơn là mã tài khoản, và email là dữ kiện của module 01 |
+
+## 5. Bổ sung (2026-10-10)
+
+Feature `010-order-confirmation` **thay thế phần state machine** của quyết định này (mục 2.2 và 2.4):
+`PENDING_PAYMENT` **đổi tên** thành `PAYMENT_PENDING`, thêm trạng thái `PENDING` (chờ artist xác nhận),
+và hàng **chỉ** được giữ khi artist xác nhận — không còn giữ ở checkout. Cột `expires_at` đổi tên
+`payment_expires_at`, trở thành nullable, và cửa sổ là **60 phút** (không còn 15). Các quyết định còn lại
+(snapshot dòng không FK, chuyển nhượng là đổi chủ, bước `PAID` để module 08 điều khiển, `WithTx` tái dùng
+transaction) vẫn hiệu lực. Xem [ADR 018](018-order-confirmation-and-editing.md).

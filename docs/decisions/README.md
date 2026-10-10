@@ -42,7 +42,8 @@ Dùng [template.md](template.md).
 | [014](014-inventory-hold-and-availability.md) | Tồn kho: hai hợp đồng liên module, mô hình ba bảng với level làm chốt chặn đồng thời, và sweeper nhả giữ chỗ hết hạn | Accepted |
 | [015](015-shop-first-version-plan-and-payos.md) | Tái thứ tự roadmap theo version (Shop-first) và chọn PayOS làm cổng thanh toán | Accepted |
 | [016](016-cart-singleton-loose-reference-and-snapshot.md) | Giỏ: tài nguyên đơn không định danh, tham chiếu sản phẩm lỏng, hai hợp đồng đọc bulk, và giá snapshot | Accepted |
-| [017](017-order-checkout.md) | Đơn hàng: dòng snapshot không FK, `expires_at` do order sở hữu, chuyển nhượng là đổi chủ, bước `PAID` giao nhưng để module 08 điều khiển, và `WithTx` tái dùng transaction | Accepted |
+| [017](017-order-checkout.md) | Đơn hàng: dòng snapshot không FK, `expires_at` do order sở hữu, chuyển nhượng là đổi chủ, bước `PAID` giao nhưng để module 08 điều khiển, và `WithTx` tái dùng transaction | Accepted (state machine bị [018](018-order-confirmation-and-editing.md) thay thế) |
+| [018](018-order-confirmation-and-editing.md) | Đơn hàng: state machine sáu trạng thái, giữ hàng chỉ khi artist xác nhận, hạn thanh toán 60 phút, sửa đơn toàn bộ quay về `PENDING`, `order_version` cho module 08, và mailer dùng chung tối thiểu | Accepted |
 
 ## Khi nào phải viết ADR
 

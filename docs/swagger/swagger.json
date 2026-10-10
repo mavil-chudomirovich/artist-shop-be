@@ -788,7 +788,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns every order, newest first, with its owner, state and total, paginated. Administrator role required.",
+                "description": "Returns every order, newest first by default, with its owner, state and total, paginated. An optional `status` filters to one order state and an optional `sort` chooses the ordering; `status=PENDING\u0026sort=oldest` is the confirmation queue oldest-first. Administrator role required.",
                 "produces": [
                     "application/json"
                 ],
@@ -807,6 +807,18 @@
                         "type": "integer",
                         "description": "Page size (default 20)",
                         "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED or CANCELLED)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Ordering: newest (default) or oldest; oldest with status=PENDING is the FIFO confirmation queue",
+                        "name": "sort",
                         "in": "query"
                     }
                 ],
@@ -962,6 +974,182 @@
                     "Orders"
                 ],
                 "summary": "Mark a shipped order completed (administrator)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.AdminOrderResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/orders/{orderId}/confirm": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Holds the whole order all-or-nothing and opens the payment window, moving it to PAYMENT_PENDING. A wrong state answers 409 ORDER_STATE_TRANSITION_INVALID; a line that cannot be held answers 409 ORDER_QUANTITY_EXCEEDS_AVAILABLE. Administrator role required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Confirm an order awaiting the artist (administrator)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.AdminOrderResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/orders/{orderId}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Declines an order awaiting the artist's confirmation, moving it to CANCELLED. No goods were held, so nothing is returned. A wrong state answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Decline an order awaiting the artist (administrator)",
                 "parameters": [
                     {
                         "type": "string",
@@ -3105,7 +3293,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Turns the caller's cart into an order. Every line is re-checked against the product's current sale state and price and against what is available; the whole checkout is refused if any line fails. On success the goods are held, the cart is emptied, and the order is returned awaiting payment.",
+                "description": "Turns the caller's cart into an order awaiting the artist's confirmation, holding no goods. Every line is re-checked against the product's current sale state and price and against what is available; the whole checkout is refused if any line fails. On success the cart is emptied and the order is returned in PENDING; the goods are held only when the artist confirms it.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3115,7 +3303,7 @@
                 "tags": [
                     "Orders"
                 ],
-                "summary": "Check out the cart into an order",
+                "summary": "Check out the cart into an order awaiting the artist's confirmation",
                 "parameters": [
                     {
                         "description": "Delivery address to use (optional addressId; omit for the default)",
@@ -3253,6 +3441,98 @@
                         }
                     }
                 }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the order's lines and, when named, its delivery address while the order awaits the artist or payment. Each line is re-checked and re-priced at its current value, the total is recomputed and the content version is bumped. An awaiting-payment order is returned to PENDING and its goods are released; a paid order is refused 409 ORDER_NOT_EDITABLE and an edit that would leave no lines is refused 409 ORDER_EMPTY.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Change the signed-in customer's order before paying",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "New lines and optional addressId",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditOrderRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
             }
         },
         "/orders/{orderId}/cancel": {
@@ -3262,7 +3542,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cancels an order that is still awaiting payment and returns its goods. A paid order cannot be cancelled; the refusal names the current state.",
+                "description": "Cancels an order before it is paid — while it awaits the artist's confirmation or payment — and returns its goods. A paid order cannot be cancelled; the refusal names the current state.",
                 "produces": [
                     "application/json"
                 ],
@@ -4543,6 +4823,35 @@
                 "addressId": {
                     "description": "AddressID is the address the customer named, or nil to use the default.",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest": {
+            "type": "object",
+            "properties": {
+                "productId": {
+                    "description": "ProductID is the product the line is for.",
+                    "type": "string"
+                },
+                "quantity": {
+                    "description": "Quantity is how many, at least 1.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditOrderRequest": {
+            "type": "object",
+            "properties": {
+                "addressId": {
+                    "description": "AddressID is a saved address to deliver to; nil keeps the current one.",
+                    "type": "string"
+                },
+                "lines": {
+                    "description": "Lines are the order's new lines; an empty set is refused.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest"
+                    }
                 }
             }
         },

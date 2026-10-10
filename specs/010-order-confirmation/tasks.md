@@ -192,29 +192,29 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 **Purpose**: Documentation, the frontend guide, Swagger, and the close-out gates.
 
-- [ ] T042 [P] Update `docs/api-reference.md`: the three new endpoints and the changed ones, the six-value status enum, the two new error codes, and the hold-window text (order and inventory) to the 60-minute window
-- [ ] T043 [P] Update `docs/modules/07-order.md`: the new state machine, the hold-at-confirmation, the editing flow, the notifications and the version
-- [ ] T044 [P] Update `docs/modules.md` (note the order confirmation flow in the V1.0 roadmap) and `docs/modules/05-inventory.md` (the hold window is now 60 minutes)
-- [ ] T045 [P] Create `docs/decisions/018-order-confirmation-and-editing.md`: supersede `009`'s state machine (the rename and the new states), hold-only-on-confirmation, the 60-minute window and the `HoldTTL` change, whole-order editing with the return-to-PENDING rule, the `order_version` seam for module 08, and the minimal shared mailer
-- [ ] T046 [P] Create `specs/010-order-confirmation/deferred.md`: the payment attempt/session and IPN/late-callback handling (module 08), the provider payment-session cancellation on edit (module 08), in-app notifications and the remaining emails (module 12); state what each is, why out of scope, and what unblocks it
+- [X] T042 [P] Update `docs/api-reference.md`: the three new endpoints and the changed ones, the six-value status enum, the two new error codes, and the hold-window text (order and inventory) to the 60-minute window
+- [X] T043 [P] Update `docs/modules/07-order.md`: the new state machine, the hold-at-confirmation, the editing flow, the notifications and the version
+- [X] T044 [P] Update `docs/modules.md` (note the order confirmation flow in the V1.0 roadmap) and `docs/modules/05-inventory.md` (the hold window is now 60 minutes)
+- [X] T045 [P] Create `docs/decisions/018-order-confirmation-and-editing.md`: supersede `009`'s state machine (the rename and the new states), hold-only-on-confirmation, the 60-minute window and the `HoldTTL` change, whole-order editing with the return-to-PENDING rule, the `order_version` seam for module 08, and the minimal shared mailer
+- [X] T046 [P] Create `specs/010-order-confirmation/deferred.md`: the payment attempt/session and IPN/late-callback handling (module 08), the provider payment-session cancellation on edit (module 08), in-app notifications and the remaining emails (module 12); state what each is, why out of scope, and what unblocks it
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance)*
 
-- [ ] T047 **Có đổi bề mặt client** → viết `specs/010-order-confirmation/frontend-guide.md`: liệt kê từng endpoint thêm/đổi (`PUT /orders/{id}`, `POST /admin/orders/{id}/confirm`, `POST /admin/orders/{id}/reject`, `GET /admin/orders` thêm `status`/`sort`; `POST /orders` và `POST /orders/{id}/cancel` đổi hành vi), enum `OrderStatus` **6 giá trị** (đánh dấu `PENDING_PAYMENT` **bị đổi tên** thành `PAYMENT_PENDING`), mọi trường DTO, và mọi mã lỗi mới; **đánh dấu `specs/009-order/frontend-guide.md` đã bị thay thế**
-- [ ] T048 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, **có đếm**; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
+- [X] T047 **Có đổi bề mặt client** → viết `specs/010-order-confirmation/frontend-guide.md`: liệt kê từng endpoint thêm/đổi (`PUT /orders/{id}`, `POST /admin/orders/{id}/confirm`, `POST /admin/orders/{id}/reject`, `GET /admin/orders` thêm `status`/`sort`; `POST /orders` và `POST /orders/{id}/cancel` đổi hành vi), enum `OrderStatus` **6 giá trị** (đánh dấu `PENDING_PAYMENT` **bị đổi tên** thành `PAYMENT_PENDING`), mọi trường DTO, và mọi mã lỗi mới; **đánh dấu `specs/009-order/frontend-guide.md` đã bị thay thế**
+- [X] T048 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, **có đếm**; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
 
 ### Swagger annotations *(bắt buộc — feature có endpoint)*
 
-- [ ] T049 Thêm annotation Swagger cho **mọi** handler mới/đổi (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
+- [X] T049 Thêm annotation Swagger cho **mọi** handler mới/đổi (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T050 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/010-order-confirmation/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
+- [X] T050 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/010-order-confirmation/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
 
 ### Close-out
 
-- [ ] T051 Normalize the new files to UTF-8 (LF); check for BOM
-- [ ] T052 Run `make lint` and `make test`
+- [X] T051 Normalize the new files to UTF-8 (LF); check for BOM
+- [X] T052 Run `make lint` and `make test`
 - [ ] T053 Run `make test-integration` (needs Docker) and confirm it did not skip
 - [ ] T054 Run `quickstart.md` validation
 - [ ] T055 Run `make check` and confirm `swagger-check` passes

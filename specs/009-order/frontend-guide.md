@@ -1,5 +1,12 @@
 # Frontend Integration Guide — Đơn hàng (Order Checkout)
 
+> ⚠️ **ĐÃ BỊ THAY THẾ (superseded) — 2026-10-10.** Feature [`010-order-confirmation`](../010-order-confirmation/spec.md)
+> thay thế guide này. Guide mới: [`specs/010-order-confirmation/frontend-guide.md`](../010-order-confirmation/frontend-guide.md).
+> Đặc biệt, guide này **sai** ở: enum `OrderStatus` (nay **6** giá trị; `PENDING_PAYMENT` **đổi tên**
+> `PAYMENT_PENDING`, thêm `PENDING`), `POST /orders` (nay tạo đơn `PENDING` và **không** giữ hàng), và
+> `POST /orders/{orderId}/cancel` (nay huỷ được cả `PENDING` lẫn `PAYMENT_PENDING`). Không sửa file này;
+> dùng guide mới.
+
 **Feature**: `009-order`
 **Trạng thái**: Chín endpoint của module 07 đã được ghi vào `docs/api-reference.md` §9.
 **Đối tượng đọc**: Lập trình viên frontend (đơn hàng của khách đã đăng nhập, và bàn quản trị đơn của operator).
