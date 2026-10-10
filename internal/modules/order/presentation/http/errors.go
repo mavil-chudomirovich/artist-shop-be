@@ -20,6 +20,8 @@ const (
 	fieldQuantity  = "quantity"
 	fieldPage      = "page"
 	fieldPageSize  = "pageSize"
+	fieldStatus    = "status"
+	fieldSort      = "sort"
 	fieldEmail     = "email"
 )
 

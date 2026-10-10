@@ -16,6 +16,7 @@ import (
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
@@ -51,6 +52,9 @@ type Service interface {
 	// ConfirmByAdmin accepts an order awaiting the artist, holds the whole order
 	// and opens the payment window (FR-004, FR-005).
 	ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// RejectByAdmin declines an order awaiting the artist, moving it to
+	// cancelled; no goods were held, so nothing is returned (FR-018).
+	RejectByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
 	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
 	// FR-023).
 	ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
@@ -324,17 +328,22 @@ func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
 }
 
-// ListAll returns a page of every order, newest first, with its owner, state and
-// total. The route is behind the administrator role guard, so the caller is
-// always an administrator; no owner filter is applied (FR-021).
+// ListAll returns a page of every order, newest first by default, with its owner,
+// state and total. An optional `status` narrows it to one state and an optional
+// `sort` chooses the ordering, so `status=PENDING&sort=oldest` is the artist's
+// FIFO confirmation queue. The route is behind the administrator role guard, so
+// the caller is always an administrator; no owner filter is applied (FR-021,
+// FR-026).
 //
 //	@Summary		List every order (administrator)
-//	@Description	Returns every order, newest first, with its owner, state and total, paginated. Administrator role required.
+//	@Description	Returns every order, newest first by default, with its owner, state and total, paginated. An optional `status` filters to one order state and an optional `sort` chooses the ordering; `status=PENDING&sort=oldest` is the confirmation queue oldest-first. Administrator role required.
 //	@Tags			Orders
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			page		query	int	false	"Page number (default 1)"
-//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Param			page		query	int		false	"Page number (default 1)"
+//	@Param			pageSize	query	int		false	"Page size (default 20)"
+//	@Param			status		query	string	false	"Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED or CANCELLED)"
+//	@Param			sort		query	string	false	"Ordering: newest (default) or oldest; oldest with status=PENDING is the FIFO confirmation queue"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminOrderSummaryResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
@@ -352,9 +361,14 @@ func (h *Handler) ListAll(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
+	status, sort, appErr := adminListFilter(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.ListAll(ctx, appdto.ListInput{Page: page, PageSize: pageSize})
+	out, err := h.svc.ListAll(ctx, appdto.ListInput{Page: page, PageSize: pageSize, Status: status, Sort: sort})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -423,6 +437,30 @@ func (h *Handler) GetByIDAdmin(w http.ResponseWriter, r *http.Request) {
 //	@Router			/admin/orders/{orderId}/confirm [post]
 func (h *Handler) ConfirmByAdmin(w http.ResponseWriter, r *http.Request) {
 	h.adminMove(w, r, h.svc.ConfirmByAdmin)
+}
+
+// RejectByAdmin declines an order awaiting the artist: it moves the order to
+// CANCELLED. No goods were held, so nothing is returned. A move the current
+// state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID naming the
+// current state (FR-018, contracts/error-codes.md).
+//
+//	@Summary		Decline an order awaiting the artist (administrator)
+//	@Description	Declines an order awaiting the artist's confirmation, moving it to CANCELLED. No goods were held, so nothing is returned. A wrong state answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/reject [post]
+func (h *Handler) RejectByAdmin(w http.ResponseWriter, r *http.Request) {
+	h.adminMove(w, r, h.svc.RejectByAdmin)
 }
 
 // ShipByAdmin moves a paid order to shipped and records the act. A move the
@@ -647,6 +685,36 @@ func positiveQuery(raw string, fallback int) (int, error) {
 		return 0, errors.New("below the lower bound")
 	}
 	return parsed, nil
+}
+
+// adminListFilter reads the operator list's optional state filter and ordering.
+// Both are optional: an absent status applies no filter, and an absent sort keeps
+// the default newest-first. A value outside the permitted set stays on the shared
+// VALIDATION_ERROR naming the member, exactly as the contract requires (FR-026,
+// research D11, contracts/error-codes.md).
+func adminListFilter(r *http.Request) (*constant.Status, constant.OrderListSort, *httpx.AppError) {
+	query := r.URL.Query()
+
+	var status *constant.Status
+	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
+		candidate := constant.Status(raw)
+		if !constant.IsValidStatus(candidate) {
+			return nil, "", fieldError(fieldStatus, "must be one of the six order states")
+		}
+		status = &candidate
+	}
+
+	sort := constant.SortNewest
+	if raw := strings.TrimSpace(query.Get("sort")); raw != "" {
+		candidate := constant.OrderListSort(raw)
+		switch candidate {
+		case constant.SortNewest, constant.SortOldest:
+			sort = candidate
+		default:
+			return nil, "", fieldError(fieldSort, "must be newest or oldest")
+		}
+	}
+	return status, sort, nil
 }
 
 // toMoneyResponse is the single conversion from a money DTO to its wire shape, so

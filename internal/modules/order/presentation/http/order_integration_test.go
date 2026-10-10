@@ -723,6 +723,76 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 	}
 }
 
+// SC-005, FR-018, FR-026, quickstart scenario 5 against real PostgreSQL: the
+// operator's list filters to the confirmation queue oldest-first, the artist
+// declines an order awaiting confirmation — it becomes CANCELLED with no stock
+// movement and an audit row naming the order and the administrator — and a
+// second decline of the now-cancelled order is refused naming its state.
+func TestAdminRejectsAnOrderAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// FR-026 (quickstart 5c): status=PENDING&sort=oldest is the FIFO confirmation
+	// queue and carries the unconfirmed order.
+	rec = perform(f.root, http.MethodGet, adminOrdersPath+"?status=PENDING&sort=oldest", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("FIFO queue: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var queue adminListBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &queue); err != nil {
+		t.Fatalf("decode the FIFO queue %q: %v", rec.Body.String(), err)
+	}
+	if len(queue.Data) != 1 || queue.Data[0].ID != orderID || queue.Data[0].Status != "PENDING" {
+		t.Fatalf("the confirmation queue must carry the pending order, got %+v", queue.Data)
+	}
+
+	// FR-018 (quickstart 5a): the artist declines it; it becomes CANCELLED with no
+	// stock movement, and the act is audited naming the order and the administrator.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/reject", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var declined adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &declined); err != nil {
+		t.Fatalf("decode the declined order %q: %v", rec.Body.String(), err)
+	}
+	if declined.Data.ID != orderID || declined.Data.Status != "CANCELLED" {
+		t.Fatalf("the order must answer CANCELLED, got %+v", declined.Data)
+	}
+	if got := heldQuantity(t, f.pool, product); got != 0 {
+		t.Fatalf("a declined order must hold no goods, got %d held", got)
+	}
+	if got := physicalStock(t, f.pool, product); got != 10 {
+		t.Fatalf("declining must not move physical stock, got %d", got)
+	}
+	f.requireAudit(t, constant.AuditOrderRejected, orderID, testAdminID)
+
+	// FR-018 (quickstart 5b): declining an order that is no longer awaiting the
+	// artist is refused naming the current state, and writes no second audit row.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/reject", "", "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second reject: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	}
+	if rows := f.auditRows(t, constant.AuditOrderRejected); len(rows) != 1 {
+		t.Fatalf("a refused decline must audit nothing further, got %d rows", len(rows))
+	}
+}
+
 // SC-006, quickstart scenario 6 against real PostgreSQL: an administrator
 // transfers a paid order to another existing account through the route — the
 // order belongs to the recipient with its lines, state and total unchanged and

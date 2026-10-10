@@ -32,9 +32,11 @@ import (
 // method the use cases drift into panic loudly rather than silently pass.
 type adminOrders struct {
 	appinterface.OrderRepository
-	byID    map[uuid.UUID]*model.Order
-	ordered []model.OrderSummary
-	updates []statusWrite
+	byID      map[uuid.UUID]*model.Order
+	ordered   []model.OrderSummary
+	updates   []statusWrite
+	gotStatus *constant.Status
+	gotSort   constant.OrderListSort
 }
 
 func (r *adminOrders) FindByID(_ context.Context, id uuid.UUID) (*model.Order, error) {
@@ -45,7 +47,9 @@ func (r *adminOrders) FindByID(_ context.Context, id uuid.UUID) (*model.Order, e
 	return order, nil
 }
 
-func (r *adminOrders) ListAll(_ context.Context, page, size int, _ *constant.Status, _ constant.OrderListSort) ([]model.OrderSummary, int64, error) {
+func (r *adminOrders) ListAll(_ context.Context, page, size int, status *constant.Status, sort constant.OrderListSort) ([]model.OrderSummary, int64, error) {
+	r.gotStatus = status
+	r.gotSort = sort
 	total := int64(len(r.ordered))
 	start := (page - 1) * size
 	if start > len(r.ordered) {
@@ -278,6 +282,94 @@ func TestAdminMoveRequiresASession(t *testing.T) {
 
 	if _, err := f.svc.ShipByAdmin(context.Background(), appdto.OrderRefInput{OrderID: order.ID}); !errors.Is(err, errNoActor) {
 		t.Fatalf("ShipByAdmin without a session must fail with errNoActor, got %v", err)
+	}
+}
+
+// FR-018: the artist declines an order awaiting confirmation; it becomes
+// CANCELLED and the act is recorded naming the order and the administrator. No
+// goods were held, so nothing is returned.
+func TestRejectByAdminCancelsTheOrderAndAuditsIt(t *testing.T) {
+	admin := uuid.New()
+	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	f := newAdminFixture(order)
+
+	declined, err := f.svc.RejectByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
+	if err != nil {
+		t.Fatalf("RejectByAdmin: %v", err)
+	}
+	if declined.Status != constant.StatusCancelled {
+		t.Fatalf("the order must answer CANCELLED, got %s", declined.Status)
+	}
+	if order.Status != constant.StatusCancelled {
+		t.Fatalf("the persisted state must be CANCELLED, got %s", order.Status)
+	}
+	if len(f.orders.updates) != 1 || f.orders.updates[0].status != constant.StatusCancelled {
+		t.Fatalf("declining must persist CANCELLED, got %+v", f.orders.updates)
+	}
+	if len(f.audit.events) != 1 {
+		t.Fatalf("declining must record one audit entry, got %+v", f.audit.events)
+	}
+	assertAudit(t, f.audit.events[0], constant.AuditOrderRejected, admin, order.ID)
+}
+
+// FR-018, FR-011: declining an order that is not awaiting the artist is refused
+// by the state machine naming the current state, and neither the order nor the
+// audit trail changes.
+func TestRejectByAdminRefusesANonPendingOrder(t *testing.T) {
+	admin := uuid.New()
+	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	order.Status = constant.StatusPaymentPending
+	f := newAdminFixture(order)
+
+	_, err := f.svc.RejectByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
+	var refusal *domainerr.StateTransitionError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("declining an awaiting-payment order must be refused with a state transition error, got %v", err)
+	}
+	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusCancelled {
+		t.Fatalf("the refusal must name PAYMENT_PENDING, got %+v", refusal)
+	}
+	if order.Status != constant.StatusPaymentPending {
+		t.Fatalf("a refused decline must leave the order untouched, got %s", order.Status)
+	}
+	if len(f.orders.updates) != 0 {
+		t.Fatalf("a refused decline must persist nothing, got %+v", f.orders.updates)
+	}
+	if len(f.audit.events) != 0 {
+		t.Fatalf("a refused decline must audit nothing, got %+v", f.audit.events)
+	}
+}
+
+// FR-020, FR-023: a decline reached without a session is a programming error,
+// not a client-facing refusal — the role guard at the transport answers
+// FORBIDDEN.
+func TestRejectByAdminRequiresASession(t *testing.T) {
+	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	f := newAdminFixture(order)
+
+	if _, err := f.svc.RejectByAdmin(context.Background(), appdto.OrderRefInput{OrderID: order.ID}); !errors.Is(err, errNoActor) {
+		t.Fatalf("RejectByAdmin without a session must fail with errNoActor, got %v", err)
+	}
+}
+
+// FR-026, research D11: the operator's list honours the state filter and the
+// ordering it is handed, so status=PENDING with sort=oldest is the FIFO
+// confirmation queue.
+func TestListAllPassesTheStatusAndSortFilter(t *testing.T) {
+	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	f := newAdminFixture(order)
+
+	pending := constant.StatusPending
+	if _, err := f.svc.ListAll(adminContext(uuid.New()), appdto.ListInput{
+		Page: 1, PageSize: 20, Status: &pending, Sort: constant.SortOldest,
+	}); err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if f.orders.gotStatus == nil || *f.orders.gotStatus != constant.StatusPending {
+		t.Fatalf("the state filter must reach the repository, got %v", f.orders.gotStatus)
+	}
+	if f.orders.gotSort != constant.SortOldest {
+		t.Fatalf("the ordering must reach the repository, got %q", f.orders.gotSort)
 	}
 }
 

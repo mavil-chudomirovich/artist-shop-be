@@ -139,12 +139,12 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T033 [P] [US4] Use-case and HTTP tests `internal/modules/order/application/implement/admin_test.go` and `presentation/http/admin_test.go`: reject a `PENDING` order → `CANCELLED`; reject a non-`PENDING` order → `409 ORDER_STATE_TRANSITION_INVALID` naming the state; a customer's session → `403`; the act is audited (`ORDER_REJECTED`); and the admin list honours `status` and `sort` (`status=PENDING&sort=oldest` is the FIFO confirmation queue, invalid values → `400 VALIDATION_ERROR`)
+- [X] T033 [P] [US4] Use-case and HTTP tests `internal/modules/order/application/implement/admin_test.go` and `presentation/http/admin_test.go`: reject a `PENDING` order → `CANCELLED`; reject a non-`PENDING` order → `409 ORDER_STATE_TRANSITION_INVALID` naming the state; a customer's session → `403`; the act is audited (`ORDER_REJECTED`); and the admin list honours `status` and `sort` (`status=PENDING&sort=oldest` is the FIFO confirmation queue, invalid values → `400 VALIDATION_ERROR`)
 
 ### Implementation for User Story 4
 
-- [ ] T034 [US4] Add `RejectByAdmin` to `internal/modules/order/application/implement/admin.go` (lock, drive `Reject`, audit `ORDER_REJECTED`, notify the customer); extend `ListAll` in the same file and the `GET /admin/orders` handler in `presentation/http/{handler.go,router.go}` to accept and validate `status` and `sort` (default newest), passing them through `dto.ListInput`, with Swagger `@Param`s; and add `POST /admin/orders/{id}/reject` with Swagger annotations (FR-018, FR-026, research D11)
-- [ ] T035 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go`: reject → `CANCELLED`, no stock movement, an audit row naming the order and the administrator
+- [X] T034 [US4] Add `RejectByAdmin` to `internal/modules/order/application/implement/admin.go` (lock, drive `Reject`, audit `ORDER_REJECTED`, notify the customer); extend `ListAll` in the same file and the `GET /admin/orders` handler in `presentation/http/{handler.go,router.go}` to accept and validate `status` and `sort` (default newest), passing them through `dto.ListInput`, with Swagger `@Param`s; and add `POST /admin/orders/{id}/reject` with Swagger annotations (FR-018, FR-026, research D11)
+- [X] T035 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go`: reject → `CANCELLED`, no stock movement, an audit row naming the order and the administrator
 
 **Checkpoint**: The artist can decline an order.
 

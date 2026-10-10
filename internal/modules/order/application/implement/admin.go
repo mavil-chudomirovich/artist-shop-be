@@ -63,6 +63,15 @@ func (s *Service) CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dt
 	return s.adminMove(ctx, in, constant.AuditOrderCompleted, (*model.Order).Complete)
 }
 
+// RejectByAdmin declines an order awaiting the artist (FR-018). The order moves
+// to CANCELLED; no goods were held, so nothing is returned. The act is recorded
+// naming the order and the administrator. An order that is not awaiting the
+// artist is refused by the state machine, naming its current state. Notifying
+// the customer is a later user story (US5).
+func (s *Service) RejectByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error) {
+	return s.adminMove(ctx, in, constant.AuditOrderRejected, (*model.Order).Reject)
+}
+
 // adminMove locks one order, applies the administrator's allowed edge — the same
 // domain transition US2 exposes as Ship and Complete — persists the new state and
 // records the act, all in one UnitOfWork. A move the current state does not allow

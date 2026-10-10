@@ -45,6 +45,8 @@ type fakeAdmin struct {
 	completeErr  error
 	confirmView  appdto.AdminOrderView
 	confirmErr   error
+	rejectView   appdto.AdminOrderView
+	rejectErr    error
 
 	gotListInput  appdto.ListInput
 	gotListActor  appinterface.Actor
@@ -53,6 +55,7 @@ type fakeAdmin struct {
 	shipCalls     int
 	completeCalls int
 	confirmCalls  int
+	rejectCalls   int
 }
 
 func (f *fakeAdmin) ListAll(ctx context.Context, in appdto.ListInput) (appdto.AdminOrderPage, error) {
@@ -86,6 +89,13 @@ func (f *fakeAdmin) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput)
 	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
 	f.confirmCalls++
 	return f.confirmView, f.confirmErr
+}
+
+func (f *fakeAdmin) RejectByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+	f.gotRefInput = in
+	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
+	f.rejectCalls++
+	return f.rejectView, f.rejectErr
 }
 
 // adminSummaryData is one row of the administrator's order list as the contract
@@ -178,6 +188,67 @@ func TestAdminListReturnsEveryOrderWithItsOwner(t *testing.T) {
 	}
 	if fake.gotListActor.ID != testAdminID {
 		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotListActor.ID)
+	}
+}
+
+// FR-026, research D11: the operator list accepts an optional state filter and an
+// ordering, passing both through; with neither supplied it is unfiltered and
+// newest-first.
+func TestAdminListPassesStatusAndSort(t *testing.T) {
+	fake := &fakeAdmin{}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodGet, adminOrdersPath+"?status=PENDING&sort=oldest", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if fake.gotListInput.Status == nil || *fake.gotListInput.Status != constant.StatusPending {
+		t.Fatalf("the state filter must be passed through, got %v", fake.gotListInput.Status)
+	}
+	if fake.gotListInput.Sort != constant.SortOldest {
+		t.Fatalf("the ordering must be passed through, got %q", fake.gotListInput.Sort)
+	}
+
+	rec = perform(router, http.MethodGet, adminOrdersPath, "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if fake.gotListInput.Status != nil || fake.gotListInput.Sort != constant.SortNewest {
+		t.Fatalf("the default list must be unfiltered and newest-first, got %+v", fake.gotListInput)
+	}
+}
+
+// contracts/error-codes.md: a `status` or `sort` outside its permitted values is
+// 400 VALIDATION_ERROR naming the member, before it reaches the use case.
+func TestAdminListRejectsInvalidStatusAndSort(t *testing.T) {
+	cases := []struct {
+		name  string
+		path  string
+		field string
+	}{
+		{"an unknown status", adminOrdersPath + "?status=NOT_A_STATE", "status"},
+		{"an unknown sort", adminOrdersPath + "?sort=sideways", "sort"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAdmin{}
+			router := newOrderAdminRouter(fake)
+			rec := perform(router, http.MethodGet, tc.path, "", "admin-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			body := decodeError(t, rec)
+			if body.Error.Code != "VALIDATION_ERROR" {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+			}
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != tc.field {
+				t.Fatalf("expected a detail naming %s, got %+v", tc.field, body.Error.Details)
+			}
+			if fake.gotListInput.Page != 0 || fake.gotListInput.Status != nil {
+				t.Fatal("an invalid filter must not reach the use case")
+			}
+		})
 	}
 }
 
@@ -326,6 +397,70 @@ func TestAdminConfirmMapsItsRefusals(t *testing.T) {
 	}
 }
 
+// FR-018, quickstart scenario 5a: `POST /admin/orders/{id}/reject` answers 200
+// with the cancelled order, and the session's actor and the addressed identifier
+// are passed through.
+func TestAdminRejectReturnsTheCancelledOrder(t *testing.T) {
+	declined := sampleAdminView()
+	declined.Status = constant.StatusCancelled
+	fake := &fakeAdmin{rejectView: declined}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+declined.ID.String()+"/reject", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the declined order %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.ID != declined.ID || body.Data.Status != "CANCELLED" {
+		t.Fatalf("the declined order must answer CANCELLED, got %+v", body.Data)
+	}
+	if fake.gotRefInput.OrderID != declined.ID || fake.gotRefActor.ID != testAdminID {
+		t.Fatalf("the session's actor and the addressed id must be passed through, got %+v / %+v", fake.gotRefActor, fake.gotRefInput)
+	}
+}
+
+// FR-018, contracts/error-codes.md: declining a non-PENDING order answers 409
+// ORDER_STATE_TRANSITION_INVALID naming the current state; an unknown order
+// answers 404 ORDER_NOT_FOUND.
+func TestAdminRejectMapsItsRefusals(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		code       string
+	}{
+		{
+			name:       "declining an awaiting-payment order",
+			err:        domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusCancelled),
+			wantStatus: http.StatusConflict,
+			code:       constant.CodeStateTransitionInvalid,
+		},
+		{
+			name:       "declining an unknown order",
+			err:        domainerr.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+			code:       constant.CodeOrderNotFound,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAdmin{rejectErr: tc.err}
+			router := newOrderAdminRouter(fake)
+			rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/reject", "", "admin-token")
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("expected %d, got %d (%s)", tc.wantStatus, rec.Code, rec.Body.String())
+			}
+			if body := decodeError(t, rec); body.Error.Code != tc.code {
+				t.Fatalf("expected %s, got %s", tc.code, body.Error.Code)
+			}
+		})
+	}
+}
+
 // contracts/error-codes.md: an unknown order answers 404 ORDER_NOT_FOUND.
 func TestAdminDetailAnswersNotFoundForAnUnknownOrder(t *testing.T) {
 	fake := &fakeAdmin{detailErr: domainerr.ErrNotFound}
@@ -365,6 +500,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 		{http.MethodGet, adminOrdersPath},
 		{http.MethodGet, adminOrdersPath + "/" + uuid.New().String()},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/confirm"},
+		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/reject"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/ship"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/complete"},
 	}
@@ -380,7 +516,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
 				t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 			}
-			if fake.shipCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.shipCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.rejectCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("a forbidden request must not reach the use case")
 			}
 		})
@@ -411,7 +547,7 @@ func TestAdminRoutesRejectAMalformedOrderIdentifier(t *testing.T) {
 	fake := &fakeAdmin{}
 	router := newOrderAdminRouter(fake)
 
-	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship", adminOrdersPath + "/not-a-uuid/confirm"} {
+	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship", adminOrdersPath + "/not-a-uuid/confirm", adminOrdersPath + "/not-a-uuid/reject"} {
 		method := http.MethodGet
 		if path != adminOrdersPath+"/not-a-uuid" {
 			method = http.MethodPost
@@ -442,6 +578,10 @@ func (f *fakeCheckout) GetByIDAdmin(context.Context, appdto.OrderRefInput) (appd
 }
 
 func (f *fakeCheckout) ConfirmByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+	return appdto.AdminOrderView{}, nil
+}
+
+func (f *fakeCheckout) RejectByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
 }
 
