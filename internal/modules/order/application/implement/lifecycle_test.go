@@ -34,16 +34,16 @@ type statusWrite struct {
 
 // lifecycleOrders is the in-memory OrderRepository the lifecycle uses. It holds
 // orders by identifier, answers the row lock, records every state write and every
-// confirmation, and answers the expiry read from a fixed set. Embedding the
-// interface makes any method the use cases drift into panic loudly rather than
-// silently pass.
+// confirmation, and answers the expiry read with the same predicate the adapter
+// uses — awaiting payment with a deadline that has passed — so a test can prove
+// which orders the sweep selects. Embedding the interface makes any method the
+// use cases drift into panic loudly rather than silently pass.
 type lifecycleOrders struct {
 	appinterface.OrderRepository
 	orders    map[uuid.UUID]*model.Order
 	locked    []uuid.UUID
 	updates   []statusWrite
 	confirmed []*model.Order
-	expired   []uuid.UUID
 }
 
 func (r *lifecycleOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Order, error) {
@@ -74,8 +74,18 @@ func (r *lifecycleOrders) SaveConfirm(_ context.Context, order *model.Order, _ t
 	return nil
 }
 
-func (r *lifecycleOrders) ListExpiredPending(_ context.Context, _ time.Time) ([]uuid.UUID, error) {
-	return r.expired, nil
+// ListExpiredPending applies the adapter's predicate: only an order awaiting
+// payment (PAYMENT_PENDING) whose deadline has passed at the given instant is
+// selected. An order awaiting the artist has no deadline and is never selected
+// (FR-008, FR-009).
+func (r *lifecycleOrders) ListExpiredPending(_ context.Context, now time.Time) ([]uuid.UUID, error) {
+	out := make([]uuid.UUID, 0)
+	for id, order := range r.orders {
+		if order.Status == constant.StatusPaymentPending && order.PaymentExpiresAt != nil && !order.PaymentExpiresAt.After(now) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // snapshot copies the stored orders by value, so a rollback can put every field
@@ -387,13 +397,17 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 	}
 }
 
-// FR-012, research D6: the expiry use case cancels every awaiting-payment order
-// its repository reports past the window, and a retried sweep never releases a
-// second time.
+// FR-008, FR-009, research D5: the expiry use case cancels the awaiting-payment
+// order whose payment deadline has passed and returns its goods exactly once,
+// while an order still awaiting the artist — which has no deadline — is never
+// selected; and a retried sweep never releases a second time.
 func TestExpireOrdersCancelsExpiredOrdersOnce(t *testing.T) {
 	expired := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
-	f := newLifecycleFixture(expired)
-	f.orders.expired = []uuid.UUID{expired.ID}
+	past := fixedNow.Add(-time.Minute)
+	expired.PaymentExpiresAt = &past
+	awaitingArtist := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+		[]model.OrderLine{line(uuid.New(), 2000, 1)}, fixedNow)
+	f := newLifecycleFixture(expired, awaitingArtist)
 
 	if err := f.svc.ExpireOrders(context.Background()); err != nil {
 		t.Fatalf("ExpireOrders: %v", err)
@@ -401,8 +415,13 @@ func TestExpireOrdersCancelsExpiredOrdersOnce(t *testing.T) {
 	if expired.Status != constant.StatusCancelled {
 		t.Fatalf("an expired unpaid order must be cancelled, got %s", expired.Status)
 	}
+	// One release proves only the expired order was cancelled: had the order
+	// awaiting the artist been selected, its line would have added a second.
 	if len(f.reservations.releases) != 1 {
-		t.Fatalf("expected the order's hold to be released once, got %+v", f.reservations.releases)
+		t.Fatalf("expected the expired order's hold to be released once, got %+v", f.reservations.releases)
+	}
+	if awaitingArtist.Status != constant.StatusPending {
+		t.Fatalf("an order awaiting the artist must never expire, got %s", awaitingArtist.Status)
 	}
 
 	// The next sweep reports the same order, but its state now refuses the move,

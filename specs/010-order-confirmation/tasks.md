@@ -177,12 +177,12 @@ description: "Task list for Order Confirmation & Editing (module 07 extension)"
 
 ### Tests for User Story 6 ⚠️
 
-- [ ] T039 [P] [US6] Use-case and sweeper tests `internal/modules/order/application/implement/lifecycle_test.go` and `presentation/worker/sweeper_test.go` (injected clock): an awaiting-payment order past `payment_expires_at` is cancelled and its goods released exactly once; an order awaiting the artist is never selected (FR-008, FR-009)
+- [X] T039 [P] [US6] Use-case and sweeper tests `internal/modules/order/application/implement/lifecycle_test.go` and `presentation/worker/sweeper_test.go` (injected clock): an awaiting-payment order past `payment_expires_at` is cancelled and its goods released exactly once; an order awaiting the artist is never selected (FR-008, FR-009)
 
 ### Implementation for User Story 6
 
-- [ ] T040 [US6] Update `ExpireOrders` in `internal/modules/order/application/implement/lifecycle.go` to select `PAYMENT_PENDING` orders past `payment_expires_at` (the sweeper is otherwise unchanged) (FR-008, FR-009, research D5)
-- [ ] T041 [US6] Extend `internal/modules/order/application/implement/lifecycle_integration_test.go`: expiry frees the goods exactly once across both the order and inventory sweeps, and a `PENDING` order is never expired (SC-004)
+- [X] T040 [US6] Update `ExpireOrders` in `internal/modules/order/application/implement/lifecycle.go` to select `PAYMENT_PENDING` orders past `payment_expires_at` (the sweeper is otherwise unchanged) (FR-008, FR-009, research D5)
+- [X] T041 [US6] Extend `internal/modules/order/application/implement/lifecycle_integration_test.go`: expiry frees the goods exactly once across both the order and inventory sweeps, and a `PENDING` order is never expired (SC-004)
 
 **Checkpoint**: Expiry is correct and bounded to the payment window.
 

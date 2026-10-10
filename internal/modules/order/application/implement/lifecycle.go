@@ -212,15 +212,18 @@ func (s *Service) transition(ctx context.Context, orderID uuid.UUID, move func(*
 	return nil
 }
 
-// ExpireOrders cancels every awaiting-payment order whose window has passed and
-// returns its goods, exactly once. It is the use case the expiry sweeper calls
-// (FR-012, research D6).
+// ExpireOrders cancels every awaiting-payment order (PAYMENT_PENDING) whose
+// payment deadline has passed and returns its goods, exactly once. It is the use
+// case the expiry sweeper calls. The repository selects only orders awaiting
+// payment past payment_expires_at, so an order that is still awaiting the artist
+// — which has no deadline — is never selected and never expires by time
+// (FR-008, FR-009, research D5).
 //
 // The selection is made with the instant the injected clock produced, so the
 // order's sweep and module 05's agree on what has expired. An order a concurrent
 // customer cancel already moved, or one that is gone, is skipped rather than
 // failing the sweep, so the operation is idempotent; module 05's own release is
-// idempotent too, so the two sweeps cannot free the same goods twice (FR-012).
+// idempotent too, so the two sweeps cannot free the same goods twice (FR-008).
 func (s *Service) ExpireOrders(ctx context.Context) error {
 	ids, err := s.Orders.ListExpiredPending(ctx, s.now())
 	if err != nil {

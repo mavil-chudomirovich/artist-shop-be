@@ -318,6 +318,46 @@ func TestExpiredOrderFreesItsGoodsExactlyOnceAcrossBothSweeps(t *testing.T) {
 	}
 }
 
+// FR-008, FR-009, SC-004, quickstart scenario 7b: an order still awaiting the
+// artist has no payment deadline, so the order's expiry sweep never selects it —
+// however long it waits — and module 05's hold sweep has nothing of its to free;
+// the order stays PENDING and holds nothing.
+func TestAnOrderAwaitingTheArtistNeverExpires(t *testing.T) {
+	f := newLifecycleDBFixture(t)
+	product := f.insertProduct(t, 120000, 5)
+	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"}, []model.OrderLine{{
+		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
+	}}, time.Now().UTC())
+	if order.Status != constant.StatusPending || order.PaymentExpiresAt != nil {
+		t.Fatalf("a fresh order must await the artist with no deadline, got %s / %v", order.Status, order.PaymentExpiresAt)
+	}
+	if err := f.svc.Orders.Create(context.Background(), order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+
+	// Both sweeps run; neither has anything of this order to act on.
+	if err := f.svc.ExpireOrders(context.Background()); err != nil {
+		t.Fatalf("order sweep: %v", err)
+	}
+	if err := f.inventory.ExpireHolds(context.Background()); err != nil {
+		t.Fatalf("inventory sweep: %v", err)
+	}
+
+	if got := f.statusOf(t, order.ID); got != constant.StatusPending {
+		t.Fatalf("an order awaiting the artist must stay PENDING, got %s", got)
+	}
+	if got := f.heldQuantity(t, product); got != 0 {
+		t.Fatalf("an order awaiting the artist holds nothing, got %d held", got)
+	}
+	if got := f.releasedHolds(t, order.ID); got != 0 {
+		t.Fatalf("an order awaiting the artist has no holds to release, got %d", got)
+	}
+	if got := f.physicalStock(t, product); got != 5 {
+		t.Fatalf("physical = %d, want 5 unchanged", got)
+	}
+}
+
 // FR-005, FR-024, SC-002, SC-005, quickstart scenario 7c: two PENDING orders
 // competing for the last unit. Confirmation holds every line in the order's own
 // transaction and module 05's Reserve serialises the two on the level row lock, so

@@ -17,13 +17,14 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 )
 
-// This file is US2's sweeper contract. The sweeper carries no business rule of its
-// own: it calls the expiry use case every interval and stops when its context is
-// cancelled. The interval is injected, so the scheduler tests drive real ticks in
-// milliseconds; the expiry test drives the real use case over in-memory fakes
-// with an injected clock, so an unpaid order past its window is cancelled and its
-// goods released exactly once while a paid order is left untouched (FR-012,
-// research D6).
+// This file is the sweeper's contract. The sweeper carries no business rule of
+// its own: it calls the expiry use case every interval and stops when its context
+// is cancelled. The interval is injected, so the scheduler tests drive real ticks
+// in milliseconds; the expiry test drives the real use case over in-memory fakes
+// with an injected clock, so an awaiting-payment order past its window is
+// cancelled and its goods released exactly once, an order awaiting the artist is
+// never selected, and a paid order is left untouched (FR-008, FR-009, research
+// D5).
 
 // fakeExpire is a stand-in for the expiry use case. It records the call count and
 // the peak concurrency, and can hold a call open so a second tick has the chance
@@ -204,8 +205,9 @@ type sweepTx struct{}
 
 func (sweepTx) WithinTx(ctx context.Context, fn func(context.Context) error) error { return fn(ctx) }
 
-// FR-012, research D6: an unpaid order past its window is cancelled and its goods
-// released exactly once; an order that is not awaiting payment is untouched.
+// FR-008, FR-009, research D5: an awaiting-payment order past its window is
+// cancelled and its goods released exactly once; an order awaiting the artist
+// (which has no deadline) and a paid order are never selected.
 func TestExpireOrdersCancelsOnlyTheExpiredUnpaidOrder(t *testing.T) {
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	lines := func() []model.OrderLine {
@@ -221,8 +223,10 @@ func TestExpireOrdersCancelsOnlyTheExpiredUnpaidOrder(t *testing.T) {
 	expired.PaymentExpiresAt = &past
 	paid := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Minute))
 	paid.Status = constant.StatusPaid
+	// A fresh order awaits the artist: PENDING with no deadline (FR-009).
+	awaitingArtist := model.NewOrder(uuid.New(), address, lines(), now.Add(-time.Minute))
 
-	orders := &sweepOrders{orders: []*model.Order{expired, paid}}
+	orders := &sweepOrders{orders: []*model.Order{expired, paid, awaitingArtist}}
 	reservations := &sweepReservations{}
 	svc := orderimplement.New(orderimplement.Service{
 		Orders:       orders,
@@ -244,9 +248,12 @@ func TestExpireOrdersCancelsOnlyTheExpiredUnpaidOrder(t *testing.T) {
 	if paid.Status != constant.StatusPaid {
 		t.Fatalf("a paid order must be untouched, got %s", paid.Status)
 	}
+	if awaitingArtist.Status != constant.StatusPending {
+		t.Fatalf("an order awaiting the artist must never expire, got %s", awaitingArtist.Status)
+	}
 
 	// A second sweep reports the same expired identifier, but its state now
-	// refuses the move, so nothing is released twice (FR-012).
+	// refuses the move, so nothing is released twice (FR-008).
 	if err := svc.ExpireOrders(context.Background()); err != nil {
 		t.Fatalf("a retried ExpireOrders must not fail: %v", err)
 	}

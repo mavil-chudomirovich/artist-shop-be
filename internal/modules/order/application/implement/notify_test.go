@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -226,8 +227,9 @@ func TestCancelEmailsTheCustomer(t *testing.T) {
 func TestExpireEmailsTheCustomerOnce(t *testing.T) {
 	owner := uuid.New()
 	expired := paymentPendingOrder(owner, line(uuid.New(), 1000, 1))
+	past := fixedNow.Add(-time.Minute)
+	expired.PaymentExpiresAt = &past
 	f := newLifecycleFixture(expired)
-	f.orders.expired = []uuid.UUID{expired.ID}
 	notifier := &fakeNotifier{}
 	enableNotifications(f.svc, notifier, owner)
 
