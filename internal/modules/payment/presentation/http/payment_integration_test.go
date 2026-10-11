@@ -5,6 +5,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -451,5 +452,132 @@ func TestWebhookRecordsAStaleConfirmationWithoutApplying(t *testing.T) {
 	}
 	if calls, _, _ := orders.calls(); calls != 1 {
 		t.Fatalf("a re-delivery drove the sale %d times, want still 1", calls)
+	}
+}
+
+// cancelProvider is the integration provider for US4. It answers create and verify
+// with nothing, and records the cancel input, so a test can prove which link the
+// module asked to cancel and can refuse the cancel to exercise the best-effort
+// path.
+type cancelProvider struct {
+	cancelErr  error
+	cancels    int
+	lastCancel dto.CancelLinkInput
+}
+
+func (p *cancelProvider) CreateLink(context.Context, dto.CreateLinkInput) (dto.PaymentLink, error) {
+	return dto.PaymentLink{}, nil
+}
+
+func (p *cancelProvider) CancelLink(_ context.Context, in dto.CancelLinkInput) error {
+	p.cancels++
+	p.lastCancel = in
+	return p.cancelErr
+}
+
+func (p *cancelProvider) VerifyWebhook(context.Context, []byte) (dto.WebhookInput, error) {
+	return dto.WebhookInput{}, nil
+}
+
+// newCancelIntegrationFixture returns the real payment use cases over the real
+// repository and a provider whose cancel can be refused, so US4's cancel path is
+// proven against real PostgreSQL.
+func newCancelIntegrationFixture(t *testing.T, provider *cancelProvider) (*pgxpool.Pool, *paymentimplement.Service) {
+	t.Helper()
+	pool := bootPaymentPool(t)
+	service := paymentimplement.New(paymentimplement.Service{
+		Payments: paymentpostgres.NewPaymentRepository(pool),
+		Provider: provider,
+		Tx:       &database.DB{Pool: pool},
+		Clock:    integrationClock{},
+		Mapper:   paymentmapper.New(),
+	})
+	return pool, service
+}
+
+// paymentStatusOf reads one order's payment status.
+func paymentStatusOf(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) string {
+	t.Helper()
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM payments WHERE order_id = $1`, orderID).Scan(&status); err != nil {
+		t.Fatalf("read payment status: %v", err)
+	}
+	return status
+}
+
+// cancelEvents counts the PAYMENT_CANCELLED rows the order's payment carries.
+func cancelEvents(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM payment_events e
+		JOIN payments p ON p.id = e.payment_id
+		WHERE p.order_id = $1 AND e.action = 'PAYMENT_CANCELLED'`, orderID).Scan(&count); err != nil {
+		t.Fatalf("count PAYMENT_CANCELLED events: %v", err)
+	}
+	return count
+}
+
+// SC-004, FR-015, research D9: cancelling an order cancels its live payment — the
+// provider is asked to cancel the link, the payment row becomes CANCELLED and the
+// PAYMENT_CANCELLED event is recorded, all against real PostgreSQL. The goods
+// release is module 07's own move and is proven by its lifecycle integration
+// test; here the payment half of SC-004 is what is asserted.
+func TestCancellingAnOrderCancelsItsPaymentAndRecordsTheEvent(t *testing.T) {
+	provider := &cancelProvider{}
+	pool, service := newCancelIntegrationFixture(t, provider)
+	orderID := uuid.New()
+	insertPendingPayment(t, pool, orderID, testCustomerID, 920001, 120000, 2)
+
+	service.CancelForOrder(context.Background(), orderID)
+
+	if provider.cancels != 1 {
+		t.Fatalf("the provider cancel was called %d times, want exactly 1", provider.cancels)
+	}
+	if provider.lastCancel.OrderCode != 920001 {
+		t.Errorf("provider cancel order code = %d, want the stored 920001", provider.lastCancel.OrderCode)
+	}
+	if got := paymentStatusOf(t, pool, orderID); got != "CANCELLED" {
+		t.Fatalf("payment status = %q, want CANCELLED", got)
+	}
+	if got := cancelEvents(t, pool, orderID); got != 1 {
+		t.Fatalf("PAYMENT_CANCELLED events = %d, want exactly 1", got)
+	}
+}
+
+// SC-004, FR-016, research D9: a provider that refuses the cancel does not fail —
+// the payment is left live for reconciliation and no PAYMENT_CANCELLED event is
+// recorded, so the order's already-committed cancellation (and its released
+// goods) is never affected.
+func TestCancellingAnOrderWithAProviderFailureLeavesThePaymentLive(t *testing.T) {
+	provider := &cancelProvider{cancelErr: errors.New("provider refused the cancel")}
+	pool, service := newCancelIntegrationFixture(t, provider)
+	orderID := uuid.New()
+	insertPendingPayment(t, pool, orderID, testCustomerID, 920002, 120000, 2)
+
+	service.CancelForOrder(context.Background(), orderID)
+
+	if provider.cancels != 1 {
+		t.Fatalf("the provider cancel was called %d times, want exactly 1", provider.cancels)
+	}
+	if got := paymentStatusOf(t, pool, orderID); got != "PENDING" {
+		t.Fatalf("payment status = %q, want PENDING — left live for reconciliation on a provider failure", got)
+	}
+	if got := cancelEvents(t, pool, orderID); got != 0 {
+		t.Fatalf("PAYMENT_CANCELLED events = %d, want none when the provider refused", got)
+	}
+}
+
+// FR-015: an order with no live payment is a no-op — the provider is never called
+// and nothing is written.
+func TestCancellingAnOrderWithNoLivePaymentIsANoOp(t *testing.T) {
+	provider := &cancelProvider{}
+	_, service := newCancelIntegrationFixture(t, provider)
+
+	service.CancelForOrder(context.Background(), uuid.New())
+
+	if provider.cancels != 0 {
+		t.Fatalf("the provider cancel was called %d times for an order with no live payment, want none", provider.cancels)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/mavil-chudomirovich/artist-shop-be/docs/swagger"
@@ -54,6 +53,7 @@ import (
 	paymentimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/application/implement"
 	paymentmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/application/mapper"
 	paymentauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/auditor"
+	paymentcancel "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/payment"
 	paymentpayos "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/payos"
 	paymentpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/postgres"
 	paymenthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/presentation/http"
@@ -391,13 +391,13 @@ func run() error {
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
 		Notifier:     orderNotifier,
-		// The payment module (08) supplies the real PaymentCancellation adapter
-		// when its module is mounted; until then the port is a deliberate no-op,
-		// so cancelling an order succeeds and nothing is asked of a payment
-		// module that does not exist yet (research D9).
-		Cancellations: noopPaymentCancellation{},
-		ArtistEmail:   cfg.Auth.AdminEmail,
-		Mapper:        ordermapper.New(),
+		// Cancellations is set a few lines below, once module 08's use cases
+		// exist: the payment service is built from this order service (through
+		// the OrderPayment adapter) while this order service is built before it,
+		// so the real PaymentCancellation adapter is assigned after both are
+		// constructed (research D9).
+		ArtistEmail: cfg.Auth.AdminEmail,
+		Mapper:      ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger)
 
@@ -426,6 +426,13 @@ func run() error {
 		CancelURL: cfg.Payment.CancelURL,
 		Logger:    logger,
 	})
+	// The order module now gets module 08's real PaymentCancellation adapter, so a
+	// customer's CancelMine and the expiry sweep both ask the payment module to
+	// cancel the order's provider link after the order's transaction commits,
+	// best-effort (FR-015, FR-016, research D9). It is assigned here, not in the
+	// order service's literal, because the payment service is built from the order
+	// service (through its OrderPayment adapter).
+	orderService.Cancellations = paymentcancel.New(paymentService)
 	paymentHandler := paymenthttp.New(paymentService, logger)
 
 	// The order expiry sweeper cancels every awaiting-payment order whose
@@ -543,14 +550,3 @@ type wallClock struct{}
 
 // Now returns the current instant in UTC.
 func (wallClock) Now() time.Time { return time.Now().UTC() }
-
-// noopPaymentCancellation stands in for module 08's contracts.PaymentCancellation
-// adapter until the payment module is mounted at this composition root. It is a
-// deliberate no-op: the order's cancellation still succeeds, and nothing is asked
-// of a payment module that does not exist yet. The real adapter replaces it when
-// module 08 is wired (research D9).
-type noopPaymentCancellation struct{}
-
-// CancelForOrder does nothing. The order module's own evidence that a payment
-// exists is the payment module's, which is not mounted here yet.
-func (noopPaymentCancellation) CancelForOrder(context.Context, uuid.UUID) {}

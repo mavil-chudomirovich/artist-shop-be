@@ -443,3 +443,33 @@ func TestTwoConfirmationsForTheLastUnitConfirmAtMostOne(t *testing.T) {
 		t.Fatalf("available = %+v, want one entry at 0 — never negative", available)
 	}
 }
+
+// SC-004, FR-015, FR-016, research D9: cancelling an awaiting-payment order
+// releases its held goods and tells the payment module through the port, against
+// real PostgreSQL. The payment side is best-effort and reports nothing, so a
+// payment module that does nothing never blocks the order's cancellation.
+func TestCancelReleasesGoodsAndNotifiesThePaymentModule(t *testing.T) {
+	f := newLifecycleDBFixture(t)
+	product := f.insertProduct(t, 120000, 10)
+	order := f.createOrder(t, uuid.New(), time.Now().Add(time.Hour), model.OrderLine{
+		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
+	})
+	f.reserve(t, order, product, 2)
+
+	port := &fakeCancellation{}
+	f.svc.Cancellations = port
+
+	if err := f.svc.Cancel(context.Background(), order.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if got := f.statusOf(t, order.ID); got != constant.StatusCancelled {
+		t.Fatalf("status = %s, want CANCELLED", got)
+	}
+	if got := f.heldQuantity(t, product); got != 0 {
+		t.Fatalf("held = %d, want 0 — cancelling releases the goods", got)
+	}
+	if len(port.ids) != 1 || port.ids[0] != order.ID {
+		t.Fatalf("the payment module was notified with %v, want exactly [%s]", port.ids, order.ID)
+	}
+}

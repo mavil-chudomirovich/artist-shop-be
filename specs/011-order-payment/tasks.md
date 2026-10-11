@@ -157,12 +157,12 @@ description: "Task list for Online Order Payment (module 08)"
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T038 [P] [US4] Use-case tests `internal/modules/payment/application/implement/cancel_test.go` (over a fake provider): `CancelForOrder` cancels a live payment (calls the provider's cancel, marks `CANCELLED`, records the event); a provider failure is logged and leaves the payment for reconciliation without failing; an order with no live payment is a no-op; and module 07's `Cancel` invokes the port after commit (a fake port asserts the call)
+- [X] T038 [P] [US4] Use-case tests `internal/modules/payment/application/implement/cancel_test.go` (over a fake provider): `CancelForOrder` cancels a live payment (calls the provider's cancel, marks `CANCELLED`, records the event); a provider failure is logged and leaves the payment for reconciliation without failing; an order with no live payment is a no-op; and module 07's `Cancel` invokes the port after commit (a fake port asserts the call)
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Create `internal/modules/payment/application/implement/cancel.go` (`CancelForOrder`) and `internal/modules/payment/infrastructure/implement/payment/cancellation.go` — module 08's adapter implementing `contracts.PaymentCancellation` over the use case, with a compile-time assertion (the port on module 07's `OrderService` is wired in T028)
-- [ ] T040 [US4] Extend the integration tests: cancelling an order cancels its payment, records the event, and releases the goods; a provider cancel failure still cancels the order and releases the goods (SC-004)
+- [X] T039 [US4] Create `internal/modules/payment/application/implement/cancel.go` (`CancelForOrder`) and `internal/modules/payment/infrastructure/implement/payment/cancellation.go` — module 08's adapter implementing `contracts.PaymentCancellation` over the use case, with a compile-time assertion (the port on module 07's `OrderService` is wired in T028)
+- [X] T040 [US4] Extend the integration tests: cancelling an order cancels its payment, records the event, and releases the goods; a provider cancel failure still cancels the order and releases the goods (SC-004)
 
 **Checkpoint**: A cancelled order cannot still be paid.
 

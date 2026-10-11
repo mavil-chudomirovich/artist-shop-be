@@ -628,3 +628,64 @@ func TestConfirmRefusesAndHoldsNothingWhenAnyLineCannotBeHeld(t *testing.T) {
 			len(f.orders.confirmed), len(f.orders.updates))
 	}
 }
+
+// commitTrackingTx is the in-memory UnitOfWork that records whether a function is
+// currently running inside a transaction, so a test can prove the payment
+// cancellation port is invoked after the commit, not inside it (research D9).
+type commitTrackingTx struct{ active bool }
+
+func (t *commitTrackingTx) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	t.active = true
+	defer func() { t.active = false }()
+	return fn(ctx)
+}
+
+// fakeCancellation is the in-memory PaymentCancellation port module 07 drives. It
+// records the orders it was asked to cancel and whether the call arrived inside a
+// transaction, so a test can prove the port is invoked after the commit with the
+// cancelled order (research D9).
+type fakeCancellation struct {
+	tx         *commitTrackingTx
+	ids        []uuid.UUID
+	calledInTx bool
+}
+
+func (f *fakeCancellation) CancelForOrder(_ context.Context, orderID uuid.UUID) {
+	if f.tx != nil && f.tx.active {
+		f.calledInTx = true
+	}
+	f.ids = append(f.ids, orderID)
+}
+
+// FR-015, research D9: cancelling an order tells the payment module (08) through
+// the PaymentCancellation port after the transaction commits, so the provider
+// payment request it created is cancelled too. A cancel the state machine refuses
+// never reaches the port, so the payment module is never asked about an order that
+// did not change.
+func TestCancelInvokesThePaymentCancellationPortAfterCommit(t *testing.T) {
+	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	f := newLifecycleFixture(order)
+	tx := &commitTrackingTx{}
+	port := &fakeCancellation{tx: tx}
+	f.svc.Tx = tx
+	f.svc.Cancellations = port
+
+	if err := f.svc.Cancel(context.Background(), order.ID); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if len(port.ids) != 1 || port.ids[0] != order.ID {
+		t.Fatalf("the port was called with %v, want exactly [%s]", port.ids, order.ID)
+	}
+	if port.calledInTx {
+		t.Error("the port must be called after the transaction commits, not inside it (research D9)")
+	}
+
+	// A second cancel is refused by the state machine and must not re-notify the
+	// payment module.
+	if err := f.svc.Cancel(context.Background(), order.ID); err == nil {
+		t.Fatal("a second cancel must be refused")
+	}
+	if len(port.ids) != 1 {
+		t.Fatalf("a refused cancel called the port %d times, want still 1", len(port.ids))
+	}
+}
