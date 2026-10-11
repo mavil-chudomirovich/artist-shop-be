@@ -15,8 +15,8 @@ type StartInput struct {
 	OrderID uuid.UUID
 }
 
-// ReadInput reads the caller's live payment for their order. The owner is taken
-// from the session, never from this input (FR-017).
+// ReadInput reads the caller's most recent payment for their order. The owner is
+// taken from the session, never from this input (FR-017).
 type ReadInput struct {
 	// OrderID is the order whose payment is read.
 	OrderID uuid.UUID

@@ -148,3 +148,37 @@ func NewOrderCode() (int64, error) {
 	// n is in [0, MaxOrderCode-1]; +1 yields [1, MaxOrderCode].
 	return n.Int64() + 1, nil
 }
+
+// PaymentEvent is one row of the module's own audit trail: one decision it made
+// about a payment — created, applied, cancelled, or recorded as unmatched. It is
+// written beside the payment it names, inside the same transaction, so "apply
+// once" is provable after the fact (data-model.md, FR-010, FR-022).
+type PaymentEvent struct {
+	// ID identifies the event.
+	ID uuid.UUID
+	// PaymentID is the payment this event belongs to.
+	PaymentID uuid.UUID
+	// Action is the canonical action name; its values are constrained by the
+	// storage check `payment_events_action_ck` (the constant.Audit* values).
+	Action string
+	// ActorID is the acting account, when one acted. It is nil for the
+	// provider's webhook, which is not a person (data-model.md, FR-019).
+	ActorID *uuid.UUID
+	// Detail is a short reason or the provider reference, for the audit trail.
+	Detail string
+	// CreatedAt is when the event was recorded.
+	CreatedAt time.Time
+}
+
+// NewPaymentEvent builds one event row for a payment. The detail is optional; an
+// empty one is stored as NULL by the adapter.
+func NewPaymentEvent(paymentID uuid.UUID, action string, actorID *uuid.UUID, detail string, now time.Time) *PaymentEvent {
+	return &PaymentEvent{
+		ID:        uuid.New(),
+		PaymentID: paymentID,
+		Action:    action,
+		ActorID:   actorID,
+		Detail:    detail,
+		CreatedAt: now,
+	}
+}

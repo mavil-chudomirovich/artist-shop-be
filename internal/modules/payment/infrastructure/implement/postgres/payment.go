@@ -128,6 +128,26 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 	return nil
 }
 
+// CreateEvent appends one event row to a payment's history — the module's own
+// audit trail (data-model.md, FR-010, FR-022). An empty detail is stored as NULL,
+// and a nil actor (the provider's webhook) is stored as NULL (FR-019).
+func (r *PaymentRepository) CreateEvent(ctx context.Context, event *model.PaymentEvent) error {
+	const query = `
+		INSERT INTO payment_events (id, payment_id, action, actor_id, detail, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`
+	if _, err := r.querier(ctx).Exec(ctx, query,
+		event.ID,
+		event.PaymentID,
+		event.Action,
+		event.ActorID,
+		nullIfEmpty(event.Detail),
+		event.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("create payment event: %w", err)
+	}
+	return nil
+}
+
 // FindByID returns one payment, or domainerr.ErrNotFound.
 func (r *PaymentRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Payment, error) {
 	query := fmt.Sprintf(`SELECT %s FROM payments WHERE id = $1`, projection(paymentColumns))

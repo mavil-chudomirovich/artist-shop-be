@@ -47,9 +47,16 @@ import (
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
 	ordernotifier "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/notifier"
+	orderpayment "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/payment"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
+	paymentimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/application/implement"
+	paymentmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/application/mapper"
+	paymentauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/auditor"
+	paymentpayos "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/payos"
+	paymentpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/infrastructure/implement/postgres"
+	paymenthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/presentation/http"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	productappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	productmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
@@ -371,8 +378,9 @@ func run() error {
 		cfg.Auth.SMTPUsername, cfg.Auth.SMTPPassword, cfg.Auth.SMTPFrom, logger)
 	orderNotifier := ordernotifier.New(orderSender, logger)
 
+	orderRepository := orderpostgres.NewOrderRepository(db.Pool)
 	orderService := orderimplement.New(orderimplement.Service{
-		Orders:       orderpostgres.NewOrderRepository(db.Pool),
+		Orders:       orderRepository,
 		Carts:        cartcheckout.New(cartRepository),
 		Products:     productcatalog.New(productRepository),
 		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
@@ -392,6 +400,32 @@ func run() error {
 		Mapper:        ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger)
+
+	// Module 08 (payment). One customer sub-resource,
+	// /orders/{orderId}/payment, carries the session guard and no owner identifier:
+	// the owner is the session, so a client never names whose order is being paid
+	// (FR-003, FR-017). The module reads an order only through the OrderPayment
+	// contract, supplied here by module 07's own adapter, and creates its link
+	// through the PayOS client — or the log-only provider when the credentials are
+	// empty, so every non-provider path still runs (research D5, D11). The module
+	// reuses the foundation audit writer one more time: one queue, one retry
+	// policy, one shutdown.
+	//
+	// The provider call and the write run inside the payment's own transaction, so
+	// a provider refusal rolls the row back and the order is untouched (FR-006).
+	orderPaymentAdapter := orderpayment.New(orderRepository, orderService)
+	paymentService := paymentimplement.New(paymentimplement.Service{
+		Payments:  paymentpostgres.NewPaymentRepository(db.Pool),
+		Orders:    orderPaymentAdapter,
+		Provider:  paymentpayos.NewProvider(cfg.Payment, nil, logger),
+		Tx:        db,
+		Clock:     wallClock{},
+		Audit:     paymentauditor.New(auditWriter),
+		Mapper:    paymentmapper.New(),
+		ReturnURL: cfg.Payment.ReturnURL,
+		CancelURL: cfg.Payment.CancelURL,
+	})
+	paymentHandler := paymenthttp.New(paymentService, logger)
 
 	// The order expiry sweeper cancels every awaiting-payment order whose
 	// 60-minute hold window has passed and returns its goods, so an unpaid
@@ -448,6 +482,12 @@ func run() error {
 			// customer surface is addressed at /orders with no owner identifier
 			// behind the session guard (research D10, FR-020).
 			r.Mount("/orders", orderHandler.Router(authHooks))
+			// The payment sub-resource: the customer starts (or reuses) and
+			// reads the payment of their own order. It is mounted once, with the
+			// order id in the Mount pattern; chi supports a path param there and
+			// the handler reads it with chi.URLParam, so nothing is mounted at
+			// /orders twice (plan.md "On the route mount").
+			r.Mount("/orders/{orderId}/payment", paymentHandler.Router(authHooks))
 			// The operator's order desk: every order, addressed by identifier
 			// behind the administrator role guard, where ship and complete drive
 			// the order's transitions and record each act (research D10, FR-023).

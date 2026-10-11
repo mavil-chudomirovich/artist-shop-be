@@ -25,6 +25,12 @@ type PaymentRepository interface {
 	// caller's transaction.
 	Create(ctx context.Context, payment *model.Payment) error
 
+	// CreateEvent appends one event row to a payment's history — the module's own
+	// audit trail (data-model.md, FR-010, FR-022). A payment the storage does not
+	// carry is refused by the foreign key. It joins the caller's transaction, so
+	// the event commits with the decision that produced it.
+	CreateEvent(ctx context.Context, event *model.PaymentEvent) error
+
 	// FindByID returns one payment, or domainerr.ErrNotFound. It joins the
 	// caller's transaction.
 	FindByID(ctx context.Context, id uuid.UUID) (*model.Payment, error)

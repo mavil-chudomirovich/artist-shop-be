@@ -90,8 +90,8 @@ type PaymentService interface {
 	// Start starts (or reuses) a payment for the caller's awaiting-payment order
 	// and returns it with its link (FR-001 to FR-003).
 	Start(ctx context.Context, in dto.StartInput) (dto.PaymentView, error)
-	// Read returns the caller's live payment for their order, or not-found when
-	// the order has none (FR-017).
+	// Read returns the caller's most recent payment for their order, in any
+	// state, or not-found when the order has none (FR-017).
 	Read(ctx context.Context, in dto.ReadInput) (dto.PaymentView, error)
 	// HandleWebhook applies a verified confirmation exactly once, or records it
 	// UNMATCHED when it cannot be applied (FR-009, FR-012, FR-019).
