@@ -79,7 +79,7 @@ fact.
 | `payment_events_pkey` | primary key on `id` | FR-022 | An event is addressable |
 | `payment_events_payment_fk` | FK → `payments(id)` ON DELETE CASCADE | FR-022 | A removed payment takes its history with it |
 | `payment_events_action_ck` | check: `action IN ('PAYMENT_CREATED','PAYMENT_APPLIED','PAYMENT_CANCELLED','PAYMENT_UNMATCHED')` | FR-022 | A written event always carries a canonical action |
-| `payment_events_payment_idx` | btree on `(payment_id, created_at)` | FR-022 | The history is read in order |
+| `payment_events_payment_idx` | btree on `(payment_id, created_at, id)` | FR-022 | The history is read in order |
 
 **On the actor being nullable**: the webhook is a provider act with no acting account, so the actor is
 NULL there, which means "PayOS said so": the acting account is absent only for the provider webhook (FR-019).

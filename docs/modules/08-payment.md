@@ -64,7 +64,8 @@ Không (hoãn — xem [`deferred.md`](../../specs/011-order-payment/deferred.md)
 **Ràng buộc ở tầng lưu trữ** (Constraint II): `payments_status_ck` (bốn giá trị), `payments_currency_ck`,
 `payments_amount_ck`, `payments_order_version_ck`, `payments_unmatched_ck`
 (`(status = 'UNMATCHED') = (unmatched_reason IS NOT NULL)`), `payments_order_code_key` (unique),
-`payments_provider_reference_key` (partial unique), cộng hai index cho đường đọc (`payments_order_idx` cho
+`payments_provider_reference_key` (partial unique), `payments_live_order_key` (partial unique trên
+`order_id` khi `status = 'PENDING'` — tối đa một thanh toán còn hiệu lực mỗi đơn), cộng hai index cho đường đọc (`payments_order_idx` cho
 khách, `payments_status_idx` cho hàng đợi đối soát). Chi tiết đầy đủ ở
 [`specs/011-order-payment/data-model.md`](../../specs/011-order-payment/data-model.md).
 

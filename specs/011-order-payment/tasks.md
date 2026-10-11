@@ -213,10 +213,10 @@ description: "Task list for Online Order Payment (module 08)"
 ### Close-out
 
 - [X] T053 Normalize the new files to UTF-8 (LF); check for BOM
-- [ ] T054 Run `make lint` and `make test`
-- [ ] T055 Run `make test-integration` (needs Docker) and confirm it did not skip
-- [ ] T056 Run `quickstart.md` validation
-- [ ] T057 Run `make check` and confirm `swagger-check` passes
+- [X] T054 Run `make lint` and `make test`
+- [X] T055 Run `make test-integration` (needs Docker) and confirm it did not skip
+- [X] T056 Run `quickstart.md` validation
+- [X] T057 Run `make check` and confirm `swagger-check` passes
 
 ---
 
