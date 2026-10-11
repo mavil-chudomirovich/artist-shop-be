@@ -176,12 +176,12 @@ description: "Task list for Online Order Payment (module 08)"
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T041 [P] [US5] Use-case and HTTP tests `internal/modules/payment/application/implement/list_test.go` and `presentation/http/admin_test.go`: the operator list is paginated, newest first, and filters by status; an invalid `status` answers `400 VALIDATION_ERROR`; a customer's session answers `403 FORBIDDEN`; the customer's `GET /orders/{id}/payment` returns only their own order's payment, and `404 PAYMENT_NOT_FOUND` when none exists
+- [X] T041 [P] [US5] Use-case and HTTP tests `internal/modules/payment/application/implement/list_test.go` and `presentation/http/admin_test.go`: the operator list is paginated, newest first, and filters by status; an invalid `status` answers `400 VALIDATION_ERROR`; a customer's session answers `403 FORBIDDEN`; the customer's `GET /orders/{id}/payment` returns only their own order's payment, and `404 PAYMENT_NOT_FOUND` when none exists
 
 ### Implementation for User Story 5
 
-- [ ] T042 [US5] In `internal/modules/payment/application/implement/list.go` and `presentation/http/{handler.go,router.go}`: add `ListAll` (paginated, `status` filter) and mount `GET /admin/payments` behind the ADMIN guard, with Swagger annotations
-- [ ] T043 [US5] Extend the integration tests: the operator's list returns every payment and `status=UNMATCHED` returns only the reconciliation queue (SC-005)
+- [X] T042 [US5] In `internal/modules/payment/application/implement/list.go` and `presentation/http/{handler.go,router.go}`: add `ListAll` (paginated, `status` filter) and mount `GET /admin/payments` behind the ADMIN guard, with Swagger annotations
+- [X] T043 [US5] Extend the integration tests: the operator's list returns every payment and `status=UNMATCHED` returns only the reconciliation queue (SC-005)
 
 **Checkpoint**: Both the customer and the operator can see the payment state, and anomalies are reviewable.
 

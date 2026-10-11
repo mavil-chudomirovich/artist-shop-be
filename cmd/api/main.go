@@ -505,6 +505,11 @@ func run() error {
 			// behind the administrator role guard, where ship and complete drive
 			// the order's transitions and record each act (research D10, FR-023).
 			r.Mount("/admin/orders", orderHandler.AdminRouter(authHooks))
+			// The operator's payment desk: every payment behind the
+			// administrator role guard, where status=UNMATCHED is the queue of
+			// payments whose confirmation could not be applied and need review
+			// (FR-018, research D15).
+			r.Mount("/admin/payments", paymentHandler.AdminRouter(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)

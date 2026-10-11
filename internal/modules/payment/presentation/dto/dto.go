@@ -43,3 +43,16 @@ type PaymentResponse struct {
 	// UpdatedAt is when the payment was last written.
 	UpdatedAt time.Time `json:"updatedAt"`
 }
+
+// AdminPaymentResponse is one payment as the operator reads it
+// (contracts/openapi.yaml, AdminPayment): the customer payment plus the owner and
+// the provider's transaction reference. It is the row shape of the operator's
+// list, where `status=UNMATCHED` is the reconciliation queue (FR-018).
+type AdminPaymentResponse struct {
+	// PaymentResponse is the customer-facing payment.
+	PaymentResponse
+	// UserID is the account that started the payment.
+	UserID uuid.UUID `json:"userId"`
+	// ProviderReference is the provider's transaction reference once it confirmed.
+	ProviderReference string `json:"providerReference"`
+}

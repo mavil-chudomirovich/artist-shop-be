@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
@@ -33,5 +34,18 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 func (h *Handler) WebhookRouter() http.Handler {
 	r := chi.NewRouter()
 	r.Post("/", h.PayOSWebhook)
+	return r
+}
+
+// AdminRouter builds the operator's payment desk. It is mounted once at
+// `/admin/payments` by the composition root, and every route is behind the
+// administrator role guard, so a customer's session is refused FORBIDDEN before
+// it reaches the use case (FR-018, Constitution V). The list is a review surface:
+// the operator sees every payment and `status=UNMATCHED` is the reconciliation
+// queue (research D15).
+func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
+	r.Get("/", h.ListPayments)
 	return r
 }

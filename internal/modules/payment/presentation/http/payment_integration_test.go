@@ -218,7 +218,7 @@ func appliedEvents(t *testing.T, pool *pgxpool.Pool, orderCode int64) int {
 }
 
 // unmatchedEvents counts the PAYMENT_UNMATCHED rows the order code's payment
-// carries — the operator's reconciliation trail (FR-014, research D8).
+// carries â€” the operator's reconciliation trail (FR-014, research D8).
 func unmatchedEvents(t *testing.T, pool *pgxpool.Pool, orderCode int64) int {
 	t.Helper()
 	var count int
@@ -298,7 +298,7 @@ func TestStartPaymentWritesOneRowAndReusesTheLink(t *testing.T) {
 	}
 
 	// FR-017: once the payment reaches a terminal state it must still be
-	// readable, not 404 — the customer sees the order's payment state.
+	// readable, not 404 â€” the customer sees the order's payment state.
 	if _, err := pool.Exec(context.Background(),
 		`UPDATE payments SET status = 'PAID', provider_reference = 'ref-1' WHERE order_id = $1`,
 		orderID); err != nil {
@@ -367,7 +367,7 @@ func TestWebhookAppliesOnceAndReplayChangesNothing(t *testing.T) {
 }
 
 // SC-002: two concurrent confirmations of the same webhook both answer 200 and the
-// sale is applied once — the row lock serialises them, and the second finds the
+// sale is applied once â€” the row lock serialises them, and the second finds the
 // payment already PAID.
 func TestWebhookConcurrentConfirmationsApplyOnce(t *testing.T) {
 	const orderCode = 910002
@@ -400,8 +400,8 @@ func TestWebhookConcurrentConfirmationsApplyOnce(t *testing.T) {
 	}
 }
 
-// SC-003: a stale confirmation — the order was edited and re-confirmed after the
-// link was made, so its content version moved — is recorded UNMATCHED with a
+// SC-003: a stale confirmation â€” the order was edited and re-confirmed after the
+// link was made, so its content version moved â€” is recorded UNMATCHED with a
 // reason and never applied: the order is not paid and the goods stay unsold. A
 // re-delivered confirmation records no duplicate (FR-012, FR-014, research D8).
 func TestWebhookRecordsAStaleConfirmationWithoutApplying(t *testing.T) {
@@ -519,7 +519,7 @@ func cancelEvents(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) int {
 	return count
 }
 
-// SC-004, FR-015, research D9: cancelling an order cancels its live payment — the
+// SC-004, FR-015, research D9: cancelling an order cancels its live payment â€” the
 // provider is asked to cancel the link, the payment row becomes CANCELLED and the
 // PAYMENT_CANCELLED event is recorded, all against real PostgreSQL. The goods
 // release is module 07's own move and is proven by its lifecycle integration
@@ -546,7 +546,7 @@ func TestCancellingAnOrderCancelsItsPaymentAndRecordsTheEvent(t *testing.T) {
 	}
 }
 
-// SC-004, FR-016, research D9: a provider that refuses the cancel does not fail —
+// SC-004, FR-016, research D9: a provider that refuses the cancel does not fail â€”
 // the payment is left live for reconciliation and no PAYMENT_CANCELLED event is
 // recorded, so the order's already-committed cancellation (and its released
 // goods) is never affected.
@@ -562,14 +562,14 @@ func TestCancellingAnOrderWithAProviderFailureLeavesThePaymentLive(t *testing.T)
 		t.Fatalf("the provider cancel was called %d times, want exactly 1", provider.cancels)
 	}
 	if got := paymentStatusOf(t, pool, orderID); got != "PENDING" {
-		t.Fatalf("payment status = %q, want PENDING — left live for reconciliation on a provider failure", got)
+		t.Fatalf("payment status = %q, want PENDING â€” left live for reconciliation on a provider failure", got)
 	}
 	if got := cancelEvents(t, pool, orderID); got != 0 {
 		t.Fatalf("PAYMENT_CANCELLED events = %d, want none when the provider refused", got)
 	}
 }
 
-// FR-015: an order with no live payment is a no-op — the provider is never called
+// FR-015: an order with no live payment is a no-op â€” the provider is never called
 // and nothing is written.
 func TestCancellingAnOrderWithNoLivePaymentIsANoOp(t *testing.T) {
 	provider := &cancelProvider{}
@@ -579,5 +579,95 @@ func TestCancellingAnOrderWithNoLivePaymentIsANoOp(t *testing.T) {
 
 	if provider.cancels != 0 {
 		t.Fatalf("the provider cancel was called %d times for an order with no live payment, want none", provider.cancels)
+	}
+}
+
+// newAdminListIntegrationFixture returns the real operator list over the real
+// payment repository, mounted the way the composition root mounts it â€” once at
+// /admin/payments behind the administrator role guard.
+func newAdminListIntegrationFixture(t *testing.T) (*pgxpool.Pool, http.Handler) {
+	t.Helper()
+	pool := bootPaymentPool(t)
+	service := paymentimplement.New(paymentimplement.Service{
+		Payments: paymentpostgres.NewPaymentRepository(pool),
+		Tx:       &database.DB{Pool: pool},
+		Clock:    integrationClock{},
+		Mapper:   paymentmapper.New(),
+	})
+	handler := New(service, testLogger)
+	root := chi.NewRouter()
+	root.Mount(adminPaymentsPath, handler.AdminRouter(paymentAdminHooks()))
+	return pool, root
+}
+
+// insertPayment writes one payment directly with an explicit status, reason and
+// creation instant, so the operator list's ordering and its status filter can be
+// asserted against real rows. A PENDING/PAID/CANCELLED row carries no reason and
+// an UNMATCHED row carries one, satisfying the storage check.
+func insertPayment(t *testing.T, pool *pgxpool.Pool, orderID, userID uuid.UUID, orderCode, amount int64, status, reason string, createdAt time.Time) {
+	t.Helper()
+	var reasonArg any
+	if reason != "" {
+		reasonArg = reason
+	}
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO payments
+			(id, order_id, user_id, order_code, amount, currency, description,
+			 order_version, status, provider, unmatched_reason, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 'VND', 'DH0001', 2, $6, 'payos', $7, $8, $8)`,
+		uuid.New(), orderID, userID, orderCode, amount, status, reasonArg, createdAt)
+	if err != nil {
+		t.Fatalf("insert payment: %v", err)
+	}
+}
+
+// SC-005, FR-018: the operator's list returns every payment, newest first, and
+// status=UNMATCHED returns only the reconciliation queue â€” proven against real
+// PostgreSQL, where the repository owns the ordering and the filter.
+func TestAdminListReturnsEveryPaymentAndFiltersTheReconciliationQueue(t *testing.T) {
+	pool, handler := newAdminListIntegrationFixture(t)
+	base := time.Now().UTC()
+
+	// The newest is UNMATCHED (the queue), then a PAID and a PENDING; the older
+	// two belong to other customers, so the list is unfiltered by owner.
+	insertPayment(t, pool, uuid.New(), testCustomerID, 930003, 120000, "UNMATCHED", "amount mismatch", base.Add(2*time.Minute))
+	insertPayment(t, pool, uuid.New(), testCustomerTwoID, 930002, 120000, "PAID", "", base.Add(time.Minute))
+	insertPayment(t, pool, uuid.New(), testCustomerTwoID, 930001, 120000, "PENDING", "", base)
+
+	all := perform(handler, http.MethodGet, adminPaymentsPath, "admin-token")
+	if all.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200; body: %s", all.Code, all.Body.String())
+	}
+	var body adminPaymentListBody
+	if err := json.Unmarshal(all.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the list body %q: %v", all.Body.String(), err)
+	}
+	if len(body.Data) != 3 || body.Meta.Total != 3 {
+		t.Fatalf("the list must return every payment, got %d rows (total %d)", len(body.Data), body.Meta.Total)
+	}
+	if body.Data[0].OrderCode != 930003 || body.Data[0].Status != "UNMATCHED" {
+		t.Fatalf("the first row must be the newest payment, got %+v", body.Data[0])
+	}
+	if body.Data[0].UserID != testCustomerID || body.Data[0].UnmatchedReason != "amount mismatch" {
+		t.Fatalf("the row must carry its owner and reason, got %+v", body.Data[0])
+	}
+	if body.Data[2].OrderCode != 930001 || body.Data[2].Status != "PENDING" {
+		t.Fatalf("the last row must be the oldest payment, got %+v", body.Data[2])
+	}
+
+	// status=UNMATCHED is the reconciliation queue: exactly the one row.
+	queue := perform(handler, http.MethodGet, adminPaymentsPath+"?status=UNMATCHED", "admin-token")
+	if queue.Code != http.StatusOK {
+		t.Fatalf("queue status = %d, want 200; body: %s", queue.Code, queue.Body.String())
+	}
+	var queueBody adminPaymentListBody
+	if err := json.Unmarshal(queue.Body.Bytes(), &queueBody); err != nil {
+		t.Fatalf("decode the queue body %q: %v", queue.Body.String(), err)
+	}
+	if len(queueBody.Data) != 1 || queueBody.Meta.Total != 1 {
+		t.Fatalf("the reconciliation queue must hold exactly one payment, got %d (total %d)", len(queueBody.Data), queueBody.Meta.Total)
+	}
+	if queueBody.Data[0].Status != "UNMATCHED" || queueBody.Data[0].OrderCode != 930003 {
+		t.Fatalf("the queue row = %+v, want the UNMATCHED 930003", queueBody.Data[0])
 	}
 }
