@@ -1,0 +1,325 @@
+openapi: 3.0.3
+info:
+  title: Artist Shop — Online Order Payment (module 08)
+  version: 1.0.0
+  description: >
+    Module 08 Payment (V1.0). A customer starts an online payment for an order awaiting
+    payment, receives a PayOS checkout link/QR, pays, and the order becomes paid when
+    PayOS notifies the shop. A verified confirmation that cannot be applied is recorded
+    for the operator to reconcile — V1.0 has no refunds.
+  x-version-note: >
+    Provider is PayOS (ADR 015 §5). The webhook path is public and verifies the PayOS
+    signature; every other route requires a session.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: payments
+    description: Starting and reading a payment (signed-in customer).
+  - name: admin
+    description: The operator's payment desk (ADMIN role required).
+  - name: webhooks
+    description: PayOS callbacks (public, signature-verified).
+
+paths:
+  /orders/{orderId}/payment:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [payments]
+      summary: Start (or reuse) an online payment for the caller's order
+      description: >
+        Creates a PayOS payment request for the order's exact total. When a live payment
+        already exists for the order, it is reused and the same link is returned.
+      operationId: startPayment
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The payment, with the link to pay
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: >
+            PAYMENT_ORDER_NOT_PAYABLE — the order is not awaiting payment. Or
+            PAYMENT_ALREADY_LIVE — a live payment exists but its link could not be
+            returned (cancelled or expired at the provider).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ProviderError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    get:
+      tags: [payments]
+      summary: Read the payment state of the caller's order
+      operationId: readPayment
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The caller's live payment for the order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404':
+          description: PAYMENT_ORDER_NOT_FOUND — no such order, or another customer's; or PAYMENT_NOT_FOUND — the caller's order has no payment yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/payments:
+    get:
+      tags: [admin]
+      summary: List payments, optionally the reconciliation queue
+      description: >
+        Newest first by default. `status=UNMATCHED` is the queue of payments whose
+        confirmation could not be applied and need the operator's review.
+      operationId: listPayments
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/PaymentStatus' }
+      responses:
+        '200':
+          description: A page of payments with their order and owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentPageEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /payments/payos/webhook:
+    post:
+      tags: [webhooks]
+      summary: PayOS payment webhook
+      description: >
+        Public. The signature is verified before anything is trusted; a body that does
+        not verify applies nothing and is refused. A handled event answers 2xx so PayOS
+        stops retrying.
+      operationId: payosWebhook
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayOSWebhook' }
+      responses:
+        '200':
+          description: The event was handled — applied, already applied, or recorded as UNMATCHED
+        '400':
+          description: MALFORMED_REQUEST — the body does not parse
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/WebhookSignatureInvalid' }
+        '404': { $ref: '#/components/responses/PaymentNotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  schemas:
+    PaymentStatus:
+      type: string
+      description: >
+        PENDING — the provider link is live and the customer may pay. PAID — a verified
+        confirmation was applied (terminal). CANCELLED — the order was cancelled (its
+        link cancelled too). UNMATCHED — a verified confirmation could not be applied
+        and needs the operator.
+      enum: [PENDING, PAID, CANCELLED, UNMATCHED]
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64, description: "Amount in the currency's minor unit" }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+
+    Payment:
+      type: object
+      required: [id, orderId, amount, currency, status, provider, orderCode, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        amount: { $ref: '#/components/schemas/Money' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        provider: { type: string, example: payos }
+        orderCode:
+          type: integer
+          format: int64
+          description: The provider's order code (a random 53-bit integer). Identifying only.
+        checkoutUrl:
+          type: string
+          format: uri
+          nullable: true
+          description: The provider's checkout URL the customer opens. Present while the payment is live.
+        qrCode:
+          type: string
+          nullable: true
+          description: The VietQR payload for QR rendering. Present while the payment is live.
+        unmatchedReason:
+          type: string
+          nullable: true
+          description: Why a confirmation could not be applied. Present only when UNMATCHED.
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AdminPayment:
+      allOf:
+        - $ref: '#/components/schemas/Payment'
+        - type: object
+          required: [userId]
+          properties:
+            userId:
+              type: string
+              format: uuid
+              description: The account that started the payment.
+            providerReference:
+              type: string
+              nullable: true
+              description: The provider's transaction reference once it confirmed.
+
+    PayOSWebhook:
+      type: object
+      required: [code, desc, success, data, signature]
+      properties:
+        code: { type: string, example: "00" }
+        desc: { type: string, example: success }
+        success: { type: boolean }
+        data:
+          type: object
+          required: [orderCode, amount, description, reference, currency, paymentLinkId]
+          properties:
+            orderCode: { type: integer, format: int64 }
+            amount: { type: integer, format: int64 }
+            description: { type: string }
+            reference:
+              type: string
+              description: The provider's transaction reference — the idempotency key.
+            transactionDateTime: { type: string }
+            currency: { type: string, example: VND }
+            paymentLinkId: { type: string }
+            accountNumber: { type: string }
+            code: { type: string }
+            desc: { type: string }
+        signature:
+          type: string
+          description: >-
+            HMAC_SHA256 over the data object's fields sorted alphabetically, formatted
+            key=value&..., with the channel's checksum key.
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  issue: { type: string }
+
+    PaymentEnvelope:
+      type: object
+      properties:
+        data: { $ref: '#/components/schemas/Payment' }
+    PaymentPageEnvelope:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/AdminPayment' }
+        meta:
+          type: object
+          properties:
+            page: { type: integer }
+            pageSize: { type: integer }
+            total: { type: integer, format: int64 }
+
+  responses:
+    ValidationError:
+      description: VALIDATION_ERROR — a request value is malformed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthenticated:
+      description: UNAUTHENTICATED — no valid session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: FORBIDDEN — the session lacks the ADMIN role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    OrderNotFound:
+      description: PAYMENT_ORDER_NOT_FOUND — no such order, or another customer's
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PaymentNotFound:
+      description: PAYMENT_NOT_FOUND — the webhook carries an unknown order code
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ProviderError:
+      description: PAYMENT_PROVIDER_ERROR — the provider refused or was unreachable; the order is unchanged
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    WebhookSignatureInvalid:
+      description: PAYMENT_WEBHOOK_INVALID_SIGNATURE — the signature does not verify; nothing is applied
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: RATE_LIMITED — too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: INTERNAL_ERROR — an unexpected failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
