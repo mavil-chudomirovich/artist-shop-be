@@ -1411,6 +1411,96 @@
                 }
             }
         },
+        "/admin/payments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every payment, newest first by default, with its owner and the provider's transaction reference, paginated. An optional `status` filters to one payment state; `status=UNMATCHED` is the queue of payments whose confirmation could not be applied and need the operator's review. Administrator role required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin"
+                ],
+                "summary": "List payments, optionally the reconciliation queue",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Page number (default 1)",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 20)",
+                        "name": "pageSize",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only payments in this state (PENDING, PAID, CANCELLED or UNMATCHED)",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.AdminPaymentResponse"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/products": {
             "get": {
                 "security": [
@@ -3616,6 +3706,220 @@
                 }
             }
         },
+        "/orders/{orderId}/payment": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the caller's most recent payment for the order, in any state. Another customer's order answers the same not-found an unknown order does; an order with no payment at all answers PAYMENT_NOT_FOUND.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments"
+                ],
+                "summary": "Read the payment state of the caller's order",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.PaymentResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a provider payment request for the order's exact total and returns the link the customer pays through. When a live payment already exists for the order it is reused and the same link is returned. The order must belong to the caller and must be awaiting payment; a provider refusal leaves the order unchanged.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "payments"
+                ],
+                "summary": "Start (or reuse) an online payment for the caller's order",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.PaymentResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/payos/webhook": {
+            "post": {
+                "description": "Public provider callback. The signature is verified over the exact received body before anything is trusted; a handled event answers 2xx so PayOS stops retrying. An unverified signature applies nothing, an unknown order code records nothing, and an amount mismatch is recorded for the operator.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "PayOS payment webhook",
+                "parameters": [
+                    {
+                        "description": "PayOS webhook envelope {code, desc, success, data, signature}",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/products": {
             "get": {
                 "description": "Returns a page of the visible catalogue — on sale, or announced as a pre-order, in a category on display — ordered by the operator's position. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.",
@@ -5013,6 +5317,133 @@
             "properties": {
                 "email": {
                     "description": "Email is the recipient account's email.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.AdminPaymentResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount requested.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "checkoutUrl": {
+                    "description": "CheckoutURL is the provider's checkout URL the customer opens.",
+                    "type": "string"
+                },
+                "createdAt": {
+                    "description": "CreatedAt is when the payment was created.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID identifies the payment.",
+                    "type": "string"
+                },
+                "orderCode": {
+                    "description": "OrderCode is the provider's order code. Identifying only.",
+                    "type": "integer"
+                },
+                "orderId": {
+                    "description": "OrderID is the order the payment belongs to.",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider is the provider name.",
+                    "type": "string"
+                },
+                "providerReference": {
+                    "description": "ProviderReference is the provider's transaction reference once it confirmed.",
+                    "type": "string"
+                },
+                "qrCode": {
+                    "description": "QRCode is the VietQR payload for QR rendering.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is where the payment is in its life.",
+                    "type": "string"
+                },
+                "unmatchedReason": {
+                    "description": "UnmatchedReason is why a confirmation could not be applied.",
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "description": "UpdatedAt is when the payment was last written.",
+                    "type": "string"
+                },
+                "userId": {
+                    "description": "UserID is the account that started the payment.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.MoneyResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount in the currency's minor unit.",
+                    "type": "integer"
+                },
+                "currency": {
+                    "description": "Currency is the currency code.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.PaymentResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount requested.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_payment_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "checkoutUrl": {
+                    "description": "CheckoutURL is the provider's checkout URL the customer opens.",
+                    "type": "string"
+                },
+                "createdAt": {
+                    "description": "CreatedAt is when the payment was created.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID identifies the payment.",
+                    "type": "string"
+                },
+                "orderCode": {
+                    "description": "OrderCode is the provider's order code. Identifying only.",
+                    "type": "integer"
+                },
+                "orderId": {
+                    "description": "OrderID is the order the payment belongs to.",
+                    "type": "string"
+                },
+                "provider": {
+                    "description": "Provider is the provider name.",
+                    "type": "string"
+                },
+                "qrCode": {
+                    "description": "QRCode is the VietQR payload for QR rendering.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is where the payment is in its life.",
+                    "type": "string"
+                },
+                "unmatchedReason": {
+                    "description": "UnmatchedReason is why a confirmation could not be applied.",
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "description": "UpdatedAt is when the payment was last written.",
                     "type": "string"
                 }
             }

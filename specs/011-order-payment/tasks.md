@@ -191,28 +191,28 @@ description: "Task list for Online Order Payment (module 08)"
 
 **Purpose**: Documentation, the frontend guide, Swagger, and the close-out gates.
 
-- [ ] T044 [P] Update `docs/api-reference.md`: the four endpoints, the four-value payment status enum, and the six new error codes
-- [ ] T045 [P] Rewrite `docs/modules/08-payment.md` to describe the PayOS flow actually built (the MoMo/VietQR text is superseded): the payments/payment_events tables, the four-state payment machine, the webhook, the `orderCode`, the cancellation and the reconciliation queue
-- [ ] T046 [P] Update `docs/modules.md`: mark module 08 delivered and the V1.0 roadmap
-- [ ] T047 [P] Create `docs/decisions/019-payos-payment.md`: the PayOS integration over the standard library (no dependency), the two contracts (`OrderPayment` with its version-aware paid transition and `PaymentCancellation`), the `orderCode` mapping, the two-layer apply-once, and "anomalies recorded, never refunded"
-- [ ] T048 [P] Create `specs/011-order-payment/deferred.md`: refunds, multi-currency, recurring payments, the live-provider end-to-end payment, the one-time webhook URL registration (`POST /confirm-webhook`), the automatic recovery of an orphan link, and the operator's out-of-band resolution of `UNMATCHED` payments — each with what unblocks it
+- [X] T044 [P] Update `docs/api-reference.md`: the four endpoints, the four-value payment status enum, and the six new error codes
+- [X] T045 [P] Rewrite `docs/modules/08-payment.md` to describe the PayOS flow actually built (the MoMo/VietQR text is superseded): the payments/payment_events tables, the four-state payment machine, the webhook, the `orderCode`, the cancellation and the reconciliation queue
+- [X] T046 [P] Update `docs/modules.md`: mark module 08 delivered and the V1.0 roadmap
+- [X] T047 [P] Create `docs/decisions/019-payos-payment.md`: the PayOS integration over the standard library (no dependency), the two contracts (`OrderPayment` with its version-aware paid transition and `PaymentCancellation`), the `orderCode` mapping, the two-layer apply-once, and "anomalies recorded, never refunded"
+- [X] T048 [P] Create `specs/011-order-payment/deferred.md`: refunds, multi-currency, recurring payments, the live-provider end-to-end payment, the one-time webhook URL registration (`POST /confirm-webhook`), the automatic recovery of an orphan link, and the operator's out-of-band resolution of `UNMATCHED` payments — each with what unblocks it
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance)*
 
-- [ ] T049 **Có đổi bề mặt client** → viết `specs/011-order-payment/frontend-guide.md`: liệt kê từng endpoint (`POST`/`GET /orders/{orderId}/payment`, `GET /admin/payments`), đánh dấu **mới**, mọi trường JSON của mọi DTO (gồm `checkoutUrl`, `qrCode`, `unmatchedReason`), mọi giá trị enum `PaymentStatus` (**4** giá trị), mọi mã lỗi mới, và hành vi **trước → sau** so với `009`/`010` (lần đầu tiên khách có thể trả tiền)
-- [ ] T050 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, **có đếm**; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
+- [X] T049 **Có đổi bề mặt client** → viết `specs/011-order-payment/frontend-guide.md`: liệt kê từng endpoint (`POST`/`GET /orders/{orderId}/payment`, `GET /admin/payments`), đánh dấu **mới**, mọi trường JSON của mọi DTO (gồm `checkoutUrl`, `qrCode`, `unmatchedReason`), mọi giá trị enum `PaymentStatus` (**4** giá trị), mọi mã lỗi mới, và hành vi **trước → sau** so với `009`/`010` (lần đầu tiên khách có thể trả tiền)
+- [X] T050 **Đồng bộ guide** ở phase cuối, SAU khi mã nguồn ổn định: đối chiếu từng route, từng trường DTO, từng giá trị enum, từng mã HTTP với mã nguồn, **có đếm**; sửa mọi chỗ lệch, ghi rõ phần chưa kiểm nếu có
 
 ### Swagger annotations *(bắt buộc — feature có endpoint)*
 
-- [ ] T051 Thêm annotation Swagger cho **mọi** handler (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`, kể cả webhook) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
+- [X] T051 Thêm annotation Swagger cho **mọi** handler (`@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`, kể cả webhook) rồi chạy `make swagger`; `make swagger-check` (trong `make check`) phải xanh (Constitution VIII)
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T052 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/011-order-payment/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
+- [X] T052 Rà lại các phát hiện ngoài phạm vi và ghi hết vào `specs/011-order-payment/deferred.md`, KHÔNG để nguyên `- [ ]` ở file này; nêu rõ **là gì**, **vì sao ngoài phạm vi**, **điều gì gỡ được** nó; nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]` thì nêu rõ số task đó
 
 ### Close-out
 
-- [ ] T053 Normalize the new files to UTF-8 (LF); check for BOM
+- [X] T053 Normalize the new files to UTF-8 (LF); check for BOM
 - [ ] T054 Run `make lint` and `make test`
 - [ ] T055 Run `make test-integration` (needs Docker) and confirm it did not skip
 - [ ] T056 Run `quickstart.md` validation

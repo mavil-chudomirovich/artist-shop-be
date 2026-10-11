@@ -44,6 +44,7 @@ Dùng [template.md](template.md).
 | [016](016-cart-singleton-loose-reference-and-snapshot.md) | Giỏ: tài nguyên đơn không định danh, tham chiếu sản phẩm lỏng, hai hợp đồng đọc bulk, và giá snapshot | Accepted |
 | [017](017-order-checkout.md) | Đơn hàng: dòng snapshot không FK, `expires_at` do order sở hữu, chuyển nhượng là đổi chủ, bước `PAID` giao nhưng để module 08 điều khiển, và `WithTx` tái dùng transaction | Accepted (state machine bị [018](018-order-confirmation-and-editing.md) thay thế) |
 | [018](018-order-confirmation-and-editing.md) | Đơn hàng: state machine sáu trạng thái, giữ hàng chỉ khi artist xác nhận, hạn thanh toán 60 phút, sửa đơn toàn bộ quay về `PENDING`, `order_version` cho module 08, và mailer dùng chung tối thiểu | Accepted |
+| [019](019-payos-payment.md) | Payment: tích hợp PayOS bằng thư viện chuẩn, hai hợp đồng liên module, `orderCode` ngẫu nhiên, áp-một-lần hai tầng, và "ghi nhận bất thường, không bao giờ hoàn tiền" | Accepted |
 
 ## Khi nào phải viết ADR
 

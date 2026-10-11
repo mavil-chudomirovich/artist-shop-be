@@ -304,6 +304,37 @@ kiến → `INTERNAL_ERROR` 500.
 > trạng thái, phiên bản và mốc thời gian của đơn (mỗi lần sửa để lại một dòng `order_edit_history`);
 > audit ghi các mutation quản trị (Constitution VI).
 
+**Riêng module payment** (`internal/modules/payment/domain/constant/codes.go`):
+
+| Code | HTTP | Nghĩa |
+|------|------|-------|
+| `PAYMENT_ORDER_NOT_FOUND` | 404 | Không có đơn nào mang định danh đó, **hoặc** đơn thuộc khách khác. Hai tình huống **cố ý** trả lời giống nhau, để route không xác nhận đơn của khách khác |
+| `PAYMENT_ORDER_NOT_PAYABLE` | 409 | Đơn **không ở trạng thái chờ thanh toán** — đã trả tiền, đã huỷ, hoặc còn chờ artist xác nhận. Chỉ bắt đầu thanh toán được cho đơn đang chờ thanh toán |
+| `PAYMENT_NOT_FOUND` | 404 | Webhook mang `orderCode` không bản ghi thanh toán nào mang (link mồ côi — liên kết sống ở cổng nhưng dòng chưa kịp ghi). Đơn không đổi và **không gì được ghi**; chỉ log warning. Cũng là câu trả lời khi khách đọc thanh toán của một đơn **chưa có thanh toán nào** |
+| `PAYMENT_ALREADY_LIVE` | 409 | Đã có thanh toán còn hiệu lực cho đơn nhưng liên kết **không còn trả được** (đã huỷ/hết hạn ở cổng), nên không tạo mới được khi bản ghi cũ còn. Không tạo liên kết thứ hai |
+| `PAYMENT_PROVIDER_ERROR` | 422 | Cổng từ chối tạo liên kết hoặc không tới được. **Không gì được tạo, đơn không đổi**; thử lại được |
+| `PAYMENT_WEBHOOK_INVALID_SIGNATURE` | 401 | Chữ ký webhook không xác minh, nên sự kiện **không** phải từ cổng. Không gì được áp. Đây là mã **của module** chứ không phải `UNAUTHENTICATED` (vốn nói về phiên) |
+
+Sáu mã trên là **not-found** (404), **conflict** (409), **unprocessable** (422) hoặc **unauthorized** (401)
+chứ không phải validation: request hợp lệ nhưng trạng thái của đơn/thanh toán hoặc chữ ký khiến nó không
+áp được, và bước tiếp theo khác hẳn — đọc lại đơn, thử lại sau, hay để operator đối soát.
+
+Những tình huống dưới đây cố ý **không** sinh mã riêng của module payment (xem
+`specs/011-order-payment/contracts/error-codes.md`): body webhook không parse được → `MALFORMED_REQUEST`
+400; `status` ngoài bốn trạng thái, `page`/`pageSize` ngoài khoảng → `VALIDATION_ERROR` 400; thiếu hoặc
+sai phiên → `UNAUTHENTICATED` 401; `CUSTOMER` gọi danh sách thanh toán của operator → `FORBIDDEN` 403;
+định danh đường dẫn không phải UUID → `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài
+dự kiến → `INTERNAL_ERROR` 500.
+
+> Một xác nhận đã xác minh **sai số tiền**, cho **nội dung đơn cũ**, hoặc cho đơn **không còn chờ thanh
+> toán** **không** phải một lỗi trả về: thanh toán thành `UNMATCHED` và webhook vẫn trả `2xx` (từ chối sẽ
+> khiến cổng thử lại mãi). Gửi lặp một xác nhận trên thanh toán đã `PAID` là **no-op**.
+
+> Action `audit_logs` của module dùng tiền tố `PAYMENT_` nhưng **không** phải mã lỗi: `PAYMENT_CREATED`,
+> `PAYMENT_APPLIED`, `PAYMENT_CANCELLED`, `PAYMENT_UNMATCHED` — xem
+> `internal/modules/payment/domain/constant/codes.go` và `payment_events.action`. Metadata của mỗi dòng chỉ
+> nêu định danh đơn, **không** mang dữ liệu người trả hay tham chiếu của cổng.
+
 ### 1.5 Rate limit
 
 | Phạm vi | Mặc định | Biến môi trường |
@@ -342,6 +373,11 @@ Nhóm `/orders` và `/admin/orders` của module order cũng **không** có hạ
 toàn cục: checkout và huỷ là hành động của khách **đã đăng nhập**, còn các endpoint của operator là
 `ADMIN`-only, nên bề mặt lạm dụng mà một hạn mức theo module tồn tại để chặn **không tồn tại**
 (`specs/009-order/spec.md`, mục *Assumptions*).
+
+Nhóm `/orders/{orderId}/payment` (khách) và `/admin/payments` (quản trị) của module payment cũng **không**
+có hạn mức riêng, chỉ chịu hạn mức toàn cục. Webhook `/payments/payos/webhook` là **công khai**, nên cũng
+chỉ chịu hạn mức toàn cục — nhưng đây là điểm PayOS **gọi tới và thử lại**, nên một sự kiện đã xử lý phải
+trả `2xx` nhanh để cổng ngừng thử lại thay vì bị chặn (`specs/011-order-payment/research.md` D10).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
@@ -2331,8 +2367,9 @@ Tám điều dễ đọc sai, nói ngay:
 - **Trạng thái đơn đi qua endpoint riêng** (`confirm`, `reject`, `cancel`, `ship`, `complete`), **không**
   qua một trường `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu từ chối nêu trạng thái
   hiện tại (`409 ORDER_STATE_TRANSITION_INVALID`).
-- **Không có endpoint `pay`.** Bước chuyển `PAYMENT_PENDING → PAID` đã được giao và test nhưng do
-  **module 08 Payment** điều khiển; chưa module nào gọi nó qua HTTP.
+- **Không có endpoint `pay`.** Bước chuyển `PAYMENT_PENDING → PAID` **không** có route HTTP trên đơn; nó do
+  **module 08 Payment** điều khiển — nay đã có: webhook PayOS (`10.4`) gọi bước đã trả sau khi xác minh và
+  đối chiếu. Khách trả tiền qua `POST /orders/{orderId}/payment` (`10.1`).
 - **Chuyển nhượng không phải một trạng thái**: nó chỉ đổi **chủ sở hữu** sang một tài khoản khác đã
   tồn tại (nêu bằng **email**), giữ nguyên dòng, trạng thái và tổng tiền, và **không** đổi tồn kho.
   Một đơn chưa trả tiền **không** chuyển nhượng được.
@@ -2727,7 +2764,178 @@ Ghi chú:
 
 ---
 
-## 10. Bảng tổng hợp
+## 10. Module 08 — Payment (`/api/v1`)
+
+Khách trả tiền online cho một đơn **đang chờ thanh toán** qua cổng **PayOS**: hệ thống tạo yêu cầu thanh
+toán cho **đúng tổng tiền hàng**, trả về **liên kết thanh toán/QR**, và **tin cậy xác nhận của cổng đúng
+một lần**. Cổng báo kết quả qua **webhook có chữ ký**; hệ thống xác minh chữ ký, đối chiếu đơn + số tiền
+rồi áp kết quả — đơn chuyển `PAID` và hàng giữ chỗ thành **bán**. Một xác nhận **không áp được** (sai số
+tiền, nội dung đơn cũ, đơn đã huỷ/hết hạn) **không** được ghi nhận: bản ghi thanh toán thành `UNMATCHED`
+để operator **đối soát**; V1.0 **không có hoàn tiền** (ADR 015 §5, ADR 019).
+
+**Bốn endpoint**: **hai** của khách đã đăng nhập dưới `/orders/{orderId}/payment` (bắt đầu/dùng lại và đọc
+thanh toán của **chính** đơn mình), **một** của quản trị (`GET /admin/payments`, vai trò `ADMIN`), và
+**một công khai** — webhook PayOS (`POST /payments/payos/webhook`, không cần phiên, **chữ ký là xác thực**).
+
+Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5); webhook là công khai và PayOS **thử
+lại tới khi nhận `2xx`**, nên một sự kiện đã xử lý trả `2xx` nhanh.
+
+Sáu điều dễ đọc sai, nói ngay:
+
+- **Chủ sở hữu lấy từ session**, không bao giờ từ body/query. Đơn của khách khác trả **cùng**
+  `404 PAYMENT_ORDER_NOT_FOUND`.
+- **Một yêu cầu còn hiệu lực thì dùng lại**: bắt đầu lần thứ hai cho cùng một đơn trả lại **chính liên
+  kết/QR đó**, **không** tạo yêu cầu mới.
+- **Tiền là tổng đơn, số nguyên đơn vị nhỏ nhất + currency, không phí ship** (ADR 015 §5).
+- **Cổng lỗi khi tạo yêu cầu → đơn không đổi** (`422 PAYMENT_PROVIDER_ERROR`, thử lại được).
+- **Xác nhận cũ/không khớp không bao giờ bị áp**: bản ghi thành `UNMATCHED` kèm lý do, đơn giữ nguyên,
+  **không** hoàn tiền; webhook vẫn trả `2xx`.
+- **Huỷ đơn chưa trả → huỷ yêu cầu ở cổng** (nỗ lực tối đa, `9.5`); việc nhả hàng là của module 07, lỗi
+  cổng **không** chặn huỷ đơn — không có bề mặt HTTP riêng cho việc huỷ này.
+- **Trạng thái thanh toán không nằm trong response của đơn**: đọc qua đường thanh toán riêng.
+
+**Hình dạng khách** — `PaymentResponse` (11 member):
+
+```json
+{
+  "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
+  "orderId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "amount": { "amount": 300000, "currency": "VND" },
+  "status": "PENDING",
+  "provider": "payos",
+  "orderCode": 123456789012345,
+  "checkoutUrl": "https://pay.payos.vn/web/abc123",
+  "qrCode": "00020101021238540010A000000727...",
+  "unmatchedReason": "",
+  "createdAt": "2026-10-11T08:15:04Z",
+  "updatedAt": "2026-10-11T08:15:04Z"
+}
+```
+
+**Hình dạng quản trị** — `AdminPaymentResponse` = `PaymentResponse` **+** `userId` **+**
+`providerReference` (13 member). **Khác khách đúng hai member.**
+
+**Bốn trạng thái thanh toán** — `status` là một trong bốn giá trị:
+
+| Giá trị | Nghĩa | Vào bằng |
+|---|---|---|
+| `PENDING` | Liên kết còn hiệu lực, khách có thể trả; **không** terminal | Bắt đầu thanh toán (`10.1`) |
+| `PAID` | Xác nhận hợp lệ đã được áp; hàng giữ chỗ thành **bán** (cuối) | Webhook hợp lệ + khớp (`10.4`) |
+| `CANCELLED` | Đơn bị huỷ nên yêu cầu ở cổng cũng bị huỷ (cuối) | Huỷ đơn `PAYMENT_PENDING` (`9.5`) |
+| `UNMATCHED` | Xác nhận không áp được, chờ operator **đối soát** (cuối) | Webhook hợp lệ nhưng sai tiền / nội dung đơn cũ / đơn không còn chờ thanh toán |
+
+> `checkoutUrl`, `qrCode` và `unmatchedReason` **luôn** có mặt trong JSON: đây là ba trường `string`
+> không dùng `omitempty`, nên khi không áp dụng chúng là **chuỗi rỗng** (`""`), không phải `null` hay vắng
+> mặt. Client nên coi `""` là "không có giá trị".
+
+### 10.1 `POST /orders/{orderId}/payment`
+
+Bắt đầu (hoặc **dùng lại**) một thanh toán online cho đơn **của chính khách** đang **chờ thanh toán**
+(`PAYMENT_PENDING`). Tạo yêu cầu thanh toán cho **đúng tổng đơn** ở cổng PayOS và trả về liên kết/QR. Nếu
+đã có một yêu cầu **còn hiệu lực** cho đơn, nó được **dùng lại** và trả về **chính liên kết đó** — **không**
+tạo yêu cầu thứ hai (FR-005).
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Path: `orderId` (UUID). Request: **không** có body.
+
+Response `200`: `data` = `PaymentResponse` với `status: "PENDING"` và, khi liên kết còn hiệu lực,
+`checkoutUrl` + `qrCode`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`PAYMENT_ORDER_NOT_FOUND` 404 · `PAYMENT_ORDER_NOT_PAYABLE` 409 · `PAYMENT_ALREADY_LIVE` 409 ·
+`PAYMENT_PROVIDER_ERROR` 422 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Số tiền = tổng đơn, **không** phí ship; đơn vị nhỏ nhất + currency.
+- Yêu cầu còn hiệu lực nhưng liên kết **không còn trả được** (đã huỷ/hết hạn ở cổng) → `409
+  PAYMENT_ALREADY_LIVE` để operator đối soát, **không** tạo liên kết thứ hai.
+- Cổng lỗi → `422 PAYMENT_PROVIDER_ERROR`, **không** có gì được tạo, đơn **không** đổi; thử lại được.
+- Tác nhân lấy từ **session**, không bao giờ từ body.
+
+### 10.2 `GET /orders/{orderId}/payment`
+
+Đọc thanh toán **mới nhất** của đơn **của chính khách**, ở **bất kỳ** trạng thái — đọc được cả `PAID`,
+`CANCELLED` và `UNMATCHED`, không chỉ thanh toán còn hiệu lực (FR-017).
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Path: `orderId` (UUID). Response `200`: `data` = `PaymentResponse`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`PAYMENT_ORDER_NOT_FOUND` 404 · `PAYMENT_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- **Hai tình huống 404 khác nhau**: đơn không tồn tại **hoặc** của khách khác → `PAYMENT_ORDER_NOT_FOUND`;
+  đơn của khách nhưng **chưa có thanh toán nào** → `PAYMENT_NOT_FOUND`.
+- Đây là **đường đọc riêng** cho thanh toán; trạng thái thanh toán **không** nằm trong response của đơn
+  (`9.3`).
+
+### 10.3 `GET /admin/payments`
+
+Danh sách **mọi** bản ghi thanh toán, **mới nhất trước**, phân trang, kèm chủ sở hữu và tham chiếu giao
+dịch của cổng. Tham số `status` **tuỳ chọn** lọc theo một trong bốn trạng thái — `status=UNMATCHED` là
+**hàng đợi đối soát** (FR-018).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`) và `status`
+(**tuỳ chọn**, một trong bốn trạng thái). Response `200`: `data` là mảng `AdminPaymentResponse`; `meta`
+là khối phân trang chung. Không có thanh toán nào trả `data: []`, **không** phải `null`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page`/`pageSize` ngoài khoảng; `status` không thuộc bốn trạng thái —
+`details[].field` là `"page"`, `"pageSize"` hoặc `"status"`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
+(ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú: danh sách **chỉ để xem** (review-only) — V1.0 **không** có thao tác "áp tay" cho một khoản
+`UNMATCHED`; operator xử lý ngoài hệ thống.
+
+### 10.4 `POST /payments/payos/webhook`
+
+Webhook **công khai** của PayOS. Không cần phiên: **chữ ký là xác thực**, xác minh trên **đúng byte nhận
+được** trước khi tin bất cứ thứ gì. Sự kiện đã xử lý — áp, đã áp, hoặc ghi `UNMATCHED` — trả `2xx` để
+PayOS ngừng thử lại (FR-019).
+
+| | |
+|---|---|
+| Auth | Không (công khai; xác minh bằng chữ ký PayOS) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` (sự kiện đã xử lý) |
+
+Request (`PayOSWebhook`): envelope `{code, desc, success, data, signature}`; `data` gồm `orderCode`,
+`amount`, `description`, `reference` (tham chiếu giao dịch — khoá chống trùng), `currency`,
+`paymentLinkId` và các trường khác. `signature` = **HMAC_SHA256** với checksum key trên **các trường của
+`data` sắp theo alphabet**.
+
+Lỗi: `MALFORMED_REQUEST` 400 (body không parse được) · `PAYMENT_WEBHOOK_INVALID_SIGNATURE` 401 ·
+`PAYMENT_NOT_FOUND` 404 (`orderCode` không bản ghi nào mang; **không gì được ghi**, chỉ log warning) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Sai số tiền / nội dung đơn cũ (khác `order_version`) / đơn không còn chờ thanh toán → `200`, bản ghi
+  thành `UNMATCHED` kèm lý do, **đơn không đổi**.
+- Gửi lặp một xác nhận trên thanh toán đã `PAID` → `200`, **không** hiệu ứng thứ hai.
+- `PAYMENT_NOT_FOUND` khi không có bản ghi nào mang `orderCode` đó (link mồ côi); **chỉ** log warning, để
+  operator đối soát ngoài hệ thống.
+
+---
+
+## 11. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -2795,18 +3003,22 @@ Ghi chú:
 | POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đánh dấu đơn đã trả tiền là đã giao |
 | POST | `/api/v1/admin/orders/{orderId}/complete` | ADMIN | Đánh dấu đơn đã giao là hoàn tất |
 | POST | `/api/v1/admin/orders/{orderId}/transfer` | ADMIN | Chuyển đơn đã trả tiền cho tài khoản khác |
+| POST | `/api/v1/orders/{orderId}/payment` | Bearer | Bắt đầu (hoặc dùng lại) thanh toán online cho đơn chờ thanh toán |
+| GET | `/api/v1/orders/{orderId}/payment` | Bearer | Đọc thanh toán của chính mình (đường đọc riêng) |
+| GET | `/api/v1/admin/payments` | ADMIN | Mọi bản ghi thanh toán (phân trang, lọc `status`; `UNMATCHED` = hàng đợi đối soát) |
+| POST | `/api/v1/payments/payos/webhook` | — | Webhook PayOS (công khai, xác minh chữ ký) |
 
 ---
 
-## 11. Quy tắc cập nhật
+## 12. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 9.
-3. Thêm dòng vào Change log ở mục 11.
+2. Cập nhật bảng tổng hợp ở mục 11.
+3. Thêm dòng vào Change log ở mục 13.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
@@ -2814,10 +3026,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 12. Change log
+## 13. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-11 | Thêm nhóm thanh toán (module 08 Payment, feature 011): **bốn** endpoint — **hai** của khách đã đăng nhập `POST`/`GET /api/v1/orders/{orderId}/payment` (bắt đầu/dùng lại và đọc thanh toán của chính đơn mình), **một** của quản trị `GET /api/v1/admin/payments` (mọi bản ghi, phân trang, lọc `status`; `status=UNMATCHED` = hàng đợi đối soát), và **một công khai** `POST /api/v1/payments/payos/webhook` (không cần phiên, xác minh chữ ký PayOS). Hai hình dạng response: khách `PaymentResponse` **11 member** (gồm `checkoutUrl`, `qrCode`, `unmatchedReason` — cả ba luôn có mặt, `""` khi không áp dụng); quản trị `AdminPaymentResponse` **13 member** (thêm `userId` + `providerReference`). **Enum mới** `PaymentStatus` — **bốn** giá trị `PENDING`/`PAID`/`CANCELLED`/`UNMATCHED`. Bổ sung **sáu** mã `PAYMENT_*` vào mục 1.4 (`PAYMENT_ORDER_NOT_FOUND` 404, `PAYMENT_ORDER_NOT_PAYABLE` 409, `PAYMENT_NOT_FOUND` 404, `PAYMENT_ALREADY_LIVE` 409, `PAYMENT_PROVIDER_ERROR` 422, `PAYMENT_WEBHOOK_INVALID_SIGNATURE` 401) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: chủ sở hữu lấy từ **session**; yêu cầu còn hiệu lực được **dùng lại**; tiền = tổng đơn, **không** phí ship; webhook công khai **xác minh chữ ký**, áp **đúng một lần**; xác nhận cũ/không khớp thành `UNMATCHED` để đối soát, **không** hoàn tiền; huỷ đơn chưa trả huỷ yêu cầu ở cổng. Phần 10 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 11/12/13. Xem ADR-019. | `internal/modules/payment/presentation/http/router.go` |
 | 2026-10-10 | Bổ sung luồng **xác nhận đơn & chỉnh sửa** cho nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order, feature 010): **ba** endpoint mới — `PUT /orders/{orderId}` (khách sửa đơn chưa trả tiền), `POST /admin/orders/{orderId}/confirm` (artist xác nhận: giữ **toàn bộ** hàng all-or-nothing, mở hạn thanh toán) và `POST /admin/orders/{orderId}/reject` (artist từ chối) — nâng module lên **mười hai**: **năm** route của khách dưới `/orders` (thêm `PUT`), **bảy** của admin. **Đổi hành vi**: `POST /orders` nay tạo đơn `PENDING` (**chờ artist xác nhận**) và **không** giữ hàng; `POST /orders/{orderId}/cancel` nay huỷ được cả `PENDING` lẫn `PAYMENT_PENDING`; `GET /admin/orders` nhận thêm `status`/`sort` (tuỳ chọn; `status=PENDING&sort=oldest` = hàng đợi xác nhận FIFO). **Đổi enum**: `PENDING_PAYMENT` **đổi tên** thành `PAYMENT_PENDING`, thêm `PENDING` — thành **sáu** giá trị. Bổ sung hai mã `ORDER_*` (`ORDER_NOT_EDITABLE`, `ORDER_EMPTY`) vào mục 1.4, ghi chú `ORDER_CONFIRMED`/`ORDER_REJECTED` vào nhóm action audit, và hạn **giữ chỗ 15 → 60 phút**. Sửa §9 (enum, endpoint, ghi chú) và bảng tổng hợp §10. Xem ADR-018. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order): **chín** endpoint — **bốn** của khách đã đăng nhập (`POST /orders` checkout, `GET /orders` danh sách, `GET /orders/{orderId}` chi tiết, `POST /orders/{orderId}/cancel` huỷ đơn còn chờ thanh toán) và **năm** của admin (`GET /admin/orders`, `GET /admin/orders/{orderId}`, `POST /admin/orders/{orderId}/ship`, `POST /admin/orders/{orderId}/complete`, `POST /admin/orders/{orderId}/transfer`). Chủ sở hữu lấy từ **session**; đơn của khách khác trả cùng `404 ORDER_NOT_FOUND`. Bốn hình dạng response: khách `OrderSummaryResponse` **5 member** / `OrderResponse` **7 member**; quản trị `AdminOrderSummaryResponse` **6 member** / `AdminOrderResponse` **8 member** (hơn khách đúng `userId`); `OrderLineResponse` **6 member**, `OrderAddressResponse` **7 member**. Bổ sung **chín** mã `ORDER_*` vào mục 1.4 (kèm ghi rõ bốn tình huống cố ý **không** có mã: trả tiền, hết hạn, sản phẩm bị xoá, chuyển nhượng lặp) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: checkout **giữ** hàng (vật lý không đổi) và **làm rỗng** giỏ trong một transaction; tiền là số nguyên đơn vị nhỏ nhất, tổng **không** gồm phí ship; đơn chưa trả tiền **tự huỷ** sau 15 phút; trạng thái đi qua endpoint riêng; **không** có endpoint `pay` (module 08 điều khiển); chuyển nhượng chỉ đổi chủ, không đổi tồn kho. Phần 9 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 10/11/12. Xem ADR-017. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/cart` (module 06 Cart): **bốn** route của khách đã đăng nhập — đọc giỏ (`GET /cart`), thêm sản phẩm (`POST /cart/items`), đổi số lượng một dòng (`PATCH /cart/items/{productId}`) và xoá một dòng (`DELETE /cart/items/{productId}`). Giỏ là **tài nguyên đơn** định địa chỉ tại `/cart` **không kèm định danh** (chủ sở hữu là session); một dòng định địa chỉ bằng **định danh sản phẩm**. Hai hình dạng response: `CartResponse` **2 member** (`lines`, `subtotal` — `null` khi giỏ rỗng) và `CartLineResponse` **8 member** (`productId`, `name`, `slug`, `quantity`, `unitPrice`, `lineTotal`, `buyable`, `availableQuantity`). Bổ sung hai mã `CART_*` vào mục 1.4 (kèm ghi rõ `PRODUCT_NOT_FOUND` 404 của module 04 được **tái sử dụng** cho sản phẩm không tồn tại lẫn dòng không thuộc giỏ này) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: đọc giỏ **đối chiếu lại** trạng thái bán và tồn khả dụng của từng dòng, `availableQuantity` chỉ có khi dòng còn bán nhưng thiếu; giá hiển thị là **snapshot** lúc thêm; giỏ **không** giữ chỗ tồn kho và **không** ghi `audit_logs`. Phần 8 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 9/10/11. Xem ADR-016. | `internal/modules/cart/presentation/http/router.go` |
