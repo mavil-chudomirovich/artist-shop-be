@@ -24,3 +24,14 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/", h.ReadPayment)
 	return r
 }
+
+// WebhookRouter builds the public provider callback route. It carries no session
+// guard: the provider is not a user, so the signature is the authentication
+// (FR-019, research D10). The composition root mounts it once at
+// `/payments/payos/webhook` under the API root, so the trust-proxy and rate-limit
+// middleware apply to it like every other API route.
+func (h *Handler) WebhookRouter() http.Handler {
+	r := chi.NewRouter()
+	r.Post("/", h.PayOSWebhook)
+	return r
+}

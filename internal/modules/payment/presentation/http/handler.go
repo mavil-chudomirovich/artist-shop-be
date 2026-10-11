@@ -30,6 +30,10 @@ type Service interface {
 	Start(ctx context.Context, in appdto.StartInput) (appdto.PaymentView, error)
 	// Read returns the caller's live payment for their order (FR-017).
 	Read(ctx context.Context, in appdto.ReadInput) (appdto.PaymentView, error)
+	// HandleWebhook verifies a raw provider callback and applies it exactly once,
+	// or records it UNMATCHED when it cannot be applied (FR-007 to FR-011,
+	// FR-019).
+	HandleWebhook(ctx context.Context, body []byte) error
 }
 
 // fieldOrderID is the path parameter naming the order, used in the VALIDATION_ERROR
@@ -201,6 +205,10 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeProviderError, http.StatusUnprocessableEntity, "Payment provider error")
 	case errors.Is(err, domainerr.ErrNotFound):
 		return coded(constant.CodeNotFound, http.StatusNotFound, "Payment not found")
+	case errors.Is(err, domainerr.ErrWebhookInvalidSignature):
+		return coded(constant.CodeWebhookInvalidSignature, http.StatusUnauthorized, "Payment webhook signature invalid")
+	case errors.Is(err, domainerr.ErrMalformedWebhook):
+		return httpx.New(httpx.CodeMalformedRequest)
 	case errors.Is(err, domainerr.ErrInvalidValue):
 		return fieldError(fieldOrderID, "is not a valid payment value")
 	default:

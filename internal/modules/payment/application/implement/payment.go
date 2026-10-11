@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -65,10 +66,24 @@ type Service struct {
 	ReturnURL string
 	// CancelURL is where the provider redirects the customer when they cancel.
 	CancelURL string
+	// Logger receives the classified diagnostics an operator acts on — currently
+	// the warning for a webhook whose order code matches no payment, whose link
+	// is orphaned and must be reconciled out of band (research D7). A nil logger
+	// is tolerated.
+	Logger *slog.Logger
 }
 
 // New creates the payment use-case service.
 func New(service Service) *Service { return &service }
+
+// log returns the injected logger, falling back to the default so a construction
+// without one cannot panic.
+func (s *Service) log() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
+}
 
 // now reads the injected clock, falling back to the wall clock when the
 // composition left it unset.

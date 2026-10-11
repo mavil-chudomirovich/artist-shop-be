@@ -42,12 +42,14 @@ var (
 // was handed and the actor the handler placed in the context, and answers a fixed
 // view or error.
 type fakeService struct {
-	view     appdto.PaymentView
-	err      error
-	gotStart appdto.StartInput
-	gotRead  appdto.ReadInput
-	gotActor appinterface.Actor
-	hasActor bool
+	view       appdto.PaymentView
+	err        error
+	webhookErr error
+	gotStart   appdto.StartInput
+	gotRead    appdto.ReadInput
+	gotWebhook []byte
+	gotActor   appinterface.Actor
+	hasActor   bool
 }
 
 func (f *fakeService) Start(ctx context.Context, in appdto.StartInput) (appdto.PaymentView, error) {
@@ -60,6 +62,13 @@ func (f *fakeService) Read(ctx context.Context, in appdto.ReadInput) (appdto.Pay
 	f.gotRead = in
 	f.gotActor, f.hasActor = appinterface.ActorFromContext(ctx)
 	return f.view, f.err
+}
+
+// HandleWebhook records the raw body and answers the configured error, so the
+// webhook transport tests can assert the error mapping.
+func (f *fakeService) HandleWebhook(_ context.Context, body []byte) error {
+	f.gotWebhook = body
+	return f.webhookErr
 }
 
 // paymentHooks supplies the foundation authentication hooks with two fixed

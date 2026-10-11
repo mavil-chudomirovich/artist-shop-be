@@ -424,6 +424,7 @@ func run() error {
 		Mapper:    paymentmapper.New(),
 		ReturnURL: cfg.Payment.ReturnURL,
 		CancelURL: cfg.Payment.CancelURL,
+		Logger:    logger,
 	})
 	paymentHandler := paymenthttp.New(paymentService, logger)
 
@@ -488,6 +489,11 @@ func run() error {
 			// the handler reads it with chi.URLParam, so nothing is mounted at
 			// /orders twice (plan.md "On the route mount").
 			r.Mount("/orders/{orderId}/payment", paymentHandler.Router(authHooks))
+			// The PayOS callback: public (no session), mounted under the API root
+			// so the trust-proxy and rate-limit middleware apply. The provider is
+			// not a user, so the module verifies the PayOS signature over the
+			// exact body before trusting anything (FR-019, research D10).
+			r.Mount("/payments/payos/webhook", paymentHandler.WebhookRouter())
 			// The operator's order desk: every order, addressed by identifier
 			// behind the administrator role guard, where ship and complete drive
 			// the order's transitions and record each act (research D10, FR-023).

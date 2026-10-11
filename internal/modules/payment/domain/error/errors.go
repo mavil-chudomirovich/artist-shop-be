@@ -50,6 +50,11 @@ var (
 	// verify, so the event is not from the provider and nothing is applied
 	// (FR-019). It maps to PAYMENT_WEBHOOK_INVALID_SIGNATURE (401).
 	ErrWebhookInvalidSignature = errors.New("payment webhook signature invalid")
+	// ErrMalformedWebhook is returned when a webhook body could not be read as
+	// the provider's envelope at all — it does not parse — so the signature check
+	// never ran. It maps to the shared MALFORMED_REQUEST (400); the request is
+	// retired rather than retried (contracts/error-codes.md).
+	ErrMalformedWebhook = errors.New("payment webhook malformed")
 	// ErrInvalidValue is returned when a value fails its own rule and the response
 	// must name the member a client has to fix. It is the single sentinel for the
 	// typed refusals built by InvalidValue. It maps to the shared VALIDATION_ERROR

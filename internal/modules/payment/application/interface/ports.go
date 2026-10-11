@@ -93,9 +93,11 @@ type PaymentService interface {
 	// Read returns the caller's most recent payment for their order, in any
 	// state, or not-found when the order has none (FR-017).
 	Read(ctx context.Context, in dto.ReadInput) (dto.PaymentView, error)
-	// HandleWebhook applies a verified confirmation exactly once, or records it
-	// UNMATCHED when it cannot be applied (FR-009, FR-012, FR-019).
-	HandleWebhook(ctx context.Context, in dto.WebhookInput) error
+	// HandleWebhook verifies a raw provider callback and applies it exactly once,
+	// or records it UNMATCHED when it cannot be applied (FR-009, FR-012, FR-019).
+	// It takes the raw body because the signature must be verified over the exact
+	// received bytes, through the provider port (research D3).
+	HandleWebhook(ctx context.Context, body []byte) error
 	// CancelForOrder cancels the live payment of a cancelled order, best-effort.
 	// It is driven by module 07 after the order's transaction commits (FR-015,
 	// research D9).
