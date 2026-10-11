@@ -94,17 +94,24 @@ func (f *fakeProvider) VerifyWebhook(context.Context, []byte) (dto.WebhookInput,
 // the order's reads from its fixture.
 type fakeRepo struct {
 	appinterface.PaymentRepository
-	created    []*model.Payment
-	events     []*model.PaymentEvent
-	live       *model.Payment
-	liveErr    error
-	payments   []model.Payment
-	byOrderErr error
-	createErr  error
+	created []*model.Payment
+	events  []*model.PaymentEvent
+	live    *model.Payment
+	liveErr error
+	// liveAfterCreate models a concurrent start winning the insert race: the
+	// first Create is refused, and the winner's live row is committed, so the
+	// next FindLiveByOrder answers it (FR-005, Constitution II).
+	liveAfterCreate *model.Payment
+	payments        []model.Payment
+	byOrderErr      error
+	createErr       error
 }
 
 func (f *fakeRepo) Create(_ context.Context, payment *model.Payment) error {
 	if f.createErr != nil {
+		if f.liveAfterCreate != nil {
+			f.live = f.liveAfterCreate
+		}
 		return f.createErr
 	}
 	f.created = append(f.created, payment)
@@ -292,6 +299,41 @@ func TestStartReusesTheLivePayment(t *testing.T) {
 	}
 	if h.provider.creates != 0 {
 		t.Fatalf("a repeat start must not call the provider, called %d times", h.provider.creates)
+	}
+}
+
+// FR-005, Constitution II: two concurrent starts cannot both create a live
+// payment. The storage's partial unique index refuses the second PENDING row
+// (ErrLivePaymentExists); Start recovers by re-reading the winner's live payment
+// and reusing it rather than failing, so the two starts converge on one link.
+func TestStartReusesTheLivePaymentWhenTheInsertCollides(t *testing.T) {
+	h := newHarness()
+	owner := uuid.New()
+	orderID := uuid.New()
+	h.orders.target = awaitingTarget(owner)
+	// The insert loses the race: the winner's live row is committed and the
+	// storage reports the sentinel.
+	h.repo.createErr = domainerr.ErrLivePaymentExists
+	h.repo.liveAfterCreate = &model.Payment{
+		ID:          uuid.New(),
+		OrderID:     orderID,
+		UserID:      owner,
+		Status:      constant.StatusPending,
+		CheckoutURL: "https://pay.example/winner",
+	}
+
+	view, err := h.service.Start(withActor(owner), dto.StartInput{OrderID: orderID})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if view.CheckoutURL != "https://pay.example/winner" {
+		t.Errorf("checkoutUrl = %q, want the winner's live link reused", view.CheckoutURL)
+	}
+	if len(h.repo.created) != 0 {
+		t.Fatalf("a refused insert must create nothing, created %d", len(h.repo.created))
+	}
+	if len(h.repo.events) != 0 {
+		t.Fatalf("a refused insert must write no event, wrote %d", len(h.repo.events))
 	}
 }
 

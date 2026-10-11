@@ -21,10 +21,11 @@ import (
 // This file exercises the payment adapter against a real PostgreSQL container. Its
 // centre of gravity is what the migration and the storage enforce: a payment and
 // its events round-trip, the live-by-order lookup finds only the PENDING one, a
-// duplicate order code is a retryable collision, the status filter is the
-// reconciliation queue, the provider reference is unique only when present, the
-// UNMATCHED ⇔ reason check holds, and deleting a payment takes its events with it
-// (quickstart scenario 6, FR-004, FR-009, FR-011, FR-012, FR-018, FR-022).
+// duplicate order code is a retryable collision, a second live payment for one
+// order is refused, the status filter is the reconciliation queue, the provider
+// reference is unique only when present, the UNMATCHED ⇔ reason check holds, and
+// deleting a payment takes its events with it (quickstart scenario 6, FR-004,
+// FR-005, FR-009, FR-011, FR-012, FR-018, FR-022).
 //
 // Docker is required to run it; the file still compiles without a container so
 // `go vet -tags integration ./...` covers it.
@@ -131,6 +132,37 @@ func TestCreateRefusesADuplicateOrderCode(t *testing.T) {
 	err := f.repo.Create(context.Background(), buildPayment(777))
 	if !errors.Is(err, domainerr.ErrOrderCodeCollision) {
 		t.Fatalf("a duplicate order code must be a collision, got %v", err)
+	}
+}
+
+// TestStorageRefusesTwoLivePaymentsForOneOrder pins FR-005 and Constitution II:
+// the partial unique index payments_live_order_key enforces at most one live
+// payment per order at the storage layer. Two PENDING rows for one order are
+// refused as a live-payment collision; a PENDING row and a terminal row for the
+// same order are allowed, because only the live state is exclusive.
+func TestStorageRefusesTwoLivePaymentsForOneOrder(t *testing.T) {
+	f := newPaymentFixture(t)
+	ctx := context.Background()
+	orderID := uuid.New()
+	now := time.Now().UTC()
+
+	first := model.NewPayment(orderID, uuid.New(), 500, 120000, "VND", "VQRIO123", 2, now)
+	if err := f.repo.Create(ctx, first); err != nil {
+		t.Fatalf("first live payment: %v", err)
+	}
+
+	second := model.NewPayment(orderID, uuid.New(), 501, 120000, "VND", "VQRIO123", 2, now)
+	if err := f.repo.Create(ctx, second); !errors.Is(err, domainerr.ErrLivePaymentExists) {
+		t.Fatalf("a second PENDING payment for one order must be a live-payment collision, got %v", err)
+	}
+
+	// Only the live state is exclusive: once the first row is terminal the same
+	// order may carry a new live payment.
+	if err := f.repo.UpdateStatus(ctx, first.ID, constant.StatusCancelled, now); err != nil {
+		t.Fatalf("cancel the first payment: %v", err)
+	}
+	if err := f.repo.Create(ctx, second); err != nil {
+		t.Fatalf("a PENDING payment beside a terminal one must be allowed, got %v", err)
 	}
 }
 

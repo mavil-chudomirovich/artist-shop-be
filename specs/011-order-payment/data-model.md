@@ -37,6 +37,7 @@ the provider said, and where that leaves both.
 |---|---|---|---|
 | `payments_pkey` | primary key on `id` | — | A payment is addressable |
 | `payments_order_code_key` | unique on `order_code` | FR-022, research D4 | A collision must be retried by the module, not silently stored twice; PayOS identifies by this code |
+| `payments_live_order_key` | partial unique index on `order_id` WHERE `status = 'PENDING'` | FR-005 | At most one **live** payment per order: two concurrent starts converge on one, so a customer cannot end up with two live links (and pay twice). Terminal rows are not constrained |
 | `payments_currency_ck` | check: `currency ~ '^[A-Z]{3}$'` | FR-004 | The currency is unambiguous |
 | `payments_amount_ck` | check: `amount > 0` | FR-004, research D13 | A payment is for a positive amount |
 | `payments_order_version_ck` | check: `order_version >= 1` | FR-012 | The version is the order's positive counter |

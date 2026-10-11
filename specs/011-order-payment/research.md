@@ -79,6 +79,11 @@ This mirrors ADR 015 §5 D4 ("số ngẫu nhiên int53 + thử lại khi trùng,
 **Alternatives considered**: A sequential code — rejected: it leaks order volume and invites guessing.
 Sending the order UUID — impossible: PayOS requires an integer.
 
+**On one live payment per order**: a **partial unique index** on `payments (order_id) WHERE status =
+'PENDING'` enforces FR-005 at the storage layer, so two concurrent starts converge on one live payment
+rather than each creating a link (which would let the customer pay twice). The losing start re-reads and
+reuses the winner (research D7's orphan-link window still applies to the link it created).
+
 ## D5: The `OrderPayment` contract against module 07
 
 **Decision**: A new interface in `internal/contracts/order.go`, provided by module 07:

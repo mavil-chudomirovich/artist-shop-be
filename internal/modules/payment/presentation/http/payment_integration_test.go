@@ -33,8 +33,9 @@ import (
 // provider.
 //
 // US1's centre of gravity is SC-001: starting a payment for an awaiting-payment
-// order writes exactly one row whose amount equals the order total, and a second
-// start adds no row. US2's is SC-002: a verified webhook applies the sale once, a
+// order writes exactly one row whose amount equals the order total, a second
+// start adds no row, and two concurrent starts still leave one live row (FR-005,
+// Constitution II). US2's is SC-002: a verified webhook applies the sale once, a
 // replay changes nothing, and two concurrent confirmations apply it once.
 //
 // Docker is required to run it; the file still compiles without a container so
@@ -314,6 +315,54 @@ func TestStartPaymentWritesOneRowAndReusesTheLink(t *testing.T) {
 	}
 	if body.Data.Status != "PAID" {
 		t.Fatalf("terminal read status = %q, want PAID", body.Data.Status)
+	}
+}
+
+// FR-005, Constitution II: two concurrent starts must converge on one live
+// payment. Both requests read no live payment before either inserts, so the
+// storage's partial unique index payments_live_order_key refuses the second
+// PENDING row; the loser re-reads and reuses the winner's link, leaving exactly
+// one PENDING row for the order.
+func TestStartPaymentConcurrentStartsWriteOneLiveRow(t *testing.T) {
+	orderID := uuid.New()
+	target := contracts.OrderPaymentTarget{
+		UserID:           testCustomerID,
+		Amount:           120000,
+		Currency:         "VND",
+		Version:          2,
+		AwaitingPayment:  true,
+		PaymentExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	pool, handler := newPaymentIntegrationFixture(t, target)
+
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	for i := range codes {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			codes[idx] = perform(handler, http.MethodPost, paymentPath(orderID), "customer-token").Code
+		}(i)
+	}
+	wg.Wait()
+
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("concurrent start %d status = %d, want 200 (the loser reuses the winner's link)", i, code)
+		}
+	}
+
+	var live, total int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FILTER (WHERE status = 'PENDING'), count(*)
+		FROM payments WHERE order_id = $1`, orderID).Scan(&live, &total); err != nil {
+		t.Fatalf("count payments: %v", err)
+	}
+	if live != 1 {
+		t.Fatalf("concurrent starts left %d live payments, want exactly 1", live)
+	}
+	if total != 1 {
+		t.Fatalf("concurrent starts wrote %d payments, want exactly 1", total)
 	}
 }
 

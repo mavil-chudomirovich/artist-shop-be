@@ -71,6 +71,14 @@ CREATE UNIQUE INDEX payments_order_code_key ON payments (order_code);
 -- partial so several rows may hold no reference until one confirms.
 CREATE UNIQUE INDEX payments_provider_reference_key
     ON payments (provider_reference) WHERE provider_reference IS NOT NULL;
+-- FR-005, Constitution II: a repeat start reuses the order's live payment, so at
+-- most one PENDING row may exist per order. Two concurrent starts can both miss
+-- the application's live-payment check and each create a link; this partial
+-- unique index refuses the second PENDING row at the storage layer, so the order
+-- never holds two live links a customer could pay twice. It is partial because
+-- only the live state is exclusive: an order may keep many terminal rows.
+CREATE UNIQUE INDEX payments_live_order_key
+    ON payments (order_id) WHERE status = 'PENDING';
 -- FR-017: the customer reads their order's payments.
 CREATE INDEX payments_order_idx ON payments (order_id, created_at, id);
 -- FR-018: the operator's reconciliation queue filters by status.
@@ -111,6 +119,7 @@ DROP TABLE payment_events;
 DROP INDEX payments_status_idx;
 DROP INDEX payments_order_idx;
 DROP INDEX payments_provider_reference_key;
+DROP INDEX IF EXISTS payments_live_order_key;
 DROP INDEX payments_order_code_key;
 ALTER TABLE payments DROP CONSTRAINT payments_unmatched_ck;
 ALTER TABLE payments DROP CONSTRAINT payments_order_version_ck;

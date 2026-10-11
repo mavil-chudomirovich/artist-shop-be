@@ -29,6 +29,12 @@ const table = "payments"
 // PostgreSQL error (research D4).
 const orderCodeKey = "payments_order_code_key"
 
+// livePaymentKey is the partial unique index that enforces at most one live
+// payment per order. A concurrent start that lost the insert race is reported as
+// domainerr.ErrLivePaymentExists, so the use case reuses the winner's payment
+// instead of failing (FR-005, Constitution II).
+const livePaymentKey = "payments_live_order_key"
+
 // uniqueViolationCode is reported for a unique-index rejection (23505).
 const uniqueViolationCode = "23505"
 
@@ -91,7 +97,10 @@ func (r *PaymentRepository) querier(ctx context.Context) database.Querier {
 
 // Create inserts a payment. The unique index on order_code is what refuses a
 // collision, reported as domainerr.ErrOrderCodeCollision so the caller can retry
-// with a fresh code; nullable columns are stored as NULL rather than the empty
+// with a fresh code; the partial unique index on the live PENDING row is what
+// refuses a second live payment for an order, reported as
+// domainerr.ErrLivePaymentExists so the caller reuses the winner's (FR-005,
+// Constitution II). Nullable columns are stored as NULL rather than the empty
 // string the model carries, so the partial unique index on provider_reference is
 // not fooled by an empty value (research D4, D7).
 func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) error {
@@ -122,6 +131,9 @@ func (r *PaymentRepository) Create(ctx context.Context, payment *model.Payment) 
 	); err != nil {
 		if isUniqueViolation(err, orderCodeKey) {
 			return domainerr.ErrOrderCodeCollision
+		}
+		if isUniqueViolation(err, livePaymentKey) {
+			return domainerr.ErrLivePaymentExists
 		}
 		return fmt.Errorf("create payment: %w", err)
 	}

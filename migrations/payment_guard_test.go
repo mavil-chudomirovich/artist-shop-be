@@ -57,6 +57,11 @@ func TestPaymentMigrationCreatesAndDropsEveryConstraint(t *testing.T) {
 			down:     "DROP INDEX payments_provider_reference_key",
 		},
 		{
+			name:     "unique live payment per order",
+			upNeedle: "CREATE UNIQUE INDEX payments_live_order_key",
+			down:     "DROP INDEX IF EXISTS payments_live_order_key",
+		},
+		{
 			name:     "order read index",
 			upNeedle: "CREATE INDEX payments_order_idx",
 			down:     "DROP INDEX payments_order_idx",
@@ -180,6 +185,30 @@ func TestPaymentMigrationPartiallyUniquesTheProviderReference(t *testing.T) {
 	}
 	if !strings.Contains(window, "WHERE provider_reference IS NOT NULL") {
 		t.Errorf("%s: the provider reference key must be partial (WHERE provider_reference IS NOT NULL)", paymentMigration)
+	}
+}
+
+// TestPaymentMigrationPartiallyUniquesTheLivePaymentPerOrder pins FR-005 and
+// Constitution II: at most one live payment per order, enforced by the storage.
+// Two PENDING rows for one order are refused; a PENDING row and a terminal row
+// for the same order are allowed, because the unique index is partial on the live
+// state.
+func TestPaymentMigrationPartiallyUniquesTheLivePaymentPerOrder(t *testing.T) {
+	up, _ := readMigration(t, paymentMigration)
+
+	index := strings.Index(up, "CREATE UNIQUE INDEX payments_live_order_key")
+	if index < 0 {
+		t.Fatalf("%s: Up section does not declare the live-payment key", paymentMigration)
+	}
+	window := up[index:]
+	if end := strings.Index(window, ";"); end >= 0 {
+		window = window[:end+1]
+	}
+	if !strings.Contains(window, "ON payments (order_id)") {
+		t.Errorf("%s: the live-payment key must be on payments (order_id)", paymentMigration)
+	}
+	if !strings.Contains(window, "WHERE status = 'PENDING'") {
+		t.Errorf("%s: the live-payment key must be partial (WHERE status = 'PENDING')", paymentMigration)
 	}
 }
 

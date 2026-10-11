@@ -121,7 +121,9 @@ func (s *Service) record(ctx context.Context, action string, actor appinterface.
 // belongs to someone else (answered as not-found, so the route never confirms
 // another customer's order). When a live payment already exists it is reused and
 // the same link is returned; a live payment whose link can no longer be returned
-// is refused so an operator reconciles it.
+// is refused so an operator reconciles it. Two concurrent starts converge on one
+// live payment: the storage's partial unique index refuses the second PENDING row
+// (ErrLivePaymentExists) and the loser re-reads and reuses the winner's.
 //
 // The provider is called BEFORE the transaction that writes the row, so the
 // payment's own transaction stays short and never spans the outbound HTTP call: a
@@ -157,10 +159,7 @@ func (s *Service) Start(ctx context.Context, in dto.StartInput) (dto.PaymentView
 	live, err := s.Payments.FindLiveByOrder(ctx, in.OrderID)
 	switch {
 	case err == nil:
-		if live.CheckoutURL == "" {
-			return dto.PaymentView{}, domainerr.ErrAlreadyLive
-		}
-		return s.Mapper.Payment(*live), nil
+		return s.reuseLive(live)
 	case !errors.Is(err, domainerr.ErrNotFound):
 		return dto.PaymentView{}, err
 	}
@@ -202,6 +201,17 @@ func (s *Service) Start(ctx context.Context, in dto.StartInput) (dto.PaymentView
 			return s.Payments.CreateEvent(txCtx, model.NewPaymentEvent(
 				payment.ID, constant.AuditPaymentCreated, &actorID, description, s.now()))
 		})
+		if errors.Is(err, domainerr.ErrLivePaymentExists) {
+			// A concurrent start created the order's live payment between our
+			// read and our insert. The partial unique index refused our second
+			// row; reuse the winner's live payment instead of failing, so two
+			// concurrent starts converge on one link (FR-005, Constitution II).
+			live, findErr := s.Payments.FindLiveByOrder(ctx, in.OrderID)
+			if findErr != nil {
+				return dto.PaymentView{}, findErr
+			}
+			return s.reuseLive(live)
+		}
 		if errors.Is(err, domainerr.ErrOrderCodeCollision) {
 			continue
 		}
@@ -214,6 +224,17 @@ func (s *Service) Start(ctx context.Context, in dto.StartInput) (dto.PaymentView
 
 	// Every attempt collided; the caller's retry is the code's own fallback.
 	return dto.PaymentView{}, domainerr.ErrOrderCodeCollision
+}
+
+// reuseLive returns a live payment as the customer's view, refusing one whose
+// checkout URL can no longer be returned so an operator reconciles it instead of
+// a second link being made (FR-005). It is shared by the pre-check and by the
+// recovery from a concurrent start that won the insert race.
+func (s *Service) reuseLive(live *model.Payment) (dto.PaymentView, error) {
+	if live.CheckoutURL == "" {
+		return dto.PaymentView{}, domainerr.ErrAlreadyLive
+	}
+	return s.Mapper.Payment(*live), nil
 }
 
 // Read returns the caller's most recent payment for their order, in any state

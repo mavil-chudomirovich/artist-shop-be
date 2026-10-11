@@ -64,6 +64,12 @@ var (
 	// belongs to another payment. The caller retries with a fresh code, so a
 	// collision never surfaces to a client (research D4).
 	ErrOrderCodeCollision = errors.New("payment order code collision")
+	// ErrLivePaymentExists is returned when the storage's partial unique index
+	// refuses a second live payment for an order, because a concurrent start
+	// already created one. The caller reuses that live payment rather than
+	// creating a second link, so two concurrent starts converge on one
+	// (FR-005, Constitution II).
+	ErrLivePaymentExists = errors.New("a live payment already exists for the order")
 )
 
 // StateTransitionError carries the move that was refused and the state that
