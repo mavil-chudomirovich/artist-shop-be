@@ -218,7 +218,7 @@ func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 	f := newLifecycleFixture(order)
 
 	const event = "payment-event-1"
-	if err := f.svc.MarkPaid(context.Background(), order.ID, event); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), order.ID, event, order.Version); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 
 	// Replaying the same payment event is a no-op success: the sale is already
 	// applied and must not be applied again (FR-014, idempotent-success).
-	if err := f.svc.MarkPaid(context.Background(), order.ID, event); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), order.ID, event, order.Version); err != nil {
 		t.Fatalf("replaying the payment must be a no-op success, got %v", err)
 	}
 	if len(f.reservations.sales) != 2 {
@@ -268,7 +268,7 @@ func TestMarkPaidIsANoOpOnceTheOrderIsPastAwaitingPayment(t *testing.T) {
 		order.Status = status
 		f := newLifecycleFixture(order)
 
-		if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1"); err != nil {
+		if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", order.Version); err != nil {
 			t.Fatalf("status %s: MarkPaid must be a no-op success, got %v", status, err)
 		}
 		if got := order.Status; got != status {
@@ -290,7 +290,7 @@ func TestMarkPaidRefusesACancelledOrder(t *testing.T) {
 	order.Status = constant.StatusCancelled
 	f := newLifecycleFixture(order)
 
-	err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1")
+	err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", order.Version)
 	var refusal *domainerr.StateTransitionError
 	if !errors.As(err, &refusal) {
 		t.Fatalf("a payment after cancellation must be refused, got %v", err)
@@ -303,6 +303,35 @@ func TestMarkPaidRefusesACancelledOrder(t *testing.T) {
 	}
 	if len(f.orders.updates) != 0 {
 		t.Fatalf("a refused payment must persist nothing, got %+v", f.orders.updates)
+	}
+}
+
+// FR-012, research D5: a confirmation whose expected version is not the order's
+// current content version is refused naming both versions, and the order is left
+// untouched — a link created before an edit and re-confirmation is never applied
+// to content it does not describe.
+func TestMarkPaidRefusesAStaleVersion(t *testing.T) {
+	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
+	order.Version = 3
+	f := newLifecycleFixture(order)
+
+	err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", 2)
+	var refusal *domainerr.StalePaymentError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("a stale confirmation must be refused, got %v", err)
+	}
+	if !errors.Is(err, domainerr.ErrStalePayment) {
+		t.Fatalf("the refusal must map to ErrStalePayment, got %v", err)
+	}
+	if refusal.CurrentVersion != 3 || refusal.ExpectedVersion != 2 {
+		t.Fatalf("the refusal must name both versions, got %+v", refusal)
+	}
+	if order.Status != constant.StatusPaymentPending {
+		t.Fatalf("a refused confirmation must leave the order untouched, got %s", order.Status)
+	}
+	if len(f.reservations.sales) != 0 || len(f.orders.updates) != 0 {
+		t.Fatalf("a refused confirmation must sell and persist nothing, got sales=%d updates=%d",
+			len(f.reservations.sales), len(f.orders.updates))
 	}
 }
 

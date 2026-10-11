@@ -35,6 +35,7 @@ type Config struct {
 	Media      MediaConfig   `envPrefix:"MEDIA_"`
 	User       UserConfig    `envPrefix:"USER_"`
 	Swagger    SwaggerConfig `envPrefix:"SWAGGER_"`
+	Payment    PaymentConfig
 
 	// MaxBodyBytes is the pipeline's own ceiling on any request body. It is a
 	// coarse early refusal: the wrapper runs before routing, so a route cannot lift
@@ -184,6 +185,37 @@ type UserConfig struct {
 // offline review either way.
 type SwaggerConfig struct {
 	Enabled bool `env:"ENABLED" envDefault:"false"`
+}
+
+// PaymentConfig controls the PayOS online payment integration (module 08).
+//
+// It is intentionally absent from Validate and ValidateForAPI, and empty PayOS_*
+// values are a supported state, not a misconfiguration: the payment module runs
+// with a log-only provider when they are empty, so one-off commands (migrate,
+// seed) and a developer without credentials can still run every non-provider
+// path. The real values live in .env (git-ignored) or the platform's secret store
+// and are never committed (Constitution V).
+type PaymentConfig struct {
+	// PayOSClientID is the PayOS merchant client id, sent as x-client-id.
+	PayOSClientID string `env:"PAYOS_CLIENT_ID"`
+	// PayOSAPIKey is the PayOS merchant API key, sent as x-api-key.
+	PayOSAPIKey string `env:"PAYOS_API_KEY"`
+	// PayOSChecksumKey is the channel checksum key used to sign a create-link
+	// request and verify a webhook signature.
+	PayOSChecksumKey string `env:"PAYOS_CHECKSUM_KEY"`
+	// PayOSBaseURL is the PayOS Merchant API base URL.
+	PayOSBaseURL string `env:"PAYOS_BASE_URL" envDefault:"https://api-merchant.payos.vn"`
+	// ReturnURL is where PayOS redirects the customer after a payment.
+	ReturnURL string `env:"PAYMENT_RETURN_URL"`
+	// CancelURL is where PayOS redirects the customer when they cancel.
+	CancelURL string `env:"PAYMENT_CANCEL_URL"`
+}
+
+// IsConfigured reports whether the PayOS credentials are present. Secrets are
+// never echoed: callers only branch on the boolean, choosing the log-only provider
+// when it is false.
+func (p PaymentConfig) IsConfigured() bool {
+	return p.PayOSClientID != "" && p.PayOSAPIKey != "" && p.PayOSChecksumKey != ""
 }
 
 // LoadDotenv loads a local .env file when present for non-production

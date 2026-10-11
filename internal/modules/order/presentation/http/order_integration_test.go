@@ -461,7 +461,7 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 
 	// FR-014: paying turns the hold into a sale exactly once; replaying the
 	// payment sells nothing a second time.
-	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1", 2); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 	if got := physicalStock(t, f.pool, product); got != 8 {
@@ -470,7 +470,7 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 	if got := heldQuantity(t, f.pool, product); got != 0 {
 		t.Fatalf("paying must clear the hold, got %d held", got)
 	}
-	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1", 2); err != nil {
 		t.Fatalf("a replayed payment must be a no-op success, got %v", err)
 	}
 	if got := physicalStock(t, f.pool, product); got != 8 {
@@ -715,7 +715,7 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 
 	// The paid transition has no HTTP surface — module 08 drives it — so it is
 	// driven directly, exactly as the quickstart says (scenario 5a).
-	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-1", 2); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 
@@ -917,7 +917,7 @@ func TestTransferHandsTheOrderToAnotherAccountAgainstPostgres(t *testing.T) {
 	// The paid transition has no HTTP surface — module 08 drives it — so it is
 	// driven directly, exactly as the quickstart says (scenario 5a). Paying turns
 	// the hold into a sale: physical stock fell and the hold cleared.
-	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-transfer"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-transfer", 2); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 	physicalAfterPaid := physicalStock(t, f.pool, product)

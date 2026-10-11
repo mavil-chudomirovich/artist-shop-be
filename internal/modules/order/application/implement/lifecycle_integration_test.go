@@ -235,7 +235,7 @@ func TestConfirmingPaymentSellsTheHeldQuantityOnce(t *testing.T) {
 		t.Fatalf("held = %d, want 2 before payment", got)
 	}
 
-	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", order.Version); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 	if got := f.statusOf(t, order.ID); got != constant.StatusPaid {
@@ -250,7 +250,7 @@ func TestConfirmingPaymentSellsTheHeldQuantityOnce(t *testing.T) {
 
 	// Replaying the same payment event is a no-op success: the held quantity is
 	// sold once, not twice (FR-014, idempotent-success).
-	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", order.Version); err != nil {
 		t.Fatalf("replaying the payment must be a no-op success, got %v", err)
 	}
 	if got := f.physicalStock(t, product); got != 8 {

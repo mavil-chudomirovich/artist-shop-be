@@ -67,6 +67,15 @@ var (
 	// An order always carries at least one line; the customer cancels instead
 	// (FR-015). It maps to ORDER_EMPTY (409).
 	ErrEmptyOrder = errors.New("order is empty")
+	// ErrStalePayment is returned when a confirmed payment asks for the paid
+	// transition of content the order no longer carries: the order's content
+	// version differs from the version the payment was created for, because the
+	// order was edited and re-confirmed after the payment link was made. It is a
+	// distinct refusal from a state refusal (ErrStateTransitionInvalid) so module
+	// 08 can tell a superseded confirmation apart and never apply it (FR-009,
+	// FR-012, research D5). It maps to ORDER_STATE_TRANSITION_INVALID (409) at the
+	// order level; the payment module records it as UNMATCHED.
+	ErrStalePayment = errors.New("order payment is stale")
 )
 
 // ItemNotPurchasableError carries the product that cannot be bought, so the
@@ -202,4 +211,32 @@ func (e *InvalidValueError) Unwrap() error { return ErrInvalidValue }
 // InvalidValue builds the typed rejection for one member.
 func InvalidValue(field, issue string) error {
 	return &InvalidValueError{Field: field, Issue: issue}
+}
+
+// StalePaymentError carries the order's current content version and the version
+// the confirmation expected, so the refusal can name the mismatch. It is the
+// single typed carrier for ErrStalePayment (FR-009, FR-012, research D5).
+type StalePaymentError struct {
+	// CurrentVersion is the order's content version now.
+	CurrentVersion int64
+	// ExpectedVersion is the version the confirmed payment was created for.
+	ExpectedVersion int64
+}
+
+// Error implements the error interface. It names both versions, which is what the
+// reader needs to see that the confirmation belongs to superseded content.
+func (e *StalePaymentError) Error() string {
+	return fmt.Sprintf("%s: order is at version %d, confirmation expects %d",
+		ErrStalePayment, e.CurrentVersion, e.ExpectedVersion)
+}
+
+// Is makes errors.Is(err, ErrStalePayment) match this error.
+func (e *StalePaymentError) Is(target error) bool { return target == ErrStalePayment }
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *StalePaymentError) Unwrap() error { return ErrStalePayment }
+
+// StalePayment builds the typed refusal naming the two versions.
+func StalePayment(current, expected int64) error {
+	return &StalePaymentError{CurrentVersion: current, ExpectedVersion: expected}
 }

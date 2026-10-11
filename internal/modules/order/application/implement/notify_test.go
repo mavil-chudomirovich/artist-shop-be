@@ -167,7 +167,7 @@ func TestMarkPaidEmailsTheCustomer(t *testing.T) {
 	notifier := &fakeNotifier{}
 	enableNotifications(f.svc, notifier, owner)
 
-	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1"); err != nil {
+	if err := f.svc.MarkPaid(context.Background(), order.ID, "payment-event-1", order.Version); err != nil {
 		t.Fatalf("MarkPaid: %v", err)
 	}
 

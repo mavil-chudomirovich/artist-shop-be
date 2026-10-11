@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/mavil-chudomirovich/artist-shop-be/docs/swagger"
@@ -382,8 +383,13 @@ func run() error {
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
 		Notifier:     orderNotifier,
-		ArtistEmail:  cfg.Auth.AdminEmail,
-		Mapper:       ordermapper.New(),
+		// The payment module (08) supplies the real PaymentCancellation adapter
+		// when its module is mounted; until then the port is a deliberate no-op,
+		// so cancelling an order succeeds and nothing is asked of a payment
+		// module that does not exist yet (research D9).
+		Cancellations: noopPaymentCancellation{},
+		ArtistEmail:   cfg.Auth.AdminEmail,
+		Mapper:        ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger)
 
@@ -491,3 +497,14 @@ type wallClock struct{}
 
 // Now returns the current instant in UTC.
 func (wallClock) Now() time.Time { return time.Now().UTC() }
+
+// noopPaymentCancellation stands in for module 08's contracts.PaymentCancellation
+// adapter until the payment module is mounted at this composition root. It is a
+// deliberate no-op: the order's cancellation still succeeds, and nothing is asked
+// of a payment module that does not exist yet. The real adapter replaces it when
+// module 08 is wired (research D9).
+type noopPaymentCancellation struct{}
+
+// CancelForOrder does nothing. The order module's own evidence that a payment
+// exists is the payment module's, which is not mounted here yet.
+func (noopPaymentCancellation) CancelForOrder(context.Context, uuid.UUID) {}

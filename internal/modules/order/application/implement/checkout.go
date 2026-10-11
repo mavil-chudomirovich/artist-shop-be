@@ -68,6 +68,14 @@ type Service struct {
 	// after the transaction commits, so it never fails a business operation
 	// (FR-019 to FR-021, research D9). A nil notifier is tolerated.
 	Notifier appinterface.Notifier
+	// Cancellations tells the payment module (08) that an order was cancelled, so
+	// the provider payment request it created is cancelled too. It is the
+	// contract module 08 provides at the composition root (research D9). The call
+	// is made after the transaction commits and is best-effort: a nil port is a
+	// no-op, and a provider failure is logged by the payment module and never
+	// fails the cancellation. A nil port is tolerated so a construction without
+	// module 08 wired (or a read-only one) cannot panic.
+	Cancellations appinterface.PaymentCancellation
 	// ArtistEmail is the shop operator's address, the recipient of the
 	// confirmation-needed note (research D9).
 	ArtistEmail string

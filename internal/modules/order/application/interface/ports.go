@@ -50,6 +50,14 @@ type CustomerLookupService = contracts.CustomerLookupService
 // by module 01 at the composition root (research D8).
 type AccountLookup = contracts.AccountLookup
 
+// PaymentCancellation is the cross-module contract the order consumes to tell the
+// payment module (08) that an order was cancelled, so the provider payment request
+// it created is cancelled too. It is declared in internal/contracts and provided by
+// module 08's adapter at the composition root (research D9). It is best-effort: a
+// nil adapter is a no-op, and a provider failure is logged by the payment module
+// and never fails the order's cancellation.
+type PaymentCancellation = contracts.PaymentCancellation
+
 // UnitOfWork runs a function inside a single database transaction. The
 // application layer owns every transaction boundary; repositories never open one
 // themselves (Constitution I). A checkout, a transition and a transfer each run
@@ -106,8 +114,12 @@ type OrderService interface {
 	Checkout(ctx context.Context, in dto.CheckoutInput) (dto.OrderView, error)
 
 	// MarkPaid turns an awaiting-payment order into a paid one, consuming its
-	// hold into a sale exactly once (FR-014, research D13).
-	MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string) error
+	// hold into a sale exactly once, only when the order still carries the
+	// content version the confirmation was created for (FR-014, research D13 of
+	// 009, research D5). A version that no longer matches is refused with
+	// ErrStalePayment, so a confirmation for superseded content is never applied
+	// (FR-012).
+	MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string, expectedVersion int64) error
 	// Cancel cancels an order before it is paid — while it awaits the artist's
 	// confirmation or payment — and returns any held goods exactly once (FR-015,
 	// FR-019).

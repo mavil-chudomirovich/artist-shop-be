@@ -37,7 +37,15 @@ import (
 // second sale, so replaying the same payment sells once (FR-014). A payment
 // arriving after cancellation is a real anomaly, not a replay, so it is refused
 // by the state machine naming the cancelled state (FR-009, FR-011).
-func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string) error {
+//
+// The transition is version-aware: a confirmation whose expectedVersion is not the
+// order's current content version is refused with ErrStalePayment naming both
+// versions, so a link created before the customer edited the order and the artist
+// re-confirmed it is never applied to content it does not describe (FR-012,
+// research D5). The check runs after the replay short-circuit, because an order
+// that is already paid carries the version the confirmation was made for and must
+// still answer a replay with a no-op success.
+func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string, expectedVersion int64) error {
 	var paid *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, orderID)
@@ -49,6 +57,12 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 			// The sale is already made; the repeat is a success, not an error,
 			// so a retrying caller stops retrying (FR-014).
 			return nil
+		}
+		// A confirmation for content the order no longer carries is refused
+		// before the state move, so a superseded link is never applied (FR-012,
+		// research D5).
+		if order.Version != expectedVersion {
+			return domainerr.StalePayment(order.Version, expectedVersion)
 		}
 		// Only PAYMENT_PENDING reaches the edge and transitions; a cancelled
 		// order is refused by the state machine naming the current state.
@@ -106,6 +120,15 @@ func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 		return nil
 	}); err != nil {
 		return err
+	}
+	// The payment module is told the order was cancelled, so the provider payment
+	// request it created is cancelled too. Called after commit, best-effort: a nil
+	// port is a no-op, and a provider failure is logged by the payment module and
+	// never fails the cancellation (FR-015, research D9). This one call site
+	// covers both the customer's CancelMine and the expiry sweep, which both drive
+	// this use case.
+	if s.Cancellations != nil {
+		s.Cancellations.CancelForOrder(ctx, orderID)
 	}
 	// The customer is told the order was cancelled. Sent after commit,
 	// best-effort (FR-020, FR-021, research D9). This covers both the customer's
