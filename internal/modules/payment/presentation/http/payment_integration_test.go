@@ -59,7 +59,9 @@ func (stubOrderPayment) MarkPaid(context.Context, uuid.UUID, string, int64) erro
 // recordingOrderPayment answers the OrderPayment contract and records the paid
 // transition it was asked to drive, so US2 can prove the sale is applied once even
 // under concurrent confirmations. Its own state stands in for module 07's order
-// and module 05's stock: driving MarkPaid twice would be two sales.
+// and module 05's stock: driving MarkPaid twice would be two sales. A markErr
+// stands in for module 07's version/state refusal (US3), so a stale or late
+// confirmation can be driven without a live order.
 type recordingOrderPayment struct {
 	target contracts.OrderPaymentTarget
 
@@ -67,6 +69,7 @@ type recordingOrderPayment struct {
 	markPaidCalls int
 	lastSource    string
 	lastVersion   int64
+	markErr       error
 }
 
 func (o *recordingOrderPayment) PaymentTarget(context.Context, uuid.UUID) (contracts.OrderPaymentTarget, error) {
@@ -79,7 +82,7 @@ func (o *recordingOrderPayment) MarkPaid(_ context.Context, _ uuid.UUID, source 
 	o.markPaidCalls++
 	o.lastSource = source
 	o.lastVersion = version
-	return nil
+	return o.markErr
 }
 
 // calls returns how many times the paid transition was driven, and with what.
@@ -209,6 +212,20 @@ func appliedEvents(t *testing.T, pool *pgxpool.Pool, orderCode int64) int {
 		JOIN payments p ON p.id = e.payment_id
 		WHERE p.order_code = $1 AND e.action = 'PAYMENT_APPLIED'`, orderCode).Scan(&count); err != nil {
 		t.Fatalf("count PAYMENT_APPLIED events: %v", err)
+	}
+	return count
+}
+
+// unmatchedEvents counts the PAYMENT_UNMATCHED rows the order code's payment
+// carries — the operator's reconciliation trail (FR-014, research D8).
+func unmatchedEvents(t *testing.T, pool *pgxpool.Pool, orderCode int64) int {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM payment_events e
+		JOIN payments p ON p.id = e.payment_id
+		WHERE p.order_code = $1 AND e.action = 'PAYMENT_UNMATCHED'`, orderCode).Scan(&count); err != nil {
+		t.Fatalf("count PAYMENT_UNMATCHED events: %v", err)
 	}
 	return count
 }
@@ -379,5 +396,60 @@ func TestWebhookConcurrentConfirmationsApplyOnce(t *testing.T) {
 	}
 	if calls, _, _ := orders.calls(); calls != 1 {
 		t.Fatalf("concurrent confirmations drove the sale %d times, want exactly 1", calls)
+	}
+}
+
+// SC-003: a stale confirmation — the order was edited and re-confirmed after the
+// link was made, so its content version moved — is recorded UNMATCHED with a
+// reason and never applied: the order is not paid and the goods stay unsold. A
+// re-delivered confirmation records no duplicate (FR-012, FR-014, research D8).
+func TestWebhookRecordsAStaleConfirmationWithoutApplying(t *testing.T) {
+	const orderCode = 910003
+	orderID := uuid.New()
+	webhook := dto.WebhookInput{OrderCode: orderCode, Amount: 120000, Reference: "TF-INT-3", Currency: "VND"}
+	pool, orders, handler := newWebhookIntegrationFixture(t, webhook)
+	// The order's content changed after this payment link was made: module 07's
+	// adapter reports contracts.ErrOrderStale.
+	orders.markErr = contracts.ErrOrderStale
+	insertPendingPayment(t, pool, orderID, testCustomerID, orderCode, 120000, 2)
+
+	rec := deliverWebhook(handler)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stale confirmation status = %d, want 200 (the provider stops retrying); body: %s", rec.Code, rec.Body.String())
+	}
+
+	var status string
+	var reason *string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status, unmatched_reason FROM payments WHERE order_code = $1`, orderCode).Scan(&status, &reason); err != nil {
+		t.Fatalf("read payment: %v", err)
+	}
+	if status != "UNMATCHED" {
+		t.Fatalf("status = %q, want UNMATCHED", status)
+	}
+	if reason == nil || *reason == "" {
+		t.Fatalf("unmatched_reason = %v, want a reason naming the mismatch", reason)
+	}
+	if got := appliedEvents(t, pool, orderCode); got != 0 {
+		t.Fatalf("PAYMENT_APPLIED events = %d, want none (the order is untouched)", got)
+	}
+	if got := unmatchedEvents(t, pool, orderCode); got != 1 {
+		t.Fatalf("PAYMENT_UNMATCHED events = %d, want exactly 1", got)
+	}
+	// The paid transition was driven once and refused, so the goods stay unsold.
+	if calls, _, _ := orders.calls(); calls != 1 {
+		t.Fatalf("the sale was driven %d times, want once (then refused)", calls)
+	}
+
+	// A re-delivery is a no-op: still one UNMATCHED event, no second one.
+	again := deliverWebhook(handler)
+	if again.Code != http.StatusOK {
+		t.Fatalf("re-delivered stale confirmation status = %d, want 200; body: %s", again.Code, again.Body.String())
+	}
+	if got := unmatchedEvents(t, pool, orderCode); got != 1 {
+		t.Fatalf("a re-delivery wrote %d PAYMENT_UNMATCHED events, want still 1", got)
+	}
+	if calls, _, _ := orders.calls(); calls != 1 {
+		t.Fatalf("a re-delivery drove the sale %d times, want still 1", calls)
 	}
 }

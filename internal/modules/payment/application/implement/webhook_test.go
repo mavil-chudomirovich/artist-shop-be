@@ -310,3 +310,94 @@ func TestHandleWebhookRefusesAnUnknownOrderCode(t *testing.T) {
 		t.Errorf("an unknown order code opened %d transactions, want none", h.uow.calls)
 	}
 }
+
+// FR-012, research D8: a confirmation whose stored order_version differs from the
+// order's current version — the order was edited and re-confirmed after the link
+// was made — is recorded UNMATCHED and never applied. The order is left untouched
+// (the paid transition is refused, the sale is not driven) and no refund is
+// attempted; the reason names the mismatch.
+func TestHandleWebhookRecordsAStaleVersionConfirmation(t *testing.T) {
+	h := newWebhookHarness()
+	orderID := uuid.New()
+	h.repo.byCode = pendingPayment(orderID, 555, 120000, 2)
+	h.repo.locked = h.repo.byCode
+	// The order's content changed after this payment link was made: module 07's
+	// adapter reports contracts.ErrOrderStale.
+	h.orders.markErr = contracts.ErrOrderStale
+	h.provider.input = dto.WebhookInput{OrderCode: 555, Amount: 120000, Reference: "TF-STALE"}
+
+	if err := h.service.HandleWebhook(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("a stale confirmation is handled, not an error: %v", err)
+	}
+	if h.orders.markCalls != 1 {
+		t.Fatalf("the paid transition was driven %d times, want once (then refused)", h.orders.markCalls)
+	}
+	if h.repo.applyPaidCalls != 0 {
+		t.Fatal("a stale confirmation must not mark the payment PAID")
+	}
+	if len(h.repo.unmatched) != 1 || h.repo.unmatched[0] == "" {
+		t.Fatalf("unmatched reason = %v, want one non-empty reason naming the mismatch", h.repo.unmatched)
+	}
+	if len(h.repo.events) != 1 || h.repo.events[0].Action != constant.AuditPaymentUnmatched {
+		t.Fatalf("events = %+v, want one PAYMENT_UNMATCHED", h.repo.events)
+	}
+	if h.repo.events[0].ActorID != nil {
+		t.Errorf("event actor = %v, want nil (the provider is not a person)", h.repo.events[0].ActorID)
+	}
+}
+
+// FR-013, research D8: a confirmation for an order no longer awaiting payment
+// (cancelled or expired) is recorded UNMATCHED and never applied; the order is
+// left untouched.
+func TestHandleWebhookRecordsAnOrderNoLongerAwaitingPayment(t *testing.T) {
+	h := newWebhookHarness()
+	orderID := uuid.New()
+	h.repo.byCode = pendingPayment(orderID, 556, 120000, 2)
+	h.repo.locked = h.repo.byCode
+	// The order is cancelled or expired: module 07's adapter reports
+	// contracts.ErrOrderNotPayable.
+	h.orders.markErr = contracts.ErrOrderNotPayable
+	h.provider.input = dto.WebhookInput{OrderCode: 556, Amount: 120000, Reference: "TF-LATE"}
+
+	if err := h.service.HandleWebhook(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("a late confirmation is handled, not an error: %v", err)
+	}
+	if h.orders.markCalls != 1 {
+		t.Fatalf("the paid transition was driven %d times, want once (then refused)", h.orders.markCalls)
+	}
+	if h.repo.applyPaidCalls != 0 {
+		t.Fatal("a confirmation for an order not awaiting payment must not be applied")
+	}
+	if len(h.repo.unmatched) != 1 || h.repo.unmatched[0] == "" {
+		t.Fatalf("unmatched reason = %v, want one non-empty reason naming the mismatch", h.repo.unmatched)
+	}
+	if len(h.repo.events) != 1 || h.repo.events[0].Action != constant.AuditPaymentUnmatched {
+		t.Fatalf("events = %+v, want one PAYMENT_UNMATCHED", h.repo.events)
+	}
+}
+
+// FR-014, research D8: a re-delivered confirmation on an already-UNMATCHED payment
+// is a no-op success — no second reason and no second event are recorded, and the
+// paid transition is not driven.
+func TestHandleWebhookRedeliveredUnmatchedRecordsNoDuplicate(t *testing.T) {
+	h := newWebhookHarness()
+	unmatched := pendingPayment(uuid.New(), 557, 120000, 2)
+	unmatched.Status = constant.StatusUnmatched
+	unmatched.UnmatchedReason = "amount mismatch: the payment asked for 120000, the provider confirmed 99000"
+	h.repo.byCode = unmatched
+	h.repo.locked = unmatched
+	h.provider.input = dto.WebhookInput{OrderCode: 557, Amount: 120000, Reference: "TF-DUP"}
+
+	if err := h.service.HandleWebhook(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("a re-delivered UNMATCHED must be a no-op success, got %v", err)
+	}
+	if h.orders.markCalls != 0 {
+		t.Fatal("a re-delivered UNMATCHED must not drive the paid transition")
+	}
+	if h.repo.applyPaidCalls != 0 {
+		t.Fatal("a re-delivered UNMATCHED must not apply")
+	}
+	if len(h.repo.unmatched) != 0 || len(h.repo.events) != 0 {
+		t.Fatalf("a re-delivered UNMATCHED recorded a duplicate: unmatched=%v events=%v", h.repo.unmatched, h.repo.events)
+	}
+}

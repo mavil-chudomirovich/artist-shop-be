@@ -138,12 +138,12 @@ description: "Task list for Online Order Payment (module 08)"
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T035 [P] [US3] Use-case tests in `internal/modules/payment/application/implement/webhook_test.go`: a confirmation whose stored `order_version` differs from the order's current version records `UNMATCHED` and does not apply; a confirmation for an order no longer awaiting payment (cancelled or expired) records `UNMATCHED`; the order's state is untouched in both cases; and a **re-delivered** `UNMATCHED` confirmation records no duplicate (research D8)
+- [X] T035 [P] [US3] Use-case tests in `internal/modules/payment/application/implement/webhook_test.go`: a confirmation whose stored `order_version` differs from the order's current version records `UNMATCHED` and does not apply; a confirmation for an order no longer awaiting payment (cancelled or expired) records `UNMATCHED`; the order's state is untouched in both cases; and a **re-delivered** `UNMATCHED` confirmation records no duplicate (research D8)
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] In `internal/modules/payment/application/implement/webhook.go`: map the order contract's version/state refusal to a `RecordUnmatched` with a reason naming the mismatch (never applying, never refunding), recording the `PAYMENT_UNMATCHED` event **once** (a re-delivery on an already-`UNMATCHED` payment is a no-op)
-- [ ] T037 [US3] Extend `internal/modules/payment/presentation/http/payment_integration_test.go`: a stale confirmation after an edit and re-confirmation leaves the order not `PAID`, the payment `UNMATCHED` with a reason, and the goods unsold (SC-003)
+- [X] T036 [US3] In `internal/modules/payment/application/implement/webhook.go`: map the order contract's version/state refusal to a `RecordUnmatched` with a reason naming the mismatch (never applying, never refunding), recording the `PAYMENT_UNMATCHED` event **once** (a re-delivery on an already-`UNMATCHED` payment is a no-op)
+- [X] T037 [US3] Extend `internal/modules/payment/presentation/http/payment_integration_test.go`: a stale confirmation after an edit and re-confirmation leaves the order not `PAID`, the payment `UNMATCHED` with a reason, and the goods unsold (SC-003)
 
 **Checkpoint**: A superseded or late confirmation can never corrupt an order.
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/domain/model"
@@ -38,7 +39,13 @@ import (
 // the same UnitOfWork as the order's paid transition and the stock sale, so they
 // agree or none happens (FR-010, Constitution II). A mismatched amount is an
 // anomaly: recorded UNMATCHED with a reason and never applied (FR-008, D8), and
-// the callback still answers success so the provider stops retrying.
+// the callback still answers success so the provider stops retrying. A
+// version/state refusal from the order's paid transition is the same anomaly: a
+// confirmation for superseded content, or for an order no longer awaiting
+// payment, is recorded UNMATCHED with a reason, never applied, and the order is
+// left untouched — no refund is attempted (FR-012, FR-013, D8). A re-delivery on
+// an already-UNMATCHED payment is a no-op success, so no duplicate is recorded
+// (FR-014).
 func (s *Service) HandleWebhook(ctx context.Context, body []byte) error {
 	confirmed, err := s.Provider.VerifyWebhook(ctx, body)
 	if err != nil {
@@ -105,7 +112,27 @@ func (s *Service) HandleWebhook(ctx context.Context, body []byte) error {
 		// the payment's own stable reference and the version it was created for,
 		// so a superseded link is never applied (FR-009, FR-010, D5, D7).
 		if err := s.Orders.MarkPaid(txCtx, locked.OrderID, sourceReference(locked.OrderCode), locked.OrderVersion); err != nil {
-			return err
+			stale, refusal := staleConfirmation(err)
+			if !stale {
+				// An unexpected failure rolls the whole transaction back.
+				return err
+			}
+			// The confirmation belongs to superseded content, or the order is no
+			// longer awaiting payment: it is recorded for the operator and never
+			// applied. The order is left untouched and no refund is attempted
+			// (FR-012, FR-013, research D8).
+			if err := locked.RecordUnmatched(refusal.Error()); err != nil {
+				return err
+			}
+			if err := s.Payments.RecordUnmatched(txCtx, locked.ID, locked.UnmatchedReason, s.now()); err != nil {
+				return err
+			}
+			if err := s.Payments.CreateEvent(txCtx, model.NewPaymentEvent(
+				locked.ID, constant.AuditPaymentUnmatched, nil, locked.UnmatchedReason, s.now())); err != nil {
+				return err
+			}
+			recordedAction = constant.AuditPaymentUnmatched
+			return nil
 		}
 		if err := locked.Apply(confirmed.Reference); err != nil {
 			return err
@@ -140,6 +167,25 @@ func sourceReference(orderCode int64) string {
 // queue, without leaking anything beyond the two amounts (FR-008, D8).
 func unmatchedReason(stored, confirmed int64) string {
 	return fmt.Sprintf("amount mismatch: the payment asked for %d, the provider confirmed %d", stored, confirmed)
+}
+
+// staleConfirmation maps the order contract's refusal onto the payment module's
+// own ErrStaleConfirmation sentinel, so the webhook branches on a payment-module
+// error without importing module 07 (research D5, D8). Module 07's adapter already
+// translated its version/state refusal onto contracts.ErrOrderStale — the order's
+// content changed after the link was made — and contracts.ErrOrderNotPayable —
+// the order is no longer awaiting payment. A refusal that is neither is returned
+// unchanged, so an unexpected failure still propagates and rolls the transaction
+// back. The contract refusal's own message (the two versions, the current state)
+// is kept, so the unmatched reason names the mismatch for the operator (FR-012,
+// FR-013).
+func staleConfirmation(err error) (bool, error) {
+	switch {
+	case errors.Is(err, contracts.ErrOrderStale), errors.Is(err, contracts.ErrOrderNotPayable):
+		return true, fmt.Errorf("%w: %v", domainerr.ErrStaleConfirmation, err)
+	default:
+		return false, err
+	}
 }
 
 // recordWebhook writes one audit entry for a provider act. The acting account is
