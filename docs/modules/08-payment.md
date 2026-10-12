@@ -191,6 +191,8 @@ là [`frontend-guide.md`](../../specs/011-order-payment/frontend-guide.md).
 
 ## Tham chiếu
 
+- [development/payment-testing.md](../development/payment-testing.md) — chạy thử thanh toán thật (ngrok +
+  `confirm-webhook`)
 - [`specs/011-order-payment/deferred.md`](../../specs/011-order-payment/deferred.md) — các điểm cố ý hoãn
 - [decisions/019](../decisions/019-payos-payment.md) — PayOS qua thư viện chuẩn, hai hợp đồng, `orderCode`,
   áp-một-lần, "ghi nhận bất thường, không bao giờ hoàn tiền"

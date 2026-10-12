@@ -26,6 +26,7 @@ docs/
     code-hygiene.md       Checklist trước khi commit và trước PR
     migration.md          Quy tắc migration SQL
     api-testing.md        Kiểm thử endpoint bằng tay, end-to-end
+    payment-testing.md    Test thanh toán PayOS (ngrok + confirm-webhook)
     agent-workflow.md     Quy trình Spec Kit
 
   system-design/          Thiết kế
@@ -70,6 +71,7 @@ specs/NNN-*/                       Artifact Spec Kit cho từng feature
 | Trước khi commit | [development/code-hygiene.md](development/code-hygiene.md) |
 | Thêm migration SQL | [development/migration.md](development/migration.md) |
 | Kiểm thử endpoint bằng tay | [development/api-testing.md](development/api-testing.md) |
+| Test thanh toán PayOS thật | [development/payment-testing.md](development/payment-testing.md) |
 | Đang làm một feature | [development/agent-workflow.md](development/agent-workflow.md) |
 | Hiểu pattern trong dự án | [system-design/design-pattern.md](system-design/design-pattern.md) |
 | Làm hợp đồng liên module | [system-design/contract-purity.md](system-design/contract-purity.md) |
