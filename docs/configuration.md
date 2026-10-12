@@ -147,13 +147,14 @@ dòng cảnh báo ghi rõ hệ quả đó.
 | `ACCESS_TOKEN_TTL` | `15m` | ✅ > 0 | |
 | `REFRESH_TOKEN_TTL` | `1080h` (45 ngày) | ✅ > 0 | |
 
-### Auth — OTP
+### Auth — OTP & đăng ký
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `OTP_TTL` | `15m` | ✅ > 0 | |
-| `OTP_MAX_ATTEMPTS` | `3` | ✅ > 0 | Số lần sai trước khi khoá mã |
+| `OTP_TTL` | `5m` | ✅ > 0 | Hạn dùng của mã xác nhận |
+| `OTP_MAX_ATTEMPTS` | `5` | ✅ > 0 | Số lần sai trước khi khoá mã |
 | `OTP_BLOCK_TTL` | `60s` | | Thời gian khoá mã |
 | `OTP_RESEND_COOLDOWN` | `60s` | | Thời gian chờ giữa 2 lần gửi lại |
+| `PENDING_REGISTRATION_TTL` | `30m` | ✅ > 0 | Hạn sống của đăng ký tạm (chưa xác thực) trong Redis |
 
 ### Auth — reset mật khẩu
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
@@ -256,7 +257,7 @@ Sau khi lấy đủ giá trị:
 | Cần xác minh | Cách kiểm | Đáp án đúng |
 |---|---|---|
 | Upload avatar thật thành công và ảnh được thu nhỏ | `curl -X POST $BASE/users/me/avatar -H "Authorization: Bearer $ACCESS" -F "file=@avatar.jpg"` | `200`, và `data.avatar.width` **≤ 512** |
-| Thư xác nhận tới hộp thư thật | Đăng ký một địa chỉ bạn sở hữu, rồi đọc hộp thư | Mã xác nhận tới; verify-email trả `200` |
+| Thư xác nhận tới hộp thư thật | Đăng ký một địa chỉ bạn sở hữu, rồi đọc hộp thư | Mã xác nhận tới; `register/verify-otp` trả `200` |
 
 Cách phân biệt **lỗi cấu hình** với **sự cố provider**: trường `classification` trong dòng
 log phân loại. Cả hai đều không chứa câu chữ của provider hay credential. Trường hợp media

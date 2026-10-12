@@ -228,14 +228,14 @@ func TestTheNewFailureDiagnosticsCannotLeakACredential(t *testing.T) {
 		// The credential the provider was configured with, and the cloud it was
 		// configured for. Neither is anywhere near either shape; both are asserted
 		// absent so that a redaction which only hid the key name would still fail.
-		cloudName   = "artist-shop-prod"
-		apiKey      = "123456789012345"
-		apiSecret   = "abcdefghijklmnopqrstuvwxyz1234"
-		smtpPass    = "smtp-credential-value-do-not-log"
-		accountID   = "3f1c8a52-9d4e-4b7a-8c21-5e6f7a8b9c0d"
-		recipient   = "leak@example.com"
-		verifyCode  = "483920"
-		providerMsg = "unauthorized IP address 203.0.113.7"
+		cloudName      = "artist-shop-prod"
+		apiKey         = "123456789012345"
+		apiSecret      = "abcdefghijklmnopqrstuvwxyz1234"
+		smtpPass       = "smtp-credential-value-do-not-log"
+		registrationID = "3f1c8a52-9d4e-4b7a-8c21-5e6f7a8b9c0d"
+		recipient      = "leak@example.com"
+		verifyCode     = "483920"
+		providerMsg    = "unauthorized IP address 203.0.113.7"
 	)
 
 	cases := map[string]struct {
@@ -246,31 +246,31 @@ func TestTheNewFailureDiagnosticsCannotLeakACredential(t *testing.T) {
 		// whole line would fail here instead of passing silently.
 		keep []string
 	}{
-		// internal/modules/auth/application/implement/register.go: reportDeliveryFailure
+		// internal/modules/auth/application/implement/registration.go: reportRegistrationDeliveryFailure
 		"the classified delivery diagnostic": {
 			emit: func(buf *bytes.Buffer) {
 				ctx := reqctx.WithCorrelation(context.Background(), "corr-004-a")
 				WithCorrelation(ctx, New("info", buf)).ErrorContext(ctx,
 					"verification message could not be delivered",
-					slog.String("accountId", accountID),
+					slog.String("registrationId", registrationID),
 					slog.String("deliveryFailure", "CONFIGURATION"),
 					slog.Int("deliveryAttempts", 1),
 				)
 			},
 			values: []string{apiKey, apiSecret, smtpPass, cloudName, recipient, verifyCode, providerMsg},
-			keep:   []string{"CONFIGURATION", `"deliveryAttempts":1`, accountID},
+			keep:   []string{"CONFIGURATION", `"deliveryAttempts":1`, registrationID},
 		},
-		// internal/modules/auth/application/implement/email_failure.go: disarmCooldownAfterFailedDelivery
+		// internal/modules/auth/application/implement/registration.go: the disarm-failure diagnostic
 		"the disarm-failure diagnostic": {
 			emit: func(buf *bytes.Buffer) {
 				ctx := reqctx.WithCorrelation(context.Background(), "corr-004-b")
 				WithCorrelation(ctx, New("error", buf)).ErrorContext(ctx,
 					"resend cooldown could not be disarmed after a failed delivery",
-					slog.String("accountId", accountID),
+					slog.String("registrationId", registrationID),
 				)
 			},
 			values: []string{apiKey, apiSecret, smtpPass, cloudName, recipient, verifyCode, providerMsg},
-			keep:   []string{accountID},
+			keep:   []string{registrationID},
 		},
 		// cmd/api/main.go: the guard's refusal reaches the operator on stderr, and
 		// the media-absent line reaches the shared logger on stdout.

@@ -72,18 +72,22 @@ type RedisConfig struct {
 
 // AuthConfig controls authentication behavior for the auth module.
 type AuthConfig struct {
-	JWTSecret          string        `env:"JWT_SECRET"`
-	AccessTokenTTL     time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"15m"`
-	RefreshTokenTTL    time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"1080h"`
-	OTPTTL             time.Duration `env:"OTP_TTL" envDefault:"15m"`
-	OTPMaxAttempts     int           `env:"OTP_MAX_ATTEMPTS" envDefault:"3"`
-	OTPBlockTTL        time.Duration `env:"OTP_BLOCK_TTL" envDefault:"60s"`
-	OTPResendCooldown  time.Duration `env:"OTP_RESEND_COOLDOWN" envDefault:"60s"`
-	PasswordResetTTL   time.Duration `env:"PASSWORD_RESET_TTL" envDefault:"30m"`
-	LoginRatePerMinute int           `env:"AUTH_LOGIN_RATE_PER_MINUTE" envDefault:"10"`
-	FlowRatePerMinute  int           `env:"AUTH_FLOW_RATE_PER_MINUTE" envDefault:"5"`
-	LoginMaxFailures   int           `env:"AUTH_LOGIN_MAX_FAILURES" envDefault:"10"`
-	LoginLockoutTTL    time.Duration `env:"AUTH_LOGIN_LOCKOUT_TTL" envDefault:"15m"`
+	JWTSecret         string        `env:"JWT_SECRET"`
+	AccessTokenTTL    time.Duration `env:"ACCESS_TOKEN_TTL" envDefault:"15m"`
+	RefreshTokenTTL   time.Duration `env:"REFRESH_TOKEN_TTL" envDefault:"1080h"`
+	OTPTTL            time.Duration `env:"OTP_TTL" envDefault:"5m"`
+	OTPMaxAttempts    int           `env:"OTP_MAX_ATTEMPTS" envDefault:"5"`
+	OTPBlockTTL       time.Duration `env:"OTP_BLOCK_TTL" envDefault:"60s"`
+	OTPResendCooldown time.Duration `env:"OTP_RESEND_COOLDOWN" envDefault:"60s"`
+	// PendingRegistrationTTL is how long a temporary registration survives
+	// before it expires on its own. It is independent of OTPTTL: the code and
+	// the registration expire separately (FR-007).
+	PendingRegistrationTTL time.Duration `env:"PENDING_REGISTRATION_TTL" envDefault:"30m"`
+	PasswordResetTTL       time.Duration `env:"PASSWORD_RESET_TTL" envDefault:"30m"`
+	LoginRatePerMinute     int           `env:"AUTH_LOGIN_RATE_PER_MINUTE" envDefault:"10"`
+	FlowRatePerMinute      int           `env:"AUTH_FLOW_RATE_PER_MINUTE" envDefault:"5"`
+	LoginMaxFailures       int           `env:"AUTH_LOGIN_MAX_FAILURES" envDefault:"10"`
+	LoginLockoutTTL        time.Duration `env:"AUTH_LOGIN_LOCKOUT_TTL" envDefault:"15m"`
 
 	SMTPHost     string `env:"SMTP_HOST"`
 	SMTPPort     int    `env:"SMTP_PORT" envDefault:"587"`
@@ -305,6 +309,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Auth.OTPMaxAttempts <= 0 {
 		errs = append(errs, errors.New("OTP_MAX_ATTEMPTS must be greater than zero"))
+	}
+	if c.Auth.PendingRegistrationTTL <= 0 {
+		errs = append(errs, errors.New("PENDING_REGISTRATION_TTL must be greater than zero"))
 	}
 	if c.Auth.PasswordResetTTL <= 0 {
 		errs = append(errs, errors.New("PASSWORD_RESET_TTL must be greater than zero"))

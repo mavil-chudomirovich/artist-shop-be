@@ -2451,7 +2451,7 @@ const docTemplate = `{
         },
         "/auth/password/forgot": {
             "post": {
-                "description": "Sends a reset link if the email is registered. The response is identical either way.",
+                "description": "Sends a one-time code by email if the address is registered. The response is identical either way, so it never reveals whether an account exists. The email carries the code only, never the reset token.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2461,7 +2461,7 @@ const docTemplate = `{
                 "tags": [
                     "Auth"
                 ],
-                "summary": "Request a password reset",
+                "summary": "Request a password-reset code",
                 "parameters": [
                     {
                         "description": "Email address",
@@ -2503,13 +2503,77 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/password/forgot/verify-otp": {
+            "post": {
+                "description": "Verifies the emailed one-time code and, on success, issues a single-use reset token whose only purpose is to set a new password. The token is not a session and cannot authenticate a request; the code can no longer be used afterwards.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Verify the password-reset code",
+                "parameters": [
+                    {
+                        "description": "Email address and code",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyResetOTPRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetTokenResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
                     }
                 }
             }
         },
         "/auth/password/reset": {
             "post": {
-                "description": "Sets a new password from a reset token and returns a fresh session.",
+                "description": "Sets a new password from a single-use reset token, consumes the token, ends every session of the account and rejects previously issued access tokens. Returns success only; it does not sign the user in.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2543,7 +2607,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.SessionResponse"
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
                                         }
                                     }
                                 }
@@ -2556,8 +2620,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
                     },
-                    "401": {
-                        "description": "Unauthorized",
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
@@ -2625,7 +2689,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
-                "description": "Creates a pending account and emails a one-time confirmation code. The response never reveals whether the email already exists.",
+                "description": "Validates the payload, rejects an email or username already taken, holds the registration temporarily and emails a one-time code. No account is created until the code is confirmed.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2635,7 +2699,7 @@ const docTemplate = `{
                 "tags": [
                     "Auth"
                 ],
-                "summary": "Register a new account",
+                "summary": "Start registration",
                 "parameters": [
                     {
                         "description": "Registration payload",
@@ -2643,7 +2707,135 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest"
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.StartRegistrationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegistrationStartedResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register/cancel": {
+            "post": {
+                "description": "Removes a temporary registration and invalidates its reference and code. The response is idempotent and identical for an unknown, expired or cancelled reference.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Cancel a registration",
+                "parameters": [
+                    {
+                        "description": "Registration reference",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegistrationIDRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/register/resend-otp": {
+            "post": {
+                "description": "Issues a new one-time code for a live registration after the resend cooldown, invalidating the previous code and resetting the attempt budget. Unknown, expired or completed references are answered generically.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Request a fresh confirmation code",
+                "parameters": [
+                    {
+                        "description": "Registration reference",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegistrationIDRequest"
                         }
                     }
                 ],
@@ -2677,13 +2869,19 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
                     }
                 }
             }
         },
-        "/auth/resend-verification": {
+        "/auth/register/verify-otp": {
             "post": {
-                "description": "Re-sends the confirmation code if the email is eligible. The response is identical either way.",
+                "description": "Confirms the one-time code against the temporary registration and, on success, creates an active customer account. Repeating a successful confirmation does not create a second account. No session is issued.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2693,15 +2891,15 @@ const docTemplate = `{
                 "tags": [
                     "Auth"
                 ],
-                "summary": "Resend the confirmation code",
+                "summary": "Confirm a registration code",
                 "parameters": [
                     {
-                        "description": "Email address",
+                        "description": "Registration reference and code",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.EmailRequest"
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyRegistrationRequest"
                         }
                     }
                 ],
@@ -2730,60 +2928,8 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
                     },
-                    "429": {
-                        "description": "Too Many Requests",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
-        "/auth/verify-email": {
-            "post": {
-                "description": "Confirms a pending account with the one-time code sent at registration.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Auth"
-                ],
-                "summary": "Confirm an email address",
-                "parameters": [
-                    {
-                        "description": "Email and confirmation code",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
@@ -4691,19 +4837,27 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegisterRequest": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegistrationIDRequest": {
             "type": "object",
             "properties": {
-                "displayName": {
+                "registrationId": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.RegistrationStartedResponse": {
+            "type": "object",
+            "properties": {
+                "otpExpiresIn": {
+                    "type": "integer"
+                },
+                "registrationId": {
                     "type": "string"
                 },
-                "email": {
-                    "type": "string"
+                "resendAvailableIn": {
+                    "type": "integer"
                 },
-                "password": {
-                    "type": "string"
-                },
-                "username": {
+                "status": {
                     "type": "string"
                 }
             }
@@ -4715,6 +4869,17 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ResetTokenResponse": {
+            "type": "object",
+            "properties": {
+                "expiresIn": {
+                    "type": "integer"
+                },
+                "resetToken": {
                     "type": "string"
                 }
             }
@@ -4733,6 +4898,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.StartRegistrationRequest": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.TokenRequest": {
             "type": "object",
             "properties": {
@@ -4741,7 +4923,18 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyEmailRequest": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyRegistrationRequest": {
+            "type": "object",
+            "properties": {
+                "otp": {
+                    "type": "string"
+                },
+                "registrationId": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.VerifyResetOTPRequest": {
             "type": "object",
             "properties": {
                 "email": {

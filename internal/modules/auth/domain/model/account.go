@@ -16,6 +16,8 @@ import (
 type Account struct {
 	ID           uuid.UUID
 	Email        string
+	Username     *string
+	DisplayName  *string
 	PasswordHash string
 	Role         access.Role
 	Status       constant.Status
@@ -26,6 +28,15 @@ type Account struct {
 // NormalizeEmail trims and lowercases an email address.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// NormalizeUsername trims an optional username.
+func NormalizeUsername(username string) *string {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 // Activate moves a pending account to active.

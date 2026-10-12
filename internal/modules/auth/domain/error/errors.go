@@ -9,9 +9,15 @@ var (
 	// so the API never reveals whether an account exists.
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrEmailTaken         = errors.New("email already registered")
+	ErrUsernameTaken      = errors.New("username already registered")
 	ErrUserNotFound       = errors.New("user not found")
 	ErrSessionNotFound    = errors.New("session not found")
 	ErrResetNotFound      = errors.New("password reset request not found")
+
+	// ErrRegistrationNotFound is returned for an unknown, expired or cancelled
+	// temporary registration. Verify, resend and cancel all report it the same
+	// generic way, so it never reveals whether a reference existed (FR-016).
+	ErrRegistrationNotFound = errors.New("registration not found")
 
 	ErrInvalidTransition = errors.New("invalid account status transition")
 	ErrAccountPending    = errors.New("account is pending email confirmation")
@@ -23,6 +29,11 @@ var (
 	ErrExpiredToken  = errors.New("token expired")
 	ErrRefreshReused = errors.New("refresh token already used")
 	ErrResetInvalid  = errors.New("invalid password reset token")
+
+	// ErrInvalidEmail is returned when a submitted address is not a plain,
+	// well-formed email. Registration validates the format before any temporary
+	// or durable state is written (FR-001).
+	ErrInvalidEmail = errors.New("email address is not valid")
 
 	ErrOTPInvalid         = errors.New("invalid OTP")
 	ErrOTPExpired         = errors.New("OTP expired")

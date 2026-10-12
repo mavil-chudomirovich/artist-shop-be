@@ -182,7 +182,8 @@ func run() error {
 		Users:         authUsers,
 		Sessions:      postgres.NewSessionRepository(db.Pool),
 		Resets:        postgres.NewResetRepository(db.Pool),
-		OTP:           authredis.NewOTPStore(redisCache, token.Hasher{}, cfg.Auth.OTPMaxAttempts, cfg.Auth.OTPTTL, cfg.Auth.OTPBlockTTL, cfg.Auth.OTPResendCooldown),
+		Registration:  authredis.NewRegistrationStore(redisCache, token.Hasher{}, cfg.Auth.OTPMaxAttempts, cfg.Auth.OTPTTL, cfg.Auth.OTPBlockTTL, cfg.Auth.OTPResendCooldown, cfg.Auth.PendingRegistrationTTL),
+		ResetOTP:      authredis.NewPasswordResetOTPStore(redisCache, token.Hasher{}, cfg.Auth.OTPMaxAttempts, cfg.Auth.OTPTTL, cfg.Auth.OTPBlockTTL, cfg.Auth.OTPResendCooldown),
 		Blacklist:     authredis.NewBlacklistStore(redisCache),
 		Guard:         authredis.NewLoginGuard(redisCache, cfg.Auth.LoginMaxFailures, cfg.Auth.LoginLockoutTTL, cfg.Auth.LoginLockoutTTL),
 		Hasher:        token.Hasher{},
@@ -196,8 +197,11 @@ func run() error {
 		// rest of the service logs with (Constitution VI).
 		Logger: logger,
 		Config: implement.Config{
-			RefreshTokenTTL:  cfg.Auth.RefreshTokenTTL,
-			PasswordResetTTL: cfg.Auth.PasswordResetTTL,
+			RefreshTokenTTL:        cfg.Auth.RefreshTokenTTL,
+			PasswordResetTTL:       cfg.Auth.PasswordResetTTL,
+			PendingRegistrationTTL: cfg.Auth.PendingRegistrationTTL,
+			OTPResendCooldown:      cfg.Auth.OTPResendCooldown,
+			OTPTTL:                 cfg.Auth.OTPTTL,
 		},
 	})
 

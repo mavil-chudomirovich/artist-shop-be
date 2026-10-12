@@ -49,8 +49,12 @@ go run ./cmd/api
 ## 3. Registration + email confirmation
 
 1. `POST /api/v1/auth/register` with `{ "email", "password" }` → `202` generic
-   message. With the log sender, the OTP appears in the service output and in
-   Redis under `auth:otp:{email}`.
+   message. The OTP arrives in **Mailpit** (`make up-tools` starts it): open
+   `http://localhost:8025`, run `make mail`, or read it from
+   `http://localhost:8025/api/v1/messages`. It is also stored hashed in Redis
+   under `auth:otp:{email}`, which is useful for checking it exists, not for
+   reading it. With the log sender instead — `SMTP_HOST` empty — the OTP appears
+   in the service output.
 2. Signing in before confirmation → `403 AUTH_ACCOUNT_PENDING`.
 3. Entering a wrong OTP three times → `429 AUTH_OTP_TOO_MANY_ATTEMPTS`; the OTP is
    blacklisted and a resend is refused for 1 minute.

@@ -46,79 +46,119 @@ func toSessionResponse(s appdto.SessionOutput) httpdto.SessionResponse {
 	return httpdto.SessionResponse{AccessToken: s.AccessToken, RefreshToken: s.RefreshToken, ExpiresIn: s.ExpiresIn}
 }
 
-// Register starts registration and emails an OTP.
+// StartRegistration starts registration and emails an OTP.
 //
-//	@Summary		Register a new account
-//	@Description	Creates a pending account and emails a one-time confirmation code. The response never reveals whether the email already exists.
+//	@Summary		Start registration
+//	@Description	Validates the payload, rejects an email or username already taken, holds the registration temporarily and emails a one-time code. No account is created until the code is confirmed.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		httpdto.RegisterRequest	true	"Registration payload"
-//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Param			request	body		httpdto.StartRegistrationRequest	true	"Registration payload"
+//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.RegistrationStartedResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
 //	@Router			/auth/register [post]
-func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	var req httpdto.RegisterRequest
+func (h *Handler) StartRegistration(w http.ResponseWriter, r *http.Request) {
+	var req httpdto.StartRegistrationRequest
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
 		return
 	}
-	if err := h.svc.Register(r.Context(), appdto.RegisterInput{Email: req.Email, Password: req.Password}); err != nil {
+	out, err := h.svc.StartRegistration(r.Context(), appdto.StartRegistrationInput{
+		Email:       req.Email,
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+		Password:    req.Password,
+	})
+	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "If the email is eligible, a confirmation code has been sent."})
+	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.RegistrationStartedResponse{
+		RegistrationID:    out.RegistrationID,
+		Status:            out.Status,
+		OTPExpiresIn:      out.OTPExpiresIn,
+		ResendAvailableIn: out.ResendAvailableIn,
+	})
 }
 
-// VerifyEmail confirms the OTP.
+// VerifyRegistrationOTP confirms the code and creates the account.
 //
-//	@Summary		Confirm an email address
-//	@Description	Confirms a pending account with the one-time code sent at registration.
+//	@Summary		Confirm a registration code
+//	@Description	Confirms the one-time code against the temporary registration and, on success, creates an active customer account. Repeating a successful confirmation does not create a second account. No session is issued.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		httpdto.VerifyEmailRequest	true	"Email and confirmation code"
+//	@Param			request	body		httpdto.VerifyRegistrationRequest	true	"Registration reference and code"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/register/verify-otp [post]
+func (h *Handler) VerifyRegistrationOTP(w http.ResponseWriter, r *http.Request) {
+	var req httpdto.VerifyRegistrationRequest
+	if err := decode(r, &req); err != nil {
+		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
+		return
+	}
+	if err := h.svc.VerifyRegistrationOTP(r.Context(), appdto.VerifyRegistrationInput{RegistrationID: req.RegistrationID, OTP: req.OTP}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Registration confirmed."})
+}
+
+// ResendRegistrationOTP replaces the confirmation code for a registration.
+//
+//	@Summary		Request a fresh confirmation code
+//	@Description	Issues a new one-time code for a live registration after the resend cooldown, invalidating the previous code and resetting the attempt budget. Unknown, expired or completed references are answered generically.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.RegistrationIDRequest	true	"Registration reference"
+//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
+//	@Router			/auth/register/resend-otp [post]
+func (h *Handler) ResendRegistrationOTP(w http.ResponseWriter, r *http.Request) {
+	var req httpdto.RegistrationIDRequest
+	if err := decode(r, &req); err != nil {
+		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
+		return
+	}
+	if err := h.svc.ResendRegistrationOTP(r.Context(), appdto.RegistrationIDInput{RegistrationID: req.RegistrationID}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "A fresh confirmation code has been sent."})
+}
+
+// CancelRegistration discards a temporary registration.
+//
+//	@Summary		Cancel a registration
+//	@Description	Removes a temporary registration and invalidates its reference and code. The response is idempotent and identical for an unknown, expired or cancelled reference.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.RegistrationIDRequest	true	"Registration reference"
 //	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
-//	@Router			/auth/verify-email [post]
-func (h *Handler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
-	var req httpdto.VerifyEmailRequest
+//	@Router			/auth/register/cancel [post]
+func (h *Handler) CancelRegistration(w http.ResponseWriter, r *http.Request) {
+	var req httpdto.RegistrationIDRequest
 	if err := decode(r, &req); err != nil {
 		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
 		return
 	}
-	if err := h.svc.VerifyEmail(r.Context(), appdto.VerifyEmailInput{Email: req.Email, OTP: req.OTP}); err != nil {
+	if err := h.svc.CancelRegistration(r.Context(), appdto.RegistrationIDInput{RegistrationID: req.RegistrationID}); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Email confirmed."})
-}
-
-// ResendVerification re-sends the OTP.
-//
-//	@Summary		Resend the confirmation code
-//	@Description	Re-sends the confirmation code if the email is eligible. The response is identical either way.
-//	@Tags			Auth
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		httpdto.EmailRequest	true	"Email address"
-//	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		429		{object}	httpx.SwaggerError
-//	@Router			/auth/resend-verification [post]
-func (h *Handler) ResendVerification(w http.ResponseWriter, r *http.Request) {
-	var req httpdto.EmailRequest
-	if err := decode(r, &req); err != nil {
-		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
-		return
-	}
-	if err := h.svc.ResendVerification(r.Context(), appdto.EmailInput{Email: req.Email}); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "If the email is eligible, a confirmation code has been sent."})
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Registration cancelled."})
 }
 
 // Login authenticates and issues tokens.
@@ -142,11 +182,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, err := h.svc.Login(r.Context(), appdto.LoginInput{
-		Email:     req.Email,
-		Password:  req.Password,
-		Source:    clientIP(r),
-		UserAgent: r.UserAgent(),
-		IP:        clientIP(r),
+		Email:      req.Email,
+		Identifier: req.Identifier,
+		Password:   req.Password,
+		Source:     clientIP(r),
+		UserAgent:  r.UserAgent(),
+		IP:         clientIP(r),
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -205,10 +246,10 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ForgotPassword requests a reset link.
+// ForgotPassword requests a reset code.
 //
-//	@Summary		Request a password reset
-//	@Description	Sends a reset link if the email is registered. The response is identical either way.
+//	@Summary		Request a password-reset code
+//	@Description	Sends a one-time code by email if the address is registered. The response is identical either way, so it never reveals whether an account exists. The email carries the code only, never the reset token.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
@@ -216,6 +257,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 //	@Success		202		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
 //	@Router			/auth/password/forgot [post]
 func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.EmailRequest
@@ -227,20 +269,46 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "If the email is registered, a reset link has been sent."})
+	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "If the email is registered, a reset code has been sent."})
+}
+
+// VerifyResetOTP verifies the emailed reset code and returns a reset token.
+//
+//	@Summary		Verify the password-reset code
+//	@Description	Verifies the emailed one-time code and, on success, issues a single-use reset token whose only purpose is to set a new password. The token is not a session and cannot authenticate a request; the code can no longer be used afterwards.
+//	@Tags			Auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		httpdto.VerifyResetOTPRequest	true	"Email address and code"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ResetTokenResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Router			/auth/password/forgot/verify-otp [post]
+func (h *Handler) VerifyResetOTP(w http.ResponseWriter, r *http.Request) {
+	var req httpdto.VerifyResetOTPRequest
+	if err := decode(r, &req); err != nil {
+		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
+		return
+	}
+	out, err := h.svc.VerifyResetOTP(r.Context(), appdto.VerifyResetOTPInput{Email: req.Email, OTP: req.OTP})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.ResetTokenResponse{ResetToken: out.ResetToken, ExpiresIn: out.ExpiresIn})
 }
 
 // ResetPassword completes a reset.
 //
 //	@Summary		Complete a password reset
-//	@Description	Sets a new password from a reset token and returns a fresh session.
+//	@Description	Sets a new password from a single-use reset token, consumes the token, ends every session of the account and rejects previously issued access tokens. Returns success only; it does not sign the user in.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		httpdto.ResetRequest	true	"Reset token and new password"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.SessionResponse}
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.MessageResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
 //	@Router			/auth/password/reset [post]
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req httpdto.ResetRequest
@@ -248,12 +316,11 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, httpx.New(httpx.CodeMalformedRequest))
 		return
 	}
-	session, err := h.svc.ResetPassword(r.Context(), appdto.ResetPasswordInput{Token: req.Token, NewPassword: req.NewPassword})
-	if err != nil {
+	if err := h.svc.ResetPassword(r.Context(), appdto.ResetPasswordInput{Token: req.Token, NewPassword: req.NewPassword}); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, toSessionResponse(session))
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Password reset."})
 }
 
 // ChangePassword changes the password of the signed-in account.

@@ -115,8 +115,14 @@ func TestAuthDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Auth.OTPMaxAttempts != 3 {
-		t.Fatalf("expected OTP attempts default 3, got %d", cfg.Auth.OTPMaxAttempts)
+	if cfg.Auth.OTPMaxAttempts != 5 {
+		t.Fatalf("expected OTP attempts default 5, got %d", cfg.Auth.OTPMaxAttempts)
+	}
+	if cfg.Auth.OTPTTL.String() != "5m0s" {
+		t.Fatalf("expected OTP TTL default 5m, got %s", cfg.Auth.OTPTTL)
+	}
+	if cfg.Auth.PendingRegistrationTTL.String() != "30m0s" {
+		t.Fatalf("expected pending registration TTL default 30m, got %s", cfg.Auth.PendingRegistrationTTL)
 	}
 	if cfg.Auth.LoginMaxFailures != 10 {
 		t.Fatalf("expected login max failures default 10, got %d", cfg.Auth.LoginMaxFailures)

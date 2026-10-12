@@ -15,8 +15,20 @@ func coded(code string, status int, message string) *httpx.AppError {
 
 func mapError(err error) *httpx.AppError {
 	switch {
+	case errors.Is(err, domainerr.ErrInvalidEmail):
+		// A malformed email is a request-shape problem the client fixes on the
+		// form, so it stays on the shared VALIDATION_ERROR and adds no module
+		// code; the detail names the member that failed (FR-001).
+		return httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{
+			Field: "email",
+			Issue: "must be a valid email address",
+		})
 	case errors.Is(err, domainerr.ErrWeakPassword):
 		return coded(constant.CodeWeakPassword, http.StatusBadRequest, "Password does not meet the policy")
+	case errors.Is(err, domainerr.ErrUsernameTaken):
+		return coded(constant.CodeUsernameTaken, http.StatusConflict, "Username is already taken")
+	case errors.Is(err, domainerr.ErrEmailTaken):
+		return coded(constant.CodeEmailTaken, http.StatusConflict, "Email is already registered")
 	case errors.Is(err, domainerr.ErrInvalidCredentials):
 		return coded(constant.CodeInvalidCredentials, http.StatusUnauthorized, "Invalid email or password")
 	case errors.Is(err, domainerr.ErrAccountPending):
@@ -43,6 +55,11 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeRefreshReused, http.StatusUnauthorized, "Refresh token already used")
 	case errors.Is(err, domainerr.ErrResetInvalid), errors.Is(err, domainerr.ErrResetNotFound):
 		return coded(constant.CodeResetInvalid, http.StatusBadRequest, "Invalid or expired reset token")
+	case errors.Is(err, domainerr.ErrRegistrationNotFound):
+		// A registration reference that is unknown, expired or cancelled is
+		// reported the same generic way on verify, resend and cancel, so it
+		// never reveals whether the reference existed (FR-016).
+		return coded(constant.CodeRegistrationNotFound, http.StatusBadRequest, "Registration not found or no longer valid")
 	case errors.Is(err, domainerr.ErrVerificationDeliveryFailed):
 		// A message the provider refused is a service problem, not a client
 		// mistake, so it answers 503 rather than 500 (FR-006). The answer itself

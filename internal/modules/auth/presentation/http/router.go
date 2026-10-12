@@ -32,10 +32,12 @@ func (h *Handler) Router(cfg config.AuthConfig) http.Handler {
 
 	r.Group(func(r chi.Router) {
 		r.Use(flowLimit)
-		r.Post("/register", h.Register)
-		r.Post("/verify-email", h.VerifyEmail)
-		r.Post("/resend-verification", h.ResendVerification)
+		r.Post("/register", h.StartRegistration)
+		r.Post("/register/verify-otp", h.VerifyRegistrationOTP)
+		r.Post("/register/resend-otp", h.ResendRegistrationOTP)
+		r.Post("/register/cancel", h.CancelRegistration)
 		r.Post("/password/forgot", h.ForgotPassword)
+		r.Post("/password/forgot/verify-otp", h.VerifyResetOTP)
 		r.Post("/password/reset", h.ResetPassword)
 	})
 

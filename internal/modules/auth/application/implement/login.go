@@ -3,18 +3,21 @@ package implement
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
-	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/model"
 )
 
 // Login authenticates an account and issues a token pair, applying the failed
 // attempt lockout.
 func (s *Service) Login(ctx context.Context, in dto.LoginInput) (dto.SessionOutput, error) {
-	normalized := model.NormalizeEmail(in.Email)
+	identifier := strings.TrimSpace(in.Identifier)
+	if identifier == "" {
+		identifier = strings.TrimSpace(in.Email)
+	}
 
 	blocked, err := s.Guard.Blocked(ctx, in.Source)
 	if err != nil {
@@ -24,11 +27,11 @@ func (s *Service) Login(ctx context.Context, in dto.LoginInput) (dto.SessionOutp
 		return dto.SessionOutput{}, domainerr.ErrAccountLocked
 	}
 
-	account, err := s.Users.ByEmail(ctx, normalized)
+	account, err := s.Users.ByIdentifier(ctx, identifier)
 	if err != nil {
 		if errors.Is(err, domainerr.ErrUserNotFound) {
 			_, _ = s.Guard.RecordFailure(ctx, in.Source)
-			s.Audit.Record(ctx, constant.AuditSignInFailed, constant.OutcomeFailure, nil, "", "user", "", map[string]any{"reason": "unknown_email"})
+			s.Audit.Record(ctx, constant.AuditSignInFailed, constant.OutcomeFailure, nil, "", "user", "", map[string]any{"reason": "unknown_identifier"})
 			return dto.SessionOutput{}, domainerr.ErrInvalidCredentials
 		}
 		return dto.SessionOutput{}, err

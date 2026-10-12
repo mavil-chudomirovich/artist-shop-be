@@ -17,10 +17,12 @@ phiên, đăng xuất, đặt lại mật khẩu, và phân quyền theo vai tr�
 
 Có:
 - Đăng ký bằng email + mật khẩu.
-- Bắt buộc xác minh email bằng OTP 6 chữ số trước khi đăng nhập được (OTP lưu ở
-  Redis, dùng một lần, 3 lần sai thì khoá 60 giây).
+- Bắt buộc xác minh email bằng OTP 6 chữ số trước khi đăng nhập được (đăng ký chỉ lưu
+  tạm ở Redis; OTP dùng một lần, 5 lần sai thì khoá 60 giây; tài khoản chính thức chỉ được
+  tạo sau khi xác minh).
 - Đăng nhập, làm mới phiên, đăng xuất (nhiều thiết bị).
-- Đặt lại mật khẩu qua email (token dùng một lần, có hạn).
+- Đặt lại mật khẩu qua email: gửi mã OTP → xác minh mã → nhận reset token dùng một lần →
+  đặt mật khẩu mới (không tự đăng nhập).
 - Vai trò CUSTOMER (mặc định) và ADMIN (cấp nội bộ bằng `cmd/seed`).
 - Rate limiting cho các endpoint xác thực.
 - Ghi vết sự kiện bảo mật.
@@ -37,14 +39,15 @@ Không (hoãn):
 
 ## Luồng nghiệp vụ chính
 
-1. Đăng ký → tạo tài khoản vai trò CUSTOMER ở trạng thái `pending` → gửi OTP →
-   xác minh email → tài khoản `active` → đăng nhập được.
+1. Đăng ký → lưu đăng ký tạm ở Redis → gửi OTP → xác minh email → tạo tài khoản CUSTOMER
+   `active` → đăng nhập được.
 2. Đăng nhập → cấp access credential ngắn hạn + session credential dài hạn.
 3. Hết hạn access → làm mới bằng session credential (có xoay vòng).
 4. Đăng xuất → thu hồi session của thiết bị đó.
 5. Dùng lại refresh token đã xoay vòng → từ chối và thu hồi **toàn bộ** phiên của
    tài khoản (phát hiện replay), ghi `audit_logs`.
-6. Quên mật khẩu → gửi token → đặt mật khẩu mới → thu hồi mọi phiên cũ.
+6. Quên mật khẩu → gửi mã OTP → xác minh mã → cấp reset token dùng một lần → đặt mật khẩu
+   mới → thu hồi mọi phiên cũ (người dùng đăng nhập lại).
 
 ## Yêu cầu chức năng sơ bộ
 

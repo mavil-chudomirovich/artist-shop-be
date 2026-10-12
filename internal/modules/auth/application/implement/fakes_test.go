@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 
-	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
@@ -20,8 +19,12 @@ import (
 )
 
 type fakeUsers struct {
+	mu      sync.Mutex
 	byEmail map[string]*model.Account
 	byID    map[uuid.UUID]*model.Account
+	// createErr, when set, makes every Create fail with it, so a test can
+	// exercise an account-store failure at confirmation time (FR-010).
+	createErr error
 }
 
 func newFakeUsers() *fakeUsers {
@@ -29,8 +32,20 @@ func newFakeUsers() *fakeUsers {
 }
 
 func (f *fakeUsers) Create(_ context.Context, a *model.Account) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return f.createErr
+	}
 	if _, ok := f.byEmail[a.Email]; ok {
 		return domainerr.ErrEmailTaken
+	}
+	if a.Username != nil {
+		for _, existing := range f.byEmail {
+			if existing.Username != nil && strings.EqualFold(*existing.Username, *a.Username) {
+				return domainerr.ErrUsernameTaken
+			}
+		}
 	}
 	f.byEmail[a.Email] = a
 	f.byID[a.ID] = a
@@ -38,12 +53,16 @@ func (f *fakeUsers) Create(_ context.Context, a *model.Account) error {
 }
 
 func (f *fakeUsers) UpsertAdmin(_ context.Context, a *model.Account) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.byEmail[a.Email] = a
 	f.byID[a.ID] = a
 	return nil
 }
 
 func (f *fakeUsers) ByEmail(_ context.Context, email string) (*model.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	a, ok := f.byEmail[email]
 	if !ok {
 		return nil, domainerr.ErrUserNotFound
@@ -51,7 +70,34 @@ func (f *fakeUsers) ByEmail(_ context.Context, email string) (*model.Account, er
 	return a, nil
 }
 
+func (f *fakeUsers) ByUsername(_ context.Context, username string) (*model.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.byEmail {
+		if a.Username != nil && strings.EqualFold(*a.Username, strings.TrimSpace(username)) {
+			return a, nil
+		}
+	}
+	return nil, domainerr.ErrUserNotFound
+}
+
+func (f *fakeUsers) ByIdentifier(_ context.Context, identifier string) (*model.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if a, ok := f.byEmail[strings.ToLower(strings.TrimSpace(identifier))]; ok {
+		return a, nil
+	}
+	for _, a := range f.byEmail {
+		if a.Username != nil && strings.EqualFold(*a.Username, strings.TrimSpace(identifier)) {
+			return a, nil
+		}
+	}
+	return nil, domainerr.ErrUserNotFound
+}
+
 func (f *fakeUsers) ByID(_ context.Context, id uuid.UUID) (*model.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	a, ok := f.byID[id]
 	if !ok {
 		return nil, domainerr.ErrUserNotFound
@@ -60,6 +106,8 @@ func (f *fakeUsers) ByID(_ context.Context, id uuid.UUID) (*model.Account, error
 }
 
 func (f *fakeUsers) Activate(_ context.Context, id uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if a, ok := f.byID[id]; ok {
 		a.Status = constant.StatusActive
 	}
@@ -67,10 +115,37 @@ func (f *fakeUsers) Activate(_ context.Context, id uuid.UUID) error {
 }
 
 func (f *fakeUsers) UpdatePassword(_ context.Context, id uuid.UUID, hash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if a, ok := f.byID[id]; ok {
 		a.PasswordHash = hash
 	}
 	return nil
+}
+
+// snapshotPasswords captures every account's password hash, so a rollback-capable
+// test transaction can restore it when a use case fails and its writes must be
+// undone.
+func (f *fakeUsers) snapshotPasswords() map[uuid.UUID]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	snap := make(map[uuid.UUID]string, len(f.byID))
+	for id, a := range f.byID {
+		snap[id] = a.PasswordHash
+	}
+	return snap
+}
+
+// restorePasswords puts the snapshotted hashes back, mutating the stored
+// accounts in place so any pointer a test still holds sees the restore.
+func (f *fakeUsers) restorePasswords(snap map[uuid.UUID]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, hash := range snap {
+		if a, ok := f.byID[id]; ok {
+			a.PasswordHash = hash
+		}
+	}
 }
 
 type fakeSessions struct {
@@ -125,6 +200,11 @@ func (f *fakeSessions) RevokeAllForUser(_ context.Context, userID uuid.UUID) err
 
 type fakeResets struct {
 	byHash map[string]*model.ResetRequest
+	// consumeConflict, when set, makes Consume report as if a concurrent
+	// transaction had already marked the row used after the use case read it.
+	// It models the race the conditional update defends against: the read sees
+	// an open token, but the write finds it consumed.
+	consumeConflict bool
 }
 
 func newFakeResets() *fakeResets { return &fakeResets{byHash: map[string]*model.ResetRequest{}} }
@@ -148,22 +228,25 @@ func (f *fakeResets) ByTokenHash(_ context.Context, hash string) (*model.ResetRe
 	return r, nil
 }
 
+// Consume mirrors the adapter: it is conditional, so a token can be consumed
+// only once. A second consume - or one that lost the race to another
+// transaction - affects no row and reports ErrResetInvalid (research D11).
 func (f *fakeResets) Consume(_ context.Context, id uuid.UUID) error {
+	if f.consumeConflict {
+		return domainerr.ErrResetInvalid
+	}
 	now := time.Now().UTC()
 	for _, r := range f.byHash {
-		if r.ID == id {
-			r.UsedAt = &now
+		if r.ID != id {
+			continue
 		}
+		if r.UsedAt != nil {
+			return domainerr.ErrResetInvalid
+		}
+		r.UsedAt = &now
+		return nil
 	}
-	return nil
-}
-
-type fakeOTP struct {
-	mu          sync.Mutex
-	hasher      appinterface.PasswordHasher
-	maxAttempts int
-	entries     map[string]*otpEntry
-	disarms     int
+	return domainerr.ErrResetInvalid
 }
 
 type otpEntry struct {
@@ -173,40 +256,85 @@ type otpEntry struct {
 	cooldown bool
 }
 
-func newFakeOTP(hasher appinterface.PasswordHasher, maxAttempts int) *fakeOTP {
-	return &fakeOTP{hasher: hasher, maxAttempts: maxAttempts, entries: map[string]*otpEntry{}}
+// fakeRegistration is an in-memory appinterface.RegistrationStore. It models the
+// temporary registration and its code state, replacing any previous record for
+// the same email exactly as the Redis adapter does (FR-026).
+type fakeRegistration struct {
+	mu          sync.Mutex
+	hasher      appinterface.PasswordHasher
+	maxAttempts int
+	records     map[string]*model.PendingRegistration
+	codes       map[string]*otpEntry
+	disarms     int
 }
 
-func (f *fakeOTP) Issue(_ context.Context, email, otpHash string) error {
+var _ appinterface.RegistrationStore = (*fakeRegistration)(nil)
+
+func newFakeRegistration(hasher appinterface.PasswordHasher, maxAttempts int) *fakeRegistration {
+	return &fakeRegistration{
+		hasher:      hasher,
+		maxAttempts: maxAttempts,
+		records:     map[string]*model.PendingRegistration{},
+		codes:       map[string]*otpEntry{},
+	}
+}
+
+func (f *fakeRegistration) Save(_ context.Context, reg model.PendingRegistration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.entries[email] = &otpEntry{hash: otpHash, cooldown: true}
+	for id, existing := range f.records {
+		if id != reg.RegistrationID && existing.Email == reg.Email {
+			delete(f.records, id)
+			delete(f.codes, id)
+		}
+	}
+	cp := reg
+	f.records[reg.RegistrationID] = &cp
 	return nil
 }
 
-// DisarmCooldown models the port: only the resend marker is cleared, so the
-// code and the block marker survive a failed delivery.
-func (f *fakeOTP) DisarmCooldown(_ context.Context, email string) error {
+func (f *fakeRegistration) ByID(_ context.Context, registrationID string) (model.PendingRegistration, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.disarms++
-	if e, ok := f.entries[email]; ok {
-		e.cooldown = false
+	reg, ok := f.records[registrationID]
+	if !ok {
+		return model.PendingRegistration{}, domainerr.ErrRegistrationNotFound
+	}
+	return *reg, nil
+}
+
+func (f *fakeRegistration) Delete(_ context.Context, registrationID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.records, registrationID)
+	delete(f.codes, registrationID)
+	return nil
+}
+
+// Complete models the port: the code state is removed and the record is marked
+// completed but retained, so a repeated confirmation reports success without a
+// second account (FR-010, FR-011). It is idempotent.
+func (f *fakeRegistration) Complete(_ context.Context, registrationID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.codes, registrationID)
+	if reg, ok := f.records[registrationID]; ok {
+		reg.Status = model.RegistrationStatusCompleted
 	}
 	return nil
 }
 
-// disarmCount reports how many times the cooldown was disarmed.
-func (f *fakeOTP) disarmCount() int {
+func (f *fakeRegistration) IssueOTP(_ context.Context, registrationID, otpHash string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.disarms
+	f.codes[registrationID] = &otpEntry{hash: otpHash, cooldown: true}
+	return nil
 }
 
-func (f *fakeOTP) CanResend(_ context.Context, email string) error {
+func (f *fakeRegistration) CanResend(_ context.Context, registrationID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	e, ok := f.entries[email]
+	e, ok := f.codes[registrationID]
 	if !ok {
 		return nil
 	}
@@ -219,10 +347,10 @@ func (f *fakeOTP) CanResend(_ context.Context, email string) error {
 	return nil
 }
 
-func (f *fakeOTP) Verify(_ context.Context, email, otp string) error {
+func (f *fakeRegistration) VerifyOTP(_ context.Context, registrationID, otp string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	e, ok := f.entries[email]
+	e, ok := f.codes[registrationID]
 	if !ok {
 		return domainerr.ErrOTPExpired
 	}
@@ -234,7 +362,9 @@ func (f *fakeOTP) Verify(_ context.Context, email, otp string) error {
 		return domainerr.ErrOTPInvalid
 	}
 	if okMatch {
-		delete(f.entries, email)
+		// The code is kept: it is removed when the registration is completed, so
+		// a failed account insert can be retried with the same code (FR-010).
+		e.attempts = 0
 		return nil
 	}
 	e.attempts++
@@ -245,11 +375,171 @@ func (f *fakeOTP) Verify(_ context.Context, email, otp string) error {
 	return domainerr.ErrOTPInvalid
 }
 
-func (f *fakeOTP) Invalidate(_ context.Context, email string) error {
+func (f *fakeRegistration) InvalidateOTP(_ context.Context, registrationID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.entries, email)
+	delete(f.codes, registrationID)
 	return nil
+}
+
+func (f *fakeRegistration) DisarmCooldown(_ context.Context, registrationID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disarms++
+	if e, ok := f.codes[registrationID]; ok {
+		e.cooldown = false
+	}
+	return nil
+}
+
+// disarmCount reports how many times a failed delivery disarmed the cooldown.
+func (f *fakeRegistration) disarmCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.disarms
+}
+
+// count reports how many live temporary registrations are held.
+func (f *fakeRegistration) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.records)
+}
+
+// idByEmail resolves the live reference for an address, so a test that could not
+// read it from a failed start (which returns no reference) can still drive the
+// follow-up calls.
+func (f *fakeRegistration) idByEmail(email string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, reg := range f.records {
+		if reg.Email == email {
+			return id
+		}
+	}
+	return ""
+}
+
+// status reports the stored lifecycle state of a registration.
+func (f *fakeRegistration) status(registrationID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if reg, ok := f.records[registrationID]; ok {
+		return reg.Status
+	}
+	return ""
+}
+
+// expireCode simulates the code's own lifetime elapsing without touching the
+// registration record, so a test can assert the expired-code branch (FR-007).
+func (f *fakeRegistration) expireCode(registrationID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.codes, registrationID)
+}
+
+// fakeResetOTP is an in-memory appinterface.PasswordResetOTPStore. It models the
+// reset code challenge and its brute-force state keyed by the normalized email,
+// exactly as the Redis adapter does.
+type fakeResetOTP struct {
+	mu          sync.Mutex
+	hasher      appinterface.PasswordHasher
+	maxAttempts int
+	codes       map[string]*otpEntry
+	disarms     int
+}
+
+var _ appinterface.PasswordResetOTPStore = (*fakeResetOTP)(nil)
+
+func newFakeResetOTP(hasher appinterface.PasswordHasher, maxAttempts int) *fakeResetOTP {
+	return &fakeResetOTP{
+		hasher:      hasher,
+		maxAttempts: maxAttempts,
+		codes:       map[string]*otpEntry{},
+	}
+}
+
+func (f *fakeResetOTP) Issue(_ context.Context, email, otpHash string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.codes[email] = &otpEntry{hash: otpHash, cooldown: true}
+	return nil
+}
+
+func (f *fakeResetOTP) CanResend(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.codes[email]
+	if !ok {
+		return nil
+	}
+	if e.blocked {
+		return domainerr.ErrOTPBlocked
+	}
+	if e.cooldown {
+		return domainerr.ErrResendCooldown
+	}
+	return nil
+}
+
+func (f *fakeResetOTP) Verify(_ context.Context, email, otp string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e, ok := f.codes[email]
+	if !ok {
+		return domainerr.ErrOTPExpired
+	}
+	if e.blocked {
+		return domainerr.ErrOTPBlocked
+	}
+	okMatch, err := f.hasher.Verify(e.hash, otp)
+	if err != nil {
+		return domainerr.ErrOTPInvalid
+	}
+	if okMatch {
+		// Mirror the adapter: the code is kept so a failed token write can be
+		// retried with the same code; Invalidate removes it after the write.
+		e.attempts = 0
+		return nil
+	}
+	e.attempts++
+	if e.attempts >= f.maxAttempts {
+		e.blocked = true
+		return domainerr.ErrOTPTooManyAttempts
+	}
+	return domainerr.ErrOTPInvalid
+}
+
+func (f *fakeResetOTP) Invalidate(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.codes, email)
+	return nil
+}
+
+func (f *fakeResetOTP) DisarmCooldown(_ context.Context, email string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disarms++
+	if e, ok := f.codes[email]; ok {
+		e.cooldown = false
+	}
+	return nil
+}
+
+// disarmCount reports how many times a failed delivery disarmed the cooldown.
+func (f *fakeResetOTP) disarmCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.disarms
+}
+
+// expireCode simulates the code's own lifetime elapsing without touching the
+// rest of the challenge state, so a test can assert the expired-code branch.
+func (f *fakeResetOTP) expireCode(email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.codes, email)
 }
 
 type fakeBlacklist struct {
@@ -483,18 +773,37 @@ func (f *fakeTx) count() int {
 	return f.calls
 }
 
+// rollbackTx is a UnitOfWork test double that snapshots the account store before
+// running fn and restores it when fn fails, so a test can prove that a refused
+// use case rolls its writes back (research D11).
+type rollbackTx struct {
+	users *fakeUsers
+	calls int
+}
+
+func (t *rollbackTx) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	t.calls++
+	snap := t.users.snapshotPasswords()
+	if err := fn(ctx); err != nil {
+		t.users.restorePasswords(snap)
+		return err
+	}
+	return nil
+}
+
 type harness struct {
-	svc       *Service
-	users     *fakeUsers
-	sessions  *fakeSessions
-	resets    *fakeResets
-	otp       *fakeOTP
-	blacklist *fakeBlacklist
-	guard     *fakeGuard
-	email     *fakeEmail
-	audit     *fakeAuditor
-	tx        *fakeTx
-	logs      *bytes.Buffer
+	svc          *Service
+	users        *fakeUsers
+	sessions     *fakeSessions
+	resets       *fakeResets
+	registration *fakeRegistration
+	resetOTP     *fakeResetOTP
+	blacklist    *fakeBlacklist
+	guard        *fakeGuard
+	email        *fakeEmail
+	audit        *fakeAuditor
+	tx           *fakeTx
+	logs         *bytes.Buffer
 }
 
 func newHarness() *harness {
@@ -503,7 +812,8 @@ func newHarness() *harness {
 	h.users = newFakeUsers()
 	h.sessions = newFakeSessions()
 	h.resets = newFakeResets()
-	h.otp = newFakeOTP(hasher, 3)
+	h.registration = newFakeRegistration(hasher, 3)
+	h.resetOTP = newFakeResetOTP(hasher, 3)
 	h.blacklist = newFakeBlacklist()
 	h.guard = newFakeGuard(10)
 	h.email = &fakeEmail{}
@@ -513,7 +823,8 @@ func newHarness() *harness {
 		Users:         h.users,
 		Sessions:      h.sessions,
 		Resets:        h.resets,
-		OTP:           h.otp,
+		Registration:  h.registration,
+		ResetOTP:      h.resetOTP,
 		Blacklist:     h.blacklist,
 		Guard:         h.guard,
 		Hasher:        hasher,
@@ -523,13 +834,22 @@ func newHarness() *harness {
 		Audit:         h.audit,
 		Tx:            h.tx,
 		Logger:        slog.New(slog.NewJSONHandler(h.logs, nil)),
-		Config:        Config{RefreshTokenTTL: time.Hour, PasswordResetTTL: time.Hour},
+		Config:        Config{RefreshTokenTTL: time.Hour, PasswordResetTTL: time.Hour, PendingRegistrationTTL: 30 * time.Minute, OTPTTL: 5 * time.Minute, OTPResendCooldown: 60 * time.Second},
 	})
 	return h
 }
 
+// registerActive seeds a sign-in-capable account directly. The registration
+// flow under test is StartRegistration/VerifyRegistrationOTP; the sign-in,
+// session and password tests only need an active account to work against, so
+// they seed one rather than driving the whole two-step flow.
 func (h *harness) registerActive(email, password string) {
-	_ = h.svc.Register(context.Background(), appdto.RegisterInput{Email: email, Password: password})
-	account, _ := h.users.ByEmail(context.Background(), model.NormalizeEmail(email))
-	_ = h.users.Activate(context.Background(), account.ID)
+	hash, _ := testHasher{}.Hash(password)
+	_ = h.users.Create(context.Background(), &model.Account{
+		ID:           uuid.New(),
+		Email:        model.NormalizeEmail(email),
+		PasswordHash: hash,
+		Role:         access.RoleCustomer,
+		Status:       constant.StatusActive,
+	})
 }

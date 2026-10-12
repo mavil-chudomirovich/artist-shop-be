@@ -26,10 +26,15 @@ import (
 )
 
 type stubService struct {
-	role       access.Role
-	subject    uuid.UUID
-	verifyEr   error
-	registerEr error
+	role                access.Role
+	subject             uuid.UUID
+	verifyEr            error
+	startRegistrationEr error
+	// forgotPasswordEr, verifyResetOTPEr and resetPasswordEr let a test pin the
+	// reset flow's error-to-status mappings (FR-014, FR-015, FR-016).
+	forgotPasswordEr error
+	verifyResetOTPEr error
+	resetPasswordEr  error
 
 	mu           sync.Mutex
 	lastChangePW dto.ChangePasswordInput
@@ -39,11 +44,22 @@ func newStub(role access.Role) *stubService {
 	return &stubService{role: role, subject: uuid.New()}
 }
 
-func (s *stubService) Register(context.Context, dto.RegisterInput) error { return s.registerEr }
-func (*stubService) VerifyEmail(context.Context, dto.VerifyEmailInput) error {
+func (s *stubService) StartRegistration(context.Context, dto.StartRegistrationInput) (dto.RegistrationStartedOutput, error) {
+	return dto.RegistrationStartedOutput{
+		RegistrationID:    "reg-1",
+		Status:            "PendingVerification",
+		OTPExpiresIn:      300,
+		ResendAvailableIn: 60,
+	}, s.startRegistrationEr
+}
+
+func (*stubService) VerifyRegistrationOTP(context.Context, dto.VerifyRegistrationInput) error {
 	return nil
 }
-func (*stubService) ResendVerification(context.Context, dto.EmailInput) error { return nil }
+func (*stubService) ResendRegistrationOTP(context.Context, dto.RegistrationIDInput) error {
+	return nil
+}
+func (*stubService) CancelRegistration(context.Context, dto.RegistrationIDInput) error { return nil }
 func (*stubService) Login(context.Context, dto.LoginInput) (dto.SessionOutput, error) {
 	return dto.SessionOutput{}, nil
 }
@@ -51,11 +67,14 @@ func (*stubService) Refresh(context.Context, dto.RefreshInput) (dto.SessionOutpu
 	return dto.SessionOutput{}, nil
 }
 func (*stubService) Logout(context.Context, dto.RefreshInput) error { return nil }
-func (*stubService) ForgotPassword(context.Context, dto.EmailInput) error {
-	return nil
+func (s *stubService) ForgotPassword(context.Context, dto.EmailInput) error {
+	return s.forgotPasswordEr
 }
-func (*stubService) ResetPassword(context.Context, dto.ResetPasswordInput) (dto.SessionOutput, error) {
-	return dto.SessionOutput{}, nil
+func (s *stubService) VerifyResetOTP(context.Context, dto.VerifyResetOTPInput) (dto.ResetTokenOutput, error) {
+	return dto.ResetTokenOutput{}, s.verifyResetOTPEr
+}
+func (s *stubService) ResetPassword(context.Context, dto.ResetPasswordInput) error {
+	return s.resetPasswordEr
 }
 func (s *stubService) ChangePassword(_ context.Context, in dto.ChangePasswordInput) (dto.SessionOutput, error) {
 	s.mu.Lock()
@@ -157,19 +176,6 @@ func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return body.Error.Message
 }
 
-func dataMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
-	t.Helper()
-	var body struct {
-		Data struct {
-			Message string `json:"message"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode success body %q: %v", rec.Body.String(), err)
-	}
-	return body.Data.Message
-}
-
 const registerBody = `{"email":"probe@example.com","password":"Str0ng!Pass"}`
 
 // TestRegisterAnswersServiceUnavailableWhenTheMessageCannotBeDelivered covers
@@ -177,7 +183,7 @@ const registerBody = `{"email":"probe@example.com","password":"Str0ng!Pass"}`
 // the answer itself that no code was sent and that a new one can be requested.
 func TestRegisterAnswersServiceUnavailableWhenTheMessageCannotBeDelivered(t *testing.T) {
 	stub := newStub(access.RoleCustomer)
-	stub.registerEr = domainerr.ErrVerificationDeliveryFailed
+	stub.startRegistrationEr = domainerr.ErrVerificationDeliveryFailed
 
 	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
 
@@ -201,7 +207,7 @@ func TestRegisterAnswersServiceUnavailableWhenTheMessageCannotBeDelivered(t *tes
 // the client sees none of it.
 func TestTheDeliveryFailureAnswerRevealsNoProviderDetail(t *testing.T) {
 	stub := newStub(access.RoleCustomer)
-	stub.registerEr = fmt.Errorf("%w: unauthorized IP address 203.0.113.7, smtp password s3cr3t-value",
+	stub.startRegistrationEr = fmt.Errorf("%w: unauthorized IP address 203.0.113.7, smtp password s3cr3t-value",
 		domainerr.ErrVerificationDeliveryFailed)
 
 	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
@@ -216,25 +222,80 @@ func TestTheDeliveryFailureAnswerRevealsNoProviderDetail(t *testing.T) {
 	}
 }
 
-// TestADeliveredMessageKeepsTheGenericAcceptedAnswer is the regression guard for
-// FR-014: the endpoint must keep answering the same generic question whatever the
-// address is, so registration still cannot be used to discover whether an email
-// exists.
-func TestADeliveredMessageKeepsTheGenericAcceptedAnswer(t *testing.T) {
+// TestRegisterReturnsTheRegistrationReference covers the new contract: a
+// successful start answers 202 with the reference and the code/resend timings.
+func TestRegisterReturnsTheRegistrationReference(t *testing.T) {
 	handler := routerFor(newStub(access.RoleCustomer), &recordingAuditor{},
 		config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1000})
 
-	created := doJSON(handler, http.MethodPost, "/register", registerBody, "")
-	if created.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d (%s)", created.Code, created.Body.String())
+	rec := doJSON(handler, http.MethodPost, "/register", registerBody, "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	duplicate := doJSON(handler, http.MethodPost, "/register", `{"email":"taken@example.com","password":"Str0ng!Pass"}`, "")
-	if duplicate.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d (%s)", duplicate.Code, duplicate.Body.String())
+	var body struct {
+		Data struct {
+			RegistrationID    string `json:"registrationId"`
+			Status            string `json:"status"`
+			OTPExpiresIn      int    `json:"otpExpiresIn"`
+			ResendAvailableIn int    `json:"resendAvailableIn"`
+		} `json:"data"`
 	}
-	if dataMessage(t, created) != dataMessage(t, duplicate) {
-		t.Fatalf("the answer must not depend on the address: %q vs %q",
-			dataMessage(t, created), dataMessage(t, duplicate))
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.RegistrationID != "reg-1" || body.Data.Status != "PendingVerification" {
+		t.Fatalf("unexpected registration payload: %+v", body.Data)
+	}
+	if body.Data.OTPExpiresIn != 300 || body.Data.ResendAvailableIn != 60 {
+		t.Fatalf("unexpected timings: %+v", body.Data)
+	}
+}
+
+// TestStartRegistrationMapsConflicts pins the early conflict answers: a taken
+// email or username is reported as a 409 with its own code (D7).
+func TestStartRegistrationMapsConflicts(t *testing.T) {
+	cases := map[error]string{
+		domainerr.ErrEmailTaken:    constant.CodeEmailTaken,
+		domainerr.ErrUsernameTaken: constant.CodeUsernameTaken,
+	}
+	for cause, want := range cases {
+		stub := newStub(access.RoleCustomer)
+		stub.startRegistrationEr = cause
+		rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("expected 409 for %v, got %d", cause, rec.Code)
+		}
+		if got := errorCode(t, rec); got != want {
+			t.Fatalf("expected %s for %v, got %s", want, cause, got)
+		}
+	}
+}
+
+// TestStartRegistrationMapsInvalidEmailToValidation covers FR-001: a malformed
+// email answers the shared VALIDATION_ERROR (400) with a detail naming the
+// member that failed, and adds no auth-specific code.
+func TestStartRegistrationMapsInvalidEmailToValidation(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.startRegistrationEr = domainerr.ErrInvalidEmail
+	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{}), http.MethodPost, "/register", registerBody, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != string(httpx.CodeValidation) {
+		t.Fatalf("expected %s, got %s", httpx.CodeValidation, got)
+	}
+	var body struct {
+		Error struct {
+			Details []struct {
+				Field string `json:"field"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body %q: %v", rec.Body.String(), err)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "email" {
+		t.Fatalf("expected one detail naming email, got %+v", body.Error.Details)
 	}
 }
 
@@ -244,7 +305,7 @@ func TestADeliveredMessageKeepsTheGenericAcceptedAnswer(t *testing.T) {
 // disarm would be an unbounded sending path.
 func TestTheFlowRateLimitStillAppliesAfterADeliveryFailure(t *testing.T) {
 	stub := newStub(access.RoleCustomer)
-	stub.registerEr = domainerr.ErrVerificationDeliveryFailed
+	stub.startRegistrationEr = domainerr.ErrVerificationDeliveryFailed
 	handler := routerFor(stub, &recordingAuditor{}, config.AuthConfig{FlowRatePerMinute: 1})
 
 	if rec := doJSON(handler, http.MethodPost, "/register", registerBody, ""); rec.Code != http.StatusServiceUnavailable {
@@ -252,7 +313,7 @@ func TestTheFlowRateLimitStillAppliesAfterADeliveryFailure(t *testing.T) {
 	}
 	// The 503 tells the customer to request a new code, so the retry must not be
 	// refused by a cooldown - only by the flow limit.
-	rec := doJSON(handler, http.MethodPost, "/resend-verification", `{"email":"probe@example.com"}`, "")
+	rec := doJSON(handler, http.MethodPost, "/register/resend-otp", `{"registrationId":"reg-1"}`, "")
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected the flow rate limit to refuse the immediate retry, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -355,18 +416,85 @@ func TestLoginRateLimitReturns429(t *testing.T) {
 	}
 }
 
+// --- US4: abuse and interruption handling (T023) ---
+
+// TestForgotPasswordMapsTheCooldownTo429 covers FR-015: a repeat request within
+// the waiting period is refused with the documented cooldown code and a 429.
+func TestForgotPasswordMapsTheCooldownTo429(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.forgotPasswordEr = domainerr.ErrResendCooldown
+	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1000}),
+		http.MethodPost, "/password/forgot", `{"email":"user@example.com"}`, "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "AUTH_RESEND_COOLDOWN" {
+		t.Fatalf("expected AUTH_RESEND_COOLDOWN, got %s", got)
+	}
+}
+
+// TestFlowRateLimitReturns429OnForgotPassword covers FR-016: the flow-level limit
+// protects the reset-request endpoint (and the mailer behind it).
+func TestFlowRateLimitReturns429OnForgotPassword(t *testing.T) {
+	handler := routerFor(newStub(access.RoleCustomer), &recordingAuditor{}, config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1})
+	body := `{"email":"user@example.com"}`
+	if rec := doJSON(handler, http.MethodPost, "/password/forgot", body, ""); rec.Code != http.StatusAccepted {
+		t.Fatalf("first request: expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec := doJSON(handler, http.MethodPost, "/password/forgot", body, "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request: expected 429, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "RATE_LIMITED" {
+		t.Fatalf("expected RATE_LIMITED, got %s", got)
+	}
+}
+
+// TestFlowRateLimitReturns429OnVerifyResetOTP covers FR-016 on the verification
+// step, which lives in the same rate-limited flow group.
+func TestFlowRateLimitReturns429OnVerifyResetOTP(t *testing.T) {
+	handler := routerFor(newStub(access.RoleCustomer), &recordingAuditor{}, config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1})
+	body := `{"email":"user@example.com","otp":"123456"}`
+	if rec := doJSON(handler, http.MethodPost, "/password/forgot/verify-otp", body, ""); rec.Code != http.StatusOK {
+		t.Fatalf("first verify-otp: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec := doJSON(handler, http.MethodPost, "/password/forgot/verify-otp", body, "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second verify-otp: expected 429, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "RATE_LIMITED" {
+		t.Fatalf("expected RATE_LIMITED, got %s", got)
+	}
+}
+
+// TestResetPasswordMapsASupersededTokenTo400 covers FR-014: a reset with a
+// superseded or used token is refused with the documented reset-invalid code.
+func TestResetPasswordMapsASupersededTokenTo400(t *testing.T) {
+	stub := newStub(access.RoleCustomer)
+	stub.resetPasswordEr = domainerr.ErrResetInvalid
+	rec := doJSON(routerFor(stub, &recordingAuditor{}, config.AuthConfig{LoginRatePerMinute: 1000, FlowRatePerMinute: 1000}),
+		http.MethodPost, "/password/reset", `{"token":"stale","newPassword":"Str0ng!Pass"}`, "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := errorCode(t, rec); got != "AUTH_RESET_INVALID" {
+		t.Fatalf("expected AUTH_RESET_INVALID, got %s", got)
+	}
+}
+
 func TestMapErrorCodes(t *testing.T) {
 	cases := map[error]string{
-		domainerr.ErrWeakPassword:       constant.CodeWeakPassword,
-		domainerr.ErrInvalidCredentials: constant.CodeInvalidCredentials,
-		domainerr.ErrAccountPending:     constant.CodeAccountPending,
-		domainerr.ErrAccountDisabled:    constant.CodeAccountDisabled,
-		domainerr.ErrOTPInvalid:         constant.CodeOTPInvalid,
-		domainerr.ErrAccountLocked:      constant.CodeLoginLocked,
-		domainerr.ErrExpiredToken:       constant.CodeTokenExpired,
-		domainerr.ErrInvalidToken:       constant.CodeTokenInvalid,
-		domainerr.ErrRefreshReused:      constant.CodeRefreshReused,
-		domainerr.ErrResetInvalid:       constant.CodeResetInvalid,
+		domainerr.ErrWeakPassword:         constant.CodeWeakPassword,
+		domainerr.ErrInvalidCredentials:   constant.CodeInvalidCredentials,
+		domainerr.ErrAccountPending:       constant.CodeAccountPending,
+		domainerr.ErrAccountDisabled:      constant.CodeAccountDisabled,
+		domainerr.ErrOTPInvalid:           constant.CodeOTPInvalid,
+		domainerr.ErrAccountLocked:        constant.CodeLoginLocked,
+		domainerr.ErrExpiredToken:         constant.CodeTokenExpired,
+		domainerr.ErrInvalidToken:         constant.CodeTokenInvalid,
+		domainerr.ErrRefreshReused:        constant.CodeRefreshReused,
+		domainerr.ErrResetInvalid:         constant.CodeResetInvalid,
+		domainerr.ErrRegistrationNotFound: constant.CodeRegistrationNotFound,
 	}
 	for err, want := range cases {
 		if got := mapError(err); string(got.Code) != want {

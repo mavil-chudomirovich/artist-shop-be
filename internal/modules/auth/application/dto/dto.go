@@ -7,16 +7,35 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 )
 
-// RegisterInput starts registration.
-type RegisterInput struct {
-	Email    string
-	Password string
+// StartRegistrationInput starts a registration. It validates the payload and
+// holds a temporary registration only; no account is created until the emailed
+// code is confirmed (FR-001, FR-004).
+type StartRegistrationInput struct {
+	Email       string
+	Username    *string
+	DisplayName *string
+	Password    string
 }
 
-// VerifyEmailInput confirms an email OTP.
-type VerifyEmailInput struct {
-	Email string
-	OTP   string
+// VerifyRegistrationInput confirms a temporary registration with its code.
+type VerifyRegistrationInput struct {
+	RegistrationID string
+	OTP            string
+}
+
+// RegistrationIDInput targets a temporary registration by its opaque reference.
+type RegistrationIDInput struct {
+	RegistrationID string
+}
+
+// RegistrationStartedOutput is the result of starting a registration: the
+// reference the client uses for the follow-up calls, plus the code and resend
+// timings it displays.
+type RegistrationStartedOutput struct {
+	RegistrationID    string
+	Status            string
+	OTPExpiresIn      int
+	ResendAvailableIn int
 }
 
 // EmailInput targets an email address.
@@ -26,11 +45,12 @@ type EmailInput struct {
 
 // LoginInput authenticates an account.
 type LoginInput struct {
-	Email     string
-	Password  string
-	Source    string
-	UserAgent string
-	IP        string
+	Email      string
+	Identifier string
+	Password   string
+	Source     string
+	UserAgent  string
+	IP         string
 }
 
 // RefreshInput carries a session credential.
@@ -38,6 +58,20 @@ type RefreshInput struct {
 	RefreshToken string
 	UserAgent    string
 	IP           string
+}
+
+// VerifyResetOTPInput verifies an emailed reset code and exchanges it for a
+// single-use reset token.
+type VerifyResetOTPInput struct {
+	Email string
+	OTP   string
+}
+
+// ResetTokenOutput is the single-use reset token returned by verify-otp,
+// together with its lifetime in seconds.
+type ResetTokenOutput struct {
+	ResetToken string
+	ExpiresIn  int
 }
 
 // ResetPasswordInput completes a password reset.

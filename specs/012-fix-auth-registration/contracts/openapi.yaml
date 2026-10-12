@@ -1,0 +1,261 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend — OTP-Gated Registration
+  version: 1.0.0
+  description: >
+    Registration and email-confirmation endpoints. A sign-up creates no durable
+    account until the emailed one-time code is confirmed. Responses use the
+    foundation envelope (data + meta, or error) and the X-Request-Id header.
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/v1/auth/register:
+    post:
+      summary: Start registration and send an email OTP
+      description: >
+        Validates the payload, rejects an email or username that is already taken,
+        stores a temporary registration, and emails a one-time code. Returns the
+        registration reference and the code/resend timings. No account is created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "202":
+          description: Registration started; a code was sent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationStartedEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: The email or username is already taken.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/Error"
+        "503":
+          description: The confirmation code could not be delivered; a new code can be requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/register/verify-otp:
+    post:
+      summary: Confirm the OTP and create the account
+      description: >
+        Confirms the provided code against the temporary registration and, on
+        success, creates an active customer account and discards the temporary
+        data. Repeating a successful confirmation for the same reference does not
+        create a second account. Does not issue a session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyRegistrationRequest"
+      responses:
+        "200":
+          description: Registration confirmed; the account is ready to sign in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageEnvelope"
+        "400":
+          $ref: "#/components/responses/RegistrationError"
+        "409":
+          description: >
+            The username was taken by another registration between start and
+            confirmation; no account was created and the temporary registration is kept.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: The code attempt limit was reached; request a new code.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/register/resend-otp:
+    post:
+      summary: Replace the confirmation code
+      description: >
+        Issues a new code and invalidates the previous one, after the resend
+        cooldown. A response is identical whether or not the reference exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationIdRequest"
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageEnvelope"
+        "400":
+          $ref: "#/components/responses/RegistrationError"
+        "429":
+          description: The resend cooldown is still active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The confirmation code could not be delivered; a new code can be requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/v1/auth/register/cancel:
+    post:
+      summary: Cancel a temporary registration
+      description: >
+        Removes the temporary registration and invalidates its code. Idempotent
+        and generic whether or not the reference exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationIdRequest"
+      responses:
+        "200":
+          description: Cancelled (or already gone).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "429":
+          $ref: "#/components/responses/Error"
+components:
+  responses:
+    Error:
+      description: Error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationError:
+      description: A field failed validation.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RegistrationError:
+      description: >
+        Registration failure. Unknown, expired or cancelled references return
+        AUTH_REGISTRATION_NOT_FOUND; a wrong/expired code returns its own
+        AUTH_OTP_* code.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+          nullable: true
+        password:
+          type: string
+          minLength: 8
+    VerifyRegistrationRequest:
+      type: object
+      required: [registrationId, otp]
+      properties:
+        registrationId:
+          type: string
+        otp:
+          type: string
+          pattern: "^[0-9]{6}$"
+    RegistrationIdRequest:
+      type: object
+      required: [registrationId]
+      properties:
+        registrationId:
+          type: string
+    RegistrationStarted:
+      type: object
+      required: [registrationId, status, otpExpiresIn, resendAvailableIn]
+      properties:
+        registrationId:
+          type: string
+          description: Opaque, unpredictable reference used for verify/resend/cancel.
+        status:
+          type: string
+          enum: [PendingVerification]
+        otpExpiresIn:
+          type: integer
+          description: Seconds until the code expires.
+        resendAvailableIn:
+          type: integer
+          description: Seconds until a resend is allowed.
+    RegistrationStartedEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          $ref: "#/components/schemas/RegistrationStarted"
+        meta:
+          $ref: "#/components/schemas/Meta"
+    MessageEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data:
+          type: object
+          properties:
+            message:
+              type: string
+        meta:
+          $ref: "#/components/schemas/Meta"
+    Meta:
+      type: object
+      properties:
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  issue:
+                    type: string
+            requestId:
+              type: string

@@ -228,15 +228,15 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8025/api/v1/messages | Selec
 
 | Cần kiểm tra | Cách |
 |---|---|
-| Tài khoản đã xác nhận email chưa | `POST /auth/verify-email` trước; nếu chưa sẽ trả `AUTH_ACCOUNT_PENDING` |
+| Tài khoản đã xác nhận email chưa | `POST /auth/register/verify-otp` trước; đăng ký chưa xác thực thì chưa có tài khoản để đăng nhập |
 | Tài khoản có bị khoá không | 10 lần sai ⇒ `AUTH_LOGIN_LOCKED` trong 15 phút |
 | Email đã normalize chưa | Email được trim + lowercase; dùng `User@Example.com ` cũng được, nhưng nhớ khớp khi verify |
 | Admin có được seed chưa | `make seed-docker`, xem `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
 
 ### `AUTH_OTP_TOO_MANY_ATTEMPTS` khi OTP vẫn còn hạn
 
-Sai 3 lần ⇒ mã bị khoá 60 giây (`OTP_BLOCK_TTL`). Chờ hoặc gửi lại mã
-`POST /auth/resend-verification` (có cooldown 60 giây).
+Sai 5 lần ⇒ mã bị khoá 60 giây (`OTP_BLOCK_TTL`). Chờ hoặc gửi lại mã
+`POST /auth/register/resend-otp` (có cooldown 60 giây).
 
 ### `AUTH_REFRESH_REUSED`
 

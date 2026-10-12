@@ -84,8 +84,8 @@ $body = (Invoke-RestMethod "http://localhost:8025/api/v1/message/$($msgs[0].ID)"
 
 1. `POST /auth/register` → `202`. Thư `Confirm your email` xuất hiện trong Mailpit.
 2. Đọc OTP 6 chữ số từ thư.
-3. Đăng nhập **trước** khi xác minh → `403 AUTH_ACCOUNT_PENDING`.
-4. `POST /auth/verify-email` với `{ email, otp }` → `200`.
+3. Đăng nhập **trước** khi xác minh → `401 AUTH_INVALID_CREDENTIALS` (chưa có tài khoản).
+4. `POST /auth/register/verify-otp` với `{ registrationId, otp }` → `200`.
 5. `POST /auth/login` → `200` kèm `accessToken` + `refreshToken`.
 
 ### Hai cái bẫy
@@ -96,15 +96,24 @@ nhà cung cấp thật chứ không phải Mailpit. Kiểm `SMTP_HOST` hiệu d�
 phải `docker-compose.yml` trần. Xem [../troubleshooting.md](../troubleshooting.md).
 
 **Cooldown 60 giây.** Sau khi `register` gửi thành công, cooldown **vẫn được giữ**, nên
-`POST /auth/resend-verification` gọi ngay sẽ trả `429 AUTH_RESEND_COOLDOWN` và **không**
+`POST /auth/register/resend-otp` gọi ngay sẽ trả `429 AUTH_RESEND_COOLDOWN` và **không**
 có thư mới. Đó là hành vi đúng, không phải lỗi. Chờ hết `OTP_RESEND_COOLDOWN` rồi gọi lại
 → `202` và có thư mới. Lưu ý phân biệt: khi gửi **thất bại** thì cooldown được gỡ, còn khi
 gửi **thành công** thì nó được giữ.
 
 ### Đặt lại mật khẩu
 
-`POST /auth/password/forgot` → `202`, thư `Reset your password` chứa token dùng cho
-`POST /auth/password/reset`. Đọc thư theo cùng cách trên.
+`POST /auth/password/forgot` → `202`, thư `Reset your password` chứa **mã 6 chữ số** (không
+phải reset token). Đọc mã từ thư theo cách trên, rồi:
+
+1. `POST /auth/password/forgot/verify-otp` với `{ email, otp }` → `200` kèm `resetToken` +
+   `expiresIn`. Mã chỉ dùng **một lần**.
+2. `POST /auth/password/reset` với `{ token, newPassword }` → `200` **thành công, không cấp
+   phiên**. Đăng nhập tự động đã bị bỏ: khách quay lại `POST /auth/login` bằng mật khẩu mới.
+
+Cooldown 60 giây áp cho **cả** `password/forgot` (giống `register/resend-otp`): gọi lại quá sớm
+trả `429 AUTH_RESEND_COOLDOWN` và không có thư mới. Gửi hỏng trả `503 SERVICE_UNAVAILABLE` và
+cooldown được gỡ, nên xin lại mã mới được ngay.
 
 ### Kiểm nhanh thư có đi đúng đường không
 

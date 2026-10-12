@@ -129,7 +129,10 @@ nội bộ ra ngoài.
 | `AUTH_TOKEN_INVALID` | 401 | Token không hợp lệ |
 | `AUTH_TOKEN_EXPIRED` | 401 | Token đã hết hạn |
 | `AUTH_REFRESH_REUSED` | 401 | Refresh token đã được dùng (rotation phát hiện replay) |
-| `AUTH_RESET_INVALID` | 400 | Token đặt lại mật khẩu sai hoặc hết hạn |
+| `AUTH_RESET_INVALID` | 400 | Token đặt lại mật khẩu sai, đã dùng, hết hạn hoặc đã bị một lần reset mới hơn thay thế |
+| `AUTH_EMAIL_TAKEN` | 409 | Email đã thuộc một tài khoản — chỉ ở `POST /register` (từ chối sớm) |
+| `AUTH_USERNAME_TAKEN` | 409 | Username đã được dùng — ở `POST /register` và `POST /register/verify-otp` |
+| `AUTH_REGISTRATION_NOT_FOUND` | 400 | Tham chiếu đăng ký lạ, hết hạn hoặc đã huỷ; dùng chung cho `verify-otp`/`resend-otp`/`cancel` để không tiết lộ sự tồn tại |
 
 **Riêng module user** (`internal/modules/user/domain/constant/codes.go`):
 
@@ -380,7 +383,7 @@ chỉ chịu hạn mức toàn cục — nhưng đây là điểm PayOS **gọi 
 trả `2xx` nhanh để cổng ngừng thử lại thay vì bị chặn (`specs/011-order-payment/research.md` D10).
 
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
-(`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **3 lần** sẽ
+(`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **5 lần** sẽ
 khoá mã 60 giây (`OTP_MAX_ATTEMPTS`, `OTP_BLOCK_TTL`).
 
 ### 1.6 Vòng đời token
@@ -436,18 +439,26 @@ là **derived**, không phải nguồn authoritative: khi lệch với file này
 
 ## 3. Module 01 — Auth (`/api/v1/auth`)
 
-Hạ tầng chung: `register`, `verify-email`, `resend-verification`,
-`password/forgot`, `password/reset` nằm trong nhóm rate limit *flow*; `login` có
-hạn mức riêng.
+Hạ tầng chung: `register`, `register/verify-otp`, `register/resend-otp`,
+`register/cancel`, `password/forgot`, `password/forgot/verify-otp`, `password/reset`
+nằm trong nhóm rate limit *flow*; `login` có hạn mức riêng.
 
-Email được normalize (trim + lowercase) trước khi xử lý. Endpoint *register* và
-*resend* **không** tiết lộ email đã tồn tại hay không (luôn trả `202` với thông
-báo chung), chỉ `verify-email` mới phản ánh trạng thái tài khoản.
+Email được normalize (trim + lowercase) trước khi xử lý. `POST /register` từ chối **sớm** một
+email/username đã dùng bằng `409` (thay đổi có chủ đích để biểu mẫu báo ngay); các endpoint
+`verify-otp`/`resend-otp`/`cancel` trả **chung một kết quả** `AUTH_REGISTRATION_NOT_FOUND` cho
+tham chiếu lạ, hết hạn hoặc đã huỷ, nên không tiết lộ tham chiếu có từng tồn tại hay không.
+
+> **Đăng ký theo cơ chế trì hoãn (deferred).** `POST /register` **không** tạo tài khoản: nó chỉ
+> giữ một đăng ký **tạm** trong Redis theo `registrationId` rồi gửi OTP. Tài khoản `active` chỉ
+> được tạo khi `POST /register/verify-otp` xác nhận đúng mã. Bỏ dở giữa chừng không để lại gì
+> lâu dài. Hai endpoint email-keyed cũ `POST /verify-email` và `POST /resend-verification` đã bị
+> **gỡ** (breaking change có chủ đích).
 
 ### 3.1 `POST /register`
 
-Tạo tài khoản ở trạng thái `pending` và gửi OTP 6 chữ số qua email. **Không** dùng
-token vì thông báo trả về là chung.
+Mở đầu một lượt đăng ký **chưa** tạo tài khoản: xác thực dữ liệu, từ chối email/username đã
+dùng, lưu đăng ký **tạm** trong Redis dưới một `registrationId` khó đoán rồi gửi OTP 6 chữ số
+qua email. Tài khoản chỉ được tạo khi OTP được xác nhận (mục 3.2).
 
 | | |
 |---|---|
@@ -458,27 +469,48 @@ token vì thông báo trả về là chung.
 Request
 
 ```json
-{ "email": "user@example.com", "password": "Str0ng!Pass" }
+{ "email": "user@example.com", "username": "artist", "displayName": "Artist", "password": "Str0ng!Pass" }
 ```
 
-`password` phải đạt chính sách mật khẩu; mật khẩu được băm **Argon2id**.
+`username` và `displayName` là tùy chọn. `password` phải đạt chính sách mật khẩu và được băm
+**Argon2id**; email được normalize (trim + lowercase). **Không** tài khoản nào (kể cả `pending`)
+được tạo ở bước này.
 
 Response `202`
 
 ```json
 {
-  "data": { "message": "If the email is eligible, a confirmation code has been sent." },
+  "data": {
+    "registrationId": "opaque-random-string",
+    "status": "PendingVerification",
+    "otpExpiresIn": 300,
+    "resendAvailableIn": 60
+  },
   "meta": { "requestId": "...", "timestamp": "..." }
 }
 ```
 
-Lỗi: `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
+`registrationId` là tham chiếu client dùng cho `verify-otp`/`resend-otp`/`cancel`;
+`otpExpiresIn` và `resendAvailableIn` là số **giây**.
 
-#### Nhánh gửi lại được `503`
+Lỗi: `VALIDATION_ERROR` 400 (email sai định dạng) · `AUTH_EMAIL_TAKEN` 409 · `AUTH_USERNAME_TAKEN` 409 · `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
 
-Khi nhà cung cấp email **từ chối** thư xác nhận, endpoint này trả `503` chứ không phải
-`500`: đây là sự cố của dịch vụ, không phải lỗi khách gây ra, và `500` khiến client
-tưởng mình sai nên thử lại y hệt — một việc không bao giờ có kết quả.
+Một `email` sai định dạng (ví dụ `user@example`, thiếu `@`/domain) trả `400 VALIDATION_ERROR`
+với `error.details[].field` là `"email"`; kiểm định này chạy **trước** khi lưu đăng ký tạm nên
+một địa chỉ sai định dạng để lại **không** đăng ký tạm và **không** gửi mã nào (FR-001). Đây là
+mã **dùng chung** của `httpx`, endpoint không thêm mã riêng nào của module auth.
+
+Một địa chỉ đã có tài khoản trả `409 AUTH_EMAIL_TAKEN`; một username đã được dùng trả `409
+AUTH_USERNAME_TAKEN`. Việc từ chối sớm này để lộ sự tồn tại của tài khoản cho người gọi — đây là
+**thay đổi có chủ đích** so với thiết kế che thông tin trước đây, để biểu mẫu đăng ký báo được
+"email/tên đăng nhập đã tồn tại". Vì từ chối xảy ra **trước** khi lưu đăng ký tạm, một email đã
+có tài khoản không bao giờ tới được nhánh `503` bên dưới.
+
+#### Nhánh gửi OTP thất bại trả `503`
+
+Khi nhà cung cấp email **từ chối** thư xác nhận, endpoint này trả `503` chứ không phải `500`: đây
+là sự cố của dịch vụ, không phải lỗi khách gây ra, và `500` khiến client tưởng mình sai nên thử
+lại y hệt — một việc không bao giờ có kết quả.
 
 Response `503`
 
@@ -492,35 +524,21 @@ Response `503`
 }
 ```
 
-Mã `SERVICE_UNAVAILABLE` là mã **dùng chung** của `httpx`, được tái sử dụng; endpoint này
-không thêm mã lỗi riêng nào của module auth.
+Mã `SERVICE_UNAVAILABLE` là mã **dùng chung** của `httpx`, được tái sử dụng; endpoint này không
+thêm mã lỗi riêng nào của module auth.
 
 Điều mà `503` này hứa thì đúng:
 
 | Điều | Kết quả quan sát được |
 |---|---|
-| Tài khoản có được tạo không | **Có**, và giữ trạng thái `pending`. Không rollback: khách vẫn xác nhận được ngay khi gửi lại thành công |
-| `POST /auth/resend-verification` ngay sau đó | **Được chấp nhận**, không bị `AUTH_RESEND_COOLDOWN`. Một lần gửi hỏng không tiêu tốn cooldown |
+| Đăng ký tạm có được giữ không | **Có**, và không có tài khoản nào được tạo. Khách xác nhận được ngay khi gửi lại thành công |
+| `POST /auth/register/resend-otp` ngay sau đó | **Được chấp nhận**, không bị `AUTH_RESEND_COOLDOWN`. Một lần gửi hỏng không tiêu tốn cooldown |
 | Rate limit nhóm *flow* | Vẫn áp dụng, nên không mở đường gửi không giới hạn |
 | Body có lộ chi tiết nhà cung cấp, credential hay địa chỉ người nhận không | Không |
-| Có lộ ra email **đã tồn tại** không | **Không** — cả hai nhánh trả cùng một câu, xem bên dưới |
 
-> **Hai nhánh trả lời giống hệt nhau khi không gửi được thư.**
-> Một địa chỉ **đã có** tài khoản đang chờ xác minh vẫn thử gửi, và nếu gửi hỏng thì
-> nhận **đúng** câu trả lời mà một địa chỉ chưa có nhận — cùng status, cùng mã lỗi, cùng
-> câu chữ. Việc này là cần thiết: nếu hai nhánh khác nhau thì `202` nghĩa là *đã đăng ký*
-> và `503` nghĩa là *chưa*, và ai đó đoán được email nào đã có tài khoản trong suốt lúc
-> nhà cung cấp hỏng. Bước tiếp theo dành cho khách là giống nhau ở cả hai trường hợp —
-> yêu cầu một mã xác minh mới — nên che được mà vẫn nói thật.
->
-> Một địa chỉ đã **xác minh** vẫn trả `202` và **không** nhận thư, vì gửi mã xác minh cho
-> người đã xác minh là hành vi không ai yêu cầu. Nói cách khác, oracle còn lại chỉ thu hẹp
-> còn email **đã xác minh** trong lúc hạ tầng mail hỏng. Xem mục *Khoảng trống đã biết*
-> ở `3.3`.
-
-Bản ghi `audit_logs` cho lần đăng ký đó dùng action `AUTH_REGISTER_DELIVERY_FAILED` với
-outcome `FAILURE`, và metadata `{"classification": ...}` là phân loại **của hệ thống
-này**, không phải câu chữ của nhà cung cấp:
+Bản ghi `audit_logs` cho lần đăng ký đó dùng action `AUTH_REGISTER_DELIVERY_FAILED` với outcome
+`FAILURE`, target là `registrationId`, và metadata `{"classification": ...}` là phân loại **của
+hệ thống này**, không phải câu chữ của nhà cung cấp:
 
 | Phân loại | Nghĩa | Có thử lại không |
 |---|---|---|
@@ -530,10 +548,10 @@ này**, không phải câu chữ của nhà cung cấp:
 | `REFUSED` | Provider từ chối chính thư đó | Không |
 | `UNKNOWN` | Lỗi không mang phân loại nào hệ thống này nhận biết | Không |
 
-Một dòng log ở mức `error` đi kèm, chỉ chứa `accountId`, `deliveryFailure` và
-`deliveryAttempts` — không có mã xác nhận, không có câu chữ của provider, không có địa
-chỉ người nhận. Ngân sách thử lại có trần (tối đa 3 lần, tổng thời gian chờ nằm trong
-mục tiêu trả lời 2 giây), nên `503` vẫn tới khách kịp thời.
+Một dòng log ở mức `error` đi kèm, chỉ chứa `registrationId`, `deliveryFailure` và
+`deliveryAttempts` — không có mã xác nhận, không có câu chữ của provider, không có địa chỉ người
+nhận. Ngân sách thử lại có trần (tối đa 3 lần, tổng thời gian chờ nằm trong mục tiêu trả lời 2
+giây), nên `503` vẫn tới khách kịp thời.
 
 > Nếu `.env` để `SMTP_HOST` rỗng, email được ghi ra log (log sender). Để xem OTP thật qua
 > Mailpit thì không cần sửa `.env`: `make up-tools` tự trỏ container vào Mailpit, còn khi
@@ -541,9 +559,12 @@ mục tiêu trả lời 2 giây), nên `503` vẫn tới khách kịp thời.
 > hộp thư ở `http://localhost:8025` hoặc `make mail`. Xem
 > [configuration.md](configuration.md) mục *Phân tầng file env*.
 
-### 3.2 `POST /verify-email`
+### 3.2 `POST /register/verify-otp`
 
-Xác nhận email bằng OTP → chuyển tài khoản sang `active`.
+Xác nhận OTP cho đăng ký tạm. Khi mã đúng, chưa hết hạn và chưa vượt số lần thử: **tạo đúng một**
+tài khoản `active` vai trò `CUSTOMER`, xoá mã và đánh dấu đăng ký `completed`. **Idempotent**:
+gọi lại cùng `registrationId` sau khi đã xác nhận vẫn trả `200` và **không** tạo tài khoản thứ hai.
+**Không** cấp phiên — client gọi `/auth/login` sau đó.
 
 | | |
 |---|---|
@@ -551,53 +572,85 @@ Xác nhận email bằng OTP → chuyển tài khoản sang `active`.
 | Rate limit | 5/phút (flow) |
 | Trả về | `200 OK` |
 
-Request `{ "email": "user@example.com", "otp": "123456" }`
+Request
+
+```json
+{ "registrationId": "opaque-random-string", "otp": "123456" }
+```
 
 Response `200`
 
 ```json
-{ "data": { "message": "Email confirmed." }, "meta": { "requestId": "...", "timestamp": "..." } }
+{ "data": { "message": "Registration confirmed." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
-Lỗi: `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `AUTH_ACCOUNT_DISABLED` 403 · `RATE_LIMITED` 429
+Lỗi: `AUTH_REGISTRATION_NOT_FOUND` 400 · `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `AUTH_USERNAME_TAKEN` 409 · `RATE_LIMITED` 429
 
-### 3.3 `POST /resend-verification`
+- `AUTH_REGISTRATION_NOT_FOUND` 400 cho tham chiếu **lạ, hết hạn hoặc đã huỷ** — phản hồi chung,
+  không tiết lộ tham chiếu có từng tồn tại hay không.
+- `AUTH_USERNAME_TAKEN` 409 khi một đăng ký khác đã chiếm `username` trong khoảng giữa lúc bắt
+  đầu và lúc xác nhận: **không** tài khoản nào được tạo, đăng ký tạm được giữ nguyên.
+- Mã sai thì bộ đếm số lần sai tăng; khi chạm `OTP_MAX_ATTEMPTS`, mã bị chặn và trả
+  `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 cho tới khi có mã mới (`resend-otp`).
 
-Gửi lại OTP khi mã hết hạn hoặc người dùng không nhận được.
+### 3.3 `POST /register/resend-otp`
+
+Gửi lại OTP cho một đăng ký **còn hiệu lực**, sau khoảng chờ giữa hai lần gửi. Mã cũ bị vô hiệu
+và bộ đếm số lần sai được reset.
 
 | | |
 |---|---|
 | Auth | Không |
 | Rate limit | 5/phút (flow) |
-| Trả về | `202 Accepted` |
+| Trả về | `202 Accepted`, hoặc `503` **khi không gửi được** |
 
-Request `{ "email": "user@example.com" }` → response giống hệt `POST /register`.
+Request
 
-Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `RATE_LIMITED` 429
+```json
+{ "registrationId": "opaque-random-string" }
+```
 
-Ghi chú cho người đọc tài liệu này:
+Response `202`
 
-- **Một lần gửi hỏng ở `POST /register` không tiêu tốn cooldown.** Khách vừa nhận
-  `503` ở `3.1` có thể gọi endpoint này ngay lập tức và được chấp nhận; đó là điều mà
-  câu trả lời `503` hứa. Ngược lại, sau một lần gửi **thành công**, cooldown vẫn áp dụng
-  và trả `AUTH_RESEND_COOLDOWN` như trước.
-- **Rate limit nhóm *flow* vẫn áp dụng** ngay cả khi cooldown đã được gỡ, nên việc gỡ
-  cooldown không mở ra một đường gửi không giới hạn.
-- **Khoảng trống đã biết:** nếu chính lần gửi lại này cũng thất bại, endpoint hiện trả
-  `500 INTERNAL_ERROR` thay vì `503 SERVICE_UNAVAILABLE` như `POST /register`. Cơ chế gỡ
-  cooldown và rate limit vẫn đúng, chỉ là **mã trả về** chưa được ánh xạ giống nhau. Sửa
-  ở đây là một thay đổi hành vi, không phải một sửa tài liệu, nên chưa nằm trong thay
-  đổi này.
-- **Khoảng trống đã biết:** ở đường thất bại, endpoint này **vẫn** phân biệt được: một
-  địa chỉ không có tài khoản, hoặc đã không còn ở trạng thái `pending`, trả `nil` và nhận
-  `202` chung; còn một địa chỉ **có** tài khoản `pending` mà bước gửi hỏng thì trả lỗi.
-  Nên khi nhà cung cấp hỏng, `202` nghĩa là *không phải tài khoản `pending`*, còn lỗi nghĩa
-  là *là*. Ở đường thành công hai trường hợp không phân biệt được; ở đường thất bại thì có.
-  Khác với `3.1`, ở đây FR-008a không áp dụng được vì endpoint này **không** hứa sẽ trả
-  `503` khi gửi hỏng — nó trả `500`. Đóng khoảng trống này cần sửa cả status của
-  resend lẫn hành vi khi địa chỉ đã tồn tại; cả hai đều ngoài thay đổi này.
+```json
+{ "data": { "message": "A fresh confirmation code has been sent." }, "meta": { "requestId": "...", "timestamp": "..." } }
+```
 
-### 3.4 `POST /login`
+Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_REGISTRATION_NOT_FOUND` 400 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
+
+- `AUTH_RESEND_COOLDOWN` 429 khi còn trong khoảng chờ (`resendAvailableIn` sau lần gửi gần nhất).
+- Tham chiếu **lạ, hết hạn hoặc đã huỷ** trả `AUTH_REGISTRATION_NOT_FOUND` 400 chung; đăng ký đã
+  `completed` cũng trả chung như vậy, không tiết lộ trạng thái.
+- Nếu lần gửi lại này **cũng** thất bại, endpoint trả `503 SERVICE_UNAVAILABLE` như `3.1`; cooldown
+  được gỡ nên khách gọi lại được ngay.
+
+### 3.4 `POST /register/cancel`
+
+Huỷ đăng ký **tạm** và vô hiệu tham chiếu lẫn mã của nó. **Idempotent**: một tham chiếu lạ, hết hạn
+hoặc đã huỷ cũng trả `200` và không tiết lộ gì. Đăng ký đã xác nhận mà bị huỷ cũng chỉ xoá bản ghi
+tạm, **không** đụng tới tài khoản đã tạo.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | 5/phút (flow) |
+| Trả về | `200 OK` |
+
+Request
+
+```json
+{ "registrationId": "opaque-random-string" }
+```
+
+Response `200`
+
+```json
+{ "data": { "message": "Registration cancelled." }, "meta": { "requestId": "...", "timestamp": "..." } }
+```
+
+Lỗi: `RATE_LIMITED` 429
+
+### 3.5 `POST /login`
 
 Đăng nhập, cấp cặp access + refresh token.
 
@@ -633,7 +686,7 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
   -d '{"email":"user@example.com","password":"Str0ng!Pass"}'
 ```
 
-### 3.5 `POST /refresh`
+### 3.6 `POST /refresh`
 
 Xoay vòng phiên: refresh token cũ bị thu hồi, cặp token mới được cấp.
 
@@ -646,7 +699,7 @@ Request `{ "refreshToken": "<opaque>" }` → response giống `POST /login`.
 
 Lỗi: `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401 · `AUTH_REFRESH_REUSED` 401 (kèm thu hồi toàn bộ phiên của user)
 
-### 3.6 `POST /logout`
+### 3.7 `POST /logout`
 
 Thu hồi phiên của thiết bị hiện tại. Thao tác **idempotent**: refresh token lạ vẫn
 trả `204`.
@@ -660,28 +713,81 @@ Request `{ "refreshToken": "<opaque>" }`
 
 Lỗi: `MALFORMED_REQUEST` 400
 
-### 3.7 `POST /password/forgot`
+### 3.8 `POST /password/forgot`
 
-Gửi link/token đặt lại mật khẩu. Phản hồi luôn chung, không tiết lộ email có tồn tại.
+Bắt đầu đặt lại mật khẩu: nếu email có tài khoản, gửi một **mã OTP** đặt lại qua email.
+Phản hồi luôn chung, không tiết lộ email có tồn tại. Bước này **cũng là** bước gửi lại:
+gọi lại sau khoảng chờ là xin mã mới (không có endpoint resend riêng).
 
 | | |
 |---|---|
 | Auth | Không |
 | Rate limit | 5/phút (flow) |
-| Trả về | `202 Accepted` |
+| Trả về | `202 Accepted`, hoặc `503` **khi không gửi được** |
 
 Request `{ "email": "user@example.com" }`
 
+Response `202`
+
 ```json
-{ "data": { "message": "If the email is registered, a reset link has been sent." }, "meta": { "...": "..." } }
+{ "data": { "message": "If the email is registered, a reset code has been sent." }, "meta": { "...": "..." } }
 ```
 
-Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `RATE_LIMITED` 429
+Email chứa **mã 6 chữ số** dùng cho `verify-otp`; email **không** chứa reset token. Mã được
+lưu ở dạng **băm không thể đảo ngược** (Argon2id), có hạn riêng và bị thay khi xin mã mới.
 
-### 3.8 `POST /password/reset`
+Lỗi: `VALIDATION_ERROR` 400 (email sai định dạng) · `AUTH_RESEND_COOLDOWN` 429 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
 
-Hoàn tất đặt lại mật khẩu bằng token đã nhận. Đặt lại xong sẽ đăng nhập luôn (trả
-cặp token).
+- `AUTH_RESEND_COOLDOWN` 429 khi email có tài khoản và còn trong khoảng chờ
+  (`OTP_RESEND_COOLDOWN`) kể từ lần gửi gần nhất; nó chặn **cả** lần gửi lại.
+- Một địa chỉ **chưa** có tài khoản cũng trả `202` y hệt, **không** gửi gì và **không** để lại
+  trạng thái, nên không tiết lộ email có tồn tại (FR-002).
+- `SERVICE_UNAVAILABLE` 503 khi nhà cung cấp email **từ chối** thư: **không** gì được gửi tới
+  địa chỉ đó, và cooldown được gỡ nên xin lại mã mới được ngay. Bản ghi `audit_logs` dùng action
+  `AUTH_PASSWORD_RESET_DELIVERY_FAILED` với outcome `FAILURE` (xem §3.1 cho mô tả `503` dùng chung).
+
+### 3.9 `POST /password/forgot/verify-otp`
+
+Xác minh mã OTP đã nhận. Khi mã đúng, chưa hết hạn và chưa vượt số lần thử: cấp một **reset
+token** dùng **một lần**, vô hiệu mã, và trả token kèm hạn của nó. Reset token **không** phải
+phiên, không dùng để xác thực bất kỳ request nào khác.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | 5/phút (flow) |
+| Trả về | `200 OK` |
+
+Request
+
+```json
+{ "email": "user@example.com", "otp": "123456" }
+```
+
+Response `200`
+
+```json
+{
+  "data": { "resetToken": "opaque-single-use-token", "expiresIn": 1800 },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+`expiresIn` là số **giây** còn lại của reset token (`PASSWORD_RESET_TTL`, mặc định 30 phút).
+
+Lỗi: `VALIDATION_ERROR` 400 (email sai định dạng) · `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `RATE_LIMITED` 429
+
+- `AUTH_OTP_INVALID` 400 khi mã sai: bộ đếm số lần sai tăng và reset request được giữ cho lần thử sau.
+- `AUTH_OTP_EXPIRED` 400 khi mã hết hạn, **chưa** có mã nào đang sống, hoặc địa chỉ không có tài khoản.
+- `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 khi chạm `OTP_MAX_ATTEMPTS`: mã bị chặn tới khi có mã mới.
+- Các phản hồi trên **không** tiết lộ địa chỉ có được đăng ký hay không (FR-009).
+- Mã chỉ dùng **một lần**: sau khi xác minh thành công, nó không dùng lại được.
+
+### 3.10 `POST /password/reset`
+
+Hoàn tất đặt lại mật khẩu bằng reset token. Thay mật khẩu, tiêu thụ token, thu hồi **mọi**
+phiên của tài khoản và vô hiệu hoá các access token đã cấp trước đó. **Không** đăng nhập tự
+động: trả về thành công, khách quay lại trang đăng nhập và dùng mật khẩu mới.
 
 | | |
 |---|---|
@@ -695,11 +801,19 @@ Request
 { "token": "<reset token>", "newPassword": "Str0ng!Pass" }
 ```
 
-Response giống `POST /login` (`accessToken`, `refreshToken`, `expiresIn`).
+Response `200`
+
+```json
+{ "data": { "message": "Password reset." }, "meta": { "requestId": "...", "timestamp": "..." } }
+```
 
 Lỗi: `AUTH_RESET_INVALID` 400 · `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429
 
-### 3.9 `GET /me`
+- `AUTH_RESET_INVALID` 400 khi token sai, đã dùng, hết hạn, hoặc đã bị một lần reset mới hơn
+  cho cùng tài khoản thay thế.
+- `AUTH_WEAK_PASSWORD` 400 khi mật khẩu mới không đạt chính sách; token **vẫn dùng được** để thử lại.
+
+### 3.11 `GET /me`
 
 Thông tin tài khoản của access token hiện tại. **Yêu cầu token hợp lệ.**
 
@@ -723,7 +837,7 @@ Response
 
 `role` là `CUSTOMER` hoặc `ADMIN` (`internal/share/access`). Lỗi: `UNAUTHENTICATED` 401 (thiếu token) · `AUTH_TOKEN_INVALID` 401 · `AUTH_TOKEN_EXPIRED` 401
 
-### 3.10 `POST /password/change`
+### 3.12 `POST /password/change`
 
 Đổi mật khẩu khi đã đăng nhập. Mọi phiên của tài khoản bị thu hồi, kể cả phiên
 đang dùng, rồi cấp lại cặp token mới — vì vậy body **bắt buộc** có
@@ -754,7 +868,7 @@ curl -X POST http://localhost:8080/api/v1/auth/password/change \
   -d '{"currentPassword":"Str0ng!Pass","newPassword":"Even5tronger!","refreshToken":"'$REFRESH'"}'
 ```
 
-### 3.11 `GET /admin/probe`
+### 3.13 `GET /admin/probe`
 
 Endpoint kiểm tra RBAC: chỉ `ADMIN` mới truy cập được. Khách không đăng nhập bị
 `401`; `CUSTOMER` đã đăng nhập bị `403` **và** bị ghi vào `audit_logs`
@@ -2941,14 +3055,16 @@ Ghi chú:
 |---|---|---|---|
 | GET | `/healthz` | — | Liveness |
 | GET | `/readyz` | — | Readiness (db + schema + redis) |
-| POST | `/api/v1/auth/register` | — | Đăng ký, gửi OTP |
-| POST | `/api/v1/auth/verify-email` | — | Xác nhận OTP |
-| POST | `/api/v1/auth/resend-verification` | — | Gửi lại OTP |
+| POST | `/api/v1/auth/register` | — | Bắt đầu đăng ký: lưu tạm, gửi OTP (202) |
+| POST | `/api/v1/auth/register/verify-otp` | — | Xác nhận OTP, tạo tài khoản (200) |
+| POST | `/api/v1/auth/register/resend-otp` | — | Gửi lại OTP (202) |
+| POST | `/api/v1/auth/register/cancel` | — | Huỷ đăng ký tạm (200) |
 | POST | `/api/v1/auth/login` | — | Đăng nhập, cấp token |
 | POST | `/api/v1/auth/refresh` | — | Xoay vòng refresh token |
 | POST | `/api/v1/auth/logout` | — | Thu hồi phiên hiện tại (204) |
-| POST | `/api/v1/auth/password/forgot` | — | Gửi token đặt lại mật khẩu |
-| POST | `/api/v1/auth/password/reset` | — | Đặt lại mật khẩu + cấp token |
+| POST | `/api/v1/auth/password/forgot` | — | Gửi mã OTP đặt lại mật khẩu (202) |
+| POST | `/api/v1/auth/password/forgot/verify-otp` | — | Xác minh mã, cấp reset token dùng một lần (200) |
+| POST | `/api/v1/auth/password/reset` | — | Đặt lại mật khẩu bằng reset token; thành công, **không** cấp phiên (200) |
 | GET | `/api/v1/auth/me` | Bearer | Thông tin tài khoản hiện tại |
 | POST | `/api/v1/auth/password/change` | Bearer | Đổi mật khẩu, thu hồi mọi phiên |
 | GET | `/api/v1/auth/admin/probe` | ADMIN | Kiểm tra RBAC |
@@ -3030,6 +3146,8 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-12 | **Đổi luồng quên mật khẩu sang xác minh bằng mã OTP (module 01 Auth, feature 013).** `POST /password/forgot` nay gửi một **mã OTP 6 chữ số** qua email thay vì gửi thẳng reset token, và trả lại `429 AUTH_RESEND_COOLDOWN` khi còn trong khoảng chờ (bước này **cũng là** bước gửi lại). **Thêm** endpoint `POST /password/forgot/verify-otp`: xác minh `{ email, otp }`, thành công trả `{ resetToken, expiresIn }` — reset token dùng **một lần**, không phải phiên và không xác thực được request khác. `POST /password/reset` **không** còn trả cặp token (**bỏ đăng nhập tự động**); nay trả `200` kèm message thành công, đồng thời thu hồi mọi phiên và vô hiệu access token cũ. Mã OTP lưu ở Redis (băm Argon2id, TTL riêng, chặn sau `OTP_MAX_ATTEMPTS`, cooldown `OTP_RESEND_COOLDOWN`); reset token giữ ở bảng `password_reset_requests` (`PASSWORD_RESET_TTL`). **Không** thêm mã lỗi mới. Các mục §3.9–3.12 dời xuống §3.10–3.13 (chèn mục verify-otp mới); `docs/swagger/` sinh lại khớp. | `internal/modules/auth/presentation/http/router.go`, `internal/modules/auth/application/implement/password.go` |
+| 2026-10-12 | **Đổi luồng đăng ký theo cơ chế trì hoãn (module 01 Auth, feature 012).** `POST /register` **không** còn tạo tài khoản `pending`: nó lưu đăng ký **tạm** trong Redis theo `registrationId` khó đoán rồi gửi OTP, trả `202` kèm `registrationId`, `otpExpiresIn`, `resendAvailableIn`. **Thêm ba** endpoint `POST /register/verify-otp` (xác nhận OTP, tạo **đúng một** tài khoản `active` vai trò `CUSTOMER`, idempotent khi gọi lại, **không** cấp phiên — 200), `POST /register/resend-otp` (thay mã sau cooldown — 202) và `POST /register/cancel` (huỷ đăng ký tạm, idempotent — 200). **Gỡ hai** endpoint `POST /verify-email` và `POST /resend-verification` (**breaking change** có chủ đích; thay bằng `register/verify-otp` và `register/resend-otp`, khoá theo `registrationId` thay vì email). `register` trả `409 AUTH_EMAIL_TAKEN`/`AUTH_USERNAME_TAKEN` sớm (§3.1) và `verify-otp` trả `409 AUTH_USERNAME_TAKEN` khi username bị đăng ký khác chiếm giữa chừng. Tham chiếu lạ/hết hạn/đã huỷ trả chung `AUTH_REGISTRATION_NOT_FOUND` 400. **Đổi mặc định** `OTP_TTL` 15m→5m, `OTP_MAX_ATTEMPTS` 3→5; thêm `PENDING_REGISTRATION_TTL=30m`. Các mục 3.2–3.11 dời xuống 3.2–3.12 (thêm ba mục đăng ký mới); `docs/swagger/` sinh lại khớp. | `internal/modules/auth/presentation/http/router.go`, `internal/modules/auth/application/implement/registration.go` |
 | 2026-10-11 | Thêm nhóm thanh toán (module 08 Payment, feature 011): **bốn** endpoint — **hai** của khách đã đăng nhập `POST`/`GET /api/v1/orders/{orderId}/payment` (bắt đầu/dùng lại và đọc thanh toán của chính đơn mình), **một** của quản trị `GET /api/v1/admin/payments` (mọi bản ghi, phân trang, lọc `status`; `status=UNMATCHED` = hàng đợi đối soát), và **một công khai** `POST /api/v1/payments/payos/webhook` (không cần phiên, xác minh chữ ký PayOS). Hai hình dạng response: khách `PaymentResponse` **11 member** (gồm `checkoutUrl`, `qrCode`, `unmatchedReason` — cả ba luôn có mặt, `""` khi không áp dụng); quản trị `AdminPaymentResponse` **13 member** (thêm `userId` + `providerReference`). **Enum mới** `PaymentStatus` — **bốn** giá trị `PENDING`/`PAID`/`CANCELLED`/`UNMATCHED`. Bổ sung **sáu** mã `PAYMENT_*` vào mục 1.4 (`PAYMENT_ORDER_NOT_FOUND` 404, `PAYMENT_ORDER_NOT_PAYABLE` 409, `PAYMENT_NOT_FOUND` 404, `PAYMENT_ALREADY_LIVE` 409, `PAYMENT_PROVIDER_ERROR` 422, `PAYMENT_WEBHOOK_INVALID_SIGNATURE` 401) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: chủ sở hữu lấy từ **session**; yêu cầu còn hiệu lực được **dùng lại**; tiền = tổng đơn, **không** phí ship; webhook công khai **xác minh chữ ký**, áp **đúng một lần**; xác nhận cũ/không khớp thành `UNMATCHED` để đối soát, **không** hoàn tiền; huỷ đơn chưa trả huỷ yêu cầu ở cổng. Phần 10 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 11/12/13. Xem ADR-019. | `internal/modules/payment/presentation/http/router.go` |
 | 2026-10-10 | Bổ sung luồng **xác nhận đơn & chỉnh sửa** cho nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order, feature 010): **ba** endpoint mới — `PUT /orders/{orderId}` (khách sửa đơn chưa trả tiền), `POST /admin/orders/{orderId}/confirm` (artist xác nhận: giữ **toàn bộ** hàng all-or-nothing, mở hạn thanh toán) và `POST /admin/orders/{orderId}/reject` (artist từ chối) — nâng module lên **mười hai**: **năm** route của khách dưới `/orders` (thêm `PUT`), **bảy** của admin. **Đổi hành vi**: `POST /orders` nay tạo đơn `PENDING` (**chờ artist xác nhận**) và **không** giữ hàng; `POST /orders/{orderId}/cancel` nay huỷ được cả `PENDING` lẫn `PAYMENT_PENDING`; `GET /admin/orders` nhận thêm `status`/`sort` (tuỳ chọn; `status=PENDING&sort=oldest` = hàng đợi xác nhận FIFO). **Đổi enum**: `PENDING_PAYMENT` **đổi tên** thành `PAYMENT_PENDING`, thêm `PENDING` — thành **sáu** giá trị. Bổ sung hai mã `ORDER_*` (`ORDER_NOT_EDITABLE`, `ORDER_EMPTY`) vào mục 1.4, ghi chú `ORDER_CONFIRMED`/`ORDER_REJECTED` vào nhóm action audit, và hạn **giữ chỗ 15 → 60 phút**. Sửa §9 (enum, endpoint, ghi chú) và bảng tổng hợp §10. Xem ADR-018. | `internal/modules/order/presentation/http/router.go` |
 | 2026-10-09 | Thêm nhóm `/api/v1/orders` và `/api/v1/admin/orders` (module 07 Order): **chín** endpoint — **bốn** của khách đã đăng nhập (`POST /orders` checkout, `GET /orders` danh sách, `GET /orders/{orderId}` chi tiết, `POST /orders/{orderId}/cancel` huỷ đơn còn chờ thanh toán) và **năm** của admin (`GET /admin/orders`, `GET /admin/orders/{orderId}`, `POST /admin/orders/{orderId}/ship`, `POST /admin/orders/{orderId}/complete`, `POST /admin/orders/{orderId}/transfer`). Chủ sở hữu lấy từ **session**; đơn của khách khác trả cùng `404 ORDER_NOT_FOUND`. Bốn hình dạng response: khách `OrderSummaryResponse` **5 member** / `OrderResponse` **7 member**; quản trị `AdminOrderSummaryResponse` **6 member** / `AdminOrderResponse` **8 member** (hơn khách đúng `userId`); `OrderLineResponse` **6 member**, `OrderAddressResponse` **7 member**. Bổ sung **chín** mã `ORDER_*` vào mục 1.4 (kèm ghi rõ bốn tình huống cố ý **không** có mã: trả tiền, hết hạn, sản phẩm bị xoá, chuyển nhượng lặp) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: checkout **giữ** hàng (vật lý không đổi) và **làm rỗng** giỏ trong một transaction; tiền là số nguyên đơn vị nhỏ nhất, tổng **không** gồm phí ship; đơn chưa trả tiền **tự huỷ** sau 15 phút; trạng thái đi qua endpoint riêng; **không** có endpoint `pay` (module 08 điều khiển); chuyển nhượng chỉ đổi chủ, không đổi tồn kho. Phần 9 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 10/11/12. Xem ADR-017. | `internal/modules/order/presentation/http/router.go` |

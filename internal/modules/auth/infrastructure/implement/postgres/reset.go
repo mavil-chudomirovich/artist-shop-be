@@ -50,8 +50,24 @@ func (r *ResetRepository) querier(ctx context.Context) database.Querier {
 
 // Create invalidates open requests and inserts a new one. It runs inside the
 // caller's transaction when the use case opened one through the UnitOfWork port.
+//
+// The account row is locked first so concurrent issuances for the same account
+// serialize: the second caller waits until the first commits, then sees that
+// caller's token, invalidates it and inserts its own - the newer reset
+// supersedes the older. Without this lock, two simultaneous transactions could
+// both insert an open row under READ COMMITTED and leave the account with two
+// usable reset tokens (research D11). Like the cart lock, SELECT ... FOR UPDATE
+// joins the transaction the application put in the context and never opens one
+// itself.
 func (r *ResetRepository) Create(ctx context.Context, req *model.ResetRequest) error {
 	q := r.querier(ctx)
+	var locked uuid.UUID
+	if err := q.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE`, req.UserID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domainerr.ErrUserNotFound
+		}
+		return fmt.Errorf("lock account for reset: %w", err)
+	}
 	if _, err := q.Exec(ctx, `UPDATE password_reset_requests SET used_at = now() WHERE user_id = $1 AND used_at IS NULL`, req.UserID); err != nil {
 		return fmt.Errorf("invalidate open resets: %w", err)
 	}
@@ -70,10 +86,18 @@ func (r *ResetRepository) ByTokenHash(ctx context.Context, tokenHash string) (*m
 	return scanReset(r.querier(ctx).QueryRow(ctx, query, tokenHash))
 }
 
-// Consume marks a reset request as used.
+// Consume marks a reset request as used, but only while it is still open. The
+// condition is what makes the token single-use even under a race: two concurrent
+// resets on the same token both pass the earlier read, but only the first
+// affects a row; the other updates nothing and reports ErrResetInvalid, so its
+// whole transaction rolls back (research D11).
 func (r *ResetRepository) Consume(ctx context.Context, id uuid.UUID) error {
-	if _, err := r.querier(ctx).Exec(ctx, `UPDATE password_reset_requests SET used_at = now() WHERE id = $1`, id); err != nil {
+	tag, err := r.querier(ctx).Exec(ctx, `UPDATE password_reset_requests SET used_at = now() WHERE id = $1 AND used_at IS NULL`, id)
+	if err != nil {
 		return fmt.Errorf("consume reset request: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domainerr.ErrResetInvalid
 	}
 	return nil
 }

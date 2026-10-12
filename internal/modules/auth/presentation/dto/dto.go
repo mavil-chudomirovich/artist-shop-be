@@ -1,16 +1,34 @@
 // Package httpdto defines the HTTP request/response payloads for the auth API.
 package httpdto
 
-// RegisterRequest is the POST /register body.
-type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+// StartRegistrationRequest is the POST /register body. It carries the same
+// payload as the previous RegisterRequest; the handler now creates no account
+// and returns a registration reference.
+type StartRegistrationRequest struct {
+	Email       string  `json:"email"`
+	Username    *string `json:"username,omitempty"`
+	DisplayName *string `json:"displayName,omitempty"`
+	Password    string  `json:"password"`
 }
 
-// VerifyEmailRequest is the POST /verify-email body.
-type VerifyEmailRequest struct {
-	Email string `json:"email"`
-	OTP   string `json:"otp"`
+// VerifyRegistrationRequest is the POST /register/verify-otp body.
+type VerifyRegistrationRequest struct {
+	RegistrationID string `json:"registrationId"`
+	OTP            string `json:"otp"`
+}
+
+// RegistrationIDRequest is the body of the resend and cancel calls.
+type RegistrationIDRequest struct {
+	RegistrationID string `json:"registrationId"`
+}
+
+// RegistrationStartedResponse is the POST /register result: the reference and
+// the code/resend timings.
+type RegistrationStartedResponse struct {
+	RegistrationID    string `json:"registrationId"`
+	Status            string `json:"status"`
+	OTPExpiresIn      int    `json:"otpExpiresIn"`
+	ResendAvailableIn int    `json:"resendAvailableIn"`
 }
 
 // EmailRequest targets an email address.
@@ -20,13 +38,28 @@ type EmailRequest struct {
 
 // LoginRequest is the POST /login body.
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email      string `json:"email"`
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
 }
 
 // TokenRequest carries a refresh token.
 type TokenRequest struct {
 	RefreshToken string `json:"refreshToken"`
+}
+
+// VerifyResetOTPRequest is the POST /password/forgot/verify-otp body: the
+// address the code was sent to and the submitted code.
+type VerifyResetOTPRequest struct {
+	Email string `json:"email"`
+	OTP   string `json:"otp"`
+}
+
+// ResetTokenResponse is the verify-otp result: a single-use reset token and its
+// lifetime in seconds. It is not a session and cannot authenticate a request.
+type ResetTokenResponse struct {
+	ResetToken string `json:"resetToken"`
+	ExpiresIn  int    `json:"expiresIn"`
 }
 
 // ResetRequest completes a password reset.

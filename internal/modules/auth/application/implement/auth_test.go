@@ -8,9 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 )
 
 func lastField(body string) string {
@@ -21,81 +25,26 @@ func lastField(body string) string {
 	return fields[len(fields)-1]
 }
 
-func TestRegisterCreatesPendingAccountAndSendsOTP(t *testing.T) {
+func TestStartRegistrationRejectsWeakPassword(t *testing.T) {
 	h := newHarness()
-	if err := h.svc.Register(context.Background(), appdto.RegisterInput{Email: "User@Example.com ", Password: "Str0ng!Pass"}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	account, err := h.users.ByEmail(context.Background(), "user@example.com")
-	if err != nil {
-		t.Fatalf("expected normalized account: %v", err)
-	}
-	if account.Status != constant.StatusPending {
-		t.Fatalf("expected pending, got %s", account.Status)
-	}
-	if h.email.count() != 1 || !h.audit.has(constant.AuditRegister) {
-		t.Fatal("expected otp email and audit event")
-	}
-}
-
-func TestRegisterRejectsWeakPassword(t *testing.T) {
-	h := newHarness()
-	if err := h.svc.Register(context.Background(), appdto.RegisterInput{Email: "w@example.com", Password: "password"}); !errors.Is(err, domainerr.ErrWeakPassword) {
+	if _, err := h.svc.StartRegistration(context.Background(), appdto.StartRegistrationInput{Email: "w@example.com", Password: "password"}); !errors.Is(err, domainerr.ErrWeakPassword) {
 		t.Fatalf("expected ErrWeakPassword, got %v", err)
-	}
-}
-
-func TestDuplicateRegisterIsSilent(t *testing.T) {
-	h := newHarness()
-	ctx := context.Background()
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: "d@example.com", Password: "Str0ng!Pass"}); err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: "d@example.com", Password: "Str0ng!Pass"}); err != nil {
-		t.Fatalf("duplicate should be silent, got %v", err)
-	}
-}
-
-func TestVerifyEmailActivates(t *testing.T) {
-	h := newHarness()
-	ctx := context.Background()
-	_ = h.svc.Register(ctx, appdto.RegisterInput{Email: "v@example.com", Password: "Str0ng!Pass"})
-	otp := lastField(h.email.lastBody)
-
-	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: "v@example.com", OTP: otp}); err != nil {
-		t.Fatalf("VerifyEmail: %v", err)
-	}
-	account, _ := h.users.ByEmail(ctx, "v@example.com")
-	if account.Status != constant.StatusActive {
-		t.Fatalf("expected active, got %s", account.Status)
-	}
-}
-
-func TestVerifyEmailLocksAfterThreeFailures(t *testing.T) {
-	h := newHarness()
-	ctx := context.Background()
-	_ = h.svc.Register(ctx, appdto.RegisterInput{Email: "l@example.com", Password: "Str0ng!Pass"})
-
-	for i := 0; i < 2; i++ {
-		if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: "l@example.com", OTP: "000000"}); !errors.Is(err, domainerr.ErrOTPInvalid) {
-			t.Fatalf("attempt %d: expected ErrOTPInvalid, got %v", i+1, err)
-		}
-	}
-	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: "l@example.com", OTP: "000000"}); !errors.Is(err, domainerr.ErrOTPTooManyAttempts) {
-		t.Fatalf("expected ErrOTPTooManyAttempts, got %v", err)
 	}
 }
 
 func TestLoginSuccessAndPending(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
-	_ = h.svc.Register(ctx, appdto.RegisterInput{Email: "p@example.com", Password: "Str0ng!Pass"})
+	hash, _ := testHasher{}.Hash("Str0ng!Pass")
+	account := &model.Account{ID: uuid.New(), Email: "p@example.com", PasswordHash: hash, Role: access.RoleCustomer, Status: constant.StatusPending}
+	if err := h.users.Create(ctx, account); err != nil {
+		t.Fatalf("seed pending account: %v", err)
+	}
 
 	if _, err := h.svc.Login(ctx, appdto.LoginInput{Email: "p@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"}); !errors.Is(err, domainerr.ErrAccountPending) {
 		t.Fatalf("expected ErrAccountPending, got %v", err)
 	}
 
-	account, _ := h.users.ByEmail(ctx, "p@example.com")
 	_ = h.users.Activate(ctx, account.ID)
 
 	session, err := h.svc.Login(ctx, appdto.LoginInput{Email: "p@example.com", Password: "Str0ng!Pass", Source: "1.1.1.1"})
@@ -194,12 +143,9 @@ func TestResetPassword(t *testing.T) {
 	ctx := context.Background()
 	h.registerActive("reset@example.com", "Old!Pass1")
 
-	if err := h.svc.ForgotPassword(ctx, appdto.EmailInput{Email: "reset@example.com"}); err != nil {
-		t.Fatalf("ForgotPassword: %v", err)
-	}
-	token := lastField(h.email.lastBody)
+	token := issueResetToken(t, h, "reset@example.com")
 
-	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: token, NewPassword: "New!Pass2"}); err != nil {
+	if err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: token, NewPassword: "New!Pass2"}); err != nil {
 		t.Fatalf("ResetPassword: %v", err)
 	}
 	if h.tx.count() == 0 {
@@ -220,10 +166,8 @@ func TestResetPasswordRevokesEverySession(t *testing.T) {
 	deviceA, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "resetall@example.com", Password: "Old!Pass1", Source: "1.1.1.1"})
 	deviceB, _ := h.svc.Login(ctx, appdto.LoginInput{Email: "resetall@example.com", Password: "Old!Pass1", Source: "2.2.2.2"})
 
-	if err := h.svc.ForgotPassword(ctx, appdto.EmailInput{Email: "resetall@example.com"}); err != nil {
-		t.Fatalf("ForgotPassword: %v", err)
-	}
-	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: lastField(h.email.lastBody), NewPassword: "New!Pass2"}); err != nil {
+	token := issueResetToken(t, h, "resetall@example.com")
+	if err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: token, NewPassword: "New!Pass2"}); err != nil {
 		t.Fatalf("ResetPassword: %v", err)
 	}
 	if _, err := h.svc.Refresh(ctx, appdto.RefreshInput{RefreshToken: deviceA.RefreshToken}); !errors.Is(err, domainerr.ErrRefreshReused) {
@@ -254,11 +198,13 @@ func TestPasswordWritesAreAtomic(t *testing.T) {
 	if h.audit.has(constant.AuditPasswordChanged) {
 		t.Fatal("a rolled back password change must not be audited as success")
 	}
+	h.tx.err = nil
 
-	if err := h.svc.ForgotPassword(ctx, appdto.EmailInput{Email: "tx@example.com"}); err == nil {
-		t.Fatal("expected the transaction failure to surface")
-	}
-	if _, err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: lastField(h.email.lastBody), NewPassword: "New!Pass3"}); err == nil {
+	// Obtain a valid reset token (its own transaction must succeed), then force
+	// the reset's transaction to fail.
+	token := issueResetToken(t, h, "tx@example.com")
+	h.tx.err = errors.New("commit failed")
+	if err := h.svc.ResetPassword(ctx, appdto.ResetPasswordInput{Token: token, NewPassword: "New!Pass3"}); err == nil {
 		t.Fatal("expected the transaction failure to surface")
 	}
 	if h.audit.has(constant.AuditPasswordReset) {
@@ -390,7 +336,7 @@ func TestARetriedDeliveryAnswersInsideTheResponseTarget(t *testing.T) {
 	})
 
 	start := time.Now()
-	err := h.svc.Register(context.Background(), appdto.RegisterInput{Email: "slow@example.com", Password: "Str0ng!Pass"})
+	_, err := h.svc.StartRegistration(context.Background(), appdto.StartRegistrationInput{Email: "slow@example.com", Password: "Str0ng!Pass"})
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
@@ -422,7 +368,7 @@ func TestTheRetryBudgetStopsRetryingBeforeTheAttemptCountIsSpent(t *testing.T) {
 	var waited []time.Duration
 	h.svc.sleep = func(d time.Duration) { waited = append(waited, d) }
 
-	_ = h.svc.Register(context.Background(), appdto.RegisterInput{Email: "budget@example.com", Password: "Str0ng!Pass"})
+	_, _ = h.svc.StartRegistration(context.Background(), appdto.StartRegistrationInput{Email: "budget@example.com", Password: "Str0ng!Pass"})
 
 	if h.email.attempts() >= deliveryMaxAttempts {
 		t.Fatalf("expected the budget to stop the loop, got %d attempts", h.email.attempts())
@@ -435,14 +381,14 @@ func TestTheRetryBudgetStopsRetryingBeforeTheAttemptCountIsSpent(t *testing.T) {
 	}
 }
 
-// TestRegisterDoesNotRetryAConfigurationClassifiedFailure covers FR-016: a
-// failure a retry cannot change is refused immediately, so the customer is not
-// kept waiting for an outcome that was never going to differ.
-func TestRegisterDoesNotRetryAConfigurationClassifiedFailure(t *testing.T) {
+// TestStartRegistrationDoesNotRetryAConfigurationClassifiedFailure covers
+// FR-016: a failure a retry cannot change is refused immediately, so the
+// customer is not kept waiting for an outcome that was never going to differ.
+func TestStartRegistrationDoesNotRetryAConfigurationClassifiedFailure(t *testing.T) {
 	h := newHarness()
 	h.email.failNext(deliveryMaxAttempts, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
 
-	err := h.svc.Register(context.Background(), appdto.RegisterInput{Email: "config@example.com", Password: "Str0ng!Pass"})
+	_, err := h.svc.StartRegistration(context.Background(), appdto.StartRegistrationInput{Email: "config@example.com", Password: "Str0ng!Pass"})
 
 	if !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
 		t.Fatalf("expected ErrVerificationDeliveryFailed, got %v", err)
@@ -455,14 +401,14 @@ func TestRegisterDoesNotRetryAConfigurationClassifiedFailure(t *testing.T) {
 	}
 }
 
-// TestRegisterDoesNotRetryAnUnclassifiedFailure keeps the budget for failures
-// this system can actually vouch for: an error with no category is not assumed
-// transient.
-func TestRegisterDoesNotRetryAnUnclassifiedFailure(t *testing.T) {
+// TestStartRegistrationDoesNotRetryAnUnclassifiedFailure keeps the budget for
+// failures this system can actually vouch for: an error with no category is not
+// assumed transient.
+func TestStartRegistrationDoesNotRetryAnUnclassifiedFailure(t *testing.T) {
 	h := newHarness()
 	h.email.failNext(deliveryMaxAttempts, errors.New("the sender returned something unexpected"))
 
-	err := h.svc.Register(context.Background(), appdto.RegisterInput{Email: "unknown@example.com", Password: "Str0ng!Pass"})
+	_, err := h.svc.StartRegistration(context.Background(), appdto.StartRegistrationInput{Email: "unknown@example.com", Password: "Str0ng!Pass"})
 
 	if !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
 		t.Fatalf("expected ErrVerificationDeliveryFailed, got %v", err)
@@ -472,15 +418,16 @@ func TestRegisterDoesNotRetryAnUnclassifiedFailure(t *testing.T) {
 	}
 }
 
-// TestRegisterRecoversWhenATransientFailureIsRetried covers the transient half of
-// FR-015: one delivered message, no duplicate account, and a customer who can
-// finish registering without anyone else's help.
-func TestRegisterRecoversWhenATransientFailureIsRetried(t *testing.T) {
+// TestStartRegistrationRecoversWhenATransientFailureIsRetried covers the
+// transient half of FR-015: one delivered message, no duplicate account, and a
+// customer who can finish registering without anyone else's help.
+func TestStartRegistrationRecoversWhenATransientFailureIsRetried(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 421", domainerr.ErrDeliveryTransient))
 
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: "retry@example.com", Password: "Str0ng!Pass"}); err != nil {
+	out, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: "retry@example.com", Password: "Str0ng!Pass"})
+	if err != nil {
 		t.Fatalf("a transient failure inside the budget must not fail the request: %v", err)
 	}
 	if h.email.attempts() != 2 {
@@ -489,60 +436,66 @@ func TestRegisterRecoversWhenATransientFailureIsRetried(t *testing.T) {
 	if h.email.count() != 1 {
 		t.Fatalf("expected exactly one delivered message, got %d", h.email.count())
 	}
-	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: "retry@example.com", OTP: lastField(h.email.lastBody)}); err != nil {
+	if err := h.svc.VerifyRegistrationOTP(ctx, appdto.VerifyRegistrationInput{RegistrationID: out.RegistrationID, OTP: lastField(h.email.lastBody)}); err != nil {
 		t.Fatalf("the delivered code must complete the registration: %v", err)
 	}
 }
 
-// TestAFailedRegistrationIsCompletedByRequestingANewCode is the promise the 503
-// makes, proved end to end: the account survives, the failed send leaves no
-// cooldown in the way (FR-024), the new code completes the registration (FR-007)
-// and no second account appears (FR-008).
-func TestAFailedRegistrationIsCompletedByRequestingANewCode(t *testing.T) {
+// TestAFailedRegistrationIsCompletedByStartingAgain is the promise the 503
+// makes, proved end to end on the new flow: the temporary registration survives,
+// the failed send leaves no cooldown in the way (FR-024), starting again
+// replaces it (FR-026) and the new code completes the registration (FR-007),
+// after which no second account appears (FR-008).
+func TestAFailedRegistrationIsCompletedByStartingAgain(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 	const email = "recover@example.com"
 	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
 
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: "Str0ng!Pass"}); !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
+	if _, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: "Str0ng!Pass"}); !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
 		t.Fatalf("expected the delivery failure to surface, got %v", err)
 	}
-	if _, err := h.users.ByEmail(ctx, email); err != nil {
-		t.Fatalf("the account must be kept: %v", err)
+	if h.registration.count() != 1 {
+		t.Fatal("the temporary registration must be kept")
 	}
-	if h.otp.disarmCount() != 1 {
-		t.Fatalf("expected the cooldown to be disarmed once, got %d", h.otp.disarmCount())
+	if h.registration.disarmCount() != 1 {
+		t.Fatalf("expected the cooldown to be disarmed once, got %d", h.registration.disarmCount())
 	}
-	if err := h.otp.CanResend(ctx, email); err != nil {
-		t.Fatalf("a send that did not happen must not consume the cooldown: %v", err)
+	// Delivery recovers: starting again replaces the previous registration and
+	// delivers a new code.
+	out, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: "Str0ng!Pass"})
+	if err != nil {
+		t.Fatalf("a new registration must be possible right after a failed delivery: %v", err)
 	}
-	if err := h.svc.ResendVerification(ctx, appdto.EmailInput{Email: email}); err != nil {
-		t.Fatalf("a new code must be requestable right after a failed delivery: %v", err)
-	}
-	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: email, OTP: lastField(h.email.lastBody)}); err != nil {
+	if err := h.svc.VerifyRegistrationOTP(ctx, appdto.VerifyRegistrationInput{RegistrationID: out.RegistrationID, OTP: lastField(h.email.lastBody)}); err != nil {
 		t.Fatalf("the customer must be able to complete registration: %v", err)
 	}
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: "Str0ng!Pass"}); err != nil {
-		t.Fatalf("a repeated registration must stay silent, got %v", err)
+	if _, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: "Str0ng!Pass"}); !errors.Is(err, domainerr.ErrEmailTaken) {
+		t.Fatalf("a repeated registration of a completed account must be rejected with ErrEmailTaken, got %v", err)
 	}
 	if len(h.users.byEmail) != 1 {
 		t.Fatalf("expected exactly one account, got %d", len(h.users.byEmail))
 	}
 }
 
-// TestAFailedDeliveryLeavesTwoTracesCoveringTheAccount covers FR-010 and FR-011:
-// an audit entry with a failure outcome that names the account it created, and no
-// success outcome for a registration that did not deliver.
-func TestAFailedDeliveryLeavesTwoTracesCoveringTheAccount(t *testing.T) {
+// TestAFailedDeliveryLeavesTwoTracesCoveringTheRegistration covers FR-020: an
+// audit entry with a failure outcome that names the registration it concerns,
+// the classification in the metadata, and one classified operator log line, and
+// no success outcome for a registration that did not deliver.
+func TestAFailedDeliveryLeavesTwoTracesCoveringTheRegistration(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 	const email = "audited@example.com"
 	h.email.failNext(deliveryMaxAttempts, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
 
-	_ = h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: "Str0ng!Pass"})
+	_, _ = h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: "Str0ng!Pass"})
 
-	if h.audit.has(constant.AuditRegister) {
-		t.Fatal("a registration that did not deliver must not be audited as a success (FR-013)")
+	ref := h.registration.idByEmail(email)
+	if ref == "" {
+		t.Fatal("the failed start must keep the temporary registration")
+	}
+	if h.audit.has(constant.AuditRegistrationStarted) {
+		t.Fatal("a registration that did not deliver must not be audited as a success (FR-020)")
 	}
 	event, ok := h.audit.find(constant.AuditRegisterDeliveryFailed)
 	if !ok {
@@ -551,12 +504,8 @@ func TestAFailedDeliveryLeavesTwoTracesCoveringTheAccount(t *testing.T) {
 	if event.outcome != constant.OutcomeFailure {
 		t.Fatalf("expected outcome %s, got %s", constant.OutcomeFailure, event.outcome)
 	}
-	account, err := h.users.ByEmail(ctx, email)
-	if err != nil {
-		t.Fatalf("the account must be kept: %v", err)
-	}
-	if event.targetID != account.ID.String() {
-		t.Fatalf("expected the entry to identify account %s, got %q", account.ID, event.targetID)
+	if event.targetID != ref {
+		t.Fatalf("expected the entry to identify registration %s, got %q", ref, event.targetID)
 	}
 	if !strings.Contains(fmt.Sprint(event.metadata), constant.DeliveryConfiguration) {
 		t.Fatalf("expected the failure classification in the metadata, got %v", event.metadata)
@@ -585,7 +534,7 @@ func TestTheFailureTracesCarryNoCodeCredentialOrProviderWording(t *testing.T) {
 			domainerr.ErrDeliveryConfiguration, issued, credential)
 	})
 
-	_ = h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: password})
+	_, _ = h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: password})
 
 	if issued == "" {
 		t.Fatal("expected the sender to have been given a verification code")
@@ -601,19 +550,20 @@ func TestTheFailureTracesCarryNoCodeCredentialOrProviderWording(t *testing.T) {
 	}
 }
 
-// TestASuccessfulRegistrationLeavesTheSuccessTraceAlone covers FR-013: the
-// successful path keeps exactly the audit entry it always wrote.
-func TestASuccessfulRegistrationLeavesTheSuccessTraceAlone(t *testing.T) {
+// TestASuccessfulStartLeavesTheSuccessTraceAlone covers FR-020: the successful
+// path keeps exactly the success audit entry it always wrote, with no
+// delivery-failure entry and the resend cooldown left armed.
+func TestASuccessfulStartLeavesTheSuccessTraceAlone(t *testing.T) {
 	h := newHarness()
 	ctx := context.Background()
 
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: "ok@example.com", Password: "Str0ng!Pass"}); err != nil {
-		t.Fatalf("Register: %v", err)
+	if _, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: "ok@example.com", Password: "Str0ng!Pass"}); err != nil {
+		t.Fatalf("StartRegistration: %v", err)
 	}
 
-	event, ok := h.audit.find(constant.AuditRegister)
+	event, ok := h.audit.find(constant.AuditRegistrationStarted)
 	if !ok {
-		t.Fatalf("expected a %s entry, got %s", constant.AuditRegister, h.audit.traces())
+		t.Fatalf("expected a %s entry, got %s", constant.AuditRegistrationStarted, h.audit.traces())
 	}
 	if event.outcome != constant.OutcomeSuccess {
 		t.Fatalf("expected outcome %s, got %s", constant.OutcomeSuccess, event.outcome)
@@ -621,8 +571,8 @@ func TestASuccessfulRegistrationLeavesTheSuccessTraceAlone(t *testing.T) {
 	if h.audit.has(constant.AuditRegisterDeliveryFailed) {
 		t.Fatal("a delivered message must not leave a delivery-failure entry")
 	}
-	if h.otp.disarmCount() != 0 {
-		t.Fatalf("a delivered message must leave the cooldown armed, got %d disarms", h.otp.disarmCount())
+	if h.registration.disarmCount() != 0 {
+		t.Fatalf("a delivered message must leave the cooldown armed, got %d disarms", h.registration.disarmCount())
 	}
 }
 
@@ -636,38 +586,40 @@ func TestAFailedResendDoesNotConsumeTheCooldown(t *testing.T) {
 	ctx := context.Background()
 	const email = "resend-retry@example.com"
 
-	// The registration's own delivery fails, which leaves the account pending
-	// and the cooldown disarmed - the state the 503 hands the customer.
+	// The registration's own delivery fails, which leaves the temporary
+	// registration and the cooldown disarmed - the state the 503 hands the
+	// customer.
 	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
-	if err := h.svc.Register(ctx, appdto.RegisterInput{Email: email, Password: "Str0ng!Pass"}); !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
+	if _, err := h.svc.StartRegistration(ctx, appdto.StartRegistrationInput{Email: email, Password: registerPassword}); !errors.Is(err, domainerr.ErrVerificationDeliveryFailed) {
 		t.Fatalf("expected the delivery failure to surface, got %v", err)
 	}
-	if err := h.otp.CanResend(ctx, email); err != nil {
+	ref := h.registration.idByEmail(email)
+	if ref == "" {
+		t.Fatal("precondition: the failed start must keep the temporary registration")
+	}
+	if err := h.registration.CanResend(ctx, ref); err != nil {
 		t.Fatalf("precondition: the failed registration must leave the cooldown disarmed: %v", err)
 	}
 
 	// The customer's first resend fails to deliver too. A configuration failure
 	// is not retried (FR-016), so exactly one send is spent on it.
 	h.email.failNext(1, fmt.Errorf("%w: the provider reported status 550", domainerr.ErrDeliveryConfiguration))
-	err := h.svc.ResendVerification(ctx, appdto.EmailInput{Email: email})
+	err := h.svc.ResendRegistrationOTP(ctx, appdto.RegistrationIDInput{RegistrationID: ref})
 	if errors.Is(err, domainerr.ErrResendCooldown) {
 		t.Fatalf("the first resend must not be refused by a cooldown no message earned: %v", err)
 	}
 	if err == nil {
 		t.Fatal("expected a resend whose delivery failed to surface its failure")
 	}
-	if err := h.otp.CanResend(ctx, email); err != nil {
+	if err := h.registration.CanResend(ctx, ref); err != nil {
 		t.Fatalf("a message that was not delivered must not consume the cooldown: %v", err)
 	}
 
 	// Delivery recovers: the next request must succeed immediately.
-	if err := h.svc.ResendVerification(ctx, appdto.EmailInput{Email: email}); err != nil {
+	if err := h.svc.ResendRegistrationOTP(ctx, appdto.RegistrationIDInput{RegistrationID: ref}); err != nil {
 		t.Fatalf("a new code must be requestable right after a failed resend: %v", err)
 	}
-	if err := h.otp.CanResend(ctx, email); !errors.Is(err, domainerr.ErrResendCooldown) {
+	if err := h.registration.CanResend(ctx, ref); !errors.Is(err, domainerr.ErrResendCooldown) {
 		t.Fatalf("a delivered message must arm the cooldown, got %v", err)
-	}
-	if err := h.svc.VerifyEmail(ctx, appdto.VerifyEmailInput{Email: email, OTP: lastField(h.email.lastBody)}); err != nil {
-		t.Fatalf("the customer must be able to finish registration: %v", err)
 	}
 }

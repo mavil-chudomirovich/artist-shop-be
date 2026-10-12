@@ -24,8 +24,13 @@ import (
 
 // Config carries use-case timeouts and TTLs.
 type Config struct {
-	RefreshTokenTTL  time.Duration
-	PasswordResetTTL time.Duration
+	RefreshTokenTTL        time.Duration
+	PasswordResetTTL       time.Duration
+	OTPResendCooldown      time.Duration
+	PendingRegistrationTTL time.Duration
+	// OTPTTL is the code's own lifetime. It is reported to the client as
+	// otpExpiresIn when a registration starts (FR-007).
+	OTPTTL time.Duration
 }
 
 // Service implements appinterface.AuthService.
@@ -33,7 +38,8 @@ type Service struct {
 	Users         repository.UserRepository
 	Sessions      repository.SessionRepository
 	Resets        repository.ResetRepository
-	OTP           appinterface.OTPStore
+	Registration  appinterface.RegistrationStore
+	ResetOTP      appinterface.PasswordResetOTPStore
 	Blacklist     appinterface.Blacklist
 	Guard         appinterface.LoginGuard
 	Hasher        appinterface.PasswordHasher

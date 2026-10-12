@@ -13,3 +13,11 @@ func isUniqueViolation(err error) bool {
 	}
 	return false
 }
+
+func isUsernameUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505" && (pgErr.ConstraintName == "users_username_lower_idx" || pgErr.ConstraintName == "users_username_key")
+	}
+	return false
+}

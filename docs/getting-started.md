@@ -69,10 +69,10 @@ curl -X POST http://localhost:8080/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"Str0ng!Pass"}'
 
-# 2. Xác nhận OTP
-curl -X POST http://localhost:8080/api/v1/auth/verify-email \
+# 2. Xác nhận OTP (dùng registrationId từ response bước 1)
+curl -X POST http://localhost:8080/api/v1/auth/register/verify-otp \
   -H 'Content-Type: application/json' \
-  -d '{"email":"user@example.com","otp":"123456"}'
+  -d '{"registrationId":"<registrationId>","otp":"123456"}'
 
 # 3. Đăng nhập -> nhận accessToken + refreshToken
 curl -X POST http://localhost:8080/api/v1/auth/login \

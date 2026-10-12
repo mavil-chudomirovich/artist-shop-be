@@ -31,11 +31,11 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 		Pool:          pool,
 		Table:         "users",
 		IDColumn:      "id",
-		Columns:       []string{"id", "email", "password_hash", "role", "status", "created_at", "updated_at"},
+		Columns:       []string{"id", "email", "username", "display_name", "password_hash", "role", "status", "created_at", "updated_at"},
 		OrderBy:       "created_at DESC",
-		InsertColumns: []string{"id", "email", "password_hash", "role", "status"},
+		InsertColumns: []string{"id", "email", "username", "display_name", "password_hash", "role", "status"},
 		InsertValues: func(a *model.Account) []any {
-			return []any{a.ID, a.Email, a.PasswordHash, string(a.Role), string(a.Status)}
+			return []any{a.ID, a.Email, a.Username, a.DisplayName, a.PasswordHash, string(a.Role), string(a.Status)}
 		},
 		UpdateColumns: []string{"password_hash", "role", "status"},
 		UpdateValues: func(a *model.Account) []any {
@@ -51,12 +51,15 @@ func (r *UserRepository) querier(ctx context.Context) database.Querier {
 	return database.FromContext(ctx, r.pool)
 }
 
-// Create inserts an account, mapping unique violations to ErrEmailTaken.
+// Create inserts an account, mapping unique violations to ErrEmailTaken or ErrUsernameTaken.
 func (r *UserRepository) Create(ctx context.Context, a *model.Account) error {
 	const query = `
-		INSERT INTO users (id, email, password_hash, role, status)
-		VALUES ($1, $2, $3, $4, $5)`
-	_, err := r.querier(ctx).Exec(ctx, query, a.ID, a.Email, a.PasswordHash, string(a.Role), string(a.Status))
+		INSERT INTO users (id, email, username, display_name, password_hash, role, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	_, err := r.querier(ctx).Exec(ctx, query, a.ID, a.Email, a.Username, a.DisplayName, a.PasswordHash, string(a.Role), string(a.Status))
+	if isUsernameUniqueViolation(err) {
+		return domainerr.ErrUsernameTaken
+	}
 	if isUniqueViolation(err) {
 		return domainerr.ErrEmailTaken
 	}
@@ -87,9 +90,26 @@ func (r *UserRepository) ByID(ctx context.Context, id uuid.UUID) (*model.Account
 // ByEmail loads an account by normalized email.
 func (r *UserRepository) ByEmail(ctx context.Context, email string) (*model.Account, error) {
 	const query = `
-		SELECT id, email, password_hash, role, status, created_at, updated_at
+		SELECT id, email, username, display_name, password_hash, role, status, created_at, updated_at
 		FROM users WHERE email = $1`
 	return scanAccount(r.querier(ctx).QueryRow(ctx, query, email))
+}
+
+// ByUsername loads an account by its handle, compared case-insensitively. It is
+// used to reject a taken username at registration before any account exists.
+func (r *UserRepository) ByUsername(ctx context.Context, username string) (*model.Account, error) {
+	const query = `
+		SELECT id, email, username, display_name, password_hash, role, status, created_at, updated_at
+		FROM users WHERE LOWER(username) = LOWER($1)`
+	return scanAccount(r.querier(ctx).QueryRow(ctx, query, username))
+}
+
+// ByIdentifier loads an account by normalized email or username.
+func (r *UserRepository) ByIdentifier(ctx context.Context, identifier string) (*model.Account, error) {
+	const query = `
+		SELECT id, email, username, display_name, password_hash, role, status, created_at, updated_at
+		FROM users WHERE email = $1 OR LOWER(username) = LOWER($1)`
+	return scanAccount(r.querier(ctx).QueryRow(ctx, query, identifier))
 }
 
 // Activate sets a pending account to active.
@@ -112,17 +132,21 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passw
 
 func scanAccount(row repository.Row) (*model.Account, error) {
 	var (
-		account model.Account
-		role    string
-		status  string
+		account     model.Account
+		username    *string
+		displayName *string
+		role        string
+		status      string
 	)
-	err := row.Scan(&account.ID, &account.Email, &account.PasswordHash, &role, &status, &account.CreatedAt, &account.UpdatedAt)
+	err := row.Scan(&account.ID, &account.Email, &username, &displayName, &account.PasswordHash, &role, &status, &account.CreatedAt, &account.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domainerr.ErrUserNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan user: %w", err)
 	}
+	account.Username = username
+	account.DisplayName = displayName
 	account.Role = access.Role(role)
 	account.Status = constant.Status(status)
 	return &account, nil
