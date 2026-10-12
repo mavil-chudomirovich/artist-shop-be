@@ -15,11 +15,12 @@ import (
 
 // This file is the transport contract of US2: `POST /payments/payos/webhook` is
 // public (no session), answers 200 for a handled event so PayOS stops retrying,
-// refuses an unverified signature with 401, an unknown order code with 404 and an
-// unparseable body with 400. The route is mounted the way the composition root
-// mounts it — once at /payments/payos/webhook — over a fake of the use case, so
-// the answers asserted are the handler's own (contracts/openapi.yaml,
-// contracts/error-codes.md).
+// refuses an unverified signature with 401 and an unparseable body with 400. An
+// unknown order code is a verified event that cannot be applied, so the use case
+// acknowledges it with success and the route answers 200 too. The route is mounted
+// the way the composition root mounts it — once at /payments/payos/webhook — over
+// a fake of the use case, so the answers asserted are the handler's own
+// (contracts/openapi.yaml, contracts/error-codes.md).
 
 // webhookPath is the public provider callback route.
 const webhookPath = "/api/v1/payments/payos/webhook"
@@ -72,12 +73,15 @@ func TestWebhookAnswersOKForAnAmountMismatch(t *testing.T) {
 	}
 }
 
-// research D7: a verified webhook for an unknown order code answers 404
-// PAYMENT_NOT_FOUND; nothing is recorded.
-func TestWebhookAnswersNotFoundForAnUnknownOrderCode(t *testing.T) {
-	svc := &fakeService{webhookErr: domainerr.ErrNotFound}
+// research D7: a verified webhook for an unknown order code is acknowledged with
+// success by the use case (so PayOS stops retrying and does not reject the
+// webhook URL), so the route answers 200; nothing is recorded.
+func TestWebhookAnswersOKForAnUnknownOrderCode(t *testing.T) {
+	svc := &fakeService{}
 	rec := performWebhook(newWebhookRouter(svc), `{"code":"00","success":true,"data":{"orderCode":1}}`)
-	assertCode(t, rec, http.StatusNotFound, constant.CodeNotFound)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a handled unknown order code; body: %s", rec.Code, rec.Body.String())
+	}
 }
 
 // contracts/error-codes.md: a body that does not parse answers 400

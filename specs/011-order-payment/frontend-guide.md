@@ -209,7 +209,7 @@ nào của module khác bị đổi.
 |---|---|---|
 | `PAYMENT_ORDER_NOT_FOUND` | 404 | Đơn không tồn tại **hoặc** của khách khác (cùng một câu). Hiện "không tìm thấy đơn", tải lại danh sách. `details` không có |
 | `PAYMENT_ORDER_NOT_PAYABLE` | 409 | Đơn **không** ở trạng thái chờ thanh toán (đã trả, đã huỷ, hoặc còn chờ artist). Tải lại đơn; **chỉ** hiện nút trả khi đơn `PAYMENT_PENDING` |
-| `PAYMENT_NOT_FOUND` | 404 | (Đọc) đơn của khách **chưa có thanh toán nào**, hoặc (webhook) orderCode lạ. Với `10.2`: hiện "đơn chưa có thanh toán", mời khách bắt đầu (`10.1`). Không thử lại |
+| `PAYMENT_NOT_FOUND` | 404 | (Đọc `10.2`) đơn của khách **chưa có thanh toán nào**. Hiện "đơn chưa có thanh toán", mời khách bắt đầu (`10.1`). Không thử lại. **Không** áp dụng cho webhook (webhook orderCode lạ trả `200`, không ghi gì) |
 | `PAYMENT_ALREADY_LIVE` | 409 | Đã có thanh toán còn hiệu lực nhưng link **không còn trả được** (huỷ/hết hạn ở cổng). Không có link mới; báo khách liên hệ shop để đối soát. **Không** tự thử lại |
 | `PAYMENT_PROVIDER_ERROR` | 422 | Cổng lỗi khi tạo yêu cầu; **đơn không đổi**. Cho khách **thử lại** sau giây lát |
 | ▲ `PAYMENT_WEBHOOK_INVALID_SIGNATURE` | 401 | Không phải FE gọi (webhook). FE không cần xử lý riêng |

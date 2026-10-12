@@ -16,13 +16,13 @@ import (
 // is public: no session is required, and the raw body is handed to the use case,
 // which verifies the signature before trusting anything (FR-007, FR-019). A body
 // whose signature does not verify answers 401 PAYMENT_WEBHOOK_INVALID_SIGNATURE;
-// a body that does not parse answers 400 MALFORMED_REQUEST; a verified event for
-// an unknown order code answers 404 PAYMENT_NOT_FOUND. A handled event — applied,
-// already applied, or recorded UNMATCHED — answers 200 so the provider stops
-// retrying (contracts/openapi.yaml, contracts/error-codes.md).
+// a body that does not parse answers 400 MALFORMED_REQUEST. A handled event —
+// applied, already applied, recorded UNMATCHED, or a verified event for an unknown
+// order code (acknowledged with nothing recorded) — answers 200 so the provider
+// stops retrying (contracts/openapi.yaml, contracts/error-codes.md).
 //
 //	@Summary		PayOS payment webhook
-//	@Description	Public provider callback. The signature is verified over the exact received body before anything is trusted; a handled event answers 2xx so PayOS stops retrying. An unverified signature applies nothing, an unknown order code records nothing, and an amount mismatch is recorded for the operator.
+//	@Description	Public provider callback. The signature is verified over the exact received body before anything is trusted; a handled event answers 2xx so PayOS stops retrying. An unverified signature applies nothing, an unknown order code is acknowledged with nothing recorded, and an amount mismatch is recorded for the operator.
 //	@Tags			webhooks
 //	@Accept			json
 //	@Produce		json
@@ -30,7 +30,6 @@ import (
 //	@Success		200		{object}	httpx.SwaggerSuccess
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
 //	@Failure		500		{object}	httpx.SwaggerError
 //	@Router			/payments/payos/webhook [post]

@@ -27,9 +27,11 @@ import (
 // The signature is verified first, over the exact received bytes, through the
 // provider port; a body that does not verify is refused and nothing is applied
 // (FR-007, research D3). The payment is found by the provider's order code, never
-// by anything the request could choose; an order code no payment carries is
-// refused with nothing recorded, because there is no row to attach a record to,
-// and a warning is logged for the operator (research D7).
+// by anything the request could choose; an order code no payment carries is a
+// verified event that cannot be applied, so it is acknowledged with success — the
+// provider stops retrying — while nothing is recorded, because there is no row to
+// attach a record to, and a warning is logged for the operator to reconcile out
+// of band (research D7).
 //
 // A payment that is already PAID is a no-op success, so a replayed callback
 // applies nothing (FR-009). Otherwise the confirmation is matched against the
@@ -62,12 +64,14 @@ func (s *Service) HandleWebhook(ctx context.Context, body []byte) error {
 	payment, err := s.Payments.FindByOrderCode(ctx, confirmed.OrderCode)
 	if err != nil {
 		if errors.Is(err, domainerr.ErrNotFound) {
-			// No row to attach a record to: nothing is recorded, and the orphaned
-			// link is flagged for the operator to reconcile out of band (research
-			// D7).
+			// A verified event that cannot be applied: nothing is recorded,
+			// because there is no row to attach a record to. It is acknowledged
+			// with success so the provider stops retrying, and the orphaned link
+			// is logged as a warning for the operator to reconcile out of band
+			// (research D7).
 			s.log().WarnContext(ctx, "payment webhook for an unknown order code",
 				slog.Int64("orderCode", confirmed.OrderCode))
-			return domainerr.ErrNotFound
+			return nil
 		}
 		return err
 	}

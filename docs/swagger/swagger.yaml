@@ -3631,7 +3631,8 @@ paths:
       description: Public provider callback. The signature is verified over the exact
         received body before anything is trusted; a handled event answers 2xx so PayOS
         stops retrying. An unverified signature applies nothing, an unknown order
-        code records nothing, and an amount mismatch is recorded for the operator.
+        code is acknowledged with nothing recorded, and an amount mismatch is recorded
+        for the operator.
       parameters:
       - description: PayOS webhook envelope {code, desc, success, data, signature}
         in: body
@@ -3652,10 +3653,6 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
         "401":
           description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
           schema:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
         "429":

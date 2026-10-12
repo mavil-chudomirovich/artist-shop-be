@@ -46,14 +46,15 @@ services:
   # behind the "ngrok" profile so `make up-tools` never starts it: a missing
   # NGROK_AUTHTOKEN would otherwise fail the stack. Run it with
   #   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ngrok up -d ngrok
-  # and read the public URL from the dashboard at http://localhost:4040, then
-  # register it as the PayOS webhook (docs/development/payment-testing.md).
+  # NGROK_DOMAIN is the reserved domain the tunnel answers on (set it in .env);
+  # read the public URL from the dashboard at http://localhost:4040, then register
+  # it as the PayOS webhook (docs/development/payment-testing.md).
   ngrok:
     image: ngrok/ngrok:latest
     profiles: ["ngrok"]
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
-    command: http api:8080 --log stdout
+    command: http api:8080 --url https://${NGROK_DOMAIN} --log stdout
     ports:
       - "127.0.0.1:${NGROK_DASHBOARD_PORT:-4040}:4040"
     restart: unless-stopped

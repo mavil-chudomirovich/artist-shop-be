@@ -51,7 +51,7 @@ Driven against the provider's documented signature vectors (no live account):
 | 2a | a webhook with the documented valid signature and matching amount | `200`; the payment is `PAID`; the order is `PAID`; the goods are **sold** (physical fell, held cleared) |
 | 2b | the **same** webhook again | `200`; nothing applies a second time (physical unchanged) |
 | 2c | a webhook whose signature was tampered with | `401 PAYMENT_WEBHOOK_INVALID_SIGNATURE`; the order is untouched |
-| 2d | a webhook for an unknown order code | `404 PAYMENT_NOT_FOUND`; nothing is recorded (only a warning is logged) |
+| 2d | a webhook for an unknown order code | `200`; nothing is applied and nothing is recorded (only a warning is logged) — required so PayOS accepts the webhook URL at registration |
 | 2e | a webhook with a **different amount** | `200` (the provider is answered); the payment is `UNMATCHED`; the order is **not** `PAID` |
 
 **2b and 2e are the two halves of the guarantee**: a replay does nothing, and a mismatch never

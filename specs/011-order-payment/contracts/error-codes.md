@@ -9,7 +9,7 @@ appears; this file records what each means and which situations deliberately reu
 |---|---|---|---|
 | `PAYMENT_ORDER_NOT_FOUND` | 404 | No order carries the identifier, or it belongs to another customer. The route never confirms another customer's order | No |
 | `PAYMENT_ORDER_NOT_PAYABLE` | 409 | The order is not awaiting payment — already paid, cancelled, or still awaiting the artist's confirmation. A payment can only start for an order awaiting payment | No — re-read the order |
-| `PAYMENT_NOT_FOUND` | 404 | The webhook carries an order code no payment carries (e.g. an orphaned link whose row was never written, research D7). The order is untouched and **nothing is recorded** — there is no payment to attach a record to; the module logs a warning with the order code for the operator | No — reconcile out of band |
+| `PAYMENT_NOT_FOUND` | 404 | (Customer read) the caller's order has no payment yet. The **webhook no longer uses this code**: a verified event for an unknown order code is acknowledged with **2xx** and records nothing (see below) | No |
 | `PAYMENT_ALREADY_LIVE` | 409 | A live payment exists for this order but its link can no longer be returned (cancelled or expired at the provider), so a new one cannot be created while the stale row stands | No — reconcile |
 | `PAYMENT_PROVIDER_ERROR` | 422 | The provider refused to create the link or was unreachable. **Nothing was created, and the order is unchanged** | Yes — after a moment |
 | `PAYMENT_WEBHOOK_INVALID_SIGNATURE` | 401 | The webhook's signature does not verify, so the event is not from the provider. Nothing is applied | No — never retry unverified |
@@ -25,9 +25,11 @@ webhook, or an unknown order code) records nothing and only logs.
 
 An unverified webhook answers `PAYMENT_WEBHOOK_INVALID_SIGNATURE` (401) and applies nothing — it is not
 a client error but a failed authenticity check, so it is this module's code rather than the shared
-`UNAUTHENTICATED` (which is about a session). A verified webhook for an unknown order code answers
-`PAYMENT_NOT_FOUND`; it never invents a payment, and because there is no payment row to attach it to,
-**nothing is recorded** — only a warning is logged (research D7).
+`UNAUTHENTICATED` (which is about a session). A verified webhook for an unknown order code is
+**acknowledged with 2xx** and **records nothing** (there is no payment row to attach a record to); it
+never invents a payment, and only a warning is logged for the operator (research D7). This is required
+so PayOS accepts the webhook URL when it registers it, and so the provider stops retrying an event it
+cannot use.
 
 ## Codes deliberately reused
 
@@ -50,6 +52,7 @@ provider stops retrying instead of being throttled.
 |---|---|
 | A verified confirmation whose amount differs from the payment | Not an error answer: the payment becomes `UNMATCHED` (409 would be wrong — the confirmation is valid, just not applicable) and the webhook still answers `2xx`, because refusing it would make the provider retry forever |
 | A verified confirmation for an order that was edited, cancelled or expired | Recorded as `UNMATCHED` and answered `2xx` for the same reason |
+| A verified confirmation for an unknown order code (e.g. an orphaned link, or PayOS's registration sample) | It is not an error answer: the webhook is acknowledged with `2xx` so the provider stops retrying, nothing is applied and nothing is recorded (no payment row exists), and a warning is logged for the operator (research D7) |
 | The same confirmation arriving twice | The second one is a no-op success: the payment is already `PAID`, so nothing applies and the webhook answers `2xx` |
 | The provider refusing to cancel a link when the order was cancelled | Not an error answer: the order's cancellation succeeded (module 07) and the failure is logged for the operator (research D9) |
 | Refunding a payment | There are no refunds in V1.0 (ADR 015 §5 D5); the operator resolves a stranded payment outside the system |

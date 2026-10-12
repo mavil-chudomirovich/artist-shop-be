@@ -3865,7 +3865,7 @@ const docTemplate = `{
         },
         "/payments/payos/webhook": {
             "post": {
-                "description": "Public provider callback. The signature is verified over the exact received body before anything is trusted; a handled event answers 2xx so PayOS stops retrying. An unverified signature applies nothing, an unknown order code records nothing, and an amount mismatch is recorded for the operator.",
+                "description": "Public provider callback. The signature is verified over the exact received body before anything is trusted; a handled event answers 2xx so PayOS stops retrying. An unverified signature applies nothing, an unknown order code is acknowledged with nothing recorded, and an amount mismatch is recorded for the operator.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3902,12 +3902,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }

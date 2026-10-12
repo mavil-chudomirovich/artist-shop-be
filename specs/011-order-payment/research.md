@@ -180,10 +180,11 @@ lifecycles. A boolean "paid" — rejected: it cannot express cancelled or unmatc
 
 **The provider is called before the row is written, so the payment's own transaction stays short.** The
 window between a successful create-link response and the payment row committing is therefore real: if
-that write fails, a live link exists at PayOS with no payment row, and a later webhook for it answers
-`PAYMENT_NOT_FOUND`. The module logs that case as a warning with the order code, and the operator
-reconciles it out of band — query the link with the reserved `GET /v2/payment-requests/{id}` (D1), then
-write the row and apply by hand. Full automatic recovery is deferred (`specs/011-order-payment/deferred.md`).
+that write fails, a live link exists at PayOS with no payment row, and a later webhook for it is
+**acknowledged with `2xx` and records nothing** (there is no row to attach a record to), with a warning
+logged. The operator reconciles it out of band — query the link with the reserved
+`GET /v2/payment-requests/{id}` (D1), then write the row and apply by hand. Full automatic recovery is
+deferred (`specs/011-order-payment/deferred.md`).
 
 **Rationale**: FR-009/FR-010 and Constitution II. The idempotency has two layers: the payment's own
 `PAID` short-circuit, and module 05's per-line `source_reference`. The transaction makes the payment

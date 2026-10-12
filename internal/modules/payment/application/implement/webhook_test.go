@@ -23,7 +23,8 @@ import (
 // payment becomes PAID with the provider reference and the PAYMENT_APPLIED event
 // is recorded, all in one transaction. A replay is a no-op success; an unverified
 // body is refused; a wrong amount records UNMATCHED and does not apply; and an
-// unknown order code is refused with nothing recorded (only a warning).
+// unknown order code is acknowledged with success while recording nothing (only a
+// warning).
 
 // webhookRepo is the in-memory repository the webhook use case runs against. It
 // answers the order-code lookup and the locked reload from its fixture, and
@@ -291,17 +292,17 @@ func TestHandleWebhookRecordsAMismatchedAmount(t *testing.T) {
 	}
 }
 
-// FR-022, research D7: a webhook for an order code no payment carries is refused
-// and nothing is recorded — there is no payment to attach a record to (only a
-// warning is logged).
-func TestHandleWebhookRefusesAnUnknownOrderCode(t *testing.T) {
+// FR-022, research D7: a webhook for an order code no payment carries is a
+// verified event that cannot be applied, so it is acknowledged with success (the
+// provider stops retrying) and nothing is recorded — there is no payment to attach
+// a record to (only a warning is logged).
+func TestHandleWebhookAcknowledgesAnUnknownOrderCode(t *testing.T) {
 	h := newWebhookHarness()
 	h.repo.byCodeErr = domainerr.ErrNotFound
 	h.provider.input = dto.WebhookInput{OrderCode: 123456, Amount: 120000}
 
-	err := h.service.HandleWebhook(context.Background(), []byte(`{}`))
-	if !errors.Is(err, domainerr.ErrNotFound) {
-		t.Fatalf("HandleWebhook error = %v, want ErrNotFound", err)
+	if err := h.service.HandleWebhook(context.Background(), []byte(`{}`)); err != nil {
+		t.Fatalf("HandleWebhook error = %v, want nil (acknowledged with success)", err)
 	}
 	if h.repo.applyPaidCalls != 0 || len(h.repo.unmatched) != 0 || len(h.repo.events) != 0 {
 		t.Fatal("an unknown order code must record nothing")

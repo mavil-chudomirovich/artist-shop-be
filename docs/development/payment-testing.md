@@ -70,9 +70,9 @@ Service `ngrok` nằm sau profile `ngrok` nên `make up-tools` **không** tự c
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ngrok up -d ngrok
 ```
 
-- URL công khai: mở dashboard **http://localhost:4040** → lấy dòng `https://<...>.ngrok-free.app`.
-- Nếu đặt `NGROK_DOMAIN` (domain reserved), sửa command của service thành
-  `http api:8080 --url https://$NGROK_DOMAIN --log stdout` để URL ổn định qua các lần restart.
+- Service dùng `NGROK_DOMAIN` (domain reserved trong `.env`) làm URL công khai:
+  `https://<NGROK_DOMAIN>`; xem lại ở dashboard **http://localhost:4040** (`/api/tunnels`).
+- Không đặt `NGROK_DOMAIN` thì dùng **Cách B** để lấy URL (ngrok sẽ cấp URL ngẫu nhiên).
 - Dừng: `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile ngrok stop ngrok`.
 
 ### Cách B — ngrok chạy trực tiếp trên host

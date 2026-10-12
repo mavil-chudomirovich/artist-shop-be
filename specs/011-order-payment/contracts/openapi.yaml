@@ -119,14 +119,13 @@ paths:
             schema: { $ref: '#/components/schemas/PayOSWebhook' }
       responses:
         '200':
-          description: The event was handled — applied, already applied, or recorded as UNMATCHED
+          description: The event was handled — applied, already applied, recorded as UNMATCHED, or acknowledged with nothing recorded (an unknown order code)
         '400':
           description: MALFORMED_REQUEST — the body does not parse
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/WebhookSignatureInvalid' }
-        '404': { $ref: '#/components/responses/PaymentNotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
 

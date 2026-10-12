@@ -117,8 +117,8 @@ description: "Task list for Online Order Payment (module 08)"
 
 ### Tests for User Story 2 ⚠️
 
-- [X] T030 [P] [US2] Use-case tests `internal/modules/payment/application/implement/webhook_test.go` (over a fake provider and a fake order contract): a verified matching webhook applies once (the order's version-aware `MarkPaid` is called with the stored version) and records the `PAYMENT_APPLIED` event; a replay is a no-op success; an unverified body is refused; a wrong amount records `UNMATCHED` and does not apply; an unknown order code is refused and **nothing is recorded** (only a warning)
-- [X] T031 [P] [US2] HTTP tests `internal/modules/payment/presentation/http/webhook_test.go`: a valid signature returns `200`; a tampered signature returns `401 PAYMENT_WEBHOOK_INVALID_SIGNATURE` and applies nothing; an amount mismatch still returns `200` but leaves the payment `UNMATCHED`; an unknown order code returns `404 PAYMENT_NOT_FOUND`; an unparseable body returns `400 MALFORMED_REQUEST`
+- [X] T030 [P] [US2] Use-case tests `internal/modules/payment/application/implement/webhook_test.go` (over a fake provider and a fake order contract): a verified matching webhook applies once (the order's version-aware `MarkPaid` is called with the stored version) and records the `PAYMENT_APPLIED` event; a replay is a no-op success; an unverified body is refused; a wrong amount records `UNMATCHED` and does not apply; an unknown order code is acknowledged with success (nothing recorded, only a warning)
+- [X] T031 [P] [US2] HTTP tests `internal/modules/payment/presentation/http/webhook_test.go`: a valid signature returns `200`; a tampered signature returns `401 PAYMENT_WEBHOOK_INVALID_SIGNATURE` and applies nothing; an amount mismatch still returns `200` but leaves the payment `UNMATCHED`; an unknown order code returns `200` (nothing recorded); an unparseable body returns `400 MALFORMED_REQUEST`
 
 ### Implementation for User Story 2
 
