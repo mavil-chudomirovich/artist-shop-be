@@ -1,7 +1,8 @@
 package constant
 
 // Stable, machine-readable error codes of the product module. They mirror
-// specs/006-product-catalog/contracts/error-codes.md one for one and are mapped to
+// specs/006-product-catalog/contracts/error-codes.md and
+// specs/014-product-variants/contracts/error-codes.md one for one and are mapped to
 // HTTP status codes by presentation/http/errors.go. Clients branch on error.code,
 // never on error.message.
 //
@@ -31,4 +32,22 @@ const (
 	// not be reached, or has no credentials. It is the module's only retryable
 	// code (FR-018).
 	CodeProductMediaUnavailable = "PRODUCT_MEDIA_UNAVAILABLE"
+	// CodeVariantGroupNotFound covers an unknown variant-group identifier or
+	// slug, a group hidden because its category is hidden or none of its options
+	// is visible, and a removed group. On the public surface the situations are
+	// deliberately one answer (FR-008).
+	CodeVariantGroupNotFound = "VARIANT_GROUP_NOT_FOUND"
+	// CodeVariantGroupSlugTaken reports that another variant group already uses
+	// the slug, ignoring letter case and surrounding whitespace (FR-019).
+	CodeVariantGroupSlugTaken = "VARIANT_GROUP_SLUG_TAKEN"
+	// CodeVariantGroupHasOptions reports that a group still has options and
+	// cannot be removed until they are detached (FR-025).
+	CodeVariantGroupHasOptions = "VARIANT_GROUP_HAS_OPTIONS"
+	// CodeVariantLabelTaken reports that another option of the same group already
+	// uses the label, ignoring letter case and surrounding whitespace (FR-021).
+	CodeVariantLabelTaken = "VARIANT_LABEL_TAKEN"
+	// CodeProductAlreadyInVariantGroup reports that the product is already an
+	// option of a group, so attaching it to another is refused — a product
+	// belongs to at most one group (FR-021).
+	CodeProductAlreadyInVariantGroup = "PRODUCT_ALREADY_IN_VARIANT_GROUP"
 )

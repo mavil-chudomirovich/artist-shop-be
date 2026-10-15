@@ -25,4 +25,29 @@ const (
 	// AuditProductDeleted is recorded when a product is removed. Removal is a hard
 	// delete (research D13); the audit entry is what survives it.
 	AuditProductDeleted = "PRODUCT_DELETED"
+	// AuditVariantGroupCreated is recorded when an administrator creates a
+	// variant group.
+	AuditVariantGroupCreated = "PRODUCT_VARIANT_GROUP_CREATED"
+	// AuditVariantGroupUpdated is recorded when an administrator edits a variant
+	// group's editable fields.
+	AuditVariantGroupUpdated = "PRODUCT_VARIANT_GROUP_UPDATED"
+	// AuditVariantGroupDeleted is recorded when a variant group is removed. Its
+	// options are never removed with it; they become ordinary products again.
+	AuditVariantGroupDeleted = "PRODUCT_VARIANT_GROUP_DELETED"
+	// AuditVariantGroupImageAdded is recorded when a picture is attached to a
+	// variant group.
+	AuditVariantGroupImageAdded = "PRODUCT_VARIANT_GROUP_IMAGE_ADDED"
+	// AuditVariantGroupImageRemoved is recorded when a variant-group picture is
+	// released.
+	AuditVariantGroupImageRemoved = "PRODUCT_VARIANT_GROUP_IMAGE_REMOVED"
+	// AuditVariantGroupImagePrimarySet is recorded when a picture is made the
+	// variant group's main one.
+	AuditVariantGroupImagePrimarySet = "PRODUCT_VARIANT_GROUP_IMAGE_PRIMARY_SET"
+	// AuditProductVariantAttached is recorded when a product is attached to a
+	// variant group as a labelled option. The product keeps its own price,
+	// pictures, sell state and link.
+	AuditProductVariantAttached = "PRODUCT_VARIANT_ATTACHED"
+	// AuditProductVariantDetached is recorded when a product is detached from its
+	// variant group and becomes an ordinary product again.
+	AuditProductVariantDetached = "PRODUCT_VARIANT_DETACHED"
 )

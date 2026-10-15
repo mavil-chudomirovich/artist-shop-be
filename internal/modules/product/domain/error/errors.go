@@ -1,7 +1,8 @@
 // Package domainerr defines the product module's business sentinel errors.
 //
-// Codes in specs/006-product-catalog/contracts/error-codes.md map to these errors
-// in presentation/http; the domain never knows an HTTP status.
+// Codes in specs/006-product-catalog/contracts/error-codes.md and
+// specs/014-product-variants/contracts/error-codes.md map to these errors in
+// presentation/http; the domain never knows an HTTP status.
 package domainerr
 
 import (
@@ -51,6 +52,30 @@ var (
 	// carries is the offending member, because FR-024, FR-028, FR-030 and FR-032
 	// require the response to name the field a client has to fix.
 	ErrProductInvalid = errors.New("invalid product")
+	// ErrVariantGroupNotFound is returned for an unknown variant-group
+	// identifier or slug, a group withheld from customers (its category is
+	// hidden, none of its options is visible, or it was removed) and a removed
+	// one. All share one error so the public response never confirms that a
+	// hidden group exists (FR-008). The administrator surface uses it for the
+	// unknown and removed cases.
+	ErrVariantGroupNotFound = errors.New("variant group not found")
+	// ErrVariantGroupSlugTaken is returned when another variant group already
+	// uses the slug, compared after trimming surrounding whitespace and ignoring
+	// letter case (FR-019). It is a group-wide invariant, so the storage layer
+	// enforces it and the adapter reports it here.
+	ErrVariantGroupSlugTaken = errors.New("variant group slug taken")
+	// ErrVariantGroupHasOptions is returned when removing a group that still has
+	// options is refused; the operator detaches them first (FR-025).
+	ErrVariantGroupHasOptions = errors.New("variant group has options")
+	// ErrVariantLabelTaken is returned when another option of the same group
+	// already uses the label, compared after trimming surrounding whitespace and
+	// ignoring letter case (FR-021). The storage layer enforces it and the
+	// adapter reports it here.
+	ErrVariantLabelTaken = errors.New("variant label taken")
+	// ErrProductAlreadyGrouped is returned when attaching a product that already
+	// belongs to a variant group is refused: a product is an option of at most
+	// one group (FR-021).
+	ErrProductAlreadyGrouped = errors.New("product already in a variant group")
 )
 
 // StateTransitionError carries the state a refused sell-state change started from,

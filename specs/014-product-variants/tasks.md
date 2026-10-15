@@ -36,8 +36,8 @@ maintains groups) are the core and ship together** — one without the other sho
 
 **Purpose**: The constants and sentinels the whole feature maps to
 
-- [ ] T001 [P] Add variant-group audit action constants in `internal/modules/product/domain/constant/audit.go` — `AuditVariantGroupCreated`, `AuditVariantGroupUpdated`, `AuditVariantGroupDeleted`, `AuditVariantGroupImageAdded`, `AuditVariantGroupImageRemoved`, `AuditVariantGroupImagePrimarySet`, `AuditProductVariantAttached`, `AuditProductVariantDetached` (values `PRODUCT_VARIANT_GROUP_*` / `PRODUCT_VARIANT_*`) — FR-014
-- [ ] T002 [P] Add the domain sentinels in `internal/modules/product/domain/error/errors.go` — `ErrVariantGroupNotFound`, `ErrVariantGroupSlugTaken`, `ErrVariantGroupHasOptions`, `ErrVariantLabelTaken`, `ErrProductAlreadyGrouped` — **and** the matching error-code constants in `internal/modules/product/domain/constant/codes.go` (`CodeVariantGroupNotFound`, `CodeVariantGroupSlugTaken`, `CodeVariantGroupHasOptions`, `CodeVariantLabelTaken`, `CodeProductAlreadyInVariantGroup`), mirroring `contracts/error-codes.md` one-for-one
+- [x] T001 [P] Add variant-group audit action constants in `internal/modules/product/domain/constant/audit.go` — `AuditVariantGroupCreated`, `AuditVariantGroupUpdated`, `AuditVariantGroupDeleted`, `AuditVariantGroupImageAdded`, `AuditVariantGroupImageRemoved`, `AuditVariantGroupImagePrimarySet`, `AuditProductVariantAttached`, `AuditProductVariantDetached` (values `PRODUCT_VARIANT_GROUP_*` / `PRODUCT_VARIANT_*`) — FR-014
+- [x] T002 [P] Add the domain sentinels in `internal/modules/product/domain/error/errors.go` — `ErrVariantGroupNotFound`, `ErrVariantGroupSlugTaken`, `ErrVariantGroupHasOptions`, `ErrVariantLabelTaken`, `ErrProductAlreadyGrouped` — **and** the matching error-code constants in `internal/modules/product/domain/constant/codes.go` (`CodeVariantGroupNotFound`, `CodeVariantGroupSlugTaken`, `CodeVariantGroupHasOptions`, `CodeVariantLabelTaken`, `CodeProductAlreadyInVariantGroup`), mirroring `contracts/error-codes.md` one-for-one
 
 ---
 
