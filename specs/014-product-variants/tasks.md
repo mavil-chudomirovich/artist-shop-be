@@ -122,11 +122,11 @@ maintains groups) are the core and ship together** — one without the other sho
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Write the integration test in `internal/modules/product/infrastructure/implement/postgres/product_variants_integration_test.go` — two options with different prices/stock/images keep their own through the group read and the product read; the group card price is the lowest visible option's (FR-016, FR-017, FR-018; SC-003)
+- [x] T033 [P] [US3] Write the integration test in `internal/modules/product/infrastructure/implement/postgres/product_variants_integration_test.go` — two options with different prices/stock/images keep their own through the group read and the product read; the group card price is the lowest visible option's (FR-016, FR-017, FR-018; SC-003)
 
 ### Implementation for User Story 3
 
-- [ ] T034 [US3] Implement/confirm in `internal/modules/product/infrastructure/implement/postgres/product.go` and `internal/modules/product/application/mapper/mapper.go` that each option's projection returns its **own** `price_amount`/`currency`, `is_preorder`, primary `image_url`, `slug` and (admin) `sell_state`/`position`/`name` — nothing inherited from the group or siblings; T033 is the test that proves it
+- [x] T034 [US3] Implement/confirm in `internal/modules/product/infrastructure/implement/postgres/product.go` and `internal/modules/product/application/mapper/mapper.go` that each option's projection returns its **own** `price_amount`/`currency`, `is_preorder`, primary `image_url`, `slug` and (admin) `sell_state`/`position`/`name` — nothing inherited from the group or siblings; T033 is the test that proves it
 
 **Checkpoint**: Option independence holds end-to-end; the cart/order/inventory suites are unchanged
 

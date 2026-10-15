@@ -13,6 +13,7 @@ import (
 
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
+	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
 )
 
 // This file exercises the variant-group adapter and the merged catalogue read
@@ -383,4 +384,220 @@ func TestGroupSlugIsUniqueAmongGroupsAndIndependentFromProductSlug(t *testing.T)
 	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldCategoryID {
 		t.Fatalf("expected the invalid field to be %q, got %v", model.FieldCategoryID, err)
 	}
+}
+
+// rawInsertOptionImage writes one picture for an option product, with its own
+// URL, so a test can give two options distinct main pictures. It mirrors
+// rawInsertPicture of product_integration_test.go, which pins one shared URL and
+// therefore cannot tell two options' pictures apart.
+func (f *productFixture) rawInsertOptionImage(ctx context.Context, productID uuid.UUID, url string, primary bool) (uuid.UUID, error) {
+	id := uuid.New()
+	const query = `
+		INSERT INTO product_images
+			(id, product_id, public_id, secure_url, width, height, position, is_primary)
+		VALUES ($1, $2, $3, $4, 10, 10, 0, $5)`
+	_, err := f.pool.Exec(ctx, query, id, productID, "demo/"+id.String(), url, primary)
+	return id, err
+}
+
+// FR-016, FR-017, FR-018, SC-003: each option is its own sellable unit. Two
+// options of one group — different prices, different sell states and different
+// pictures — each keep their own values through the group read and the product
+// read, nothing is inherited from the group or a sibling, and the group's
+// catalogue-card price follows the lowest *visible* option. The second half
+// changes only one option and proves the other keeps its own price, state and
+// picture (SC-003).
+func TestOptionsKeepTheirOwnPriceStateAndPicture(t *testing.T) {
+	f := newProductFixture(t)
+	ctx := context.Background()
+	category := f.requireCategory(t, "cat-independence")
+	groups := f.variantGroupRepositoryFor()
+	visible := []uuid.UUID{category}
+
+	groupID, err := f.rawInsertGroup(ctx, category, "independence-group", 1)
+	if err != nil {
+		t.Fatalf("insert the group: %v", err)
+	}
+
+	// Option A: cheaper, on sale, its own picture.
+	labelA := "Flins"
+	optionA := visibleOption(category, "independence-flins", 1000)
+	optionA.Position = 0
+	optionAID, err := f.rawInsertVariantProduct(ctx, optionA, &groupID, &labelA)
+	if err != nil {
+		t.Fatalf("insert option A: %v", err)
+	}
+	// Option B: dearer, a different sell state (an announced pre-order, which the
+	// catalogue predicate treats as visible) and its own picture.
+	labelB := "Dottore"
+	optionB := visibleOption(category, "independence-dottore", 3000)
+	optionB.Position = 1
+	optionB.SellState = "COMING_SOON"
+	optionB.IsPreorder = true
+	optionBID, err := f.rawInsertVariantProduct(ctx, optionB, &groupID, &labelB)
+	if err != nil {
+		t.Fatalf("insert option B: %v", err)
+	}
+	if _, err := f.rawInsertOptionImage(ctx, optionAID, "https://example.test/flins.jpg", true); err != nil {
+		t.Fatalf("insert option A picture: %v", err)
+	}
+	if _, err := f.rawInsertOptionImage(ctx, optionBID, "https://example.test/dottore.jpg", true); err != nil {
+		t.Fatalf("insert option B picture: %v", err)
+	}
+	if _, err := f.rawInsertGroupImage(ctx, groupID, "https://example.test/group.jpg", true); err != nil {
+		t.Fatalf("insert the group picture: %v", err)
+	}
+
+	findOption := func(options []domainrepo.GroupOptionItem, id uuid.UUID) (domainrepo.GroupOptionItem, bool) {
+		for _, option := range options {
+			if option.ID == id {
+				return option, true
+			}
+		}
+		return domainrepo.GroupOptionItem{}, false
+	}
+
+	// requireOption asserts one option's own public values: slug, label, price
+	// (amount and currency together) and main picture.
+	requireOption := func(t *testing.T, options []domainrepo.GroupOptionItem, id uuid.UUID, slug, label string, amount int64, imageURL string) {
+		t.Helper()
+		option, ok := findOption(options, id)
+		if !ok {
+			t.Fatalf("the read is missing option %q", slug)
+		}
+		if option.Slug != slug || option.Label != label {
+			t.Fatalf("option %q carried slug %q label %q", slug, option.Slug, option.Label)
+		}
+		if option.Price.Amount != amount || option.Price.Currency != "VND" {
+			t.Fatalf("option %q carried price %d %s, want %d VND", slug, option.Price.Amount, option.Price.Currency, amount)
+		}
+		if option.ImageURL != imageURL {
+			t.Fatalf("option %q carried image %q, want %q", slug, option.ImageURL, imageURL)
+		}
+	}
+
+	// requireCard asserts the group's merged-list entry: the price follows the
+	// lowest visible option and the image is the group's own, never an option's.
+	requireCard := func(t *testing.T, amount int64) {
+		t.Helper()
+		entries, _, err := f.repo.ListCatalogue(ctx, visibleListQuery(category))
+		if err != nil {
+			t.Fatalf("ListCatalogue: %v", err)
+		}
+		for _, entry := range entries {
+			if entry.Slug != "independence-group" {
+				continue
+			}
+			if entry.Price.Amount != amount || entry.Price.Currency != "VND" {
+				t.Fatalf("the group card carried price %d %s, want %d VND", entry.Price.Amount, entry.Price.Currency, amount)
+			}
+			if entry.ImageURL != "https://example.test/group.jpg" {
+				t.Fatalf("the group card carried image %q, want the group's own", entry.ImageURL)
+			}
+			return
+		}
+		t.Fatalf("the group is absent from the catalogue")
+	}
+
+	// --- the group read (public): both options are visible, each with its own
+	// slug, label, price, currency and main picture.
+	publicGroup, err := groups.FindVisibleGroupBySlug(ctx, "independence-group", visible)
+	if err != nil {
+		t.Fatalf("FindVisibleGroupBySlug: %v", err)
+	}
+	if len(publicGroup.Options) != 2 {
+		t.Fatalf("expected the two visible options, got %d", len(publicGroup.Options))
+	}
+	requireOption(t, publicGroup.Options, optionAID, "independence-flins", "Flins", 1000, "https://example.test/flins.jpg")
+	requireOption(t, publicGroup.Options, optionBID, "independence-dottore", "Dottore", 3000, "https://example.test/dottore.jpg")
+
+	// --- the product read: an option resolved on its own link is an ordinary
+	// product carrying its own price, currency, picture and group attachment.
+	optionAView, err := f.repo.FindVisibleBySlug(ctx, "independence-flins", visible)
+	if err != nil {
+		t.Fatalf("FindVisibleBySlug(option A): %v", err)
+	}
+	if optionAView.Product.Price.Amount != 1000 || optionAView.Product.Price.Currency != "VND" {
+		t.Fatalf("option A carried price %d %s, want 1000 VND", optionAView.Product.Price.Amount, optionAView.Product.Price.Currency)
+	}
+	primaryA, ok := model.PrimaryPicture(optionAView.Pictures)
+	if !ok || primaryA.URL != "https://example.test/flins.jpg" {
+		t.Fatalf("option A carried picture %+v, want its own", optionAView.Pictures)
+	}
+	if optionAView.Product.VariantGroupID == nil || *optionAView.Product.VariantGroupID != groupID {
+		t.Fatalf("option A lost its group attachment: %v", optionAView.Product.VariantGroupID)
+	}
+	if optionAView.Product.VariantLabel == nil || *optionAView.Product.VariantLabel != "Flins" {
+		t.Fatalf("option A carried label %v, want %q", optionAView.Product.VariantLabel, "Flins")
+	}
+
+	// --- the selector read: the product detail's sibling options carry each own
+	// value too.
+	selector, err := f.repo.ListOptionsByGroupIDs(ctx, []uuid.UUID{groupID}, visible)
+	if err != nil {
+		t.Fatalf("ListOptionsByGroupIDs: %v", err)
+	}
+	requireOption(t, selector[groupID], optionAID, "independence-flins", "Flins", 1000, "https://example.test/flins.jpg")
+	requireOption(t, selector[groupID], optionBID, "independence-dottore", "Dottore", 3000, "https://example.test/dottore.jpg")
+
+	// --- the admin group read: hidden options included, each with its own name,
+	// position, sell state and price — nothing taken from the group.
+	adminGroup, err := groups.FindByID(ctx, groupID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	adminA, okA := findOption(adminGroup.Options, optionAID)
+	adminB, okB := findOption(adminGroup.Options, optionBID)
+	if !okA || !okB {
+		t.Fatalf("the admin read must carry both options, got %d", len(adminGroup.Options))
+	}
+	if adminA.Name != "Product independence-flins" || adminA.Position != 0 || adminA.SellState != "ACTIVE" {
+		t.Fatalf("option A carried name %q position %d state %q", adminA.Name, adminA.Position, adminA.SellState)
+	}
+	if adminB.Name != "Product independence-dottore" || adminB.Position != 1 || adminB.SellState != "COMING_SOON" || !adminB.IsPreorder {
+		t.Fatalf("option B carried name %q position %d state %q preorder %v", adminB.Name, adminB.Position, adminB.SellState, adminB.IsPreorder)
+	}
+
+	// --- the group card is the lowest visible option's price, not the group's
+	// (it has none) and not a sibling's.
+	requireCard(t, 1000)
+
+	// SC-003: changing one option changes only that option. Option B is retired
+	// and repriced far lower; option A must keep its own price, picture and state,
+	// and the card must keep following the still-visible A.
+	if _, err := f.pool.Exec(ctx,
+		`UPDATE products SET sell_state = 'DISCONTINUED', price_amount = 500 WHERE id = $1`, optionBID); err != nil {
+		t.Fatalf("retire and reprice option B: %v", err)
+	}
+
+	afterRetire, err := groups.FindVisibleGroupBySlug(ctx, "independence-group", visible)
+	if err != nil {
+		t.Fatalf("FindVisibleGroupBySlug after the change: %v", err)
+	}
+	if len(afterRetire.Options) != 1 {
+		t.Fatalf("only option A is visible now, got %d options", len(afterRetire.Options))
+	}
+	requireOption(t, afterRetire.Options, optionAID, "independence-flins", "Flins", 1000, "https://example.test/flins.jpg")
+
+	// The admin read still shows both, option B carrying its own new values and
+	// option A untouched.
+	afterAdmin, err := groups.FindByID(ctx, groupID)
+	if err != nil {
+		t.Fatalf("FindByID after the change: %v", err)
+	}
+	adminAAfter, okA := findOption(afterAdmin.Options, optionAID)
+	adminBAfter, okB := findOption(afterAdmin.Options, optionBID)
+	if !okA || !okB {
+		t.Fatalf("the admin read must still carry both options, got %d", len(afterAdmin.Options))
+	}
+	if adminAAfter.Price.Amount != 1000 || adminAAfter.SellState != "ACTIVE" {
+		t.Fatalf("option A changed with its sibling: price %d state %q", adminAAfter.Price.Amount, adminAAfter.SellState)
+	}
+	if adminBAfter.Price.Amount != 500 || adminBAfter.SellState != "DISCONTINUED" {
+		t.Fatalf("option B did not keep its own new values: price %d state %q", adminBAfter.Price.Amount, adminBAfter.SellState)
+	}
+
+	// The card follows the lowest *visible* option, so option B's lower price
+	// must not leak into it.
+	requireCard(t, 1000)
 }
