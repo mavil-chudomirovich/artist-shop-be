@@ -44,7 +44,7 @@ const (
 	// cannot be removed until they are detached (FR-025).
 	CodeVariantGroupHasOptions = "VARIANT_GROUP_HAS_OPTIONS"
 	// CodeVariantLabelTaken reports that another option of the same group already
-	// uses the label, ignoring letter case and surrounding whitespace (FR-021).
+	// uses the label (compared after trimming surrounding whitespace, FR-021).
 	CodeVariantLabelTaken = "VARIANT_LABEL_TAKEN"
 	// CodeProductAlreadyInVariantGroup reports that the product is already an
 	// option of a group, so attaching it to another is refused — a product

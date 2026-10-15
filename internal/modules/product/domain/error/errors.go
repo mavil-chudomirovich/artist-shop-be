@@ -68,9 +68,8 @@ var (
 	// options is refused; the operator detaches them first (FR-025).
 	ErrVariantGroupHasOptions = errors.New("variant group has options")
 	// ErrVariantLabelTaken is returned when another option of the same group
-	// already uses the label, compared after trimming surrounding whitespace and
-	// ignoring letter case (FR-021). The storage layer enforces it and the
-	// adapter reports it here.
+	// already uses the label, compared after trimming surrounding whitespace
+	// (FR-021). The storage layer enforces it and the adapter reports it here.
 	ErrVariantLabelTaken = errors.New("variant label taken")
 	// ErrProductAlreadyGrouped is returned when attaching a product that already
 	// belongs to a variant group is refused: a product is an option of at most
