@@ -602,6 +602,62 @@ definitions:
         description: UpdatedAt is when the payment was last written.
         type: string
     type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse:
+    properties:
+      height:
+        type: integer
+      id:
+        description: ID identifies the picture.
+        type: string
+      isPrimary:
+        description: IsPrimary reports whether this is the group's main picture.
+        type: boolean
+      position:
+        description: Position is the display order.
+        type: integer
+      publicId:
+        description: PublicID is the provider's opaque identifier.
+        type: string
+      url:
+        description: URL is the displayable link.
+        type: string
+      width:
+        description: Width and Height are the stored pixel dimensions.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse:
+    properties:
+      id:
+        description: ID is the option product's stable identifier.
+        type: string
+      imageUrl:
+        description: ImageURL is the option's main picture's link, or null when it
+          has none.
+        type: string
+      isPreorder:
+        description: IsPreorder reports whether the option is an announced pre-order.
+        type: boolean
+      label:
+        description: Label is the option's value in the group's single choice dimension.
+        type: string
+      name:
+        description: Name is the option product's name.
+        type: string
+      position:
+        description: Position is the option product's ordering preference (research
+          D5).
+        type: integer
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the option's own price and currency.
+      sellState:
+        description: SellState is the option product's selling-life state (FR-017).
+        type: string
+      slug:
+        description: Slug is the option product's public link segment.
+        type: string
+    type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse:
     properties:
       height:
@@ -743,6 +799,94 @@ definitions:
       updatedAt:
         type: string
     type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the group belongs to.
+        type: string
+      createdAt:
+        description: CreatedAt and UpdatedAt are the stored timestamps.
+        type: string
+      description:
+        description: Description is the text shown to customers; an empty string is
+          valid.
+        type: string
+      id:
+        description: ID is the group's stable identifier.
+        type: string
+      imageCount:
+        description: ImageCount is how many pictures the group has.
+        type: integer
+      imageUrl:
+        description: ImageURL is the group's main picture's link, or null when it
+          has none.
+        type: string
+      images:
+        description: |-
+          Images holds every picture in display order. It is always an array, never
+          null.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse'
+        type: array
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      optionName:
+        description: OptionName is the single choice-dimension name, for example "Card".
+        type: string
+      options:
+        description: |-
+          Options holds every option, visible or not. It is always an array, never
+          null.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse'
+        type: array
+      position:
+        description: Position is the operator's ordering preference.
+        type: integer
+      slug:
+        description: Slug is the link segment the operator wrote.
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the group belongs to.
+        type: string
+      createdAt:
+        description: CreatedAt and UpdatedAt are the stored timestamps.
+        type: string
+      description:
+        description: Description is the text shown to customers; an empty string is
+          valid.
+        type: string
+      id:
+        description: ID is the group's stable identifier.
+        type: string
+      imageCount:
+        description: ImageCount is how many pictures the group has.
+        type: integer
+      imageUrl:
+        description: ImageURL is the group's main picture's link, or null when it
+          has none.
+        type: string
+      name:
+        description: Name is the name the operator wrote.
+        type: string
+      optionName:
+        description: OptionName is the single choice-dimension name, for example "Card".
+        type: string
+      position:
+        description: Position is the operator's ordering preference.
+        type: integer
+      slug:
+        description: Slug is the link segment the operator wrote.
+        type: string
+      updatedAt:
+        type: string
+    type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest:
     properties:
       to:
@@ -794,6 +938,40 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
         description: Price is the price with its currency.
+      slug:
+        description: Slug is the public link segment.
+        type: string
+      variantGroupId:
+        description: |-
+          VariantGroupID attaches the new product to a group as an option; an omitted
+          or null value creates an ordinary product (FR-010). It requires
+          VariantLabel.
+        type: string
+      variantLabel:
+        description: |-
+          VariantLabel is the option's short choice label; required when
+          VariantGroupID is present (FR-021).
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest:
+    properties:
+      categoryId:
+        description: CategoryID is the one category the group belongs to (FR-023).
+        type: string
+      description:
+        description: |-
+          Description is the text shown to customers; an omitted or empty value is
+          stored empty.
+        type: string
+      name:
+        description: Name is the group name.
+        type: string
+      optionName:
+        description: OptionName is the single choice-dimension name (FR-009).
+        type: string
+      position:
+        description: Position is the ordering preference.
+        type: integer
       slug:
         description: Slug is the public link segment.
         type: string
@@ -1036,6 +1214,40 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
         description: Price is the new price; nil keeps the current value.
+      slug:
+        description: Slug is the new slug; nil keeps the current value.
+        type: string
+      variantGroupId:
+        description: |-
+          VariantGroupID attaches or detaches the product's option role; the JSON key
+          being absent keeps the current attachment (research D13).
+        type: string
+      variantLabel:
+        description: |-
+          VariantLabel sets or clears the option label; the JSON key being absent
+          keeps the current label (research D13).
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest:
+    properties:
+      categoryId:
+        description: CategoryID is the new category; nil keeps the current value.
+        type: string
+      description:
+        description: |-
+          Description is the new description; nil keeps the current value, an empty
+          string clears it.
+        type: string
+      name:
+        description: Name is the new name; nil keeps the current value.
+        type: string
+      optionName:
+        description: OptionName is the new choice-dimension name; nil keeps the current
+          value.
+        type: string
+      position:
+        description: Position is the new position; nil keeps the current value.
+        type: integer
       slug:
         description: Slug is the new slug; nil keeps the current value.
         type: string
@@ -2271,6 +2483,386 @@ paths:
       summary: List payments, optionally the reconciliation queue
       tags:
       - admin
+  /admin/product-groups:
+    get:
+      description: Returns a page of every variant group, including the ones not visible
+        to customers, with the category, the position and the picture summary a customer
+        never sees.
+      parameters:
+      - description: Page number (default 1)
+        in: query
+        name: page
+        type: integer
+      - description: Page size (default 20)
+        in: query
+        name: pageSize
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: List every variant group (ADMIN)
+      tags:
+      - VariantGroup
+    post:
+      consumes:
+      - application/json
+      description: Creates a variant group. A slug another group holds is a conflict;
+        a category that does not exist is refused naming the field. The acting administrator
+        comes from the session, never the body.
+      parameters:
+      - description: Variant-group payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Create a variant group (ADMIN)
+      tags:
+      - VariantGroup
+  /admin/product-groups/{id}:
+    delete:
+      description: Removes a variant group. Refused with VARIANT_GROUP_HAS_OPTIONS
+        while the group still has options; the options are never removed with it.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove a variant group (ADMIN)
+      tags:
+      - VariantGroup
+    get:
+      description: Returns one variant group, including one not visible to customers,
+        with its own pictures and every option, visible or not.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Read one variant group by identifier (ADMIN)
+      tags:
+      - VariantGroup
+    patch:
+      consumes:
+      - application/json
+      description: Applies a partial edit. An omitted member keeps its value; the
+        pictures are edited through their own endpoints. A slug another group holds
+        is a conflict.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant-group update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Update a variant group (ADMIN)
+      tags:
+      - VariantGroup
+  /admin/product-groups/{id}/images:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores a picture for the variant group through the media provider.
+        The content is validated by signature, not by name or declared media type.
+        The first picture becomes the main one.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Group image (JPEG, PNG or WebP)
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Upload a group picture (ADMIN)
+      tags:
+      - VariantGroup
+  /admin/product-groups/{id}/images/{imageId}:
+    delete:
+      description: Detaches one picture from the variant group and releases its stored
+        asset. Removing the main picture promotes the next one by position.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Picture identifier
+        in: path
+        name: imageId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove a group picture (ADMIN)
+      tags:
+      - VariantGroup
+  /admin/product-groups/{id}/images/{imageId}/primary:
+    post:
+      description: Makes one picture the variant group's main one, clearing any other
+        in the same operation.
+      parameters:
+      - description: Variant-group identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Picture identifier
+        in: path
+        name: imageId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Set the main group picture (ADMIN)
+      tags:
+      - VariantGroup
   /admin/products:
     get:
       description: Returns a page of every product, including the ones withheld from

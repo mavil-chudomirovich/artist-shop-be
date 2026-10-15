@@ -185,4 +185,28 @@ type ProductService interface {
 	// SetPrimaryPicture makes one picture the product's main one and audits the
 	// change (FR-017, research D7).
 	SetPrimaryPicture(ctx context.Context, in dto.SetPrimaryPictureInput) (dto.AdminProductDetailOutput, error)
+
+	// ListAdminGroups returns one page of every variant group, including the ones
+	// withheld from customers (FR-013).
+	ListAdminGroups(ctx context.Context, in dto.ListAdminGroupsInput) (dto.AdminVariantGroupPage, error)
+	// GetAdminGroup returns one group by identifier, including one not visible to
+	// customers, with its own pictures and every option, visible or not (FR-013).
+	GetAdminGroup(ctx context.Context, in dto.AdminVariantGroupRefInput) (dto.AdminVariantGroupDetailOutput, error)
+	// CreateVariantGroup creates a group and audits the change (FR-009, FR-014).
+	CreateVariantGroup(ctx context.Context, in dto.CreateVariantGroupInput) (dto.AdminVariantGroupDetailOutput, error)
+	// UpdateVariantGroup applies a partial edit and audits the change (FR-011,
+	// FR-014).
+	UpdateVariantGroup(ctx context.Context, in dto.UpdateVariantGroupInput) (dto.AdminVariantGroupDetailOutput, error)
+	// DeleteVariantGroup removes a group and audits the removal (FR-012, FR-014).
+	// Removal is refused while options remain (FR-025).
+	DeleteVariantGroup(ctx context.Context, in dto.AdminVariantGroupRefInput) error
+	// AddGroupImage validates the upload, stores it through the MediaStore and
+	// audits the change; the first picture becomes the main one (FR-018).
+	AddGroupImage(ctx context.Context, in dto.AddGroupImageInput) (dto.AdminVariantGroupDetailOutput, error)
+	// RemoveGroupImage removes a group picture, promotes the next main one when
+	// needed, releases the stored asset and audits the change (FR-018).
+	RemoveGroupImage(ctx context.Context, in dto.RemoveGroupImageInput) error
+	// SetPrimaryGroupImage makes one picture the group's main one and audits the
+	// change (FR-018).
+	SetPrimaryGroupImage(ctx context.Context, in dto.SetPrimaryGroupImageInput) (dto.AdminVariantGroupDetailOutput, error)
 }

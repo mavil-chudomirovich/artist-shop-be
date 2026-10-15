@@ -80,3 +80,27 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Post("/{id}/images/{imageId}/primary", h.SetPrimaryPicture)
 	return r
 }
+
+// GroupAdminRouter builds the `/admin/product-groups` group. Mount it under
+// `/api/v1`.
+//
+// Every route is guarded by the administrator role (FR-014), and the denial is
+// recorded through the foundation's OnDenied hook the composition root supplies,
+// exactly as the product surface does. The group gallery mirrors the product
+// picture routes, including the raised body limit for its upload, so the two
+// surfaces read the same way (research D8).
+func (h *Handler) GroupAdminRouter(hooks middleware.AuthHooks) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
+	r.Get("/", h.ListAdminGroups)
+	r.Post("/", h.CreateVariantGroup)
+	r.Get("/{id}", h.GetAdminGroup)
+	r.Patch("/{id}", h.UpdateVariantGroup)
+	r.Delete("/{id}", h.DeleteVariantGroup)
+	r.With(middleware.BodyLimitWithRefusal(
+		PictureUploadCeiling(h.cfg.PictureMaxBytesOrDefault()), imageTooLarge(),
+	)).Post("/{id}/images", h.AddGroupImage)
+	r.Delete("/{id}/images/{imageId}", h.RemoveGroupImage)
+	r.Post("/{id}/images/{imageId}/primary", h.SetPrimaryGroupImage)
+	return r
+}

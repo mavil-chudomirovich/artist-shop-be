@@ -68,6 +68,21 @@ type stubProductService struct {
 	changeStateErr   error
 	changeStateIn    appdto.ChangeSellStateInput
 
+	listAdminGroupsOut      appdto.AdminVariantGroupPage
+	getGroupOut             appdto.AdminVariantGroupDetailOutput
+	getGroupErr             error
+	createGroupOut          appdto.AdminVariantGroupDetailOutput
+	createGroupErr          error
+	createGroupIn           appdto.CreateVariantGroupInput
+	updateGroupOut          appdto.AdminVariantGroupDetailOutput
+	updateGroupErr          error
+	deleteGroupErr          error
+	addGroupImageOut        appdto.AdminVariantGroupDetailOutput
+	addGroupImageErr        error
+	removeGroupImageErr     error
+	setPrimaryGroupImageOut appdto.AdminVariantGroupDetailOutput
+	setPrimaryGroupImageErr error
+
 	// seenActor is the actor the use case received through the context, which is
 	// how the test proves the identity travels beside the request.
 	seenActor appinterface.Actor
@@ -140,6 +155,47 @@ func (s *stubProductService) ChangeSellState(ctx context.Context, in appdto.Chan
 func (s *stubProductService) MarkOutOfStock(context.Context, uuid.UUID) error { return nil }
 
 func (s *stubProductService) MarkOnSale(context.Context, uuid.UUID) error { return nil }
+
+// The variant-group use cases, stubbed the same way the product ones are: the
+// group HTTP tests are about the transport and the role guard.
+func (s *stubProductService) ListAdminGroups(context.Context, appdto.ListAdminGroupsInput) (appdto.AdminVariantGroupPage, error) {
+	return s.listAdminGroupsOut, nil
+}
+
+func (s *stubProductService) GetAdminGroup(context.Context, appdto.AdminVariantGroupRefInput) (appdto.AdminVariantGroupDetailOutput, error) {
+	return s.getGroupOut, s.getGroupErr
+}
+
+func (s *stubProductService) CreateVariantGroup(ctx context.Context, in appdto.CreateVariantGroupInput) (appdto.AdminVariantGroupDetailOutput, error) {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	s.createGroupIn = in
+	return s.createGroupOut, s.createGroupErr
+}
+
+func (s *stubProductService) UpdateVariantGroup(ctx context.Context, _ appdto.UpdateVariantGroupInput) (appdto.AdminVariantGroupDetailOutput, error) {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	return s.updateGroupOut, s.updateGroupErr
+}
+
+func (s *stubProductService) DeleteVariantGroup(ctx context.Context, _ appdto.AdminVariantGroupRefInput) error {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	return s.deleteGroupErr
+}
+
+func (s *stubProductService) AddGroupImage(ctx context.Context, _ appdto.AddGroupImageInput) (appdto.AdminVariantGroupDetailOutput, error) {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	return s.addGroupImageOut, s.addGroupImageErr
+}
+
+func (s *stubProductService) RemoveGroupImage(ctx context.Context, _ appdto.RemoveGroupImageInput) error {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	return s.removeGroupImageErr
+}
+
+func (s *stubProductService) SetPrimaryGroupImage(ctx context.Context, _ appdto.SetPrimaryGroupImageInput) (appdto.AdminVariantGroupDetailOutput, error) {
+	s.seenActor, _ = appinterface.ActorFromContext(ctx)
+	return s.setPrimaryGroupImageOut, s.setPrimaryGroupImageErr
+}
 
 // The stub satisfies the one declared use-case surface the handler consumes, so
 // the surface cannot drift away from what the routes reach.
@@ -975,5 +1031,201 @@ func TestTheAdministratorResponseWritesThePreorderDateAsACalendarDate(t *testing
 	}
 	if strings.Contains(rec.Body.String(), "T00:00:00Z") {
 		t.Fatalf("the response must not carry the RFC 3339 form, got %s", rec.Body.String())
+	}
+}
+
+// --- User Story 2: the variant-group administrator surface ---
+
+const adminProductGroupsPath = "/api/v1/admin/product-groups"
+
+// sampleAdminGroupDetail is a well-formed administrator group answer, carrying the
+// group's own gallery and the members a customer must not expose (FR-013).
+func sampleAdminGroupDetail() appdto.AdminVariantGroupDetailOutput {
+	imageURL := "https://cdn.example.test/groups/one.jpg"
+	return appdto.AdminVariantGroupDetailOutput{
+		AdminVariantGroupOutput: appdto.AdminVariantGroupOutput{
+			ID:          uuid.New(),
+			Name:        "Card Genshin",
+			Slug:        "card-genshin",
+			Description: "Bộ card Genshin",
+			CategoryID:  uuid.New(),
+			Position:    1,
+			OptionName:  "Card",
+			ImageCount:  1,
+			ImageURL:    &imageURL,
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+		},
+		Images: []appdto.AdminGroupImageOutput{{
+			ID: uuid.New(), PublicID: "demo/one", URL: imageURL,
+			Width: 1600, Height: 1200, Position: 0, IsPrimary: true,
+		}},
+	}
+}
+
+// groupMaintenanceRoutes enumerates every group route the guard must protect.
+func groupMaintenanceRoutes(id, imageID uuid.UUID) []adminRoute {
+	return []adminRoute{
+		{http.MethodGet, adminProductGroupsPath, ""},
+		{http.MethodPost, adminProductGroupsPath, `{"name":"Card Genshin","slug":"card-genshin","description":"","categoryId":"` + uuid.New().String() + `","position":1,"optionName":"Card"}`},
+		{http.MethodGet, adminProductGroupsPath + "/" + id.String(), ""},
+		{http.MethodPatch, adminProductGroupsPath + "/" + id.String(), `{"name":"B"}`},
+		{http.MethodDelete, adminProductGroupsPath + "/" + id.String(), ""},
+		{http.MethodPost, adminProductGroupsPath + "/" + id.String() + "/images", ""},
+		{http.MethodDelete, adminProductGroupsPath + "/" + id.String() + "/images/" + imageID.String(), ""},
+		{http.MethodPost, adminProductGroupsPath + "/" + id.String() + "/images/" + imageID.String() + "/primary", ""},
+	}
+}
+
+// newGroupAdminRouter mounts the module's group administrator group the way the
+// composition root mounts it.
+func newGroupAdminRouter(svc appinterface.ProductService, hooks middleware.AuthHooks) http.Handler {
+	handler := New(svc, appinterface.Config{}, testLogger)
+	root := chi.NewRouter()
+	root.Mount(adminProductGroupsPath, handler.GroupAdminRouter(hooks))
+	return root
+}
+
+type administeredGroupBody struct {
+	Data httpdto.AdminVariantGroupDetailResponse `json:"data"`
+}
+
+func decodeAdminGroup(t *testing.T, rec *httptest.ResponseRecorder) httpdto.AdminVariantGroupDetailResponse {
+	t.Helper()
+	var body administeredGroupBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the administrator group body %q: %v", rec.Body.String(), err)
+	}
+	return body.Data
+}
+
+// FR-015: every group maintenance route answers 401 with no token and 403 with a
+// customer token, and the denial is recorded through the OnDenied hook.
+func TestEveryGroupMaintenanceRouteRefusesNoTokenAndCustomerToken(t *testing.T) {
+	id, imageID := uuid.New(), uuid.New()
+	for _, route := range groupMaintenanceRoutes(id, imageID) {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			denied := false
+			router := newGroupAdminRouter(&stubProductService{}, maintenanceHooks(&denied))
+
+			noToken := performJSON(router, route.method, route.path, route.body, "")
+			if noToken.Code != http.StatusUnauthorized {
+				t.Fatalf("no token: expected 401, got %d (%s)", noToken.Code, noToken.Body.String())
+			}
+			if body := decodeAdminError(t, noToken); body.Error.Code != "UNAUTHENTICATED" {
+				t.Fatalf("no token: expected UNAUTHENTICATED, got %s", body.Error.Code)
+			}
+
+			customer := performJSON(router, route.method, route.path, route.body, "customer-token")
+			if customer.Code != http.StatusForbidden {
+				t.Fatalf("customer token: expected 403, got %d (%s)", customer.Code, customer.Body.String())
+			}
+			if body := decodeAdminError(t, customer); body.Error.Code != "FORBIDDEN" {
+				t.Fatalf("customer token: expected FORBIDDEN, got %s", body.Error.Code)
+			}
+			if !denied {
+				t.Fatal("the role denial must be recorded through the foundation's OnDenied hook")
+			}
+		})
+	}
+}
+
+// FR-009: the group create route answers 201 with the administrator shape and
+// hands the acting administrator from the session to the use case.
+func TestCreateVariantGroupAnswers201WithTheAdministratorShape(t *testing.T) {
+	stub := &stubProductService{createGroupOut: sampleAdminGroupDetail()}
+	router := newGroupAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodPost, adminProductGroupsPath,
+		`{"name":"Card Genshin","slug":"card-genshin","description":"Bộ card","categoryId":"`+uuid.New().String()+`","position":1,"optionName":"Card"}`,
+		"admin-token")
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	got := decodeAdminGroup(t, rec)
+	if got.ID != stub.createGroupOut.ID || got.OptionName != "Card" {
+		t.Fatalf("unexpected administrator group answer: %+v", got)
+	}
+	for _, member := range []string{`"categoryId"`, `"position"`, `"optionName"`, `"imageCount"`, `"images"`, `"options"`} {
+		if !strings.Contains(rec.Body.String(), member) {
+			t.Fatalf("the administrator group answer must carry %s: %s", member, rec.Body.String())
+		}
+	}
+	if stub.seenActor.ID != testAdminID || stub.seenActor.Role != access.RoleAdmin {
+		t.Fatalf("the use case must receive the session's administrator, got %+v", stub.seenActor)
+	}
+}
+
+// FR-019: a second group with the same slug is 409 VARIANT_GROUP_SLUG_TAKEN with
+// the slug named.
+func TestAGroupSlugCollisionIs409NamingTheSlug(t *testing.T) {
+	stub := &stubProductService{createGroupErr: domainerr.ErrVariantGroupSlugTaken}
+	router := newGroupAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodPost, adminProductGroupsPath,
+		`{"name":"B","slug":"card-genshin","description":"","categoryId":"`+uuid.New().String()+`","position":1,"optionName":"Card"}`,
+		"admin-token")
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeAdminError(t, rec)
+	if body.Error.Code != "VARIANT_GROUP_SLUG_TAKEN" {
+		t.Fatalf("expected VARIANT_GROUP_SLUG_TAKEN, got %s", body.Error.Code)
+	}
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "slug" {
+		t.Fatalf("expected the detail to name slug, got %+v", body.Error.Details)
+	}
+}
+
+// FR-025: removing a group that still has options is 409
+// VARIANT_GROUP_HAS_OPTIONS, not an internal failure.
+func TestRemovingAGroupWithOptionsIs409(t *testing.T) {
+	stub := &stubProductService{deleteGroupErr: domainerr.ErrVariantGroupHasOptions}
+	router := newGroupAdminRouter(stub, maintenanceHooks(nil))
+
+	rec := performJSON(router, http.MethodDelete, adminProductGroupsPath+"/"+uuid.New().String(), "", "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeAdminError(t, rec); body.Error.Code != "VARIANT_GROUP_HAS_OPTIONS" {
+		t.Fatalf("expected VARIANT_GROUP_HAS_OPTIONS, got %s", body.Error.Code)
+	}
+}
+
+// research D13: the product PATCH tracks the presence of variantGroupId and
+// variantLabel, so an omitted key keeps the current attachment while an explicit
+// null detaches it.
+func TestTheProductPatchTracksTheVariantAttachmentPresence(t *testing.T) {
+	id := uuid.New()
+	stub := &stubProductService{updateOut: sampleAdminProduct()}
+	router := newAdminRouter(stub, maintenanceHooks(nil))
+
+	// Omitted: neither flag is set, so the use case keeps the current attachment.
+	performJSON(router, http.MethodPatch, adminProductsPath+"/"+id.String(), `{"name":"Mới"}`, "admin-token")
+	if stub.updateIn.VariantGroupSet || stub.updateIn.VariantLabelSet {
+		t.Fatalf("an omitted attachment must not change it: %+v", stub.updateIn)
+	}
+
+	// Explicit null: both flags are set with a nil value, so the use case detaches.
+	performJSON(router, http.MethodPatch, adminProductsPath+"/"+id.String(),
+		`{"variantGroupId":null,"variantLabel":null}`, "admin-token")
+	if !stub.updateIn.VariantGroupSet || stub.updateIn.VariantGroupID != nil {
+		t.Fatalf("an explicit null group must detach: %+v", stub.updateIn)
+	}
+	if !stub.updateIn.VariantLabelSet || stub.updateIn.VariantLabel != nil {
+		t.Fatalf("an explicit null label must clear it: %+v", stub.updateIn)
+	}
+
+	// Non-null: the use case receives the target group and label.
+	groupID := uuid.New()
+	performJSON(router, http.MethodPatch, adminProductsPath+"/"+id.String(),
+		`{"variantGroupId":"`+groupID.String()+`","variantLabel":"Flins"}`, "admin-token")
+	if !stub.updateIn.VariantGroupSet || stub.updateIn.VariantGroupID == nil || *stub.updateIn.VariantGroupID != groupID {
+		t.Fatalf("a non-null group must attach: %+v", stub.updateIn)
+	}
+	if !stub.updateIn.VariantLabelSet || stub.updateIn.VariantLabel == nil || *stub.updateIn.VariantLabel != "Flins" {
+		t.Fatalf("a non-null label must be carried: %+v", stub.updateIn)
 	}
 }

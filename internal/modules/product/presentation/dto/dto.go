@@ -211,9 +211,62 @@ type PriceRequest struct {
 	Currency string `json:"currency"`
 }
 
+// OptionalUUID is a request member that distinguishes "the key was absent" from
+// "the key was present and null". A plain *uuid.UUID cannot, and the product PATCH
+// needs the difference: an omitted variantGroupId keeps the product's current
+// attachment while an explicit null detaches it (research D13). It is decoded by
+// the standard library through UnmarshalJSON, so a handler only has to read Set
+// and Value.
+type OptionalUUID struct {
+	// Value is the parsed identifier, or nil when the key was present and null.
+	Value *uuid.UUID
+	// Set reports whether the JSON key was present at all.
+	Set bool
+}
+
+// UnmarshalJSON records that the key was present and parses it. A JSON null sets
+// Set true with a nil Value, which is what makes an explicit detach expressible.
+func (o *OptionalUUID) UnmarshalJSON(raw []byte) error {
+	o.Set = true
+	if string(raw) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var id uuid.UUID
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return err
+	}
+	o.Value = &id
+	return nil
+}
+
+// OptionalString is the string twin of OptionalUUID, used for the option label.
+type OptionalString struct {
+	// Value is the string, or nil when the key was present and null.
+	Value *string
+	// Set reports whether the JSON key was present at all.
+	Set bool
+}
+
+// UnmarshalJSON records presence and parses the value; a JSON null sets Set true
+// with a nil Value.
+func (o *OptionalString) UnmarshalJSON(raw []byte) error {
+	o.Set = true
+	if string(raw) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return err
+	}
+	o.Value = &value
+	return nil
+}
+
 // CreateProductRequest is the administrator create body (contracts/openapi.yaml,
 // CreateProductRequest). It carries only the members FR-010 names plus the set
-// (FR-039) and pre-order (FR-040) members.
+// (FR-039), pre-order (FR-040) and variant-attachment (FR-010) members.
 type CreateProductRequest struct {
 	// Name is the product name.
 	Name string `json:"name"`
@@ -240,6 +293,13 @@ type CreateProductRequest struct {
 	// PreorderExpectedAt is the optional expected-availability date, in the
 	// contract's date-only form. It is meaningful only together with IsPreorder.
 	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt" swaggertype:"string"`
+	// VariantGroupID attaches the new product to a group as an option; an omitted
+	// or null value creates an ordinary product (FR-010). It requires
+	// VariantLabel.
+	VariantGroupID *uuid.UUID `json:"variantGroupId"`
+	// VariantLabel is the option's short choice label; required when
+	// VariantGroupID is present (FR-021).
+	VariantLabel *string `json:"variantLabel"`
 }
 
 // UpdateProductRequest is the administrator partial-edit body
@@ -247,6 +307,10 @@ type CreateProductRequest struct {
 // current value; a pointer to a zero value changes it. `sellState` is not
 // accepted here: a state change is a transition and has its own endpoint
 // (research D11).
+//
+// VariantGroupID and VariantLabel are presence-tracked (research D13): an omitted
+// key keeps the current attachment, an explicit null detaches, and a non-null value
+// attaches an ordinary product.
 type UpdateProductRequest struct {
 	// Name is the new name; nil keeps the current value.
 	Name *string `json:"name"`
@@ -274,6 +338,12 @@ type UpdateProductRequest struct {
 	// PreorderExpectedAt is the new expected-availability date, in the
 	// contract's date-only form; nil keeps the current value.
 	PreorderExpectedAt *PreorderDate `json:"preorderExpectedAt" swaggertype:"string"`
+	// VariantGroupID attaches or detaches the product's option role; the JSON key
+	// being absent keeps the current attachment (research D13).
+	VariantGroupID OptionalUUID `json:"variantGroupId" swaggertype:"string"`
+	// VariantLabel sets or clears the option label; the JSON key being absent
+	// keeps the current label (research D13).
+	VariantLabel OptionalString `json:"variantLabel" swaggertype:"string"`
 }
 
 // ChangeStateRequest is the administrator sell-state transition body
@@ -365,4 +435,127 @@ type AdminProductDetailResponse struct {
 	// Members holds the products inside a set, in order. It is omitted for a
 	// product that is not a set.
 	Members []SetMemberResponse `json:"members,omitempty"`
+}
+
+// --- Variant-group administrator surface (US2) ---
+
+// AdminVariantGroupResponse is one entry of the administrator group list, with the
+// members a customer must not receive (FR-013,
+// contracts/openapi.yaml AdminVariantGroup).
+type AdminVariantGroupResponse struct {
+	// ID is the group's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the name the operator wrote.
+	Name string `json:"name"`
+	// Slug is the link segment the operator wrote.
+	Slug string `json:"slug"`
+	// Description is the text shown to customers; an empty string is valid.
+	Description string `json:"description"`
+	// CategoryID is the one category the group belongs to.
+	CategoryID uuid.UUID `json:"categoryId"`
+	// Position is the operator's ordering preference.
+	Position int `json:"position"`
+	// OptionName is the single choice-dimension name, for example "Card".
+	OptionName string `json:"optionName"`
+	// ImageCount is how many pictures the group has.
+	ImageCount int `json:"imageCount"`
+	// ImageURL is the group's main picture's link, or null when it has none.
+	ImageURL *string `json:"imageUrl"`
+	// CreatedAt and UpdatedAt are the stored timestamps.
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AdminGroupImageResponse is one group picture as an administrator sees it,
+// including the provider's opaque identifier, its position and whether it is the
+// main one (FR-018).
+type AdminGroupImageResponse struct {
+	// ID identifies the picture.
+	ID uuid.UUID `json:"id"`
+	// PublicID is the provider's opaque identifier.
+	PublicID string `json:"publicId"`
+	// URL is the displayable link.
+	URL string `json:"url"`
+	// Width and Height are the stored pixel dimensions.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	// Position is the display order.
+	Position int `json:"position"`
+	// IsPrimary reports whether this is the group's main picture.
+	IsPrimary bool `json:"isPrimary"`
+}
+
+// AdminGroupOptionResponse is one option as the administrator sees it: the
+// option's own label, price, picture, position and sell state, so the operator can
+// manage it without a second read (FR-013, FR-017).
+type AdminGroupOptionResponse struct {
+	// ID is the option product's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the option product's name.
+	Name string `json:"name"`
+	// Slug is the option product's public link segment.
+	Slug string `json:"slug"`
+	// Label is the option's value in the group's single choice dimension.
+	Label string `json:"label"`
+	// Price is the option's own price and currency.
+	Price PriceResponse `json:"price"`
+	// ImageURL is the option's main picture's link, or null when it has none.
+	ImageURL *string `json:"imageUrl"`
+	// Position is the option product's ordering preference (research D5).
+	Position int `json:"position"`
+	// SellState is the option product's selling-life state (FR-017).
+	SellState string `json:"sellState"`
+	// IsPreorder reports whether the option is an announced pre-order.
+	IsPreorder bool `json:"isPreorder"`
+}
+
+// AdminVariantGroupDetailResponse is one group's full detail for an administrator:
+// the administrator fields plus its pictures and, including the withheld options,
+// the full option list (FR-013).
+type AdminVariantGroupDetailResponse struct {
+	AdminVariantGroupResponse
+	// Images holds every picture in display order. It is always an array, never
+	// null.
+	Images []AdminGroupImageResponse `json:"images"`
+	// Options holds every option, visible or not. It is always an array, never
+	// null.
+	Options []AdminGroupOptionResponse `json:"options"`
+}
+
+// CreateVariantGroupRequest is the administrator group-create body
+// (contracts/openapi.yaml, CreateVariantGroupRequest). The acting administrator is
+// never part of the body (FR-015).
+type CreateVariantGroupRequest struct {
+	// Name is the group name.
+	Name string `json:"name"`
+	// Slug is the public link segment.
+	Slug string `json:"slug"`
+	// Description is the text shown to customers; an omitted or empty value is
+	// stored empty.
+	Description string `json:"description"`
+	// CategoryID is the one category the group belongs to (FR-023).
+	CategoryID uuid.UUID `json:"categoryId"`
+	// Position is the ordering preference.
+	Position int `json:"position"`
+	// OptionName is the single choice-dimension name (FR-009).
+	OptionName string `json:"optionName"`
+}
+
+// UpdateVariantGroupRequest is the administrator group partial-edit body
+// (contracts/openapi.yaml, UpdateVariantGroupRequest). An omitted member keeps its
+// current value. The pictures are edited through their own endpoints.
+type UpdateVariantGroupRequest struct {
+	// Name is the new name; nil keeps the current value.
+	Name *string `json:"name"`
+	// Slug is the new slug; nil keeps the current value.
+	Slug *string `json:"slug"`
+	// Description is the new description; nil keeps the current value, an empty
+	// string clears it.
+	Description *string `json:"description"`
+	// CategoryID is the new category; nil keeps the current value.
+	CategoryID *uuid.UUID `json:"categoryId"`
+	// Position is the new position; nil keeps the current value.
+	Position *int `json:"position"`
+	// OptionName is the new choice-dimension name; nil keeps the current value.
+	OptionName *string `json:"optionName"`
 }

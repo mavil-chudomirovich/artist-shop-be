@@ -9,6 +9,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
@@ -73,6 +74,8 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 		IsSet:              in.IsSet,
 		IsPreorder:         in.IsPreorder,
 		PreorderExpectedAt: in.PreorderExpectedAt,
+		VariantGroupID:     in.VariantGroupID,
+		VariantLabel:       in.VariantLabel,
 	}, now())
 	if err != nil {
 		return dto.AdminProductDetailOutput{}, err
@@ -93,6 +96,11 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 		return dto.AdminProductDetailOutput{}, err
 	}
 	s.recordProduct(ctx, constant.AuditProductCreated, product.ID, map[string]any{"slug": product.Slug})
+	// A product created as an option is attached in the same statement that created
+	// it, so the attachment is audited beside the creation (FR-010, FR-014).
+	if product.VariantGroupID != nil {
+		s.recordProduct(ctx, constant.AuditProductVariantAttached, product.ID, map[string]any{"slug": product.Slug})
+	}
 	return s.adminDetail(ctx, product.ID)
 }
 
@@ -103,6 +111,12 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 // (FR-024). The sell state is deliberately absent: a transition has its own
 // endpoint (research D11). Re-sending the product's own slug succeeds because
 // the storage unique index excludes the row being updated (FR-027).
+//
+// The variant attachment is a tri-state (research D13): an omitted group
+// identifier keeps the current attachment, an explicit null detaches, and a
+// non-null value attaches an ordinary product. A product that is already an
+// option of a group cannot be moved to another one — a product belongs to at
+// most one group at a time (FR-021) — so the operator detaches it first.
 func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) (dto.AdminProductDetailOutput, error) {
 	stored, err := s.Products.FindByID(ctx, in.ID)
 	if err != nil {
@@ -110,6 +124,10 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 	}
 	product := stored.Product
 	wasSet := product.IsSet
+	wasGrouped := product.VariantGroupID != nil
+	if err := s.refuseRegrouping(product, in); err != nil {
+		return dto.AdminProductDetailOutput{}, err
+	}
 	if err := product.Apply(model.ProductEdit{
 		Name:               in.Name,
 		Slug:               in.Slug,
@@ -120,6 +138,10 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 		IsSet:              in.IsSet,
 		IsPreorder:         in.IsPreorder,
 		PreorderExpectedAt: in.PreorderExpectedAt,
+		VariantGroupID:     in.VariantGroupID,
+		VariantGroupSet:    in.VariantGroupSet,
+		VariantLabel:       in.VariantLabel,
+		VariantLabelSet:    in.VariantLabelSet,
 	}, now()); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
@@ -143,7 +165,29 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 		return dto.AdminProductDetailOutput{}, err
 	}
 	s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"slug": product.Slug})
+	// Attaching and detaching are audited as their own events, so a group's history
+	// names the product that joined or left it (FR-014).
+	switch {
+	case !wasGrouped && product.VariantGroupID != nil:
+		s.recordProduct(ctx, constant.AuditProductVariantAttached, product.ID, map[string]any{"slug": product.Slug})
+	case wasGrouped && product.VariantGroupID == nil:
+		s.recordProduct(ctx, constant.AuditProductVariantDetached, product.ID, map[string]any{"slug": product.Slug})
+	}
 	return s.adminDetail(ctx, in.ID)
+}
+
+// refuseRegrouping refuses attaching a product that already belongs to a group to
+// a *different* group (FR-021, spec Edge Cases). Writing the same group again is a
+// relabel, and detaching is always allowed; both fall through. The check runs
+// before the entity is changed, so a refusal leaves the row untouched.
+func (s *Service) refuseRegrouping(product model.Product, in dto.UpdateProductInput) error {
+	if !in.VariantGroupSet || product.VariantGroupID == nil || in.VariantGroupID == nil {
+		return nil
+	}
+	if *in.VariantGroupID != *product.VariantGroupID {
+		return domainerr.ErrProductAlreadyGrouped
+	}
+	return nil
 }
 
 // DeleteProduct removes a product and audits the removal (FR-013, FR-014).

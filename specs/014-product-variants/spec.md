@@ -253,8 +253,10 @@ reappears as a single entry.
 - **FR-010**: System MUST let an administrator attach an existing product to a group as an option by
   giving it an option label, without changing the product's own price, pictures, sell state or link.
 - **FR-011**: System MUST let an administrator edit a group's name, link segment, description,
-  category, position, choice-dimension name and its own picture gallery, and move, relabel or detach
-  an option.
+  category, position, choice-dimension name and its own picture gallery, and relabel or detach an
+  option. Moving an option to another group is done by detaching it and attaching it again, because a
+  product belongs to at most one group at a time (FR-021) and attaching an already-grouped product is
+  refused.
 - **FR-012**: System MUST let an administrator remove a variant group, and removing a group MUST NOT
   remove the products that were its options.
 - **FR-013**: System MUST let an administrator read a group including the choices a customer cannot

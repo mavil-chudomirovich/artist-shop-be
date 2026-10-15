@@ -488,6 +488,10 @@ func run() error {
 			// required (FR-002, research D6).
 			r.Mount("/product-groups", productHandler.GroupRouter(authHooks))
 			r.Mount("/admin/products", productHandler.AdminRouter(authHooks))
+			// The variant-group administrator surface: group CRUD and the
+			// group's own picture gallery, addressed by identifier behind the
+			// administrator role guard (FR-009 to FR-014, research D8).
+			r.Mount("/admin/product-groups", productHandler.GroupAdminRouter(authHooks))
 			// The inventory administrator surface: one product's stock and its
 			// manual operations, addressed by identifier behind the administrator
 			// role guard (research D8).

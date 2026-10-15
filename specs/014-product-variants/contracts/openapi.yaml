@@ -648,8 +648,10 @@ components:
           type: string
           format: uuid
           description: >
-            Attach or move the product to this group. Send null together with variantLabel null to
-            detach. Omit both to keep the current attachment.
+            Attach the product to this group, but only when it belongs to no group yet; a product
+            already in another group is refused (409 PRODUCT_ALREADY_IN_VARIANT_GROUP) and must be
+            detached first. Send null together with variantLabel null to detach. Omit both to keep
+            the current attachment.
         variantLabel:
           type: string
           description: The option value; required when variantGroupId is present.

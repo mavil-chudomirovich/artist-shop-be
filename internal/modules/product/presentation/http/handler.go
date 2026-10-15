@@ -437,6 +437,8 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		MemberProductIDs:   req.MemberProductIDs,
 		IsPreorder:         req.IsPreorder,
 		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
+		VariantGroupID:     req.VariantGroupID,
+		VariantLabel:       req.VariantLabel,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -491,6 +493,10 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		MemberProductIDs:   req.MemberProductIDs,
 		IsPreorder:         req.IsPreorder,
 		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
+		VariantGroupID:     req.VariantGroupID.Value,
+		VariantGroupSet:    req.VariantGroupID.Set,
+		VariantLabel:       req.VariantLabel.Value,
+		VariantLabelSet:    req.VariantLabel.Set,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -854,6 +860,396 @@ func toSetMemberResponses(list []appdto.SetMemberOutput) []httpdto.SetMemberResp
 	out := make([]httpdto.SetMemberResponse, 0, len(list))
 	for _, member := range list {
 		out = append(out, httpdto.SetMemberResponse{ID: member.ID, Name: member.Name, Slug: member.Slug})
+	}
+	return out
+}
+
+// --- Variant-group administrator surface (US2) ---
+
+// ListAdminGroups returns a page of every variant group, including the ones
+// withheld from customers (FR-013). It is reached only behind the administrator
+// role guard.
+//
+//	@Summary		List every variant group (ADMIN)
+//	@Description	Returns a page of every variant group, including the ones not visible to customers, with the category, the position and the picture summary a customer never sees.
+//	@Tags			VariantGroup
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			page		query	int	false	"Page number (default 1)"
+//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminVariantGroupResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups [get]
+func (h *Handler) ListAdminGroups(w http.ResponseWriter, r *http.Request) {
+	page, pageSize, appErr := pageParams(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	out, err := h.svc.ListAdminGroups(r.Context(), appdto.ListAdminGroupsInput{Page: page, PageSize: pageSize})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccessList(w, r, toAdminVariantGroupResponses(out.Groups), out.Page, out.PageSize, out.Total)
+}
+
+// CreateVariantGroup creates a variant group (FR-009). The acting administrator
+// comes from the session, never from the body: the input carries no account member
+// and the decoder refuses an unknown one.
+//
+//	@Summary		Create a variant group (ADMIN)
+//	@Description	Creates a variant group. A slug another group holds is a conflict; a category that does not exist is refused naming the field. The acting administrator comes from the session, never the body.
+//	@Tags			VariantGroup
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body	httpdto.CreateVariantGroupRequest	true	"Variant-group payload"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups [post]
+func (h *Handler) CreateVariantGroup(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	var req httpdto.CreateVariantGroupRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.CreateVariantGroup(ctx, appdto.CreateVariantGroupInput{
+		Name:        req.Name,
+		Slug:        req.Slug,
+		Description: req.Description,
+		CategoryID:  req.CategoryID,
+		Position:    req.Position,
+		OptionName:  req.OptionName,
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminVariantGroupDetailResponse(out))
+}
+
+// GetAdminGroup returns one variant group by identifier, including one not visible
+// to customers, with its pictures and every option (FR-013).
+//
+//	@Summary		Read one variant group by identifier (ADMIN)
+//	@Description	Returns one variant group, including one not visible to customers, with its own pictures and every option, visible or not.
+//	@Tags			VariantGroup
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Variant-group identifier"
+//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
+//	@Failure		400	{object}	httpx.SwaggerError
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Failure		403	{object}	httpx.SwaggerError
+//	@Failure		404	{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id} [get]
+func (h *Handler) GetAdminGroup(w http.ResponseWriter, r *http.Request) {
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	out, err := h.svc.GetAdminGroup(r.Context(), appdto.AdminVariantGroupRefInput{ID: id})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
+}
+
+// UpdateVariantGroup applies a partial administrator edit (FR-011). An omitted
+// member keeps its current value; the pictures are edited through their own
+// endpoints.
+//
+//	@Summary		Update a variant group (ADMIN)
+//	@Description	Applies a partial edit. An omitted member keeps its value; the pictures are edited through their own endpoints. A slug another group holds is a conflict.
+//	@Tags			VariantGroup
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string							true	"Variant-group identifier"
+//	@Param			request	body	httpdto.UpdateVariantGroupRequest	true	"Variant-group update"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id} [patch]
+func (h *Handler) UpdateVariantGroup(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	var req httpdto.UpdateVariantGroupRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.UpdateVariantGroup(ctx, appdto.UpdateVariantGroupInput{
+		ID:          id,
+		Name:        req.Name,
+		Slug:        req.Slug,
+		Description: req.Description,
+		CategoryID:  req.CategoryID,
+		Position:    req.Position,
+		OptionName:  req.OptionName,
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
+}
+
+// DeleteVariantGroup removes a variant group (FR-012). Removal is refused while
+// options remain; the products are never removed with the group.
+//
+//	@Summary		Remove a variant group (ADMIN)
+//	@Description	Removes a variant group. Refused with VARIANT_GROUP_HAS_OPTIONS while the group still has options; the options are never removed with it.
+//	@Tags			VariantGroup
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Variant-group identifier"
+//	@Success		204	"No Content"
+//	@Failure		400	{object}	httpx.SwaggerError
+//	@Failure		401	{object}	httpx.SwaggerError
+//	@Failure		403	{object}	httpx.SwaggerError
+//	@Failure		404	{object}	httpx.SwaggerError
+//	@Failure		409	{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id} [delete]
+func (h *Handler) DeleteVariantGroup(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	if err := h.svc.DeleteVariantGroup(ctx, appdto.AdminVariantGroupRefInput{ID: id}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddGroupImage stores an uploaded group picture. The bytes are read with a hard
+// ceiling and handed to the use case, which validates them by content and by the
+// gallery's count; neither the file name nor the client-declared media type is
+// trusted (FR-018).
+//
+//	@Summary		Upload a group picture (ADMIN)
+//	@Description	Stores a picture for the variant group through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.
+//	@Tags			VariantGroup
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string	true	"Variant-group identifier"
+//	@Param			image	formData	file	true	"Group image (JPEG, PNG or WebP)"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id}/images [post]
+func (h *Handler) AddGroupImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	content, appErr := h.readPictureFile(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.AddGroupImage(ctx, appdto.AddGroupImageInput{GroupID: id, Content: content})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminVariantGroupDetailResponse(out))
+}
+
+// RemoveGroupImage detaches one picture from a variant group and releases its
+// stored asset (FR-018).
+//
+//	@Summary		Remove a group picture (ADMIN)
+//	@Description	Detaches one picture from the variant group and releases its stored asset. Removing the main picture promotes the next one by position.
+//	@Tags			VariantGroup
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Variant-group identifier"
+//	@Param			imageId	path	string	true	"Picture identifier"
+//	@Success		204		"No Content"
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id}/images/{imageId} [delete]
+func (h *Handler) RemoveGroupImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	imageID, appErr := pathUUID(r, "imageId", fieldImageID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	if err := h.svc.RemoveGroupImage(ctx, appdto.RemoveGroupImageInput{GroupID: id, ImageID: imageID}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetPrimaryGroupImage makes one picture the group's main one (FR-018).
+//
+//	@Summary		Set the main group picture (ADMIN)
+//	@Description	Makes one picture the variant group's main one, clearing any other in the same operation.
+//	@Tags			VariantGroup
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string	true	"Variant-group identifier"
+//	@Param			imageId	path	string	true	"Picture identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/product-groups/{id}/images/{imageId}/primary [post]
+func (h *Handler) SetPrimaryGroupImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	imageID, appErr := pathUUID(r, "imageId", fieldImageID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.SetPrimaryGroupImage(ctx, appdto.SetPrimaryGroupImageInput{GroupID: id, ImageID: imageID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
+}
+
+// toAdminVariantGroupResponse is the single conversion point from the application
+// group DTO to the administrator HTTP shape, so the members a customer must not
+// see cannot drift per route.
+func toAdminVariantGroupResponse(group appdto.AdminVariantGroupOutput) httpdto.AdminVariantGroupResponse {
+	return httpdto.AdminVariantGroupResponse{
+		ID:          group.ID,
+		Name:        group.Name,
+		Slug:        group.Slug,
+		Description: group.Description,
+		CategoryID:  group.CategoryID,
+		Position:    group.Position,
+		OptionName:  group.OptionName,
+		ImageCount:  group.ImageCount,
+		ImageURL:    group.ImageURL,
+		CreatedAt:   group.CreatedAt,
+		UpdatedAt:   group.UpdatedAt,
+	}
+}
+
+// toAdminVariantGroupResponses maps a page. It always allocates, so an empty
+// catalogue answers an empty array rather than null.
+func toAdminVariantGroupResponses(list []appdto.AdminVariantGroupOutput) []httpdto.AdminVariantGroupResponse {
+	out := make([]httpdto.AdminVariantGroupResponse, 0, len(list))
+	for _, group := range list {
+		out = append(out, toAdminVariantGroupResponse(group))
+	}
+	return out
+}
+
+// toAdminVariantGroupDetailResponse maps one group's administrator detail,
+// including its pictures and every option.
+func toAdminVariantGroupDetailResponse(detail appdto.AdminVariantGroupDetailOutput) httpdto.AdminVariantGroupDetailResponse {
+	return httpdto.AdminVariantGroupDetailResponse{
+		AdminVariantGroupResponse: toAdminVariantGroupResponse(detail.AdminVariantGroupOutput),
+		Images:                    toAdminGroupImageResponses(detail.Images),
+		Options:                   toAdminGroupOptionResponses(detail.Options),
+	}
+}
+
+// toAdminGroupImageResponses maps the group pictures in the order they were given.
+// It always allocates, so a group with no picture answers `[]` rather than null.
+func toAdminGroupImageResponses(list []appdto.AdminGroupImageOutput) []httpdto.AdminGroupImageResponse {
+	out := make([]httpdto.AdminGroupImageResponse, 0, len(list))
+	for _, image := range list {
+		out = append(out, httpdto.AdminGroupImageResponse{
+			ID:        image.ID,
+			PublicID:  image.PublicID,
+			URL:       image.URL,
+			Width:     image.Width,
+			Height:    image.Height,
+			Position:  image.Position,
+			IsPrimary: image.IsPrimary,
+		})
+	}
+	return out
+}
+
+// toAdminGroupOptionResponses maps a group's options in the order they were given.
+// It always allocates, so an empty group answers `[]` rather than null.
+func toAdminGroupOptionResponses(list []appdto.AdminGroupOptionOutput) []httpdto.AdminGroupOptionResponse {
+	out := make([]httpdto.AdminGroupOptionResponse, 0, len(list))
+	for _, option := range list {
+		out = append(out, httpdto.AdminGroupOptionResponse{
+			ID:         option.ID,
+			Name:       option.Name,
+			Slug:       option.Slug,
+			Label:      option.Label,
+			Price:      httpdto.PriceResponse{Amount: option.Price.Amount, Currency: option.Price.Currency},
+			ImageURL:   option.ImageURL,
+			Position:   option.Position,
+			SellState:  string(option.SellState),
+			IsPreorder: option.IsPreorder,
+		})
 	}
 	return out
 }

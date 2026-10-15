@@ -64,6 +64,26 @@ func mapError(err error) *httpx.AppError {
 		// A hidden group, an option-less one, a removed one and an unknown slug
 		// are deliberately one answer on the public surface (FR-008).
 		return coded(constant.CodeVariantGroupNotFound, http.StatusNotFound, "Variant group not found")
+	case errors.Is(err, domainerr.ErrVariantGroupSlugTaken):
+		return withField(
+			coded(constant.CodeVariantGroupSlugTaken, http.StatusConflict, "Another variant group already uses that slug"),
+			model.FieldSlug, "choose a different slug",
+		)
+	case errors.Is(err, domainerr.ErrVariantGroupHasOptions):
+		// The group still has options: the request is well formed and the current
+		// data forbids it, so the operator detaches them first (FR-025).
+		return coded(constant.CodeVariantGroupHasOptions, http.StatusConflict,
+			"The variant group still has options; detach them first")
+	case errors.Is(err, domainerr.ErrVariantLabelTaken):
+		return withField(
+			coded(constant.CodeVariantLabelTaken, http.StatusConflict, "Another option of the group already uses that label"),
+			model.FieldVariantLabel, "choose a different label",
+		)
+	case errors.Is(err, domainerr.ErrProductAlreadyGrouped):
+		return withField(
+			coded(constant.CodeProductAlreadyInVariantGroup, http.StatusConflict, "The product already belongs to a variant group"),
+			model.FieldVariantGroupID, "detach it from its group first",
+		)
 	case errors.Is(err, domainerr.ErrProductSlugTaken):
 		return withField(
 			coded(constant.CodeProductSlugTaken, http.StatusConflict, "Another product already uses that slug"),

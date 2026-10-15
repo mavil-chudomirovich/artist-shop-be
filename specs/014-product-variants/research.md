@@ -223,7 +223,9 @@ that was inconsistent across artifacts and `"group"` is ambiguous next to stock 
 
 **Decision**: in the product create/edit HTTP bodies, `variantGroupId` and `variantLabel` are
 **presence-tracked** on a `PATCH`: absent = keep the current attachment; present and `null` = detach;
-present and non-null = attach or move. The presentation DTO decodes each member with a small
+present and non-null = attach (only when the product belongs to no group — a product already in a
+group is refused with `PRODUCT_ALREADY_IN_VARIANT_GROUP` and must be detached first, per the spec's
+Edge case and `error-codes.md`). The presentation DTO decodes each member with a small
 `OptionalUUID` / `OptionalString` type that records whether the JSON key was present, and the
 application input carries `VariantGroupID *uuid.UUID` together with `VariantGroupSet bool` (and the
 same pair for the label).

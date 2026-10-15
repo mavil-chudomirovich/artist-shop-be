@@ -142,6 +142,25 @@ func (m *fauxProducts) slugTaken(product *model.Product) bool {
 	return false
 }
 
+// labelTaken reports whether another product in the same group already holds the
+// label, mirroring the products_variant_label_key partial unique index (FR-021).
+// The index compares the stored text exactly; the domain has already trimmed the
+// label before it reaches the adapter.
+func (m *fauxProducts) labelTaken(product *model.Product) bool {
+	if product.VariantGroupID == nil || product.VariantLabel == nil {
+		return false
+	}
+	for _, existing := range m.products {
+		if existing.ID == product.ID || existing.VariantGroupID == nil || existing.VariantLabel == nil {
+			continue
+		}
+		if *existing.VariantGroupID == *product.VariantGroupID && *existing.VariantLabel == *product.VariantLabel {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *fauxProducts) Create(_ context.Context, product *model.Product) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -150,6 +169,9 @@ func (m *fauxProducts) Create(_ context.Context, product *model.Product) error {
 	}
 	if m.slugTaken(product) {
 		return domainerr.ErrProductSlugTaken
+	}
+	if m.labelTaken(product) {
+		return domainerr.ErrVariantLabelTaken
 	}
 	m.products[product.ID] = *product
 	return nil
@@ -166,6 +188,9 @@ func (m *fauxProducts) Update(_ context.Context, product *model.Product) error {
 	}
 	if m.slugTaken(product) {
 		return domainerr.ErrProductSlugTaken
+	}
+	if m.labelTaken(product) {
+		return domainerr.ErrVariantLabelTaken
 	}
 	m.products[product.ID] = *product
 	return nil
@@ -957,6 +982,190 @@ func TestAnExpectedDateWithoutThePreorderLabelIsRefused(t *testing.T) {
 	}
 	if out.ID != uuid.Nil {
 		t.Fatalf("a refused create must not answer a product, got %+v", out)
+	}
+}
+
+// --- User Story 2: attaching products to a variant group ---
+
+// launchSeed moves a seeded product to ACTIVE, so an attach test can prove the
+// sell state is untouched by the attach.
+func (m *fauxProducts) launchSeed(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	product, ok := m.products[id]
+	if !ok {
+		t.Fatalf("product %s is not seeded", id)
+	}
+	if err := product.Launch(time.Now().UTC()); err != nil {
+		t.Fatalf("launch %s: %v", id, err)
+	}
+	m.products[id] = product
+}
+
+// FR-010, FR-014: creating a product with a group identifier and a label attaches
+// it as an option and records PRODUCT_VARIANT_ATTACHED beside PRODUCT_CREATED.
+func TestCreatingAnOptionAttachesItToTheGroup(t *testing.T) {
+	repo := newFauxProducts()
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	groupID := uuid.New()
+	label := "Flins"
+
+	out, err := maintenanceService(repo, recorder).CreateProduct(ctx, dto.CreateProductInput{
+		Name: "Card Flins", Slug: "card-flins", Price: price(120000),
+		CategoryID: category, Position: 1,
+		VariantGroupID: &groupID, VariantLabel: &label,
+	})
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	stored, err := repo.FindByID(context.Background(), out.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	if stored.Product.VariantGroupID == nil || *stored.Product.VariantGroupID != groupID {
+		t.Fatalf("the created product must be attached to the group: %+v", stored.Product)
+	}
+	if stored.Product.VariantLabel == nil || *stored.Product.VariantLabel != label {
+		t.Fatalf("the created option must carry its label: %+v", stored.Product)
+	}
+	requireAudited(t, recorder, constant.AuditProductCreated, actor, out.ID)
+	requireAudited(t, recorder, constant.AuditProductVariantAttached, actor, out.ID)
+}
+
+// FR-010, FR-011: attaching an existing product to a group leaves its price,
+// pictures, sell state and link exactly as they were, and records
+// PRODUCT_VARIANT_ATTACHED.
+func TestAttachingAnExistingProductKeepsItsOwnFields(t *testing.T) {
+	repo := newFauxProducts()
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "Card Flins", Slug: "card-flins", Description: "bản gốc",
+		Price: price(120000), CategoryID: category, Position: 4,
+	}, time.Now().UTC().Add(-time.Hour))
+	repo.launchSeed(t, seeded.ID)
+	repo.addSeedPicture(seeded.ID, 0, true)
+
+	groupID := uuid.New()
+	label := "Flins"
+	if _, err := maintenanceService(repo, recorder).UpdateProduct(ctx, dto.UpdateProductInput{
+		ID: seeded.ID, VariantGroupID: &groupID, VariantGroupSet: true,
+		VariantLabel: &label, VariantLabelSet: true,
+	}); err != nil {
+		t.Fatalf("UpdateProduct attach: %v", err)
+	}
+
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	if stored.Product.VariantGroupID == nil || *stored.Product.VariantGroupID != groupID {
+		t.Fatalf("the product must be attached: %+v", stored.Product)
+	}
+	if stored.Product.Price.Amount != 120000 || stored.Product.Price.Currency != "VND" {
+		t.Fatalf("an attach must not touch the price: %+v", stored.Product.Price)
+	}
+	if stored.Product.Slug != "card-flins" || stored.Product.Description != "bản gốc" || stored.Product.Position != 4 {
+		t.Fatalf("an attach must not touch the link, description or position: %+v", stored.Product)
+	}
+	if stored.Product.SellState != constant.SellStateActive {
+		t.Fatalf("an attach must not touch the sell state: %q", stored.Product.SellState)
+	}
+	if len(stored.Pictures) != 1 {
+		t.Fatalf("an attach must not touch the pictures, got %d", len(stored.Pictures))
+	}
+	requireAudited(t, recorder, constant.AuditProductVariantAttached, actor, seeded.ID)
+}
+
+// FR-011, research D13: clearing both the group identifier and the label detaches
+// the product, and records PRODUCT_VARIANT_DETACHED.
+func TestDetachingAProductClearsItsAttachmentAndAudits(t *testing.T) {
+	repo := newFauxProducts()
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	groupID := uuid.New()
+	label := "Flins"
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "Card Flins", Slug: "card-flins", Price: price(120000), CategoryID: category,
+		VariantGroupID: &groupID, VariantLabel: &label,
+	}, time.Now().UTC().Add(-time.Hour))
+
+	if _, err := maintenanceService(repo, recorder).UpdateProduct(ctx, dto.UpdateProductInput{
+		ID: seeded.ID, VariantGroupID: nil, VariantGroupSet: true,
+		VariantLabel: nil, VariantLabelSet: true,
+	}); err != nil {
+		t.Fatalf("UpdateProduct detach: %v", err)
+	}
+
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	if stored.Product.VariantGroupID != nil || stored.Product.VariantLabel != nil {
+		t.Fatalf("detaching must clear both the group and the label: %+v", stored.Product)
+	}
+	requireAudited(t, recorder, constant.AuditProductVariantDetached, actor, seeded.ID)
+}
+
+// FR-024: a combo set cannot be attached to a variant group; the refusal names
+// the group field.
+func TestAComboSetCannotBeAttachedToAGroup(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "Combo Aki", Slug: "combo-aki", Price: price(300000), CategoryID: category, IsSet: true,
+	}, time.Now().UTC().Add(-time.Hour))
+	groupID := uuid.New()
+	label := "Flins"
+
+	_, err := maintenanceService(repo, &recordingAuditor{}).UpdateProduct(context.Background(), dto.UpdateProductInput{
+		ID: seeded.ID, VariantGroupID: &groupID, VariantGroupSet: true,
+		VariantLabel: &label, VariantLabelSet: true,
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldVariantGroupID {
+		t.Fatalf("expected the field %q to be named, got %v", model.FieldVariantGroupID, err)
+	}
+}
+
+// FR-024: a product that is an option of a group cannot be made a combo set; the
+// refusal names the group field.
+func TestAnOptionCannotBeMadeAComboSet(t *testing.T) {
+	repo := newFauxProducts()
+	category := uuid.New()
+	repo.categories = map[uuid.UUID]bool{category: true}
+	groupID := uuid.New()
+	label := "Flins"
+	seeded := repo.seed(t, model.ProductDraft{
+		Name: "Card Flins", Slug: "card-flins", Price: price(120000), CategoryID: category,
+		VariantGroupID: &groupID, VariantLabel: &label,
+	}, time.Now().UTC().Add(-time.Hour))
+
+	on := true
+	_, err := maintenanceService(repo, &recordingAuditor{}).UpdateProduct(context.Background(), dto.UpdateProductInput{
+		ID: seeded.ID, IsSet: &on,
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != model.FieldVariantGroupID {
+		t.Fatalf("expected the field %q to be named, got %v", model.FieldVariantGroupID, err)
 	}
 }
 

@@ -181,3 +181,81 @@ func stringContains(haystack, needle string) bool {
 	}
 	return false
 }
+
+// The codes this feature adds (specs/014-product-variants/contracts/error-codes.md)
+// map to their documented statuses, and the field-level ones name the offending
+// member so a client can point at the exact input.
+func TestMapErrorCoversTheVariantGroupCodes(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		code    string
+		status  int
+		field   string
+		details bool
+	}{
+		{
+			name:   "an unknown, hidden or removed group shares one not-found",
+			err:    domainerr.ErrVariantGroupNotFound,
+			code:   constant.CodeVariantGroupNotFound,
+			status: http.StatusNotFound,
+		},
+		{
+			name:    "a duplicate group slug names the field and is a conflict",
+			err:     domainerr.ErrVariantGroupSlugTaken,
+			code:    constant.CodeVariantGroupSlugTaken,
+			status:  http.StatusConflict,
+			field:   model.FieldSlug,
+			details: true,
+		},
+		{
+			name:   "a group that still has options is a conflict",
+			err:    domainerr.ErrVariantGroupHasOptions,
+			code:   constant.CodeVariantGroupHasOptions,
+			status: http.StatusConflict,
+		},
+		{
+			name:    "a duplicate option label names the field and is a conflict",
+			err:     domainerr.ErrVariantLabelTaken,
+			code:    constant.CodeVariantLabelTaken,
+			status:  http.StatusConflict,
+			field:   model.FieldVariantLabel,
+			details: true,
+		},
+		{
+			name:    "attaching an already-grouped product names the group field",
+			err:     domainerr.ErrProductAlreadyGrouped,
+			code:    constant.CodeProductAlreadyInVariantGroup,
+			status:  http.StatusConflict,
+			field:   model.FieldVariantGroupID,
+			details: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			appErr := mapError(tc.err)
+			if string(appErr.Code) != tc.code {
+				t.Fatalf("expected code %s, got %s", tc.code, appErr.Code)
+			}
+			if appErr.Status != tc.status {
+				t.Fatalf("expected status %d, got %d", tc.status, appErr.Status)
+			}
+			if appErr.Message == "" {
+				t.Fatal("expected a safe client message")
+			}
+			if tc.details {
+				if len(appErr.Details) != 1 || appErr.Details[0].Field != tc.field {
+					t.Fatalf("expected one detail naming %q, got %+v", tc.field, appErr.Details)
+				}
+				if appErr.Details[0].Issue == "" {
+					t.Fatal("expected the detail to explain the problem")
+				}
+				return
+			}
+			if len(appErr.Details) != 0 {
+				t.Fatalf("expected no details, got %+v", appErr.Details)
+			}
+		})
+	}
+}
