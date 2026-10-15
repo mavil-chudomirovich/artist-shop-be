@@ -75,16 +75,16 @@ maintains groups) are the core and ship together** — one without the other sho
 
 ### Tests for User Story 1
 
-- [ ] T018 [P] [US1] Write failing unit tests for `ListCatalogue` in `internal/modules/product/application/implement/catalogue_test.go` — a group with a visible option appears once as `type: "variant-group"`, its options do not appear as separate entries; a standalone product appears as `type: "product"`
-- [ ] T019 [P] [US1] Write failing unit tests for the group detail and the product-detail selector in `catalogue_test.go` — group detail returns shared content + ordered options; product detail of an option carries `variantGroup`; a group with no visible option answers not-found
+- [x] T018 [P] [US1] Write failing unit tests for `ListCatalogue` in `internal/modules/product/application/implement/catalogue_test.go` — a group with a visible option appears once as `type: "variant-group"`, its options do not appear as separate entries; a standalone product appears as `type: "product"`
+- [x] T019 [P] [US1] Write failing unit tests for the group detail and the product-detail selector in `catalogue_test.go` — group detail returns shared content + ordered options; product detail of an option carries `variantGroup`; a group with no visible option answers not-found
 
 ### Implementation for User Story 1
 
-- [ ] T020 [US1] Implement `ListCatalogue` in `internal/modules/product/application/implement/catalogue.go` (visibility set resolved once per request, passed to the repository so the predicate runs in SQL — FR-001, FR-006, FR-027)
-- [ ] T021 [US1] Implement `GetPublicGroupBySlug` and extend `GetPublicBySlug` (attach the `variantGroup` selector when the product is an option) in `catalogue.go` (FR-002, FR-005, FR-007, FR-008)
-- [ ] T022 [US1] Add/extend the handlers in `internal/modules/product/presentation/http/handler.go` — `ListPublic` returns the merged entry shape, a new `GetPublicGroupBySlug`, `GetPublicBySlug` gains the selector; each with Swagger annotations; add the matching methods to `ProductService` in `internal/modules/product/application/interface/ports.go`
-- [ ] T023 [US1] Add the public route `GET /product-groups/{slug}` in `internal/modules/product/presentation/http/router.go`; add the HTTP request/response DTOs in `internal/modules/product/presentation/dto/dto.go`; map the new not-found in `internal/modules/product/presentation/http/errors.go`
-- [ ] T024 [P] [US1] Write the integration test in `internal/modules/product/presentation/http/catalogue_variants_integration_test.go` (new file) — merged list, group detail, direct option link, a customer adding the option to the cart at its own price, and the FR-004 negative case: adding an off-sale option is refused (`409`) while its on-sale sibling still adds
+- [x] T020 [US1] Implement `ListCatalogue` in `internal/modules/product/application/implement/catalogue.go` (visibility set resolved once per request, passed to the repository so the predicate runs in SQL — FR-001, FR-006, FR-027)
+- [x] T021 [US1] Implement `GetPublicGroupBySlug` and extend `GetPublicBySlug` (attach the `variantGroup` selector when the product is an option) in `catalogue.go` (FR-002, FR-005, FR-007, FR-008)
+- [x] T022 [US1] Add/extend the handlers in `internal/modules/product/presentation/http/handler.go` — `ListPublic` returns the merged entry shape, a new `GetPublicGroupBySlug`, `GetPublicBySlug` gains the selector; each with Swagger annotations; add the matching methods to `ProductService` in `internal/modules/product/application/interface/ports.go`
+- [x] T023 [US1] Add the public route `GET /product-groups/{slug}` in `internal/modules/product/presentation/http/router.go`; add the HTTP request/response DTOs in `internal/modules/product/presentation/dto/dto.go`; map the new not-found in `internal/modules/product/presentation/http/errors.go`
+- [x] T024 [P] [US1] Write the integration test in `internal/modules/product/presentation/http/catalogue_variants_integration_test.go` (new file) — merged list, group detail, direct option link, a customer adding the option to the cart at its own price, and the FR-004 negative case: adding an off-sale option is refused (`409`) while its on-sale sibling still adds
 
 **Checkpoint**: US1 works against the repository-seeded data; addable to cart with no cart/order change
 

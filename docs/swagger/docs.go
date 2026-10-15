@@ -4067,16 +4067,63 @@ const docTemplate = `{
                 }
             }
         },
-        "/products": {
+        "/product-groups/{slug}": {
             "get": {
-                "description": "Returns a page of the visible catalogue — on sale, or announced as a pre-order, in a category on display — ordered by the operator's position. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.",
+                "description": "Returns a visible variant group's shared name, description, choice-dimension name and its own picture gallery, together with its visible options (each with label, price, picture and preorder flag). A group hidden by its category, with no visible option, removed or unknown answers the same not-found. No session is required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Product"
                 ],
-                "summary": "List the products a customer can see",
+                "summary": "Read a variant group by slug",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Variant group slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/products": {
+            "get": {
+                "description": "Returns a page of the visible catalogue — standalone products and variant groups — ordered by the operator's position. A group is visible only while at least one of its options is; its price is the lowest among its visible options. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "List the catalogue a customer can see (products and variant groups)",
                 "parameters": [
                     {
                         "type": "integer",
@@ -4111,7 +4158,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse"
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse"
                                             }
                                         }
                                     }
@@ -4130,7 +4177,7 @@ const docTemplate = `{
         },
         "/products/{slug}": {
             "get": {
-                "description": "Returns one visible product with its description and every picture. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.",
+                "description": "Returns one visible product with its description and every picture, plus the variantGroup selector when the product is an option. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.",
                 "produces": [
                     "application/json"
                 ],
@@ -5911,6 +5958,43 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID is the entry's stable public identifier.",
+                    "type": "string"
+                },
+                "imageUrl": {
+                    "description": "ImageURL is the entry's main picture's link, or null when it has none.",
+                    "type": "string"
+                },
+                "isPreorder": {
+                    "description": "IsPreorder reports whether a standalone product is announced but not yet\navailable; it is always false for a group, which carries no sell state.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "description": "Name is the name the operator wrote.",
+                    "type": "string"
+                },
+                "price": {
+                    "description": "Price is the integer amount with its currency.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
+                        }
+                    ]
+                },
+                "slug": {
+                    "description": "Slug is the segment a customer-facing link is built from.",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "Type is \"product\" or \"variant-group\".",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse": {
             "type": "object",
             "properties": {
@@ -5972,30 +6056,112 @@ const docTemplate = `{
                 "slug": {
                     "description": "Slug is the segment a customer-facing link is built from.",
                     "type": "string"
+                },
+                "variantGroup": {
+                    "description": "VariantGroup is the selector present when the product is an option of a\nvariant group, and omitted for a standalone product (FR-007).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse"
+                        }
+                    ]
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse": {
             "type": "object",
             "properties": {
                 "id": {
-                    "description": "ID is the product's stable public identifier.",
+                    "description": "ID is the group's stable identifier.",
+                    "type": "string"
+                },
+                "images": {
+                    "description": "Images holds the group's own pictures in display order; always an array.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse"
+                    }
+                },
+                "name": {
+                    "description": "Name is the group's shared name.",
+                    "type": "string"
+                },
+                "optionName": {
+                    "description": "OptionName is the single choice-dimension name.",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "Options holds the group's visible options in display order; always an\narray.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse"
+                    }
+                },
+                "slug": {
+                    "description": "Slug is the group's public link segment.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "Description may be empty.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID is the group's stable identifier.",
+                    "type": "string"
+                },
+                "images": {
+                    "description": "Images holds the group's own pictures in display order. It is always an\narray, never null.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse"
+                    }
+                },
+                "name": {
+                    "description": "Name is the group's shared name.",
+                    "type": "string"
+                },
+                "optionName": {
+                    "description": "OptionName is the single choice-dimension name, for example \"Card\".",
+                    "type": "string"
+                },
+                "options": {
+                    "description": "Options holds the visible options in display order. It is always an array,\nnever null.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse"
+                    }
+                },
+                "slug": {
+                    "description": "Slug is the group's public link segment.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID is the option product's stable identifier.",
                     "type": "string"
                 },
                 "imageUrl": {
-                    "description": "ImageURL is the main picture's link, or null when the product has none.",
+                    "description": "ImageURL is the option's main picture's link, or null when it has none.",
                     "type": "string"
                 },
                 "isPreorder": {
-                    "description": "IsPreorder reports whether the product is announced but not yet available.\nSuch a product is visible and not buyable (FR-002, FR-040).",
+                    "description": "IsPreorder reports whether the option is an announced pre-order.",
                     "type": "boolean"
                 },
-                "name": {
-                    "description": "Name is the name the operator wrote.",
+                "label": {
+                    "description": "Label is the option's value in the group's single choice dimension.",
                     "type": "string"
                 },
                 "price": {
-                    "description": "Price is the integer amount with its currency.",
+                    "description": "Price is the option's own price and currency (FR-016).",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
@@ -6003,7 +6169,7 @@ const docTemplate = `{
                     ]
                 },
                 "slug": {
-                    "description": "Slug is the segment a customer-facing link is built from.",
+                    "description": "Slug is the option product's public link segment (FR-007).",
                     "type": "string"
                 }
             }

@@ -230,6 +230,22 @@ func (m *Mapper) PublicVariantGroupDetail(view repository.VariantGroupView) dto.
 	}
 }
 
+// PublicProductVariantGroup maps an option product's group to the detail
+// selector: the group's shared content, its own gallery and its visible sibling
+// options (FR-007). It carries no description — the selector is a switch, not a
+// full page — and a group with no picture maps to nil images, exactly as the
+// public group detail does.
+func (m *Mapper) PublicProductVariantGroup(group model.VariantGroup, images []model.VariantGroupImage, options []repository.GroupOptionItem) *dto.PublicProductVariantGroupOutput {
+	return &dto.PublicProductVariantGroupOutput{
+		ID:         group.ID,
+		Slug:       group.Slug,
+		Name:       group.Name,
+		OptionName: group.OptionName,
+		Images:     publicGroupImages(images),
+		Options:    publicVariantOptions(options),
+	}
+}
+
 // AdminVariantGroup maps one group list row to the administrator entry,
 // including the members a customer must not receive (FR-013).
 func (m *Mapper) AdminVariantGroup(item repository.VariantGroupListItem) dto.AdminVariantGroupOutput {

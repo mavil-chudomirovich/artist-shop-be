@@ -111,6 +111,94 @@ type PublicProductDetailResponse struct {
 	// Images holds every picture in display order. It is always an array, never
 	// null, so a product with no picture answers `[]`.
 	Images []PublicImageResponse `json:"images"`
+	// VariantGroup is the selector present when the product is an option of a
+	// variant group, and omitted for a standalone product (FR-007).
+	VariantGroup *PublicProductVariantGroupResponse `json:"variantGroup,omitempty"`
+}
+
+// PublicCatalogueEntryResponse is one row of the merged customer-facing
+// catalogue: a standalone product or a variant group, discriminated by Type
+// (FR-001, contracts/openapi.yaml PublicCatalogueEntry).
+//
+// The client picks the route by Type: a product at /products/{slug}, a group at
+// /product-groups/{slug}. A group carries its own main picture and the lowest
+// price among its visible options; a standalone product carries its own.
+type PublicCatalogueEntryResponse struct {
+	// Type is "product" or "variant-group".
+	Type string `json:"type"`
+	// ID is the entry's stable public identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the name the operator wrote.
+	Name string `json:"name"`
+	// Slug is the segment a customer-facing link is built from.
+	Slug string `json:"slug"`
+	// Price is the integer amount with its currency.
+	Price PriceResponse `json:"price"`
+	// ImageURL is the entry's main picture's link, or null when it has none.
+	ImageURL *string `json:"imageUrl"`
+	// IsPreorder reports whether a standalone product is announced but not yet
+	// available; it is always false for a group, which carries no sell state.
+	IsPreorder bool `json:"isPreorder"`
+}
+
+// PublicVariantOptionResponse is one option as a customer sees it in a group:
+// the option's own label, price, picture and preorder flag; nothing is inherited
+// from the group or its siblings (FR-016).
+type PublicVariantOptionResponse struct {
+	// ID is the option product's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Slug is the option product's public link segment (FR-007).
+	Slug string `json:"slug"`
+	// Label is the option's value in the group's single choice dimension.
+	Label string `json:"label"`
+	// Price is the option's own price and currency (FR-016).
+	Price PriceResponse `json:"price"`
+	// ImageURL is the option's main picture's link, or null when it has none.
+	ImageURL *string `json:"imageUrl"`
+	// IsPreorder reports whether the option is an announced pre-order.
+	IsPreorder bool `json:"isPreorder"`
+}
+
+// PublicVariantGroupDetailResponse is one variant group's full detail for a
+// customer: its shared content, its own gallery and its visible options
+// (FR-002, FR-005, contracts/openapi.yaml PublicVariantGroupDetail).
+type PublicVariantGroupDetailResponse struct {
+	// ID is the group's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Name is the group's shared name.
+	Name string `json:"name"`
+	// Slug is the group's public link segment.
+	Slug string `json:"slug"`
+	// Description may be empty.
+	Description string `json:"description"`
+	// OptionName is the single choice-dimension name, for example "Card".
+	OptionName string `json:"optionName"`
+	// Images holds the group's own pictures in display order. It is always an
+	// array, never null.
+	Images []PublicImageResponse `json:"images"`
+	// Options holds the visible options in display order. It is always an array,
+	// never null.
+	Options []PublicVariantOptionResponse `json:"options"`
+}
+
+// PublicProductVariantGroupResponse is the selector a product detail carries
+// when the product is an option: the group's shared content, its own gallery and
+// its visible siblings, so a shared link to one option resolves and the customer
+// can switch (FR-007). It carries no description.
+type PublicProductVariantGroupResponse struct {
+	// ID is the group's stable identifier.
+	ID uuid.UUID `json:"id"`
+	// Slug is the group's public link segment.
+	Slug string `json:"slug"`
+	// Name is the group's shared name.
+	Name string `json:"name"`
+	// OptionName is the single choice-dimension name.
+	OptionName string `json:"optionName"`
+	// Images holds the group's own pictures in display order; always an array.
+	Images []PublicImageResponse `json:"images"`
+	// Options holds the group's visible options in display order; always an
+	// array.
+	Options []PublicVariantOptionResponse `json:"options"`
 }
 
 // PriceRequest is money supplied by an operator on a create or an edit. It is an

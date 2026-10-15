@@ -73,12 +73,20 @@ type stubProductService struct {
 	seenActor appinterface.Actor
 }
 
-func (s *stubProductService) ListPublic(context.Context, appdto.ListPublicInput) (appdto.PublicProductPage, error) {
-	return appdto.PublicProductPage{}, nil
+func (s *stubProductService) ListPublic(context.Context, appdto.ListPublicInput) (appdto.PublicCataloguePage, error) {
+	return appdto.PublicCataloguePage{}, nil
+}
+
+func (s *stubProductService) ListCatalogue(context.Context, appdto.ListPublicInput) (appdto.PublicCataloguePage, error) {
+	return appdto.PublicCataloguePage{}, nil
 }
 
 func (s *stubProductService) GetPublicBySlug(context.Context, appdto.PublicProductRefInput) (appdto.PublicProductDetailOutput, error) {
 	return appdto.PublicProductDetailOutput{}, nil
+}
+
+func (s *stubProductService) GetPublicGroupBySlug(context.Context, appdto.PublicVariantGroupRefInput) (appdto.PublicVariantGroupDetailOutput, error) {
+	return appdto.PublicVariantGroupDetailOutput{}, nil
 }
 
 func (s *stubProductService) ListAdmin(context.Context, appdto.ListAdminInput) (appdto.AdminProductPage, error) {

@@ -123,13 +123,26 @@ func (c Config) PictureTargetWidthOrDefault() int {
 // administrator role guard, and take the acting account from the context the
 // session filled (ActorFromContext), never from the request (FR-015).
 type ProductService interface {
-	// ListPublic returns one page of the products a customer may see, in the
-	// configured order (FR-001 to FR-009).
-	ListPublic(ctx context.Context, in dto.ListPublicInput) (dto.PublicProductPage, error)
+	// ListPublic returns one page of the public catalogue — the standalone
+	// products and the variant groups in one merged, ordered result — in the
+	// configured order (FR-001 to FR-009). It is the merged read the public
+	// route consumes.
+	ListPublic(ctx context.Context, in dto.ListPublicInput) (dto.PublicCataloguePage, error)
+	// ListCatalogue returns one page of the merged public catalogue, resolving
+	// the visible category set once and passing the visibility predicate to the
+	// repository so it runs in SQL (FR-001, FR-006, FR-027). ListPublic is the
+	// named public-listing entry that uses it.
+	ListCatalogue(ctx context.Context, in dto.ListPublicInput) (dto.PublicCataloguePage, error)
 	// GetPublicBySlug returns one product a customer may see, with its
 	// description and every picture, addressed by its slug. A hidden, removed or
-	// unknown slug answers the same not-found (FR-005).
+	// unknown slug answers the same not-found (FR-005). When the product is an
+	// option of a variant group, its detail carries the group selector (FR-007).
 	GetPublicBySlug(ctx context.Context, in dto.PublicProductRefInput) (dto.PublicProductDetailOutput, error)
+	// GetPublicGroupBySlug returns one variant group a customer may see, with its
+	// shared content, its own gallery and its visible options. A group hidden by
+	// its category, with no visible option, removed or unknown answers the same
+	// not-found (FR-002, FR-006, FR-008).
+	GetPublicGroupBySlug(ctx context.Context, in dto.PublicVariantGroupRefInput) (dto.PublicVariantGroupDetailOutput, error)
 
 	// ListAdmin returns one page of every product, including the ones withheld
 	// from customers (FR-011).

@@ -155,7 +155,10 @@ func (m *memoryVariantGroups) FindByID(_ context.Context, id uuid.UUID) (*domain
 }
 
 // FindVisibleGroupBySlug mirrors the adapter's visibility predicate: the group's
-// category must be visible and at least one option must exist (FR-006, FR-008).
+// category must be visible and at least one of its options must itself be visible
+// (FR-006, FR-008). It answers only the visible options, exactly as the adapter's
+// EXISTS predicate and its option read do, so a group whose every option is
+// withheld is indistinguishable from an unknown slug.
 func (m *memoryVariantGroups) FindVisibleGroupBySlug(_ context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.VariantGroupView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -170,13 +173,19 @@ func (m *memoryVariantGroups) FindVisibleGroupBySlug(_ context.Context, slug str
 		if !visible[group.CategoryID] {
 			return nil, domainerr.ErrVariantGroupNotFound
 		}
-		if len(m.options[id]) == 0 {
+		visibles := make([]domainrepo.GroupOptionItem, 0, len(m.options[id]))
+		for _, option := range m.options[id] {
+			if optionVisible(option) {
+				visibles = append(visibles, option)
+			}
+		}
+		if len(visibles) == 0 {
 			return nil, domainerr.ErrVariantGroupNotFound
 		}
 		return &domainrepo.VariantGroupView{
 			Group:   group,
 			Images:  cloneGroupImages(m.images[id]),
-			Options: cloneGroupOptions(m.options[id]),
+			Options: visibles,
 		}, nil
 	}
 	return nil, domainerr.ErrVariantGroupNotFound

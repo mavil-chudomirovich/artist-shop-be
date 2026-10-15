@@ -43,6 +43,16 @@ type memoryProducts struct {
 	listCalls int
 	// detailSlug records the slug the detail read was addressed by.
 	detailSlug string
+	// catalogueGroups holds the variant-group rows the merged read should
+	// include. The fake does not own groups, so a test seeds the group row the
+	// real adapter's UNION ALL would derive from the group and its visible
+	// options (FR-001, research D4).
+	catalogueGroups []domainrepo.CatalogueItem
+	// lastCatalogueQuery records the query the merged read received, so a test
+	// can prove the visible set reached the merged read.
+	lastCatalogueQuery domainrepo.VisibleListQuery
+	// catalogueCalls counts how many times the merged read was reached.
+	catalogueCalls int
 }
 
 func newMemoryProducts() *memoryProducts {
@@ -137,6 +147,143 @@ func (m *memoryProducts) ListVisible(_ context.Context, query domainrepo.Visible
 	return all[start:end], total, nil
 }
 
+// ListCatalogue mirrors the adapter's merged public list: the seeded group rows
+// plus the standalone products (a product with variant_group_id null), under the
+// same visibility predicate, in the FR-009 order. A product that belongs to a
+// group is excluded, because the group represents it (FR-001, SC-002).
+func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.VisibleListQuery) ([]domainrepo.CatalogueItem, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastCatalogueQuery = query
+	m.catalogueCalls++
+
+	visible := make(map[uuid.UUID]bool, len(query.VisibleCategoryIDs))
+	for _, id := range query.VisibleCategoryIDs {
+		visible[id] = true
+	}
+
+	all := make([]domainrepo.CatalogueItem, 0, len(m.catalogueGroups)+len(m.products))
+	for _, item := range m.catalogueGroups {
+		if !visible[item.CategoryID] {
+			continue
+		}
+		if query.CategoryID != nil && item.CategoryID != *query.CategoryID {
+			continue
+		}
+		all = append(all, item)
+	}
+	for _, product := range m.products {
+		if product.VariantGroupID != nil {
+			continue
+		}
+		if !visible[product.CategoryID] {
+			continue
+		}
+		if product.SellState != constant.SellStateActive && !product.IsPreorder {
+			continue
+		}
+		if query.CategoryID != nil && product.CategoryID != *query.CategoryID {
+			continue
+		}
+		item := domainrepo.CatalogueItem{
+			Type:        domainrepo.CatalogueEntryProduct,
+			ID:          product.ID,
+			Name:        product.Name,
+			Slug:        product.Slug,
+			Description: product.Description,
+			Price:       product.Price,
+			IsPreorder:  product.IsPreorder,
+			CategoryID:  product.CategoryID,
+			Position:    product.Position,
+			CreatedAt:   product.CreatedAt,
+		}
+		if primary, ok := model.PrimaryPicture(m.pictures[product.ID]); ok {
+			item.ImageURL = primary.URL
+		}
+		all = append(all, item)
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Position != all[j].Position {
+			return all[i].Position < all[j].Position
+		}
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		}
+		return all[i].ID.String() < all[j].ID.String()
+	})
+
+	total := int64(len(all))
+	start := (query.Page - 1) * query.PageSize
+	if query.Page < 1 || start >= len(all) {
+		return []domainrepo.CatalogueItem{}, total, nil
+	}
+	end := start + query.PageSize
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[start:end], total, nil
+}
+
+// ListOptionsByGroupIDs mirrors the adapter's bulk option read for the detail
+// selector: the visible options of the requested groups, keyed by group, under
+// the option visibility predicate (FR-007, FR-027).
+func (m *memoryProducts) ListOptionsByGroupIDs(_ context.Context, groupIDs []uuid.UUID, visibleCategoryIDs []uuid.UUID) (map[uuid.UUID][]domainrepo.GroupOptionItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[uuid.UUID][]domainrepo.GroupOptionItem)
+	if len(groupIDs) == 0 || len(visibleCategoryIDs) == 0 {
+		return out, nil
+	}
+	wanted := make(map[uuid.UUID]bool, len(groupIDs))
+	for _, id := range groupIDs {
+		wanted[id] = true
+	}
+	visible := make(map[uuid.UUID]bool, len(visibleCategoryIDs))
+	for _, id := range visibleCategoryIDs {
+		visible[id] = true
+	}
+	for _, product := range m.products {
+		if product.VariantGroupID == nil || !wanted[*product.VariantGroupID] {
+			continue
+		}
+		if !visible[product.CategoryID] {
+			continue
+		}
+		if product.SellState != constant.SellStateActive && !product.IsPreorder {
+			continue
+		}
+		if product.VariantLabel == nil {
+			continue
+		}
+		item := domainrepo.GroupOptionItem{
+			ID:         product.ID,
+			Name:       product.Name,
+			Slug:       product.Slug,
+			Label:      *product.VariantLabel,
+			Price:      product.Price,
+			Position:   product.Position,
+			SellState:  product.SellState,
+			IsPreorder: product.IsPreorder,
+		}
+		if primary, ok := model.PrimaryPicture(m.pictures[product.ID]); ok {
+			item.ImageURL = primary.URL
+		}
+		groupID := *product.VariantGroupID
+		out[groupID] = append(out[groupID], item)
+	}
+	for groupID := range out {
+		options := out[groupID]
+		sort.Slice(options, func(i, j int) bool {
+			if options[i].Position != options[j].Position {
+				return options[i].Position < options[j].Position
+			}
+			return options[i].ID.String() < options[j].ID.String()
+		})
+	}
+	return out, nil
+}
+
 // FindVisibleBySlug mirrors the adapter's public detail read, predicate
 // included, so a hidden product is indistinguishable from an unknown one
 // (FR-003).
@@ -189,7 +336,17 @@ func publicService(repo *memoryProducts, visibility *fakeVisibility) *Service {
 	return New(Service{Products: repo, Visibility: visibility, Mapper: mapper.New()})
 }
 
+// catalogueService wires the merged read with the variant-group repository the
+// public group detail and the product selector reach.
+func catalogueService(repo *memoryProducts, groups *memoryVariantGroups, visibility *fakeVisibility) *Service {
+	return New(Service{Products: repo, Groups: groups, Visibility: visibility, Mapper: mapper.New()})
+}
+
 func price(amount int64) model.Price { return model.Price{Amount: amount, Currency: "VND"} }
+
+// strptr returns a pointer to its argument, so a one-line seed can attach a
+// label or a group identifier without a named local.
+func strptr(value string) *string { return &value }
 
 // FR-002: only products that are on sale or a pre-order, in a visible category,
 // are returned.
@@ -213,12 +370,12 @@ func TestListPublicReturnsOnlyVisibleProducts(t *testing.T) {
 	if page.Total != 2 {
 		t.Fatalf("expected a total of 2 visible products, got %d", page.Total)
 	}
-	if len(page.Products) != 2 {
-		t.Fatalf("expected 2 visible products, got %d", len(page.Products))
+	if len(page.Entries) != 2 {
+		t.Fatalf("expected 2 visible products, got %d", len(page.Entries))
 	}
-	for _, entry := range page.Products {
+	for _, entry := range page.Entries {
 		if entry.Slug == "announced" || entry.Slug == "hidden" {
-			t.Fatalf("a product that is not visible leaked into the list: %+v", page.Products)
+			t.Fatalf("a product that is not visible leaked into the list: %+v", page.Entries)
 		}
 	}
 }
@@ -241,11 +398,11 @@ func TestListPublicPassesTheVisibleSetToTheRepository(t *testing.T) {
 	if visibility.visibleCalls != 1 {
 		t.Fatalf("the visible set must be fetched exactly once per request, got %d", visibility.visibleCalls)
 	}
-	if len(repo.lastQuery.VisibleCategoryIDs) != 1 || repo.lastQuery.VisibleCategoryIDs[0] != catA {
-		t.Fatalf("the visible set did not reach the repository: %+v", repo.lastQuery.VisibleCategoryIDs)
+	if len(repo.lastCatalogueQuery.VisibleCategoryIDs) != 1 || repo.lastCatalogueQuery.VisibleCategoryIDs[0] != catA {
+		t.Fatalf("the visible set did not reach the repository: %+v", repo.lastCatalogueQuery.VisibleCategoryIDs)
 	}
-	if repo.lastQuery.CategoryID != nil {
-		t.Fatalf("an unfiltered request must carry no category filter, got %s", *repo.lastQuery.CategoryID)
+	if repo.lastCatalogueQuery.CategoryID != nil {
+		t.Fatalf("an unfiltered request must carry no category filter, got %s", *repo.lastCatalogueQuery.CategoryID)
 	}
 }
 
@@ -268,8 +425,8 @@ func TestAProductInAHiddenCategoryIsExcludedAndAnswersNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
-	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Slug != "visible" {
-		t.Fatalf("a product in a hidden category leaked into the list: %+v", page.Products)
+	if page.Total != 1 || len(page.Entries) != 1 || page.Entries[0].Slug != "visible" {
+		t.Fatalf("a product in a hidden category leaked into the list: %+v", page.Entries)
 	}
 
 	if _, err := svc.GetPublicBySlug(ctx, dto.PublicProductRefInput{Slug: "hidden"}); !errors.Is(err, domainerr.ErrProductNotFound) {
@@ -293,8 +450,8 @@ func TestListPublicAnswersEmptyForAnEmptyOrFullyHiddenCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an empty catalogue must not be an error, got %v", err)
 	}
-	if len(page.Products) != 0 || page.Total != 0 {
-		t.Fatalf("expected an empty page, got %d products and a total of %d", len(page.Products), page.Total)
+	if len(page.Entries) != 0 || page.Total != 0 {
+		t.Fatalf("expected an empty page, got %d products and a total of %d", len(page.Entries), page.Total)
 	}
 
 	base := time.Now().UTC().Add(-time.Hour)
@@ -307,8 +464,8 @@ func TestListPublicAnswersEmptyForAnEmptyOrFullyHiddenCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a fully hidden catalogue must not be an error, got %v", err)
 	}
-	if len(page.Products) != 0 || page.Total != 0 {
-		t.Fatalf("expected an empty page, got %d products and a total of %d", len(page.Products), page.Total)
+	if len(page.Entries) != 0 || page.Total != 0 {
+		t.Fatalf("expected an empty page, got %d products and a total of %d", len(page.Entries), page.Total)
 	}
 }
 
@@ -333,7 +490,7 @@ func TestListPublicOrderIsTheConfiguredOneAndStableAcrossTwoCalls(t *testing.T) 
 		t.Fatalf("ListPublic: %v", err)
 	}
 	want := []string{"delta", "alpha", "gamma"}
-	if got := slugs(first.Products); !equalStrings(got, want) {
+	if got := slugs(first.Entries); !equalStrings(got, want) {
 		t.Fatalf("expected the configured order %v, got %v", want, got)
 	}
 
@@ -341,8 +498,8 @@ func TestListPublicOrderIsTheConfiguredOneAndStableAcrossTwoCalls(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListPublic repeat: %v", err)
 	}
-	if got := slugs(second.Products); !equalStrings(got, slugs(first.Products)) {
-		t.Fatalf("the order changed between two identical calls: %v then %v", slugs(first.Products), got)
+	if got := slugs(second.Entries); !equalStrings(got, slugs(first.Entries)) {
+		t.Fatalf("the order changed between two identical calls: %v then %v", slugs(first.Entries), got)
 	}
 }
 
@@ -371,24 +528,24 @@ func TestListPublicResolvesTheCategorySlugFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered ListPublic: %v", err)
 	}
-	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Slug != "a" {
-		t.Fatalf("expected only category A's product, got %+v", page.Products)
+	if page.Total != 1 || len(page.Entries) != 1 || page.Entries[0].Slug != "a" {
+		t.Fatalf("expected only category A's product, got %+v", page.Entries)
 	}
 
-	callsBefore := repo.listCalls
+	callsBefore := repo.catalogueCalls
 	unknown, err := svc.ListPublic(ctx, dto.ListPublicInput{Page: 1, PageSize: 20, CategorySlug: "never-existed"})
 	if err != nil {
 		t.Fatalf("an unknown filter slug must not be an error, got %v", err)
 	}
-	if len(unknown.Products) != 0 || unknown.Total != 0 {
-		t.Fatalf("an unknown filter slug must answer an empty page, got %+v", unknown.Products)
+	if len(unknown.Entries) != 0 || unknown.Total != 0 {
+		t.Fatalf("an unknown filter slug must answer an empty page, got %+v", unknown.Entries)
 	}
-	if repo.listCalls != callsBefore {
+	if repo.catalogueCalls != callsBefore {
 		t.Fatalf("an unknown filter slug must answer the empty page without a storage read")
 	}
 }
 
-func slugs(list []dto.PublicProductOutput) []string {
+func slugs(list []dto.PublicCatalogueEntry) []string {
 	out := make([]string, 0, len(list))
 	for _, product := range list {
 		out = append(out, product.Slug)
@@ -406,4 +563,200 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// --- User Story 1: the merged list, the group detail and the selector ---
+
+// FR-001, FR-027, SC-002: the merged public list carries a variant group once,
+// discriminated by type "variant-group"; the group's options do not appear as
+// separate entries, and a standalone product appears as type "product".
+func TestListCatalogueShowsAGroupOnceAndAStandaloneProduct(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	repo := newMemoryProducts()
+	groupID := uuid.New()
+	flins := repo.seed(t, model.ProductDraft{
+		Name: "Card Flins", Slug: "card-flins", Price: price(120000),
+		CategoryID: category, Position: 2, VariantGroupID: &groupID, VariantLabel: strptr("Flins"),
+	}, base.Add(time.Minute))
+	dottore := repo.seed(t, model.ProductDraft{
+		Name: "Card Dottore", Slug: "card-dottore", Price: price(150000),
+		CategoryID: category, Position: 3, VariantGroupID: &groupID, VariantLabel: strptr("Dottore"),
+	}, base.Add(2*time.Minute))
+	standalone := repo.seed(t, model.ProductDraft{
+		Name: "Standalone", Slug: "standalone", Price: price(90000),
+		CategoryID: category, Position: 4,
+	}, base.Add(3*time.Minute))
+	for _, product := range []*model.Product{flins, dottore, standalone} {
+		repo.move(t, product.ID, (*model.Product).Launch)
+	}
+	// The group row the real adapter derives from the group and its visible
+	// options: the group's own primary picture and the lowest visible option
+	// price (FR-005).
+	repo.catalogueGroups = []domainrepo.CatalogueItem{{
+		Type: domainrepo.CatalogueEntryVariantGroup, ID: groupID, Name: "Card Genshin",
+		Slug: "card-genshin", Price: price(120000), CategoryID: category, Position: 1, CreatedAt: base,
+	}}
+
+	svc := catalogueService(repo, newMemoryVariantGroups(), &fakeVisibility{visible: []uuid.UUID{category}})
+	page, err := svc.ListCatalogue(context.Background(), dto.ListPublicInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListCatalogue: %v", err)
+	}
+	if page.Total != 2 || len(page.Entries) != 2 {
+		t.Fatalf("expected the group and the standalone product, got %d entries and a total of %d", len(page.Entries), page.Total)
+	}
+	types := make(map[string]string, len(page.Entries))
+	for _, entry := range page.Entries {
+		types[entry.Slug] = entry.Type
+	}
+	if types["card-genshin"] != dto.CatalogueEntryTypeVariantGroup {
+		t.Fatalf("the group must appear once as %q, got %q", dto.CatalogueEntryTypeVariantGroup, types["card-genshin"])
+	}
+	if types["standalone"] != dto.CatalogueEntryTypeProduct {
+		t.Fatalf("the standalone product must appear as %q, got %q", dto.CatalogueEntryTypeProduct, types["standalone"])
+	}
+	for _, leaked := range []string{"card-flins", "card-dottore"} {
+		if _, ok := types[leaked]; ok {
+			t.Fatalf("an option of the group must not appear as a separate entry, got %q", leaked)
+		}
+	}
+	for _, entry := range page.Entries {
+		if entry.Slug == "card-genshin" && entry.Price.Amount != 120000 {
+			t.Fatalf("the group's price must be the lowest visible option's, got %d", entry.Price.Amount)
+		}
+	}
+}
+
+// FR-002, FR-005, FR-008: the public group detail carries the group's shared
+// content and its own gallery, with its visible options in the configured order;
+// a withdrawn option is absent.
+func TestGetPublicGroupBySlugReturnsSharedContentAndOrderedVisibleOptions(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	groups := newMemoryVariantGroups()
+	group := model.VariantGroup{
+		ID: uuid.New(), Name: "Card Genshin", Slug: "card-genshin", Description: "Bộ card",
+		CategoryID: category, Position: 1, OptionName: "Card", CreatedAt: base, UpdatedAt: base,
+	}
+	groups.seedGroup(group)
+	groups.seedImage(model.VariantGroupImage{
+		ID: uuid.New(), GroupID: group.ID, PublicID: "demo/g", URL: "https://cdn.example.test/g.jpg",
+		Width: 10, Height: 10, IsPrimary: true,
+	})
+	groups.seedOptions(group.ID,
+		domainrepo.GroupOptionItem{ID: uuid.New(), Slug: "flins", Label: "Flins", Price: price(120000), SellState: constant.SellStateActive, Position: 1},
+		domainrepo.GroupOptionItem{ID: uuid.New(), Slug: "dottore", Label: "Dottore", Price: price(150000), SellState: constant.SellStateDiscontinued, Position: 2},
+		domainrepo.GroupOptionItem{ID: uuid.New(), Slug: "furina", Label: "Furina", Price: price(130000), SellState: constant.SellStateActive, Position: 3},
+	)
+
+	svc := catalogueService(newMemoryProducts(), groups, &fakeVisibility{visible: []uuid.UUID{category}})
+	out, err := svc.GetPublicGroupBySlug(context.Background(), dto.PublicVariantGroupRefInput{Slug: "card-genshin"})
+	if err != nil {
+		t.Fatalf("GetPublicGroupBySlug: %v", err)
+	}
+	if out.Name != "Card Genshin" || out.Description != "Bộ card" || out.OptionName != "Card" {
+		t.Fatalf("the group detail must carry the shared content, got %+v", out)
+	}
+	if len(out.Images) != 1 {
+		t.Fatalf("the group detail must carry its own gallery, got %d", len(out.Images))
+	}
+	var labels []string
+	for _, option := range out.Options {
+		labels = append(labels, option.Label)
+	}
+	if !equalStrings(labels, []string{"Flins", "Furina"}) {
+		t.Fatalf("expected the visible options in position order [Flins Furina], got %v", labels)
+	}
+}
+
+// FR-007: a public product detail of an option carries the variantGroup selector
+// with the group's shared content and its visible siblings; a standalone product
+// carries none.
+func TestGetPublicBySlugOfAnOptionCarriesTheVariantGroupSelector(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	groups := newMemoryVariantGroups()
+	group := model.VariantGroup{
+		ID: uuid.New(), Name: "Card Genshin", Slug: "card-genshin", Description: "Bộ card",
+		CategoryID: category, Position: 1, OptionName: "Card", CreatedAt: base, UpdatedAt: base,
+	}
+	groups.seedGroup(group)
+	groups.seedImage(model.VariantGroupImage{
+		ID: uuid.New(), GroupID: group.ID, PublicID: "demo/g", URL: "https://cdn.example.test/g.jpg",
+		Width: 10, Height: 10, IsPrimary: true,
+	})
+
+	repo := newMemoryProducts()
+	flins := repo.seed(t, model.ProductDraft{
+		Name: "Card Flins", Slug: "card-flins", Price: price(120000),
+		CategoryID: category, Position: 1, VariantGroupID: &group.ID, VariantLabel: strptr("Flins"),
+	}, base.Add(time.Minute))
+	furina := repo.seed(t, model.ProductDraft{
+		Name: "Card Furina", Slug: "card-furina", Price: price(130000),
+		CategoryID: category, Position: 2, VariantGroupID: &group.ID, VariantLabel: strptr("Furina"),
+	}, base.Add(2*time.Minute))
+	for _, product := range []*model.Product{flins, furina} {
+		repo.move(t, product.ID, (*model.Product).Launch)
+	}
+
+	svc := catalogueService(repo, groups, &fakeVisibility{visible: []uuid.UUID{category}})
+	out, err := svc.GetPublicBySlug(context.Background(), dto.PublicProductRefInput{Slug: "card-flins"})
+	if err != nil {
+		t.Fatalf("GetPublicBySlug: %v", err)
+	}
+	if out.VariantGroup == nil {
+		t.Fatal("a product that is an option must carry the variantGroup selector")
+	}
+	if out.VariantGroup.ID != group.ID || out.VariantGroup.Name != "Card Genshin" || out.VariantGroup.OptionName != "Card" {
+		t.Fatalf("the selector must carry the group's shared content, got %+v", out.VariantGroup)
+	}
+	var labels []string
+	for _, option := range out.VariantGroup.Options {
+		labels = append(labels, option.Label)
+	}
+	if !equalStrings(labels, []string{"Flins", "Furina"}) {
+		t.Fatalf("the selector must carry the visible siblings in order, got %v", labels)
+	}
+
+	standalone := repo.seed(t, model.ProductDraft{
+		Name: "Standalone", Slug: "standalone", Price: price(90000), CategoryID: category, Position: 3,
+	}, base.Add(3*time.Minute))
+	repo.move(t, standalone.ID, (*model.Product).Launch)
+	plain, err := svc.GetPublicBySlug(context.Background(), dto.PublicProductRefInput{Slug: "standalone"})
+	if err != nil {
+		t.Fatalf("GetPublicBySlug standalone: %v", err)
+	}
+	if plain.VariantGroup != nil {
+		t.Fatalf("a standalone product must not carry a selector, got %+v", plain.VariantGroup)
+	}
+}
+
+// FR-006, FR-008: a group with no visible option answers the same not-found an
+// unknown slug answers, so a hidden group is never confirmed.
+func TestAGroupWithNoVisibleOptionAnswersNotFoundLikeAnUnknownSlug(t *testing.T) {
+	category := uuid.New()
+	groups := newMemoryVariantGroups()
+	group := model.VariantGroup{
+		ID: uuid.New(), Name: "Hidden group", Slug: "hidden-group",
+		CategoryID: category, OptionName: "Card",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	groups.seedGroup(group)
+	groups.seedOptions(group.ID, domainrepo.GroupOptionItem{
+		ID: uuid.New(), Slug: "off", Label: "Off", Price: price(100),
+		SellState: constant.SellStateDiscontinued, Position: 1,
+	})
+
+	svc := catalogueService(newMemoryProducts(), groups, &fakeVisibility{visible: []uuid.UUID{category}})
+	ctx := context.Background()
+	if _, err := svc.GetPublicGroupBySlug(ctx, dto.PublicVariantGroupRefInput{Slug: "hidden-group"}); !errors.Is(err, domainerr.ErrVariantGroupNotFound) {
+		t.Fatalf("a group with no visible option must answer not-found, got %v", err)
+	}
+	if _, err := svc.GetPublicGroupBySlug(ctx, dto.PublicVariantGroupRefInput{Slug: "never-existed"}); !errors.Is(err, domainerr.ErrVariantGroupNotFound) {
+		t.Fatalf("an unknown slug must answer not-found, got %v", err)
+	}
 }

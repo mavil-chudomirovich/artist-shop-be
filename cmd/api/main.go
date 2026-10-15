@@ -483,6 +483,10 @@ func run() error {
 			// required (FR-001). The /admin/products group is addressed by
 			// identifier behind the administrator role guard (research D11).
 			r.Mount("/products", productHandler.Router(authHooks))
+			// The public variant-group group: a group's shared content and its
+			// visible options, addressed by its own slug namespace. No session is
+			// required (FR-002, research D6).
+			r.Mount("/product-groups", productHandler.GroupRouter(authHooks))
 			r.Mount("/admin/products", productHandler.AdminRouter(authHooks))
 			// The inventory administrator surface: one product's stock and its
 			// manual operations, addressed by identifier behind the administrator

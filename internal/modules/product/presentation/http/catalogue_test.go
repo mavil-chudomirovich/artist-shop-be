@@ -144,6 +144,34 @@ func (r *stubRepository) ListVisible(_ context.Context, query domainrepo.Visible
 	return all[start:end], total, nil
 }
 
+// ListCatalogue mirrors the adapter's merged read for the standalone products the
+// public tests seed: it runs the same visible-product predicate and projects each
+// product as a `type: product` entry, so the HTTP tests exercise the real merged
+// use case and the handler rather than a permissive fake.
+func (r *stubRepository) ListCatalogue(ctx context.Context, query domainrepo.VisibleListQuery) ([]domainrepo.CatalogueItem, int64, error) {
+	items, total, err := r.ListVisible(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]domainrepo.CatalogueItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, domainrepo.CatalogueItem{
+			Type:        domainrepo.CatalogueEntryProduct,
+			ID:          item.Product.ID,
+			Name:        item.Product.Name,
+			Slug:        item.Product.Slug,
+			Description: item.Product.Description,
+			Price:       item.Product.Price,
+			ImageURL:    item.ImageURL,
+			IsPreorder:  item.Product.IsPreorder,
+			CategoryID:  item.Product.CategoryID,
+			Position:    item.Product.Position,
+			CreatedAt:   item.Product.CreatedAt,
+		})
+	}
+	return out, total, nil
+}
+
 func (r *stubRepository) FindVisibleBySlug(_ context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -263,10 +291,11 @@ func TestPublicProductListIsReachableWithoutAToken(t *testing.T) {
 	}
 }
 
-// FR-004, FR-008, SC-002, quickstart scenario 4: each public entry carries
-// exactly id, name, slug, price, imageUrl and isPreorder — no sellState, no
-// position, no categoryId, no isSet and no folding key — and the price
-// round-trips as the exact integer sent (FR-030).
+// FR-001, FR-004, FR-008, SC-002, quickstart scenario 4: each public entry
+// carries exactly type, id, name, slug, price, imageUrl and isPreorder — no
+// sellState, no position, no categoryId, no isSet and no folding key — and the
+// price round-trips as the exact integer sent (FR-030). A standalone product is
+// discriminated as `type: "product"` so a client picks its route.
 func TestAPublicProductEntryCarriesExactlyThePublicMembers(t *testing.T) {
 	handler, repo, visibility := newPublicFixture(t)
 	product, _ := seedVisibleProduct(t, repo, visibility, "acrylic-stand", 1)
@@ -285,7 +314,7 @@ func TestAPublicProductEntryCarriesExactlyThePublicMembers(t *testing.T) {
 	if len(body.Data) != 1 {
 		t.Fatalf("expected one entry, got %d", len(body.Data))
 	}
-	want := map[string]bool{"id": true, "name": true, "slug": true, "price": true, "imageUrl": true, "isPreorder": true}
+	want := map[string]bool{"type": true, "id": true, "name": true, "slug": true, "price": true, "imageUrl": true, "isPreorder": true}
 	entry := body.Data[0]
 	if len(entry) != len(want) {
 		t.Fatalf("expected exactly %d members, got %d: %v", len(want), len(entry), keys(entry))
@@ -299,6 +328,9 @@ func TestAPublicProductEntryCarriesExactlyThePublicMembers(t *testing.T) {
 		if _, ok := entry[member]; !ok {
 			t.Fatalf("the public entry is missing %q: %v", member, keys(entry))
 		}
+	}
+	if string(entry["type"]) != `"product"` {
+		t.Fatalf("a standalone product must be discriminated as type product, got %s", entry["type"])
 	}
 	for _, forbidden := range []string{"sellState", "position", "categoryId", "isSet", "normalizedSlug", "normalized_slug"} {
 		if strings.Contains(rec.Body.String(), forbidden) {

@@ -60,6 +60,10 @@ func mapError(err error) *httpx.AppError {
 	switch {
 	case errors.Is(err, domainerr.ErrProductNotFound):
 		return coded(constant.CodeProductNotFound, http.StatusNotFound, "Product not found")
+	case errors.Is(err, domainerr.ErrVariantGroupNotFound):
+		// A hidden group, an option-less one, a removed one and an unknown slug
+		// are deliberately one answer on the public surface (FR-008).
+		return coded(constant.CodeVariantGroupNotFound, http.StatusNotFound, "Variant group not found")
 	case errors.Is(err, domainerr.ErrProductSlugTaken):
 		return withField(
 			coded(constant.CodeProductSlugTaken, http.StatusConflict, "Another product already uses that slug"),

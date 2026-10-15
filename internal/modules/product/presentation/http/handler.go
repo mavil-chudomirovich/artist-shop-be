@@ -59,18 +59,20 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 // ListPublic returns a page of the catalogue a customer may see. It is reachable
 // with no session (FR-001): the route installs no authentication middleware.
 //
-// The `category` filter is passed down as the slug a customer-facing link
-// carries; the use case resolves it, and a hidden or unknown slug answers an
-// empty page rather than a not-found (FR-006).
+// The page is the merged catalogue: a standalone product and a variant group
+// both appear as one entry, discriminated by `type`, so a grouped product is
+// shown once, not once per option (FR-001). The `category` filter is passed down
+// as the slug a customer-facing link carries; the use case resolves it, and a
+// hidden or unknown slug answers an empty page rather than a not-found (FR-006).
 //
-//	@Summary		List the products a customer can see
-//	@Description	Returns a page of the visible catalogue — on sale, or announced as a pre-order, in a category on display — ordered by the operator's position. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.
+//	@Summary		List the catalogue a customer can see (products and variant groups)
+//	@Description	Returns a page of the visible catalogue — standalone products and variant groups — ordered by the operator's position. A group is visible only while at least one of its options is; its price is the lowest among its visible options. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.
 //	@Tags			Product
 //	@Produce		json
 //	@Param			page		query	int		false	"Page number (default 1)"
 //	@Param			pageSize	query	int		false	"Page size (default 20)"
 //	@Param			category	query	string	false	"Category slug to narrow the list to"
-//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicProductResponse}
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicCatalogueEntryResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Router			/products [get]
 func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
@@ -88,16 +90,17 @@ func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccessList(w, r, toPublicProductResponses(out.Products), out.Page, out.PageSize, out.Total)
+	httpx.WriteSuccessList(w, r, toPublicCatalogueEntryResponses(out.Entries), out.Page, out.PageSize, out.Total)
 }
 
 // GetPublicBySlug returns one visible product with its description and every
 // picture, addressed by the slug a customer-facing link is built from
 // (FR-005). A hidden, retired, removed or unknown slug answers the same
-// not-found (FR-003).
+// not-found (FR-003). When the product is an option of a variant group, the
+// detail carries the `variantGroup` selector (FR-007).
 //
 //	@Summary		Read one product by slug
-//	@Description	Returns one visible product with its description and every picture. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.
+//	@Description	Returns one visible product with its description and every picture, plus the variantGroup selector when the product is an option. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.
 //	@Tags			Product
 //	@Produce		json
 //	@Param			slug	path	string	true	"Product slug"
@@ -112,6 +115,29 @@ func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteSuccess(w, r, http.StatusOK, toPublicProductDetailResponse(out))
+}
+
+// GetPublicGroupBySlug returns one visible variant group, addressed by the slug a
+// customer-facing link is built from: its shared name, description and gallery
+// together with its visible options (FR-002). A group hidden by its category,
+// with no visible option, removed or unknown answers the same not-found (FR-008).
+//
+//	@Summary		Read a variant group by slug
+//	@Description	Returns a visible variant group's shared name, description, choice-dimension name and its own picture gallery, together with its visible options (each with label, price, picture and preorder flag). A group hidden by its category, with no visible option, removed or unknown answers the same not-found. No session is required.
+//	@Tags			Product
+//	@Produce		json
+//	@Param			slug	path	string	true	"Variant group slug"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.PublicVariantGroupDetailResponse}
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/product-groups/{slug} [get]
+func (h *Handler) GetPublicGroupBySlug(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	out, err := h.svc.GetPublicGroupBySlug(r.Context(), appdto.PublicVariantGroupRefInput{Slug: slug})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toPublicVariantGroupDetailResponse(out))
 }
 
 // pageParams reads the catalogue window. Pagination validation is a foundation
@@ -159,26 +185,98 @@ func toPublicProductResponse(product appdto.PublicProductOutput) httpdto.PublicP
 	}
 }
 
-// toPublicProductResponses maps a page. It always allocates, so an empty
+// toPublicCatalogueEntryResponse is the single conversion point from the merged
+// application entry to the public HTTP shape, so the `type` discriminator and
+// the seven members cannot drift per route.
+func toPublicCatalogueEntryResponse(entry appdto.PublicCatalogueEntry) httpdto.PublicCatalogueEntryResponse {
+	return httpdto.PublicCatalogueEntryResponse{
+		Type:       entry.Type,
+		ID:         entry.ID,
+		Name:       entry.Name,
+		Slug:       entry.Slug,
+		Price:      httpdto.PriceResponse{Amount: entry.Price.Amount, Currency: entry.Price.Currency},
+		ImageURL:   entry.ImageURL,
+		IsPreorder: entry.IsPreorder,
+	}
+}
+
+// toPublicCatalogueEntryResponses maps a page. It always allocates, so an empty
 // catalogue answers an empty array rather than null: the contract declares the
 // list as an array, and FR-007 requires an empty result, not an error.
-func toPublicProductResponses(list []appdto.PublicProductOutput) []httpdto.PublicProductResponse {
-	out := make([]httpdto.PublicProductResponse, 0, len(list))
-	for _, product := range list {
-		out = append(out, toPublicProductResponse(product))
+func toPublicCatalogueEntryResponses(list []appdto.PublicCatalogueEntry) []httpdto.PublicCatalogueEntryResponse {
+	out := make([]httpdto.PublicCatalogueEntryResponse, 0, len(list))
+	for _, entry := range list {
+		out = append(out, toPublicCatalogueEntryResponse(entry))
 	}
 	return out
 }
 
 // toPublicProductDetailResponse maps one product's detail. The pictures are
 // mapped through their own conversion so the public picture shape cannot gain a
-// member the contract does not declare.
+// member the contract does not declare; the optional variantGroup selector is
+// mapped through its own conversion too.
 func toPublicProductDetailResponse(detail appdto.PublicProductDetailOutput) httpdto.PublicProductDetailResponse {
 	return httpdto.PublicProductDetailResponse{
 		PublicProductResponse: toPublicProductResponse(detail.PublicProductOutput),
 		Description:           detail.Description,
 		Images:                toPublicImageResponses(detail.Images),
+		VariantGroup:          toPublicProductVariantGroupResponse(detail.VariantGroup),
 	}
+}
+
+// toPublicProductVariantGroupResponse maps the selector when the product is an
+// option. A nil selector stays nil, so a standalone product omits the member.
+func toPublicProductVariantGroupResponse(selector *appdto.PublicProductVariantGroupOutput) *httpdto.PublicProductVariantGroupResponse {
+	if selector == nil {
+		return nil
+	}
+	return &httpdto.PublicProductVariantGroupResponse{
+		ID:         selector.ID,
+		Slug:       selector.Slug,
+		Name:       selector.Name,
+		OptionName: selector.OptionName,
+		Images:     toPublicImageResponses(selector.Images),
+		Options:    toPublicVariantOptionResponses(selector.Options),
+	}
+}
+
+// toPublicVariantGroupDetailResponse maps one group's detail. It always
+// allocates the lists, so a group with no picture or no option answers `[]`
+// rather than null.
+func toPublicVariantGroupDetailResponse(detail appdto.PublicVariantGroupDetailOutput) httpdto.PublicVariantGroupDetailResponse {
+	return httpdto.PublicVariantGroupDetailResponse{
+		ID:          detail.ID,
+		Name:        detail.Name,
+		Slug:        detail.Slug,
+		Description: detail.Description,
+		OptionName:  detail.OptionName,
+		Images:      toPublicImageResponses(detail.Images),
+		Options:     toPublicVariantOptionResponses(detail.Options),
+	}
+}
+
+// toPublicVariantOptionResponse is the single conversion point for an option as
+// a customer reads it, so its label and its own price cannot drift per route.
+func toPublicVariantOptionResponse(option appdto.PublicVariantOptionOutput) httpdto.PublicVariantOptionResponse {
+	return httpdto.PublicVariantOptionResponse{
+		ID:         option.ID,
+		Slug:       option.Slug,
+		Label:      option.Label,
+		Price:      httpdto.PriceResponse{Amount: option.Price.Amount, Currency: option.Price.Currency},
+		ImageURL:   option.ImageURL,
+		IsPreorder: option.IsPreorder,
+	}
+}
+
+// toPublicVariantOptionResponses maps the options in the order they were given —
+// the display order the use case and the repository already applied. It always
+// allocates, so a group with no visible option answers `[]` rather than null.
+func toPublicVariantOptionResponses(list []appdto.PublicVariantOptionOutput) []httpdto.PublicVariantOptionResponse {
+	out := make([]httpdto.PublicVariantOptionResponse, 0, len(list))
+	for _, option := range list {
+		out = append(out, toPublicVariantOptionResponse(option))
+	}
+	return out
 }
 
 // toPublicImageResponses maps the pictures in the order they were given — the

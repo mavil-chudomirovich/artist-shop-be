@@ -36,6 +36,20 @@ func (h *Handler) Router(_ middleware.AuthHooks) http.Handler {
 	return r
 }
 
+// GroupRouter builds the public `/product-groups` group. Mount it under
+// `/api/v1`.
+//
+// It is readable without a session (FR-002): the route installs no
+// authentication middleware. A group is addressed by slug, a separate namespace
+// from a product's slug, because the two are distinct customer-facing routes
+// (research D6); the administrator surface is a separate group mounted by the
+// story that adds it.
+func (h *Handler) GroupRouter(_ middleware.AuthHooks) http.Handler {
+	r := chi.NewRouter()
+	r.Get("/{slug}", h.GetPublicGroupBySlug)
+	return r
+}
+
 // AdminRouter builds the `/admin/products` group. Mount it under `/api/v1`.
 //
 // Every route is guarded by the administrator role (FR-014), and the denial is

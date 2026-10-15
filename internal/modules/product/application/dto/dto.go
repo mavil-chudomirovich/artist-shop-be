@@ -60,6 +60,30 @@ type PublicProductDetailOutput struct {
 	// Images holds every picture in display order. It is nil when the product
 	// has no picture.
 	Images []PublicImageOutput
+	// VariantGroup is the selector carried when the product is an option of a
+	// variant group: the group's shared content and its visible siblings. It is
+	// nil for a standalone product (FR-007).
+	VariantGroup *PublicProductVariantGroupOutput
+}
+
+// PublicProductVariantGroupOutput is the selector a product detail carries when
+// the product is an option: the group's shared content, its own gallery and its
+// visible sibling options, so a shared link to one option resolves and the
+// customer can switch between choices (FR-007). It is a view of the group, not a
+// purchasable entry: it carries no price and no sell state of its own.
+type PublicProductVariantGroupOutput struct {
+	// ID is the group's stable identifier.
+	ID uuid.UUID
+	// Slug is the group's public link segment.
+	Slug string
+	// Name is the group's shared name.
+	Name string
+	// OptionName is the group's single choice-dimension name, for example "Card".
+	OptionName string
+	// Images holds the group's own pictures in display order; nil when none.
+	Images []PublicImageOutput
+	// Options holds the group's visible options in display order; nil when none.
+	Options []PublicVariantOptionOutput
 }
 
 // PublicProductPage is one page of the customer-facing catalogue.
