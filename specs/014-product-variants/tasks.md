@@ -140,12 +140,12 @@ maintains groups) are the core and ship together** — one without the other sho
 
 ### Tests for User Story 4
 
-- [ ] T035 [P] [US4] Write failing unit tests in `catalogue_test.go` — a group with zero visible options is absent from the list and answers the same not-found as an unknown slug (FR-006, FR-008)
-- [ ] T036 [P] [US4] Write the integration test in `product_variants_integration_test.go` — hiding/removing all options removes the group (and the total drops by one); a grouped product never appears on the standalone side (FR-001, FR-006)
+- [x] T035 [P] [US4] Write failing unit tests in `catalogue_test.go` — a group with zero visible options is absent from the list and answers the same not-found as an unknown slug (FR-006, FR-008)
+- [x] T036 [P] [US4] Write the integration test in `product_variants_integration_test.go` — hiding/removing all options removes the group (and the total drops by one); a grouped product never appears on the standalone side (FR-001, FR-006)
 
 ### Implementation for User Story 4
 
-- [ ] T037 [US4] Implement/confirm in `internal/modules/product/infrastructure/implement/postgres/product.go` that the group-visibility predicate (`category_id = ANY(visible) AND EXISTS(<visible option>)`) and the `variant_group_id IS NULL` exclusion on the standalone side match `data-model.md` D7/D4; T036 is the test that proves the total drops by one when a group's last option leaves
+- [x] T037 [US4] Implement/confirm in `internal/modules/product/infrastructure/implement/postgres/product.go` that the group-visibility predicate (`category_id = ANY(visible) AND EXISTS(<visible option>)`) and the `variant_group_id IS NULL` exclusion on the standalone side match `data-model.md` D7/D4; T036 is the test that proves the total drops by one when a group's last option leaves
 
 **Checkpoint**: All four stories work independently; the list total is always correct
 

@@ -152,6 +152,96 @@ func TestMergedCatalogueListsGroupsAndStandaloneInOnePage(t *testing.T) {
 	}
 }
 
+// FR-001, FR-006, SC-002: a group's presence follows its options. Hiding the last
+// visible option, or removing it outright, removes the group from the merged list
+// and drops the total by exactly one — a group is one entry, never one per option
+// — and a grouped product is never listed on the standalone side. The standalone
+// product stays throughout, so each drop in the total is attributable to the group
+// rather than to an emptied page.
+func TestHidingTheLastVisibleOptionRemovesTheGroupAndDropsTheTotal(t *testing.T) {
+	f := newProductFixture(t)
+	ctx := context.Background()
+	category := f.requireCategory(t, "cat-presence")
+
+	standalone := visibleOption(category, "presence-standalone", 900)
+	if _, err := f.rawInsertVariantProduct(ctx, standalone, nil, nil); err != nil {
+		t.Fatalf("insert the standalone product: %v", err)
+	}
+
+	// Group A: one visible option, hidden later.
+	groupA, err := f.rawInsertGroup(ctx, category, "presence-group-hide", 1)
+	if err != nil {
+		t.Fatalf("insert group A: %v", err)
+	}
+	labelA := "Flins"
+	optionA := visibleOption(category, "presence-hide-option", 1000)
+	optionAID, err := f.rawInsertVariantProduct(ctx, optionA, &groupA, &labelA)
+	if err != nil {
+		t.Fatalf("insert group A's option: %v", err)
+	}
+
+	// Group B: one visible option, removed later.
+	groupB, err := f.rawInsertGroup(ctx, category, "presence-group-remove", 2)
+	if err != nil {
+		t.Fatalf("insert group B: %v", err)
+	}
+	labelB := "Dottore"
+	optionB := visibleOption(category, "presence-remove-option", 1100)
+	optionBID, err := f.rawInsertVariantProduct(ctx, optionB, &groupB, &labelB)
+	if err != nil {
+		t.Fatalf("insert group B's option: %v", err)
+	}
+
+	// requireCatalogue asserts the page, its total and that no grouped product
+	// reached the standalone side (FR-001).
+	requireCatalogue := func(t *testing.T, wantGroups []string, wantTotal int) {
+		t.Helper()
+		entries, total, err := f.repo.ListCatalogue(ctx, visibleListQuery(category))
+		if err != nil {
+			t.Fatalf("ListCatalogue: %v", err)
+		}
+		if total != int64(wantTotal) || len(entries) != wantTotal {
+			t.Fatalf("expected %d entries, got %d of a total %d", wantTotal, len(entries), total)
+		}
+		gotGroups := map[string]bool{}
+		for _, entry := range entries {
+			switch string(entry.Type) {
+			case "variant-group":
+				gotGroups[entry.Slug] = true
+			case "product":
+				if entry.Slug != "presence-standalone" {
+					t.Fatalf("a grouped product leaked onto the standalone side: %q", entry.Slug)
+				}
+			default:
+				t.Fatalf("unexpected entry type %q", entry.Type)
+			}
+		}
+		if len(gotGroups) != len(wantGroups) {
+			t.Fatalf("expected the groups %v, got %v", wantGroups, gotGroups)
+		}
+		for _, slug := range wantGroups {
+			if !gotGroups[slug] {
+				t.Fatalf("the group %q is missing from the list: %v", slug, gotGroups)
+			}
+		}
+	}
+
+	// Both groups are present; neither grouped product is a standalone entry.
+	requireCatalogue(t, []string{"presence-group-hide", "presence-group-remove"}, 3)
+
+	// Hide group A's only option: the group leaves and the total drops by one.
+	if _, err := f.pool.Exec(ctx, `UPDATE products SET sell_state = 'DISCONTINUED' WHERE id = $1`, optionAID); err != nil {
+		t.Fatalf("hide group A's option: %v", err)
+	}
+	requireCatalogue(t, []string{"presence-group-remove"}, 2)
+
+	// Remove group B's only option: the group leaves and the total drops again.
+	if _, err := f.pool.Exec(ctx, `DELETE FROM products WHERE id = $1`, optionBID); err != nil {
+		t.Fatalf("remove group B's option: %v", err)
+	}
+	requireCatalogue(t, nil, 1)
+}
+
 // FR-005, research D7: a group's card price is the lowest price among its
 // *visible* options, and its card image is its own main picture.
 func TestGroupCardPriceIsTheLowestVisibleOption(t *testing.T) {

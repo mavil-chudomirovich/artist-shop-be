@@ -170,6 +170,14 @@ func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.Visib
 		if query.CategoryID != nil && item.CategoryID != *query.CategoryID {
 			continue
 		}
+		// Mirror the adapter's EXISTS(visible option) half of the group
+		// predicate: a group row is emitted only while at least one of its
+		// options is itself visible (FR-006). A group whose every option is
+		// hidden is absent from the list, the same way it answers not-found on
+		// its own route, so the fake cannot be more permissive than the SQL.
+		if !m.hasVisibleOption(item.ID, visible) {
+			continue
+		}
 		all = append(all, item)
 	}
 	for _, product := range m.products {
@@ -223,6 +231,28 @@ func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.Visib
 		end = len(all)
 	}
 	return all[start:end], total, nil
+}
+
+// hasVisibleOption mirrors the adapter's EXISTS(visible option) predicate: it
+// reports whether the group named by groupID has at least one option a customer
+// may see. The option's own category must be visible and it must be on sale or
+// an announced pre-order, exactly the rule the merged read's standalone loop
+// applies to a product (FR-006, research D4). It is what keeps the merged list
+// from showing a group whose every option is hidden.
+func (m *memoryProducts) hasVisibleOption(groupID uuid.UUID, visible map[uuid.UUID]bool) bool {
+	for _, product := range m.products {
+		if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
+			continue
+		}
+		if !visible[product.CategoryID] {
+			continue
+		}
+		if product.SellState != constant.SellStateActive && !product.IsPreorder {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // ListOptionsByGroupIDs mirrors the adapter's bulk option read for the detail
@@ -758,5 +788,43 @@ func TestAGroupWithNoVisibleOptionAnswersNotFoundLikeAnUnknownSlug(t *testing.T)
 	}
 	if _, err := svc.GetPublicGroupBySlug(ctx, dto.PublicVariantGroupRefInput{Slug: "never-existed"}); !errors.Is(err, domainerr.ErrVariantGroupNotFound) {
 		t.Fatalf("an unknown slug must answer not-found, got %v", err)
+	}
+}
+
+// FR-006, FR-008, SC-002: a group whose every option is hidden is absent from the
+// merged list and is not counted, so an empty group never lingers in the
+// customer-facing catalogue. The not-found half of this story is already proven by
+// TestAGroupWithNoVisibleOptionAnswersNotFoundLikeAnUnknownSlug; this is the list
+// half, where the products fake mirrors the adapter's EXISTS-visible-option
+// predicate and must therefore drop the group it was handed.
+func TestAGroupWithNoVisibleOptionIsAbsentFromTheCatalogueList(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	repo := newMemoryProducts()
+	groupID := uuid.New()
+	// The group's only option is retired: hidden from customers on its own, so it
+	// cannot keep the group on the list (FR-006).
+	hidden := repo.seed(t, model.ProductDraft{
+		Name: "Card Hidden", Slug: "card-hidden", Price: price(120000),
+		CategoryID: category, Position: 1, VariantGroupID: &groupID, VariantLabel: strptr("Hidden"),
+	}, base)
+	repo.move(t, hidden.ID, (*model.Product).Retire)
+
+	// The group row the adapter's UNION ALL would derive were the group visible;
+	// seeded directly to prove the list drops it because it has no visible option.
+	repo.catalogueGroups = []domainrepo.CatalogueItem{{
+		Type: domainrepo.CatalogueEntryVariantGroup, ID: groupID, Name: "Card Genshin",
+		Slug: "card-genshin", CategoryID: category, Position: 0, CreatedAt: base,
+	}}
+
+	svc := catalogueService(repo, newMemoryVariantGroups(), &fakeVisibility{visible: []uuid.UUID{category}})
+	page, err := svc.ListCatalogue(context.Background(), dto.ListPublicInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListCatalogue: %v", err)
+	}
+	if len(page.Entries) != 0 || page.Total != 0 {
+		t.Fatalf("a group with no visible option must be absent and uncounted, got %d entries and a total of %d",
+			len(page.Entries), page.Total)
 	}
 }
