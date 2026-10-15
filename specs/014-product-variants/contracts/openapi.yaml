@@ -1,0 +1,655 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Product Variants (module 04 extension)
+  version: 1.0.0
+  description: >
+    The feature adds a variant group — a catalogue entry that offers one product in several
+    interchangeable choices (e.g. a card set with "Flins"/"Dottore") — without changing any
+    cross-module contract. Each option is an ordinary product, so a customer still adds a product id
+    to the cart. Every response uses the foundation envelope (data + meta, or error) and the
+    X-Request-Id correlation header. Group routes are administrator-only behind the ADMIN role; the
+    group detail and the catalogue are public.
+
+    The two new / changed contracts for existing clients:
+    - `GET /api/v1/products` items gain a `type` discriminator ("product" | "variant-group"); group
+      entries carry the group's own `slug`.
+    - `GET /api/v1/products/{slug}` detail gains an optional `variantGroup` selector when the product
+      is an option.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: catalogue
+    description: Public browsing. No authentication.
+  - name: admin
+    description: Maintenance. Administrator role required.
+paths:
+  /api/v1/products:
+    get:
+      tags: [catalogue]
+      summary: List the catalogue a customer can see (products and variant groups)
+      description: >
+        One entry per visible product and per visible variant group, ordered by position then
+        creation then id. A variant group is visible only while at least one of its options is
+        visible; its price is the lowest price among its visible options. A product that belongs to a
+        group is represented by that group, not listed individually.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/CategoryFilter"
+      responses:
+        "200":
+          description: A page of catalogue entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicCatalogueEntry"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+
+  /api/v1/product-groups/{slug}:
+    get:
+      tags: [catalogue]
+      summary: Read a variant group by slug (public)
+      description: >
+        Returns the group's shared name, description, option-dimension name and its own picture
+        gallery, together with its visible options (each with label, price, picture and preorder
+        flag). Hidden, empty-of-visible-options, retired-by-category or unknown answers the same
+        not-found.
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: A variant group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublicVariantGroupDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/products/{slug}:
+    get:
+      tags: [catalogue]
+      summary: Read one product by slug (public)
+      description: >
+        As today, plus an optional `variantGroup` selector when the product is an option of a group:
+        the group's shared content and its sibling options, so a shared link to one option resolves
+        and the customer can switch.
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: A product.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PublicProductDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/admin/product-groups:
+    get:
+      tags: [admin]
+      summary: List every variant group (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of variant groups.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AdminVariantGroup"
+                  meta:
+                    $ref: "#/components/schemas/Meta"
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a variant group (ADMIN)
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVariantGroupRequest"
+      responses:
+        "201":
+          description: The created group.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminVariantGroupDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/product-groups/{id}:
+    get:
+      tags: [admin]
+      summary: Read one variant group (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The group with its images and options.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminVariantGroupDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [admin]
+      summary: Update a variant group (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVariantGroupRequest"
+      responses:
+        "200":
+          description: The updated group.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminVariantGroupDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [admin]
+      summary: Remove a variant group (ADMIN)
+      description: Refused with VARIANT_GROUP_HAS_OPTIONS while the group still has options.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/product-groups/{id}/images:
+    post:
+      tags: [admin]
+      summary: Upload a group picture (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image: { type: string, format: binary }
+      responses:
+        "201":
+          description: The group with the new picture.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminVariantGroupDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+
+  /api/v1/admin/product-groups/{id}/images/{imageId}:
+    delete:
+      tags: [admin]
+      summary: Remove a group picture (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/ImageId"
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/product-groups/{id}/images/{imageId}/primary:
+    post:
+      tags: [admin]
+      summary: Set the group's main picture (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/ImageId"
+      responses:
+        "200":
+          description: The group with the new main picture.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminVariantGroupDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products:
+    post:
+      tags: [admin]
+      summary: Create a product (ADMIN)
+      description: >
+        As today; the body gains optional `variantGroupId` and `variantLabel`. Sending both attaches
+        the new product to a group as an option; sending neither creates an ordinary product.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductRequest"
+      responses:
+        "201":
+          description: The created product.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminProductDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/{id}:
+    patch:
+      tags: [admin]
+      summary: Update a product (ADMIN)
+      description: >
+        As today; the body gains optional `variantGroupId` and `variantLabel`. Sending both attaches
+        or moves the product to a group as an option; sending both as null detaches it; omitting them
+        keeps the current attachment. Price, pictures, sell state and link are untouched by an
+        attach/detach.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductRequest"
+      responses:
+        "200":
+          description: The updated product.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/AdminProductDetail" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    CategoryFilter:
+      name: category
+      in: query
+      schema: { type: string }
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ImageId:
+      name: imageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationError:
+      description: A field is invalid; details[].field names it.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Not found (unknown, hidden or removed).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: The current data does not allow the request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthenticated:
+      description: No valid session.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: The caller lacks the required role.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    TooLarge:
+      description: The upload exceeds the size ceiling.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  schemas:
+    Meta:
+      type: object
+      properties:
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer, format: int64 }
+    ErrorEnvelope:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+    Price:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string, minLength: 3, maxLength: 3 }
+
+    PublicCatalogueEntry:
+      type: object
+      required: [type, id, name, slug, price]
+      properties:
+        type:
+          type: string
+          enum: [product, variant-group]
+          description: >
+            "product" for a standalone product, "variant-group" for a group. The client picks the
+            route by type: products at /products/{slug}, groups at /product-groups/{slug}.
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+        isPreorder:
+          type: boolean
+          description: False for a variant group (a group carries no sell state).
+
+    PublicVariantOption:
+      type: object
+      required: [id, slug, label, price]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        label: { type: string, description: "The option value, e.g. \"Flins\"." }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+        isPreorder: { type: boolean }
+
+    PublicImage:
+      type: object
+      required: [id, url, width, height]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+
+    PublicVariantGroupDetail:
+      type: object
+      required: [id, name, slug, optionName, options]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        optionName: { type: string, description: "The single choice-dimension name, e.g. \"Card\"." }
+        images:
+          type: array
+          items: { $ref: "#/components/schemas/PublicImage" }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/PublicVariantOption" }
+
+    PublicProductDetail:
+      type: object
+      description: The existing product detail, plus variantGroup when the product is an option.
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+        isPreorder: { type: boolean }
+        images:
+          type: array
+          items: { $ref: "#/components/schemas/PublicImage" }
+        variantGroup:
+          description: Present when the product is an option of a group.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, slug, name, optionName, options]
+              properties:
+                id: { type: string, format: uuid }
+                slug: { type: string }
+                name: { type: string }
+                optionName: { type: string }
+                images:
+                  type: array
+                  items: { $ref: "#/components/schemas/PublicImage" }
+                options:
+                  type: array
+                  items: { $ref: "#/components/schemas/PublicVariantOption" }
+
+    AdminVariantGroup:
+      type: object
+      required: [id, name, slug, categoryId, position, optionName]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        optionName: { type: string }
+        imageCount: { type: integer }
+        imageUrl: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AdminGroupImage:
+      type: object
+      required: [id, publicId, url, width, height, position, isPrimary]
+      properties:
+        id: { type: string, format: uuid }
+        publicId: { type: string }
+        url: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        position: { type: integer }
+        isPrimary: { type: boolean }
+
+    AdminGroupOption:
+      type: object
+      required: [id, name, slug, label, price]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        label: { type: string }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+        position: { type: integer }
+        sellState: { type: string, enum: [COMING_SOON, ACTIVE, OUT_OF_STOCK, DISCONTINUED] }
+        isPreorder: { type: boolean }
+
+    AdminVariantGroupDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminVariantGroup"
+        - type: object
+          properties:
+            images:
+              type: array
+              items: { $ref: "#/components/schemas/AdminGroupImage" }
+            options:
+              type: array
+              items: { $ref: "#/components/schemas/AdminGroupOption" }
+
+    CreateVariantGroupRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug, description, categoryId, position, optionName]
+      properties:
+        name: { type: string, maxLength: 120 }
+        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 5000 }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        optionName: { type: string }
+
+    UpdateVariantGroupRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 5000 }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        optionName: { type: string }
+
+    CreateProductRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug, description, price, categoryId, position]
+      properties:
+        name: { type: string, maxLength: 120 }
+        slug: { type: string, maxLength: 140 }
+        description: { type: string, maxLength: 5000 }
+        price: { $ref: "#/components/schemas/Price" }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        isSet: { type: boolean }
+        memberProductIds:
+          type: array
+          items: { type: string, format: uuid }
+        isPreorder: { type: boolean }
+        preorderExpectedAt: { type: [string, "null"], format: date }
+        variantGroupId:
+          type: string
+          format: uuid
+          description: Attaches the new product to a group as an option. Requires variantLabel.
+        variantLabel:
+          type: string
+          description: The option value; required when variantGroupId is present.
+
+    UpdateProductRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        slug: { type: string, maxLength: 140 }
+        description: { type: string, maxLength: 5000 }
+        price: { $ref: "#/components/schemas/Price" }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        isSet: { type: boolean }
+        memberProductIds:
+          type: array
+          items: { type: string, format: uuid }
+        isPreorder: { type: boolean }
+        preorderExpectedAt: { type: [string, "null"], format: date }
+        variantGroupId:
+          type: string
+          format: uuid
+          description: >
+            Attach or move the product to this group. Send null together with variantLabel null to
+            detach. Omit both to keep the current attachment.
+        variantLabel:
+          type: string
+          description: The option value; required when variantGroupId is present.
