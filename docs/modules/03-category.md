@@ -76,6 +76,12 @@ là bất biến và duy nhất (FR-015), và luật xoá đã định nghĩa (h
 lại). Phần còn lại — chặn xoá khi còn sản phẩm — nay đã trở thành bảo đảm ở tầng lưu trữ:
 module 04 đã thêm tham chiếu `products_category_fk`.
 
+Từ feature 014 (Product Variants), một khoá ngoại **thứ hai** cùng tham chiếu `categories(id)`
+với `ON DELETE RESTRICT`: `product_variant_groups_category_fk` trên bảng nhóm biến thể. Nhờ vậy
+không thể xoá một danh mục còn nhóm biến thể; module này vẫn dịch lỗi khoá ngoại (SQLSTATE 23503)
+thành `409 CATEGORY_IN_USE` **không** kiểm tra tên constraint, nên hành vi không đổi — chỉ là
+comment trong `classifyDeleteError` được cập nhật cho đúng.
+
 Hợp đồng HTTP của module nằm ở [api-reference.md](../api-reference.md) mục 5 — danh sách
 endpoint và mã lỗi chỉ có ở đó, file này không nhân bản.
 

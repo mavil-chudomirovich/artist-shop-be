@@ -25,6 +25,11 @@ endpoint would confirm which groups the operator has not published (FR-006, FR-0
 **administrator** surface the group is read regardless of category/options, so only "unknown" and
 "removed" arise.
 
+It is also answered by the product create/edit routes when `variantGroupId` names no group (the
+`products_variant_group_fk` refusal), so attaching a product to a group that does not exist is a
+`404 VARIANT_GROUP_NOT_FOUND` rather than a `VALIDATION_ERROR` — the referenced group is a missing
+resource, not a malformed value.
+
 ### Why the removal and attachment refusals are conflicts
 
 Removing a group with options and attaching a product that already has a group are well-formed

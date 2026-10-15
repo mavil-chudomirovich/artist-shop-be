@@ -155,27 +155,27 @@ maintains groups) are the core and ship together** — one without the other sho
 
 **Purpose**: Contract docs, ADR, swagger, the frontend hand-off and the full gate
 
-- [ ] T038 [P] Update `docs/api-reference.md` §6 — the changed `GET /products` (the `type` discriminator), the new `GET /product-groups/{slug}`, the changed product detail (`variantGroup`), the new admin group endpoints, the changed product create/edit bodies, the new error codes, the summary table and the change log (Constitution VIII)
-- [ ] T039 [P] Update `docs/modules/04-product.md` — move "biến thể một chiều" out of "Không (hoãn)" into delivered scope, and point to `specs/014-product-variants/deferred.md` for what stays deferred
-- [ ] T040 [P] Write the ADR `docs/decisions/020-product-variants.md` — a group is its own table; an option is an ordinary product (so no cross-module contract changes); the merged catalogue list; the two slug namespaces; group-removal RESTRICT
+- [x] T038 [P] Update `docs/api-reference.md` §6 — the changed `GET /products` (the `type` discriminator), the new `GET /product-groups/{slug}`, the changed product detail (`variantGroup`), the new admin group endpoints, the changed product create/edit bodies, the new error codes, the summary table and the change log (Constitution VIII)
+- [x] T039 [P] Update `docs/modules/04-product.md` — move "biến thể một chiều" out of "Không (hoãn)" into delivered scope, and point to `specs/014-product-variants/deferred.md` for what stays deferred
+- [x] T040 [P] Write the ADR `docs/decisions/020-product-variants.md` — a group is its own table; an option is an ordinary product (so no cross-module contract changes); the merged catalogue list; the two slug namespaces; group-removal RESTRICT
 
 ### Swagger annotations *(bắt buộc — feature có endpoint)*
 
-- [ ] T041 Ensure every new/changed handler in `internal/modules/product/presentation/http/handler.go` carries `@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`, then run `make swagger` to regenerate `docs/swagger/`; `make swagger-check` must pass (Constitution VIII)
+- [x] T041 Ensure every new/changed handler in `internal/modules/product/presentation/http/handler.go` carries `@Summary`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`, then run `make swagger` to regenerate `docs/swagger/`; `make swagger-check` must pass (Constitution VIII)
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance; feature CÓ đổi bề mặt client)*
 
-- [ ] T042 Write `specs/014-product-variants/frontend-guide.md` enumerating every affected endpoint with method and path, marked **new/changed**, with before → after for each changed one — at minimum: `GET /products` (items gain `type`; grouped products leave as their group), `GET /products/{slug}` (gains `variantGroup`), `GET /product-groups/{slug}` (new), `POST/PATCH /admin/products` (gain `variantGroupId`/`variantLabel`), the new `/admin/product-groups*` endpoints, and the new error codes
-- [ ] T043 **Đồng bộ guide** after the source is stable: re-read `frontend-guide.md` and compare against the source **with counts** — every DTO JSON field, every enum value, every listed route, every HTTP status. Fix every drift; state any part that could not be checked and why
+- [x] T042 Write `specs/014-product-variants/frontend-guide.md` enumerating every affected endpoint with method and path, marked **new/changed**, with before → after for each changed one — at minimum: `GET /products` (items gain `type`; grouped products leave as their group), `GET /products/{slug}` (gains `variantGroup`), `GET /product-groups/{slug}` (new), `POST/PATCH /admin/products` (gain `variantGroupId`/`variantLabel`), the new `/admin/product-groups*` endpoints, and the new error codes
+- [x] T043 **Đồng bộ guide** after the source is stable: re-read `frontend-guide.md` and compare against the source **with counts** — every DTO JSON field, every enum value, every listed route, every HTTP status. Fix every drift; state any part that could not be checked and why
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T044 Write `specs/014-product-variants/deferred.md` for any out-of-scope debt found while building (per-option availability on the group page, multi-dimension options, option reordering beyond `position`, a shared-slug registry if ever wanted) — what it is, why out of scope, what would unblock it. Do not leave unchecked tasks here
+- [x] T044 Write `specs/014-product-variants/deferred.md` for any out-of-scope debt found while building (per-option availability on the group page, multi-dimension options, option reordering beyond `position`, a shared-slug registry if ever wanted) — what it is, why out of scope, what would unblock it. Do not leave unchecked tasks here
 
 ### Validation
 
 - [ ] T045 Validate `specs/014-product-variants/quickstart.md` end-to-end (Scenarios A–G) against the running stack and record the outcome; mark the manual checks (e.g. the 404 consistency) as manual, not automated
-- [ ] T046 [P] Correct module 03's now-stale assumption: the `classifyDeleteError` comment in `internal/modules/category/infrastructure/implement/postgres/category.go` ("products_category_fk is the only foreign key that points at categories") is no longer true once `product_variant_groups_category_fk` exists; update the comment (behaviour is unchanged — the SQLSTATE-based mapping already covers any category FK) and add the one-line note to `docs/modules/03-category.md`; run `make fmt-check` after (comment-only change)
+- [x] T046 [P] Correct module 03's now-stale assumption: the `classifyDeleteError` comment in `internal/modules/category/infrastructure/implement/postgres/category.go` ("products_category_fk is the only foreign key that points at categories") is no longer true once `product_variant_groups_category_fk` exists; update the comment (behaviour is unchanged — the SQLSTATE-based mapping already covers any category FK) and add the one-line note to `docs/modules/03-category.md`; run `make fmt-check` after (comment-only change)
 - [ ] T047 Run the full gate `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check); confirm the existing catalogue/cart/order/inventory suites pass unchanged (SC-005)
 
 ---

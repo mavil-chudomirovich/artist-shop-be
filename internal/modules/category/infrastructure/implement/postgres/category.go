@@ -394,10 +394,12 @@ func classifyWriteError(operation string, err error) error {
 //
 // Attribution is by the SQLSTATE PostgreSQL reports, never by its message text:
 // the message is localized and free to change while the SQLSTATE is part of the
-// protocol. products_category_fk is the only foreign key that points at
-// categories, so a 23503 from this delete can only mean products still reference
-// the row. Any other failure is returned unwrapped rather than guessed at, so an
-// unexpected error cannot be quietly reported as a category in use.
+// protocol. Two foreign keys now point at categories — products_category_fk and
+// product_variant_groups_category_fk (feature 014) — and a 23503 from this delete
+// means a row of either still references the category, so the mapping is
+// unchanged; the constraint name is deliberately not inspected. Any other failure
+// is returned unwrapped rather than guessed at, so an unexpected error cannot be
+// quietly reported as a category in use.
 func classifyDeleteError(operation string, err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == foreignKeyViolationCode {

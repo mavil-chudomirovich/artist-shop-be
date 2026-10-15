@@ -312,6 +312,7 @@ paths:
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/admin/products/{id}:
@@ -320,9 +321,11 @@ paths:
       summary: Update a product (ADMIN)
       description: >
         As today; the body gains optional `variantGroupId` and `variantLabel`. Sending both attaches
-        or moves the product to a group as an option; sending both as null detaches it; omitting them
-        keeps the current attachment. Price, pictures, sell state and link are untouched by an
-        attach/detach.
+        the product to a group as an option, but only when it belongs to no group yet (a product
+        already in another group is refused with 409 PRODUCT_ALREADY_IN_VARIANT_GROUP); sending both
+        as null detaches it; omitting them keeps the current attachment. A `variantGroupId` naming no
+        group answers 404 VARIANT_GROUP_NOT_FOUND. Price, pictures, sell state and link are untouched
+        by an attach/detach.
       security: [{ BearerAuth: [] }]
       parameters:
         - $ref: "#/components/parameters/Id"

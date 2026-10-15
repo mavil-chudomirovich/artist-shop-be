@@ -198,9 +198,15 @@ member lạ → `MALFORMED_REQUEST` 400.
 | `PRODUCT_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte tải lên không phải JPEG, PNG hoặc WebP (nhận theo chữ ký nội dung) |
 | `PRODUCT_IMAGE_TOO_LARGE` | 413 | Ảnh vượt trần 2 MB |
 | `PRODUCT_MEDIA_UNAVAILABLE` | 503 | Dịch vụ media từ chối hoặc không lưu được; **không có gì bị đổi** nên thử lại được |
+| `VARIANT_GROUP_NOT_FOUND` | 404 | Không có nhóm biến thể nào mang định danh/slug đó, **hoặc** nhóm bị ẩn — danh mục của nó bị ẩn, không lựa chọn nào của nó hiển thị, hoặc đã bị xoá. Trên bề mặt công khai các tình huống này **cố ý** trả lời giống nhau (mục 6.12) |
+| `VARIANT_GROUP_SLUG_TAKEN` | 409 | Một nhóm biến thể khác đã dùng slug đó (so khớp sau khi trim và bỏ qua hoa/thường) |
+| `VARIANT_GROUP_HAS_OPTIONS` | 409 | Nhóm còn lựa chọn nên không xoá được; phải gỡ các lựa chọn trước |
+| `VARIANT_LABEL_TAKEN` | 409 | Một lựa chọn khác trong cùng nhóm đã dùng nhãn đó |
+| `PRODUCT_ALREADY_IN_VARIANT_GROUP` | 409 | Sản phẩm đã là lựa chọn của một nhóm; gán nó vào nhóm khác bị từ chối (mỗi sản phẩm thuộc tối đa một nhóm) |
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module product (xem
-`specs/006-product-catalog/contracts/error-codes.md`): slug không an toàn URL, một trường vượt
+`specs/006-product-catalog/contracts/error-codes.md` và
+`specs/014-product-variants/contracts/error-codes.md`): slug không an toàn URL, một trường vượt
 độ dài, giá không dương, `currency` không phải ba chữ in hoa, `categoryId`/`memberProductIds`
 không tồn tại → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không
 phải UUID → `VALIDATION_ERROR` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED` 401; `CUSTOMER`
@@ -208,13 +214,26 @@ gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`); `
 khoảng → `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ →
 `MALFORMED_REQUEST` 400.
 
+Với variant group, các tình huống sau **cũng** không sinh mã riêng: tên/slug/mô tả nhóm vượt
+độ dài; slug nhóm không an toàn URL; `categoryId` của nhóm không tồn tại; nhãn lựa chọn rỗng
+khi đang gắn nhóm → `VALIDATION_ERROR` 400 với `details[].field`; gắn/gỡ nhóm trên một sản phẩm
+**không tồn tại** → **tái sử dụng** `PRODUCT_NOT_FOUND` 404 của module 04; một sản phẩm vừa là
+combo set vừa là lựa chọn (hoặc một lựa chọn bị đặt làm set) → `VALIDATION_ERROR` 400. Nhóm
+không có lựa chọn nào **không** phải lỗi: đó là một nhóm hợp lệ, chỉ ẩn với khách.
+
 > Action `audit_logs` của module dùng tiền tố `PRODUCT_` nhưng **không** phải mã lỗi:
 > `PRODUCT_CREATED`, `PRODUCT_UPDATED`, `PRODUCT_STATE_CHANGED`, `PRODUCT_IMAGE_ADDED`,
-> `PRODUCT_IMAGE_REMOVED`, `PRODUCT_IMAGE_PRIMARY_SET`, `PRODUCT_DELETED` — xem
+> `PRODUCT_IMAGE_REMOVED`, `PRODUCT_IMAGE_PRIMARY_SET`, `PRODUCT_DELETED`, các action của
+> variant group `PRODUCT_VARIANT_GROUP_CREATED`, `PRODUCT_VARIANT_GROUP_UPDATED`,
+> `PRODUCT_VARIANT_GROUP_DELETED`, `PRODUCT_VARIANT_GROUP_IMAGE_ADDED`,
+> `PRODUCT_VARIANT_GROUP_IMAGE_REMOVED`, `PRODUCT_VARIANT_GROUP_IMAGE_PRIMARY_SET`, và hai
+> action gắn/gỡ lựa chọn `PRODUCT_VARIANT_ATTACHED`, `PRODUCT_VARIANT_DETACHED` — xem
 > `internal/modules/product/domain/constant/audit.go`. Metadata của mỗi dòng chỉ mang giá trị
 > do operator gõ (`slug` ở create/update, `from`/`to` ở đổi trạng thái, `imageId` ở thao tác
 > ảnh), **không** mang cột khoá chuẩn hoá `normalized_slug` — cột đó không bao giờ xuất hiện
-> trong response, audit hay log (`specs/006-product-catalog/data-model.md`).
+> trong response, audit hay log (`specs/006-product-catalog/data-model.md`). Metadata của thao
+> tác nhóm mang `slug` (tạo/sửa nhóm) hoặc `imageId` (thao tác ảnh nhóm); gắn/gỡ lựa chọn mang
+> `slug` của sản phẩm, còn `target_id` là định danh nhóm/sản phẩm — không mang dữ liệu cá nhân.
 
 **Riêng module inventory** (`internal/modules/inventory/domain/constant/codes.go`):
 
@@ -1686,12 +1705,13 @@ Ghi chú:
 
 ## 6. Module 04 — Product (`/api/v1`)
 
-Sản phẩm của shop: món vật lý, combo set và pre-order, cùng ảnh, giá, danh mục và trạng thái
-bán. **Một bảng, hai bề mặt, hai hình dạng response**: bề mặt công khai (`/products`, không cần
-token, địa chỉ theo **slug**) và bề mặt quản trị (`/admin/products`, vai trò `ADMIN`, địa chỉ
-theo **định danh**).
+Sản phẩm của shop: món vật lý, combo set, pre-order, và **variant group** (feature 014) — một mục
+trưng bày gom nhiều **lựa chọn** (mỗi lựa chọn là một sản phẩm đầy đủ, độc lập) — cùng ảnh, giá,
+danh mục và trạng thái bán. **Một module, hai tài nguyên (sản phẩm, nhóm), hai bề mặt**: bề mặt
+công khai (`/products` và `/product-groups`, không cần token, địa chỉ theo **slug**) và bề mặt quản
+trị (`/admin/products` và `/admin/product-groups`, vai trò `ADMIN`, địa chỉ theo **định danh**).
 
-Bốn điều dễ đọc sai, nói ngay:
+Sáu điều dễ đọc sai, nói ngay:
 
 - **Sản phẩm bị ẩn và một slug chưa từng tồn tại trả lời y hệt nhau** (`404
   PRODUCT_NOT_FOUND`). Gồm cả sản phẩm nằm trong **danh mục bị ẩn**. Nếu các tình huống trả lời
@@ -1701,15 +1721,23 @@ Bốn điều dễ đọc sai, nói ngay:
   nhưng **không mua được**. "Hiện" và "mua được" là hai điều kiện khác nhau.
 - **Trạng thái bán đi qua endpoint riêng** `POST .../state`; `PATCH` **không** nhận `sellState`.
   Một lần chuyển không hợp lệ trả `409`, không phải `400`.
+- **`GET /products` giờ là danh sách gộp** (feature 014): mỗi phần tử mang thêm `type` để phân
+  biệt `"product"` và `"variant-group"`. Một sản phẩm **đã thuộc một nhóm** **không** xuất hiện
+  riêng lẻ — nó được đại diện bởi nhóm (xem `6.1`).
+- **Nhóm và sản phẩm dùng hai không gian tên slug riêng**, địa chỉ qua hai route khác nhau
+  (`/product-groups/{slug}` và `/products/{slug}`), nên cùng một giá trị slug có thể tồn tại một
+  lần ở mỗi loại. Trùng **trong cùng một loại** vẫn `409` kèm field (xem `6.12`).
 - Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5).
 
-Hai danh sách đều phân trang theo quy ước chung: `page` mặc định `1`, `pageSize` mặc định `20`,
+Các danh sách đều phân trang theo quy ước chung: `page` mặc định `1`, `pageSize` mặc định `20`,
 khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi `id`.
 
-**Hình dạng công khai** `PublicProduct` (6 member) — một phần tử của danh sách:
+**Hình dạng công khai** — một phần tử của danh sách công khai là `PublicCatalogueEntry` (7
+member): sáu member của `PublicProduct` cộng `type`:
 
 ```json
 {
+  "type": "product",
   "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
   "name": "Acrylic stand Aki",
   "slug": "acrylic-stand-aki",
@@ -1718,6 +1746,11 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
   "isPreorder": false
 }
 ```
+
+`type` chỉ nhận `"product"` hoặc `"variant-group"`; client chọn route theo nó (sản phẩm →
+`/products/{slug}`, nhóm → `/product-groups/{slug}`). Với một phần tử nhóm, `id`/`slug`/`name` là
+của **nhóm**, `price` là giá **thấp nhất** trong các lựa chọn đang hiển thị của nhóm, `imageUrl`
+là ảnh chính của nhóm, và `isPreorder` luôn `false` (nhóm không có trạng thái bán).
 
 **Hình dạng quản trị** `AdminProduct` (15 member) — một phần tử của danh sách quản trị:
 
@@ -1743,8 +1776,10 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
 
 ### 6.1 `GET /products`
 
-Danh sách sản phẩm **khách thấy được**: đang bán (`ACTIVE`) **hoặc** là pre-order đang thông
-báo, và **danh mục chưa bị ẩn** (FR-002). Lọc tuỳ chọn theo danh mục.
+Danh sách **gộp** khách thấy được: các **sản phẩm** đang bán (`ACTIVE`) **hoặc** là pre-order đang
+thông báo, và **danh mục chưa bị ẩn** — cộng các **variant group** đang hiển thị, xếp chung trong
+một danh sách. Một sản phẩm đã thuộc một nhóm **không** xuất hiện riêng lẻ; nó được đại diện bởi
+nhóm (feature 014, FR-001). Lọc tuỳ chọn theo danh mục.
 
 | | |
 |---|---|
@@ -1755,23 +1790,29 @@ báo, và **danh mục chưa bị ẩn** (FR-002). Lọc tuỳ chọn theo danh 
 Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`),
 `category` (slug danh mục, tuỳ chọn).
 
-Response `200`: `data` là mảng `PublicProduct`; `meta` là khối phân trang chung.
+Response `200`: `data` là mảng `PublicCatalogueEntry` (7 member, phân biệt bằng `type`); `meta` là
+khối phân trang chung.
 
 Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng;
 `details[].field` là `"page"` hoặc `"pageSize"`) · `RATE_LIMITED` 429
 
 Ghi chú:
 
-- **Ẩn danh mục ẩn luôn sản phẩm bên trong** — nhưng **không** sửa gì trên dòng sản phẩm; bỏ ẩn
-  danh mục đưa sản phẩm trở lại y như cũ.
-- Lọc `?category=<slug>`: danh mục **ẩn**, **không tồn tại**, hoặc **không có sản phẩm hiển thị**
+- **Một nhóm chỉ hiển thị khi còn ít nhất một lựa chọn hiển thị.** Nhóm mà mọi lựa chọn bị ẩn,
+  bị gỡ, hoặc không có lựa chọn nào **không** xuất hiện và **không** được đếm (FR-006).
+- **Giá của card nhóm** là giá **thấp nhất** trong các lựa chọn đang hiển thị; nhóm **không** có
+  giá riêng (FR-005).
+- **Ẩn danh mục ẩn luôn sản phẩm lẫn nhóm bên trong** — nhưng **không** sửa gì trên dòng; bỏ ẩn
+  danh mục đưa chúng trở lại y như cũ (FR-027).
+- Lọc `?category=<slug>`: danh mục **ẩn**, **không tồn tại**, hoặc **không có mục hiển thị**
   đều trả `data: []` — **không** `404` — nên bộ lọc không tiết lộ danh mục ẩn (FR-006).
-- `meta.total` đếm đúng số sản phẩm hiển thị; thiếu `total` nghĩa là `0` (§1.3).
+- `meta.total` đếm đúng số **mục** hiển thị (cả sản phẩm lẫn nhóm); thiếu `total` nghĩa là `0` (§1.3).
 - Catalogue rỗng trả `data: []`, **không** phải `null` và **không** phải lỗi (FR-007).
 
 ### 6.2 `GET /products/{slug}`
 
-Đọc một sản phẩm khách thấy được theo slug, kèm mô tả và **toàn bộ** ảnh theo thứ tự.
+Đọc một sản phẩm khách thấy được theo slug, kèm mô tả và **toàn bộ** ảnh theo thứ tự. Khi sản phẩm
+là một **lựa chọn của variant group**, response mang thêm bộ chọn `variantGroup` (feature 014).
 
 | | |
 |---|---|
@@ -1779,8 +1820,12 @@ Ghi chú:
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Response `200` là `data` = `PublicProductDetail` (8 member = `PublicProduct` + `description` +
-`images`; mỗi phần tử `images` là `{ id, url, width, height }`).
+Response `200` là `data` = `PublicProductDetail` (8 member, hoặc 9 khi sản phẩm là một lựa chọn =
+`PublicProduct` + `description` + `images` + `variantGroup`; mỗi phần tử `images` là
+`{ id, url, width, height }`). `variantGroup` **vắng mặt** với sản phẩm độc lập và **có mặt** khi
+sản phẩm là một lựa chọn (FR-007): nó mang nội dung chung của nhóm (`id`, `slug`, `name`,
+`optionName`, `images`) và danh sách lựa chọn đang hiển thị của nhóm (`options`), để một link trỏ
+thẳng vào một lựa chọn vẫn mở được và khách đổi lựa chọn được.
 
 Lỗi: `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
 
@@ -1792,6 +1837,11 @@ Lỗi: `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
 >
 > Hình dạng công khai **không** liệt kê nội dung của một combo set (FR-005, research D18); chỉ
 > hình dạng quản trị (`6.5`) mới có `members`.
+>
+> Mở thẳng một **lựa chọn** cho `200` y như khi mở qua nhóm: nội dung chung của nhóm đến từ nhóm,
+> còn giá/tồn/ảnh/link là của chính lựa chọn đó (FR-007). Mỗi lựa chọn vẫn là một sản phẩm độc lập,
+> nên `variantGroup.options` có thể chứa chính nó. Ảnh đang hiển thị của một lựa chọn là ảnh
+> **của lựa chọn đó**, không phải ảnh của nhóm.
 
 ### 6.3 `GET /admin/products`
 
@@ -1834,7 +1884,9 @@ Request (`CreateProductRequest`, `additionalProperties: false`)
   "isSet": false,
   "memberProductIds": [],
   "isPreorder": false,
-  "preorderExpectedAt": null
+  "preorderExpectedAt": null,
+  "variantGroupId": null,
+  "variantLabel": null
 }
 ```
 
@@ -1843,14 +1895,22 @@ mặc định (`position` mặc định `0`, có thể âm); `memberProductIds` 
 `true`; `preorderExpectedAt` (`YYYY-MM-DD`) chỉ có nghĩa khi `isPreorder` là `true`. `slug` do
 operator viết, **không** sinh từ `name`.
 
+Gắn sản phẩm vào một variant group ngay khi tạo: gửi **cả** `variantGroupId` (định danh nhóm) và
+`variantLabel` (nhãn lựa chọn) — sản phẩm được tạo và gắn làm lựa chọn trong cùng thao tác. Gửi cả
+hai `null` (hoặc bỏ qua) tạo một sản phẩm độc lập. `variantGroupId` không đi kèm `variantLabel`
+(hay ngược lại) bị từ chối `400` với `details[].field` (FR-010, FR-021).
+
 Response `201`: `data` = `AdminProductDetail` (17 member = `AdminProduct` + `images` +
 `members`).
 
 Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng/quá 120 ký tự; `slug` rỗng, quá 140 ký tự hoặc không
 khớp mẫu URL-safe; `description` quá 5000 ký tự; `price.amount` không dương; `price.currency`
-không phải ba chữ in hoa; `categoryId`/`memberProductIds` không tồn tại — `details[].field` chỉ
-đúng member) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
-`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+không phải ba chữ in hoa; `categoryId`/`memberProductIds` không tồn tại;
+`variantGroupId`/`variantLabel` không đi kèm nhau, hoặc sản phẩm là combo set mà vẫn gắn nhóm —
+`details[].field` chỉ đúng member) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member
+lạ) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `VARIANT_GROUP_NOT_FOUND` 404 (`variantGroupId`
+trỏ tới nhóm không tồn tại) · `PRODUCT_SLUG_TAKEN` 409 · `VARIANT_LABEL_TAKEN` 409 (nhãn đã có
+trong nhóm) · `RATE_LIMITED` 429
 
 Ghi chú:
 
@@ -1858,7 +1918,8 @@ Ghi chú:
   lên `ACTIVE` (FR-002, FR-040).
 - Combo set là **một sản phẩm độc lập** có giá riêng do operator đặt; giá này **không** suy ra
   từ các thành viên (FR-039, research D10).
-- Mỗi lần tạo ghi `audit_logs` với action `PRODUCT_CREATED`, metadata `{"slug": ...}`.
+- Mỗi lần tạo ghi `audit_logs` với action `PRODUCT_CREATED`, metadata `{"slug": ...}`; tạo kèm gắn
+  nhóm ghi thêm `PRODUCT_VARIANT_ATTACHED`.
 
 ### 6.5 `GET /admin/products/{id}`
 
@@ -1900,7 +1961,9 @@ Request (`UpdateProductRequest`, mọi member tuỳ chọn, `additionalPropertie
   "isSet": true,
   "memberProductIds": ["<uuid>", "<uuid>"],
   "isPreorder": true,
-  "preorderExpectedAt": "2026-12-01"
+  "preorderExpectedAt": "2026-12-01",
+  "variantGroupId": null,
+  "variantLabel": null
 }
 ```
 
@@ -1908,16 +1971,25 @@ Gửi `memberProductIds` **thay toàn bộ** danh sách thành viên (chỉ ghi 
 hết; đổi `isSet` từ `true` sang `false` cũng xoá thành viên. `isPreorder: false` xoá luôn
 `preorderExpectedAt` (FR-040).
 
+`variantGroupId`/`variantLabel` là **ba trạng thái** (feature 014, research D13): **bỏ qua** cả hai
+giữ nguyên tình trạng gắn nhóm hiện tại; gửi **cả hai `null`** gỡ sản phẩm khỏi nhóm (thành sản
+phẩm độc lập); gửi **cả hai có giá trị** gắn sản phẩm vào nhóm với nhãn đó. Gắn/gỡ **không** đụng
+tới giá, ảnh, trạng thái bán hay slug của sản phẩm (FR-010, FR-011). Một sản phẩm đã thuộc một
+nhóm **không** gắn thẳng sang nhóm khác được — phải gỡ trước (FR-021).
+
 Response `200`: `data` = `AdminProductDetail`.
 
 Lỗi: `VALIDATION_ERROR` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN`
-403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+403 · `PRODUCT_NOT_FOUND` 404 · `VARIANT_GROUP_NOT_FOUND` 404 (`variantGroupId` trỏ tới nhóm
+không tồn tại) · `PRODUCT_SLUG_TAKEN` 409 · `VARIANT_LABEL_TAKEN` 409 ·
+`PRODUCT_ALREADY_IN_VARIANT_GROUP` 409 (gắn sản phẩm đã thuộc nhóm khác) · `RATE_LIMITED` 429
 
 Ghi chú:
 
 - Gửi lại **đúng slug sản phẩm đang giữ** thành công — một sản phẩm không bao giờ trùng với
   chính nó.
-- Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"slug": ...}`.
+- Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"slug": ...}`; một lần gắn ghi thêm
+  `PRODUCT_VARIANT_ATTACHED`, một lần gỡ ghi thêm `PRODUCT_VARIANT_DETACHED`.
 
 ### 6.7 `DELETE /admin/products/{id}`
 
@@ -2070,6 +2142,272 @@ Ghi chú:
   thể để lại hai ảnh chính; partial unique index trên `(product_id) WHERE is_primary` là bảo
   đảm ở tầng lưu trữ (research D7).
 - Ghi `audit_logs` với action `PRODUCT_IMAGE_PRIMARY_SET`, metadata `{"imageId": ...}`.
+
+---
+
+### 6.12 `GET /product-groups/{slug}`
+
+Đọc một **variant group** khách thấy được theo slug (feature 014, FR-002): nội dung chung của nhóm
+(tên, mô tả, tên chiều chọn) và **bộ ảnh riêng** của nhóm, cùng **các lựa chọn đang hiển thị** —
+mỗi lựa chọn mang nhãn, giá, ảnh và cờ pre-order **của chính nó**. Đây là route công khai của nhóm,
+tách khỏi `/products/{slug}`.
+
+| | |
+|---|---|
+| Auth | Không |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`: `data` = `PublicVariantGroupDetail` (7 member: `id`, `name`, `slug`, `description`,
+`optionName`, `images`, `options`). Mỗi phần tử `images` là `{ id, url, width, height }`; mỗi phần
+tử `options` là `PublicVariantOption` (6 member: `id`, `slug`, `label`, `price`, `imageUrl`,
+`isPreorder`).
+
+```json
+{
+  "id": "1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d",
+  "name": "Card Genshin",
+  "slug": "card-genshin",
+  "description": "Bộ card nhân vật",
+  "optionName": "Card",
+  "images": [
+    { "id": "aa11...", "url": "https://res.cloudinary.com/demo/image/upload/banner.jpg", "width": 1200, "height": 1600 }
+  ],
+  "options": [
+    { "id": "bb22...", "slug": "card-flins", "label": "Flins", "price": { "amount": 50000, "currency": "VND" }, "imageUrl": "https://res.cloudinary.com/demo/image/upload/flins.jpg", "isPreorder": false },
+    { "id": "cc33...", "slug": "card-dottore", "label": "Dottore", "price": { "amount": 60000, "currency": "VND" }, "imageUrl": null, "isPreorder": false }
+  ]
+}
+```
+
+Lỗi: `VARIANT_GROUP_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+> **Nhóm bị ẩn, nhóm không còn lựa chọn hiển thị, nhóm nằm trong danh mục bị ẩn, nhóm đã xoá và
+> slug chưa từng tồn tại trả lời y hệt nhau** — cùng `404 VARIANT_GROUP_NOT_FOUND` (FR-008). Nếu
+> khác nhau, endpoint sẽ xác nhận nhóm operator đã chọn **không** công bố.
+>
+> Nhóm **không** có giá và **không** có trạng thái bán: mỗi lựa chọn giữ giá, trạng thái và ảnh
+> riêng (FR-016, FR-017). `options` luôn là mảng (có thể rỗng), **không** bao giờ `null`.
+
+### 6.13 `GET /admin/product-groups`
+
+Danh sách **toàn bộ** nhóm, kể cả nhóm không hiển thị với khách (FR-013).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query: `page` (mặc định `1`, tối thiểu `1`), `pageSize` (mặc định `20`, khoảng `1..100`).
+
+Response `200`: `data` là mảng `AdminVariantGroup` (11 member: `id`, `name`, `slug`, `description`,
+`categoryId`, `position`, `optionName`, `imageCount`, `imageUrl`, `createdAt`, `updatedAt`); `meta`
+là khối phân trang chung.
+
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
+(ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
+
+### 6.14 `POST /admin/product-groups`
+
+Tạo một variant group (FR-009). Tác nhân lấy từ **session**, không bao giờ từ body.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` |
+
+Request (`CreateVariantGroupRequest`, `additionalProperties: false`)
+
+```json
+{
+  "name": "Card Genshin",
+  "slug": "card-genshin",
+  "description": "Bộ card nhân vật",
+  "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "position": 10,
+  "optionName": "Card"
+}
+```
+
+`name`, `slug`, `description`, `categoryId`, `position`, `optionName` **bắt buộc**; `position` mặc
+định `0`; `slug` do operator viết, **không** sinh từ `name`. `optionName` là **đúng một** tên chiều
+chọn (ví dụ "Card").
+
+Response `201`: `data` = `AdminVariantGroupDetail` (13 member = `AdminVariantGroup` + `images` +
+`options`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng/quá 120 ký tự; `slug` rỗng, quá 140 ký tự hoặc không
+khớp mẫu URL-safe; `description` quá 5000 ký tự; `optionName` rỗng; `categoryId` không tồn tại —
+`details[].field` chỉ đúng member) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member
+lạ) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `VARIANT_GROUP_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Nhóm mới **chưa có lựa chọn nào** và **chưa có ảnh**: đây là trạng thái hợp lệ, nhóm chỉ ẩn với
+  khách cho tới khi có lựa chọn hiển thị (FR-006).
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_CREATED`, metadata `{"slug": ...}`.
+
+### 6.15 `GET /admin/product-groups/{id}`
+
+Đọc một nhóm theo định danh, kể cả nhóm không hiển thị, với **bộ ảnh riêng** và **toàn bộ** lựa
+chọn (kể cả lựa chọn khách không thấy) — để operator quản lý một nhóm đang ẩn (FR-013).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Response `200`: `data` = `AdminVariantGroupDetail`; `images` là mảng `AdminGroupImage` (7 member:
+`id`, `publicId`, `url`, `width`, `height`, `position`, `isPrimary`); `options` là mảng
+`AdminGroupOption` (9 member: `id`, `name`, `slug`, `label`, `price`, `imageUrl`, `position`,
+`sellState`, `isPreorder`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`VARIANT_GROUP_NOT_FOUND` 404 · `RATE_LIMITED` 429
+
+### 6.16 `PATCH /admin/product-groups/{id}`
+
+Sửa một phần nhóm: member bỏ trống giữ nguyên giá trị hiện tại; ảnh sửa qua các endpoint riêng
+(FR-011).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả nhóm sau khi sửa |
+
+Request (`UpdateVariantGroupRequest`, mọi member tuỳ chọn, `additionalProperties: false`)
+
+```json
+{
+  "name": "Card Genshin mới",
+  "slug": "card-genshin-moi",
+  "description": "Mô tả mới",
+  "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+  "position": 5,
+  "optionName": "Card"
+}
+```
+
+Response `200`: `data` = `AdminVariantGroupDetail`.
+
+Lỗi: `VALIDATION_ERROR` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN`
+403 · `VARIANT_GROUP_NOT_FOUND` 404 · `VARIANT_GROUP_SLUG_TAKEN` 409 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- Gửi lại **đúng slug nhóm đang giữ** thành công — một nhóm không bao giờ trùng với chính nó.
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_UPDATED`, metadata `{"slug": ...}`.
+
+### 6.17 `DELETE /admin/product-groups/{id}`
+
+Xoá một variant group (FR-012). **Bị từ chối khi nhóm còn lựa chọn** — operator phải gỡ các lựa
+chọn trước (FR-025). Các sản phẩm từng là lựa chọn **không** bị xoá theo.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`VARIANT_GROUP_NOT_FOUND` 404 · `VARIANT_GROUP_HAS_OPTIONS` 409 · `RATE_LIMITED` 429
+
+Ghi chú:
+
+- **Ảnh của nhóm được giải phóng và các dòng ảnh bị xoá theo (cascade);** các **sản phẩm** là lựa
+  chọn của nhóm **không** bị đụng — chúng trở lại là sản phẩm độc lập vì `products.variant_group_id`
+  tham chiếu nhóm bằng `ON DELETE RESTRICT` (FR-025, research D10).
+- Xoá lại nhóm đã xoá trả cùng `404 VARIANT_GROUP_NOT_FOUND`, không phải lỗi.
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_DELETED`.
+
+### 6.18 `POST /admin/product-groups/{id}/images`
+
+Gắn một ảnh vào gallery của nhóm. Body là `multipart/form-data` với đúng một part tên `image`.
+Cùng luật media như ảnh sản phẩm (JPEG/PNG/WebP, trần 2 MB, tối đa 10 ảnh, ảnh đầu là ảnh chính)
+(FR-018).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `201 Created` — trả nhóm với ảnh mới |
+
+Request
+
+```bash
+curl -X POST http://localhost:8080/api/v1/admin/product-groups/$ID/images \
+  -H "Authorization: Bearer $ACCESS" \
+  -F "image=@banner.jpg"
+```
+
+Response `201`: `data` = `AdminVariantGroupDetail`; ảnh mới nằm trong `images` (mỗi phần tử
+`{ id, publicId, url, width, height, position, isPrimary }`).
+
+Lỗi: `VALIDATION_ERROR` 400 (thiếu part `image`, hoặc body không phải `multipart/form-data`;
+`details[].field` là `"image"`) · `MALFORMED_REQUEST` 400 · `PRODUCT_IMAGE_TYPE_UNSUPPORTED` 400 ·
+`UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `VARIANT_GROUP_NOT_FOUND` 404 ·
+`PRODUCT_IMAGE_LIMIT_REACHED` 409 (nhóm đã có đủ 10 ảnh) · `PRODUCT_IMAGE_TOO_LARGE` 413 ·
+`RATE_LIMITED` 429 · `PRODUCT_MEDIA_UNAVAILABLE` 503
+
+Ghi chú:
+
+- **Ảnh đầu tiên trở thành ảnh chính** (`isPrimary: true`); ảnh thứ 11 bị từ chối **trước khi**
+  byte nào lên provider (FR-018).
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_IMAGE_ADDED`, metadata `{"imageId": ...}`.
+
+### 6.19 `DELETE /admin/product-groups/{id}/images/{imageId}`
+
+Gỡ một ảnh khỏi gallery của nhóm và giải phóng tài nguyên đã lưu (FR-018).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `204 No Content` — **không có body** |
+
+Request: không có body.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` / `imageId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `VARIANT_GROUP_NOT_FOUND` 404 (nhóm không tồn tại hoặc ảnh không thuộc nhóm) ·
+`RATE_LIMITED` 429
+
+Ghi chú:
+
+- Gỡ **ảnh chính** sẽ thăng cấp ảnh kế theo `position`, nên nhóm còn ảnh luôn có đúng một ảnh
+  chính (FR-018, research D7).
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_IMAGE_REMOVED`, metadata `{"imageId": ...}`.
+
+### 6.20 `POST /admin/product-groups/{id}/images/{imageId}/primary`
+
+Đặt một ảnh làm ảnh chính của nhóm (FR-018).
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — trả nhóm với ảnh được chọn làm chính |
+
+Request: không có body.
+
+Response `200`: `data` = `AdminVariantGroupDetail`.
+
+Lỗi: `VALIDATION_ERROR` 400 (`id` / `imageId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `VARIANT_GROUP_NOT_FOUND` 404 (nhóm không tồn tại hoặc ảnh không thuộc nhóm) ·
+`RATE_LIMITED` 429
+
+Ghi chú:
+
+- Thao tác chạy trong một transaction, nên hai lần thăng cấp đồng thời không thể để lại hai ảnh
+  chính; partial unique index trên `(group_id) WHERE is_primary` là bảo đảm ở tầng lưu trữ
+  (research D7).
+- Ghi `audit_logs` với action `PRODUCT_VARIANT_GROUP_IMAGE_PRIMARY_SET`, metadata
+  `{"imageId": ...}`.
 
 ---
 
@@ -3087,17 +3425,26 @@ Ghi chú:
 | GET | `/api/v1/admin/categories/{categoryId}` | ADMIN | Chi tiết danh mục, kể cả ẩn |
 | PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục |
 | DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204; `409 CATEGORY_IN_USE` nếu còn sản phẩm — feature 006) |
-| GET | `/api/v1/products` | — | Sản phẩm khách thấy được (có phân trang, lọc `?category=`) |
-| GET | `/api/v1/products/{slug}` | — | Chi tiết sản phẩm theo slug |
+| GET | `/api/v1/products` | — | Catalogue gộp: sản phẩm **và** nhóm biến thể khách thấy được, phân biệt bằng `type` (có phân trang, lọc `?category=`) |
+| GET | `/api/v1/products/{slug}` | — | Chi tiết sản phẩm theo slug (kèm bộ chọn `variantGroup` khi là lựa chọn) |
+| GET | `/api/v1/product-groups/{slug}` | — | Chi tiết nhóm biến thể theo slug (công khai) |
 | GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang) |
-| POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm, luôn ở `COMING_SOON` (201) |
+| POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm, luôn ở `COMING_SOON`; kèm `variantGroupId`+`variantLabel` để gắn làm lựa chọn (201) |
 | GET | `/api/v1/admin/products/{id}` | ADMIN | Chi tiết sản phẩm, kể cả không hiển thị |
-| PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đổi `sellState`) |
+| PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đổi `sellState`; gắn/gỡ nhóm theo ba trạng thái) |
 | DELETE | `/api/v1/admin/products/{id}` | ADMIN | Xoá cứng sản phẩm (204) |
 | POST | `/api/v1/admin/products/{id}/state` | ADMIN | Chuyển trạng thái bán |
 | POST | `/api/v1/admin/products/{id}/images` | ADMIN | Gắn ảnh (multipart, ≤ 2 MB, ≤ 10 ảnh) (201) |
 | DELETE | `/api/v1/admin/products/{id}/images/{imageId}` | ADMIN | Gỡ ảnh (204) |
 | POST | `/api/v1/admin/products/{id}/images/{imageId}/primary` | ADMIN | Đặt ảnh chính |
+| GET | `/api/v1/admin/product-groups` | ADMIN | Toàn bộ nhóm biến thể, kể cả ẩn (có phân trang) |
+| POST | `/api/v1/admin/product-groups` | ADMIN | Tạo nhóm biến thể (201) |
+| GET | `/api/v1/admin/product-groups/{id}` | ADMIN | Chi tiết nhóm, kể cả ẩn, kèm ảnh + lựa chọn |
+| PATCH | `/api/v1/admin/product-groups/{id}` | ADMIN | Sửa một phần nhóm |
+| DELETE | `/api/v1/admin/product-groups/{id}` | ADMIN | Xoá nhóm (204; `409 VARIANT_GROUP_HAS_OPTIONS` nếu còn lựa chọn) |
+| POST | `/api/v1/admin/product-groups/{id}/images` | ADMIN | Gắn ảnh nhóm (multipart, ≤ 2 MB, ≤ 10 ảnh) (201) |
+| DELETE | `/api/v1/admin/product-groups/{id}/images/{imageId}` | ADMIN | Gỡ ảnh nhóm (204) |
+| POST | `/api/v1/admin/product-groups/{id}/images/{imageId}/primary` | ADMIN | Đặt ảnh chính của nhóm |
 | GET | `/api/v1/admin/inventory/{productId}` | ADMIN | Tồn kho một sản phẩm (vật lý, đang giữ, khả dụng) |
 | GET | `/api/v1/admin/inventory/{productId}/movements` | ADMIN | Lịch sử biến động kho (có phân trang, cũ nhất trước) |
 | POST | `/api/v1/admin/inventory/{productId}/restock` | ADMIN | Nhập thêm hàng |
@@ -3146,6 +3493,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-15 | **Thêm variant group một chiều vào module 04 Product (feature 014).** Một nhóm gom nhiều **lựa chọn**, mỗi lựa chọn là một **sản phẩm đầy đủ, độc lập** (giá/tồn/trạng thái/ảnh/link riêng), nên **không** đổi bất kỳ hợp đồng liên module nào — khách vẫn thêm một `productId` vào giỏ. **Đổi** `GET /products` thành danh sách **gộp**: mỗi phần tử là `PublicCatalogueEntry` **7 member** (thêm `type` = `"product"` hoặc `"variant-group"`); một sản phẩm đã thuộc nhóm **không** còn xuất hiện riêng lẻ mà được đại diện bởi nhóm; nhóm chỉ hiện khi còn ít nhất một lựa chọn hiển thị, và giá card là giá lựa chọn thấp nhất. **Đổi** `GET /products/{slug}`: khi sản phẩm là lựa chọn, `data` mang thêm bộ chọn `variantGroup` (nhóm + các lựa chọn đang hiển thị); `data` là 8 hoặc 9 member. **Thêm tám** endpoint nhóm: công khai `GET /api/v1/product-groups/{slug}`; quản trị `GET`/`POST /admin/product-groups`, `GET`/`PATCH`/`DELETE /admin/product-groups/{id}`, `POST /{id}/images`, `DELETE /{id}/images/{imageId}`, `POST /{id}/images/{imageId}/primary` (tất cả `ADMIN`). **Đổi** body `POST`/`PATCH /admin/products`: thêm `variantGroupId`+`variantLabel` — với `PATCH` là **ba trạng thái** (bỏ qua = giữ, `null` = gỡ, có giá trị = gắn), gắn/gỡ **không** đụng giá/ảnh/trạng thái/slug. **Thêm năm** mã `VARIANT_GROUP_NOT_FOUND` 404, `VARIANT_GROUP_SLUG_TAKEN` 409, `VARIANT_GROUP_HAS_OPTIONS` 409, `VARIANT_LABEL_TAKEN` 409, `PRODUCT_ALREADY_IN_VARIANT_GROUP` 409 vào mục 1.4, cùng các action audit nhóm. Nhóm và sản phẩm dùng **hai không gian tên slug riêng** (trùng trong cùng một loại vẫn `409`). Gallery nhóm dùng chung luật media và mã `PRODUCT_IMAGE_*`. Ba hình dạng mới: công khai `PublicVariantGroupDetail` **7 member** / `PublicVariantOption` **6 member**; quản trị `AdminVariantGroup` **11 member** / `AdminVariantGroupDetail` **13 member** / `AdminGroupOption` **9 member**. Mục 6 thêm `6.12`–`6.20`; bảng tổng hợp §11 cập nhật. Xem ADR-020. | `internal/modules/product/presentation/http/router.go`, `internal/modules/product/presentation/http/handler.go` |
 | 2026-10-12 | **Đổi luồng quên mật khẩu sang xác minh bằng mã OTP (module 01 Auth, feature 013).** `POST /password/forgot` nay gửi một **mã OTP 6 chữ số** qua email thay vì gửi thẳng reset token, và trả lại `429 AUTH_RESEND_COOLDOWN` khi còn trong khoảng chờ (bước này **cũng là** bước gửi lại). **Thêm** endpoint `POST /password/forgot/verify-otp`: xác minh `{ email, otp }`, thành công trả `{ resetToken, expiresIn }` — reset token dùng **một lần**, không phải phiên và không xác thực được request khác. `POST /password/reset` **không** còn trả cặp token (**bỏ đăng nhập tự động**); nay trả `200` kèm message thành công, đồng thời thu hồi mọi phiên và vô hiệu access token cũ. Mã OTP lưu ở Redis (băm Argon2id, TTL riêng, chặn sau `OTP_MAX_ATTEMPTS`, cooldown `OTP_RESEND_COOLDOWN`); reset token giữ ở bảng `password_reset_requests` (`PASSWORD_RESET_TTL`). **Không** thêm mã lỗi mới. Các mục §3.9–3.12 dời xuống §3.10–3.13 (chèn mục verify-otp mới); `docs/swagger/` sinh lại khớp. | `internal/modules/auth/presentation/http/router.go`, `internal/modules/auth/application/implement/password.go` |
 | 2026-10-12 | **Đổi luồng đăng ký theo cơ chế trì hoãn (module 01 Auth, feature 012).** `POST /register` **không** còn tạo tài khoản `pending`: nó lưu đăng ký **tạm** trong Redis theo `registrationId` khó đoán rồi gửi OTP, trả `202` kèm `registrationId`, `otpExpiresIn`, `resendAvailableIn`. **Thêm ba** endpoint `POST /register/verify-otp` (xác nhận OTP, tạo **đúng một** tài khoản `active` vai trò `CUSTOMER`, idempotent khi gọi lại, **không** cấp phiên — 200), `POST /register/resend-otp` (thay mã sau cooldown — 202) và `POST /register/cancel` (huỷ đăng ký tạm, idempotent — 200). **Gỡ hai** endpoint `POST /verify-email` và `POST /resend-verification` (**breaking change** có chủ đích; thay bằng `register/verify-otp` và `register/resend-otp`, khoá theo `registrationId` thay vì email). `register` trả `409 AUTH_EMAIL_TAKEN`/`AUTH_USERNAME_TAKEN` sớm (§3.1) và `verify-otp` trả `409 AUTH_USERNAME_TAKEN` khi username bị đăng ký khác chiếm giữa chừng. Tham chiếu lạ/hết hạn/đã huỷ trả chung `AUTH_REGISTRATION_NOT_FOUND` 400. **Đổi mặc định** `OTP_TTL` 15m→5m, `OTP_MAX_ATTEMPTS` 3→5; thêm `PENDING_REGISTRATION_TTL=30m`. Các mục 3.2–3.11 dời xuống 3.2–3.12 (thêm ba mục đăng ký mới); `docs/swagger/` sinh lại khớp. | `internal/modules/auth/presentation/http/router.go`, `internal/modules/auth/application/implement/registration.go` |
 | 2026-10-11 | Thêm nhóm thanh toán (module 08 Payment, feature 011): **bốn** endpoint — **hai** của khách đã đăng nhập `POST`/`GET /api/v1/orders/{orderId}/payment` (bắt đầu/dùng lại và đọc thanh toán của chính đơn mình), **một** của quản trị `GET /api/v1/admin/payments` (mọi bản ghi, phân trang, lọc `status`; `status=UNMATCHED` = hàng đợi đối soát), và **một công khai** `POST /api/v1/payments/payos/webhook` (không cần phiên, xác minh chữ ký PayOS). Hai hình dạng response: khách `PaymentResponse` **11 member** (gồm `checkoutUrl`, `qrCode`, `unmatchedReason` — cả ba luôn có mặt, `""` khi không áp dụng); quản trị `AdminPaymentResponse` **13 member** (thêm `userId` + `providerReference`). **Enum mới** `PaymentStatus` — **bốn** giá trị `PENDING`/`PAID`/`CANCELLED`/`UNMATCHED`. Bổ sung **sáu** mã `PAYMENT_*` vào mục 1.4 (`PAYMENT_ORDER_NOT_FOUND` 404, `PAYMENT_ORDER_NOT_PAYABLE` 409, `PAYMENT_NOT_FOUND` 404, `PAYMENT_ALREADY_LIVE` 409, `PAYMENT_PROVIDER_ERROR` 422, `PAYMENT_WEBHOOK_INVALID_SIGNATURE` 401) và ghi chú module không có hạn mức riêng ở mục 1.5. Nêu rõ: chủ sở hữu lấy từ **session**; yêu cầu còn hiệu lực được **dùng lại**; tiền = tổng đơn, **không** phí ship; webhook công khai **xác minh chữ ký**, áp **đúng một lần**; xác nhận cũ/không khớp thành `UNMATCHED` để đối soát, **không** hoàn tiền; huỷ đơn chưa trả huỷ yêu cầu ở cổng. Phần 10 được chèn, bảng tổng hợp/quy tắc/change log dời xuống mục 11/12/13. Xem ADR-019. | `internal/modules/payment/presentation/http/router.go` |
