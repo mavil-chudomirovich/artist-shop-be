@@ -49,6 +49,14 @@ const (
 	// transition. It is the member name of ChangeStateRequest in the contract, so
 	// a rejected target is reported against the exact input the client sent.
 	FieldTo = "to"
+	// FieldVariantGroupID is the request member carrying the variant group a
+	// product is attached to as an option (FR-010). It is the member name of
+	// CreateProductRequest/UpdateProductRequest in
+	// specs/014-product-variants/contracts/openapi.yaml.
+	FieldVariantGroupID = "variantGroupId"
+	// FieldVariantLabel is the request member carrying the option's short label
+	// (FR-021).
+	FieldVariantLabel = "variantLabel"
 )
 
 // Product is one thing the shop sells: a physical item, a combo set or a
@@ -96,6 +104,13 @@ type Product struct {
 	// PreorderExpectedAt is the optional expected availability date of a
 	// pre-order. Only meaningful while IsPreorder is true (FR-040).
 	PreorderExpectedAt *time.Time
+	// VariantGroupID is the variant group this product is an option of (FR-021).
+	// Nil means a standalone product, which behaves exactly as it did before this
+	// feature existed (FR-026).
+	VariantGroupID *uuid.UUID
+	// VariantLabel is the option's short choice text, for example "Flins". It is
+	// set iff VariantGroupID is set, and is unique within its group (FR-021).
+	VariantLabel *string
 	// CreatedAt is when the product was created. Set once.
 	CreatedAt time.Time
 	// UpdatedAt is when the product was last written.
@@ -126,6 +141,12 @@ type ProductDraft struct {
 	IsPreorder bool
 	// PreorderExpectedAt is the optional expected availability date.
 	PreorderExpectedAt *time.Time
+	// VariantGroupID attaches the new product to a group as an option; nil
+	// creates an ordinary product (FR-010).
+	VariantGroupID *uuid.UUID
+	// VariantLabel is the option's short label; required when VariantGroupID is
+	// set (FR-021).
+	VariantLabel *string
 }
 
 // ProductEdit carries the changes of a partial edit.
@@ -152,6 +173,21 @@ type ProductEdit struct {
 	IsPreorder *bool
 	// PreorderExpectedAt is the new expected date; nil keeps the current value.
 	PreorderExpectedAt *time.Time
+	// VariantGroupID is the target group. It is consulted only when VariantGroupSet
+	// is true: a non-nil value attaches or moves the product, a nil value detaches
+	// it (FR-010, FR-011).
+	VariantGroupID *uuid.UUID
+	// VariantGroupSet reports whether the edit is changing the attachment. A
+	// plain pointer cannot tell "omitted" from "explicitly null", so this flag is
+	// what makes detach a real operation (research D13).
+	VariantGroupSet bool
+	// VariantLabel is the new option label. It is consulted only when
+	// VariantLabelSet is true: a non-blank value sets it, a nil or blank value
+	// clears it (FR-021).
+	VariantLabel *string
+	// VariantLabelSet reports whether the edit is changing the label (research
+	// D13).
+	VariantLabelSet bool
 }
 
 // NewProduct builds a product in COMING_SOON, the first state of the selling life
@@ -180,6 +216,10 @@ func NewProduct(draft ProductDraft, now time.Time) (*Product, error) {
 	if err := validatePreorder(constant.SellStateComingSoon, draft.IsPreorder, draft.PreorderExpectedAt); err != nil {
 		return nil, err
 	}
+	variantLabel := normalizeVariantLabel(draft.VariantLabel)
+	if err := validateVariantAttachment(draft.VariantGroupID, variantLabel, draft.IsSet); err != nil {
+		return nil, err
+	}
 
 	return &Product{
 		ID:                 uuid.New(),
@@ -194,6 +234,8 @@ func NewProduct(draft ProductDraft, now time.Time) (*Product, error) {
 		IsSet:              draft.IsSet,
 		IsPreorder:         draft.IsPreorder,
 		PreorderExpectedAt: draft.PreorderExpectedAt,
+		VariantGroupID:     draft.VariantGroupID,
+		VariantLabel:       variantLabel,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}, nil
@@ -215,6 +257,8 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	isSet := p.IsSet
 	isPreorder := p.IsPreorder
 	expectedAt := p.PreorderExpectedAt
+	variantGroupID := p.VariantGroupID
+	variantLabel := p.VariantLabel
 
 	if edit.Name != nil {
 		name = strings.TrimSpace(*edit.Name)
@@ -246,6 +290,12 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	if edit.PreorderExpectedAt != nil {
 		expectedAt = edit.PreorderExpectedAt
 	}
+	if edit.VariantGroupSet {
+		variantGroupID = edit.VariantGroupID
+	}
+	if edit.VariantLabelSet {
+		variantLabel = normalizeVariantLabel(edit.VariantLabel)
+	}
 
 	if err := ValidateName(name); err != nil {
 		return err
@@ -262,6 +312,9 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	if err := validatePreorder(p.SellState, isPreorder, expectedAt); err != nil {
 		return err
 	}
+	if err := validateVariantAttachment(variantGroupID, variantLabel, isSet); err != nil {
+		return err
+	}
 
 	p.Name = name
 	p.Slug = slug
@@ -273,6 +326,8 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	p.IsSet = isSet
 	p.IsPreorder = isPreorder
 	p.PreorderExpectedAt = expectedAt
+	p.VariantGroupID = variantGroupID
+	p.VariantLabel = variantLabel
 	p.UpdatedAt = now
 	return nil
 }
@@ -372,6 +427,44 @@ func validatePreorder(state constant.SellState, isPreorder bool, expectedAt *tim
 	if isPreorder && state == constant.SellStateActive {
 		return domainerr.InvalidProductField(
 			FieldIsPreorder, "cannot be set while the product is on sale")
+	}
+	return nil
+}
+
+// normalizeVariantLabel trims an option label and treats a value that is blank
+// after trimming as no label at all, so a group with a whitespace label is
+// refused as missing rather than stored blank (FR-021).
+func normalizeVariantLabel(label *string) *string {
+	if label == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*label)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+// validateVariantAttachment enforces the two variant rules FR-021 and FR-024
+// state. The same rules are check constraints on the products table
+// (products_variant_label_ck and products_set_not_variant_ck), so the database
+// refuses a value that bypassed this function; here the operator is told which
+// field to fix.
+//
+// A label belongs to a grouped product and to nothing else, and a combo set is
+// never an option of a variant group.
+func validateVariantAttachment(groupID *uuid.UUID, label *string, isSet bool) error {
+	if groupID != nil && label == nil {
+		return domainerr.InvalidProductField(
+			FieldVariantLabel, "is required when the product is attached to a variant group")
+	}
+	if groupID == nil && label != nil {
+		return domainerr.InvalidProductField(
+			FieldVariantLabel, "belongs to a product attached to a variant group and to nothing else")
+	}
+	if isSet && groupID != nil {
+		return domainerr.InvalidProductField(
+			FieldVariantGroupID, "a combo set cannot be attached to a variant group")
 	}
 	return nil
 }

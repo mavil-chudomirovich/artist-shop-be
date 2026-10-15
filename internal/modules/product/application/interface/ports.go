@@ -21,6 +21,14 @@ import (
 // declaring a second interface that could drift (Constitution I).
 type ProductRepository = repository.ProductRepository
 
+// VariantGroupRepository is the variant-group persistence port the group use
+// cases depend on. It is the domain's contract, aliased here for the same reason
+// as ProductRepository: this package names the dependency without declaring a
+// second interface that could drift, and the composition root can name the port
+// while the group methods are added to ProductService by the story that
+// implements them (FR-009 to FR-018, research D1).
+type VariantGroupRepository = repository.VariantGroupRepository
+
 // MediaStore is the shared media port, re-exported here so this module names its
 // dependency without declaring a second interface that could drift from the
 // shared one (research D2). The port itself lives in internal/share/media.

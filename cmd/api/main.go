@@ -302,8 +302,10 @@ func run() error {
 	// one queue, one retry policy, one shutdown.
 	productConfig := productappinterface.Config{}
 	productRepository := productpostgres.NewProductRepository(db.Pool)
+	variantGroupRepository := productpostgres.NewVariantGroupRepository(db.Pool)
 	productService := productimplement.New(productimplement.Service{
 		Products:   productRepository,
+		Groups:     variantGroupRepository,
 		Visibility: categoryvisibility.New(categoryRepository),
 		Audit:      productauditor.New(auditWriter),
 		Media:      userMediaStore,

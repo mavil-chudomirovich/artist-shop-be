@@ -12,6 +12,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -60,6 +61,58 @@ type SetMember struct {
 	Name string
 	// Slug is the member product's public link segment.
 	Slug string
+}
+
+// CatalogueEntryType discriminates one row of the merged public catalogue list: a
+// standalone product or a variant group. Its serialised values are the `type`
+// field of PublicCatalogueEntry in
+// specs/014-product-variants/contracts/openapi.yaml (research D12).
+type CatalogueEntryType string
+
+const (
+	// CatalogueEntryProduct is a standalone product: a product with
+	// variant_group_id null (FR-026).
+	CatalogueEntryProduct CatalogueEntryType = "product"
+	// CatalogueEntryVariantGroup is a variant group.
+	CatalogueEntryVariantGroup CatalogueEntryType = "variant-group"
+)
+
+// CatalogueItem is one row of the merged public catalogue list: either a
+// standalone product or a variant group, discriminated by Type (FR-001, research
+// D4).
+//
+// The response shape exposes Type, ID, Name, Slug, Price, ImageURL and IsPreorder;
+// Description, CategoryID, Position and CreatedAt are the internal projection the
+// ordering, the pagination window and the total need and are not all exposed
+// (data-model.md — Public list).
+type CatalogueItem struct {
+	// Type says whether this row is a standalone product or a variant group.
+	Type CatalogueEntryType
+	// ID is the entry's stable identifier (the product's or the group's).
+	ID uuid.UUID
+	// Name is the entry's name.
+	Name string
+	// Slug is the entry's public link segment.
+	Slug string
+	// Description is the entry's description, an internal projection not exposed
+	// on the list.
+	Description string
+	// Price is the standalone product's price, or a group's price — the lowest
+	// price among its visible options (FR-005).
+	Price model.Price
+	// ImageURL is the entry's main picture's link, or "" when it has none.
+	ImageURL string
+	// IsPreorder reports whether a standalone product is an announced pre-order.
+	// It is always false for a group, which carries no sell state (FR-005).
+	IsPreorder bool
+	// CategoryID is the entry's category, an internal projection (FR-023).
+	CategoryID uuid.UUID
+	// Position is the entry's ordering preference, an internal projection
+	// (FR-009).
+	Position int
+	// CreatedAt is when the entry was created, an internal projection used to
+	// break an ordering tie (FR-009).
+	CreatedAt time.Time
 }
 
 // VisibleListQuery describes one page of the public catalogue.
@@ -220,4 +273,43 @@ type ProductRepository interface {
 	// listed. It serves the administrator detail only: the public shape does not
 	// enumerate a set's contents (FR-039, research D18).
 	ListSetMembers(ctx context.Context, setProductID uuid.UUID) ([]SetMember, error)
+
+	// ListCatalogue returns one page of the merged public catalogue — standalone
+	// products and variant groups in one ordered result — plus the total number
+	// of entries across both kinds.
+	//
+	// The whole predicate runs in this single statement (a CTE/UNION ALL, research
+	// D4), not in Go: a group is visible when its category is in
+	// query.VisibleCategoryIDs and at least one of its options is visible, and its
+	// price is the lowest price among those visible options with the group's own
+	// main picture as its image (FR-001, FR-005, FR-006); a standalone product is
+	// a product with variant_group_id null under the existing visibility
+	// predicate (FR-026, FR-027). A product that belongs to a group is represented
+	// by that group and is excluded from the standalone side, so a group appears
+	// once and never once per option (FR-001). The order is position, then
+	// created_at, then id across both kinds (FR-009), and a COUNT(*) over the same
+	// CTE gives the total, so pagination and the total stay correct (research D4).
+	ListCatalogue(ctx context.Context, query VisibleListQuery) ([]CatalogueItem, int64, error)
+
+	// ListGroupOptions returns a group's visible options in display order, for the
+	// public group read.
+	//
+	// The visibility predicate — the option's category is in visibleCategoryIDs
+	// and it is on sale or an announced non-retired pre-order — runs here, so an
+	// option a customer may not see is absent rather than dropped in Go (FR-002,
+	// FR-027). Each option is projected with its own label, price, currency,
+	// preorder flag, link and primary picture; nothing is inherited from the group
+	// or its siblings (FR-016, FR-018).
+	ListGroupOptions(ctx context.Context, groupID uuid.UUID, visibleCategoryIDs []uuid.UUID) ([]GroupOptionItem, error)
+
+	// ListOptionsByGroupIDs returns the options of several groups in one read,
+	// keyed by group identifier, for the detail selector: a product read that
+	// finds it has a group renders every sibling option without a query per
+	// option, keeping the detail read bounded (FR-007, research D4).
+	//
+	// Only visible options are returned, under the same predicate ListGroupOptions
+	// applies. A group identifier with no visible option is absent from the map
+	// rather than an error. The order within each group is position, then
+	// created_at, then id.
+	ListOptionsByGroupIDs(ctx context.Context, groupIDs []uuid.UUID, visibleCategoryIDs []uuid.UUID) (map[uuid.UUID][]GroupOptionItem, error)
 }

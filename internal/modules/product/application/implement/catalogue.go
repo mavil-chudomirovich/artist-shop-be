@@ -33,6 +33,10 @@ type Service struct {
 	// transaction; the application layer owns every boundary
 	// (Constitution I).
 	Products domainrepo.ProductRepository
+	// Groups persists variant groups and reads their own pictures and their
+	// options (FR-009 to FR-018). It is the module's second repository,
+	// supplied at the composition root beside Products.
+	Groups appinterface.VariantGroupRepository
 	// Visibility answers the two facts about categories this module cannot read
 	// itself: which categories a customer may see, and which category a
 	// customer-facing slug names (research D1). It is the cross-module contract

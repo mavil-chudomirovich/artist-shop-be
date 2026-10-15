@@ -564,3 +564,189 @@ func mustProduct(t *testing.T) *Product {
 	}
 	return product
 }
+
+// A draft that names a group and a label attaches the new product as an option,
+// trimming the label (FR-010, FR-021).
+func TestNewProductAttachesAnOption(t *testing.T) {
+	groupID := uuid.New()
+	label := "  Flins  "
+	draft := validDraft()
+	draft.VariantGroupID = &groupID
+	draft.VariantLabel = &label
+
+	product, err := NewProduct(draft, testNow)
+	if err != nil {
+		t.Fatalf("NewProduct: unexpected error %v", err)
+	}
+	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
+		t.Errorf("VariantGroupID = %v, want %s", product.VariantGroupID, groupID)
+	}
+	if product.VariantLabel == nil || *product.VariantLabel != "Flins" {
+		t.Errorf("VariantLabel = %v, want the trimmed %q", product.VariantLabel, "Flins")
+	}
+}
+
+// FR-021: a label without a group belongs to nothing and is refused naming the
+// label.
+func TestNewProductRefusesALabelWithoutAGroup(t *testing.T) {
+	draft := validDraft()
+	draft.VariantLabel = ptr("Flins")
+
+	product, err := NewProduct(draft, testNow)
+	if product != nil {
+		t.Errorf("a refused draft must yield no product")
+	}
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantLabel)
+}
+
+// FR-021: a group without a label is refused naming the missing label.
+func TestNewProductRefusesAGroupWithoutALabel(t *testing.T) {
+	groupID := uuid.New()
+	draft := validDraft()
+	draft.VariantGroupID = &groupID
+
+	product, err := NewProduct(draft, testNow)
+	if product != nil {
+		t.Errorf("a refused draft must yield no product")
+	}
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantLabel)
+}
+
+// A whitespace label is no label, so a grouped product without a real label is
+// refused (FR-021).
+func TestNewProductTreatsABlankLabelAsMissing(t *testing.T) {
+	groupID := uuid.New()
+	draft := validDraft()
+	draft.VariantGroupID = &groupID
+	draft.VariantLabel = ptr("   ")
+
+	product, err := NewProduct(draft, testNow)
+	if product != nil {
+		t.Errorf("a refused draft must yield no product")
+	}
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantLabel)
+}
+
+// FR-024: a combo set cannot be created as an option, naming the group member.
+func TestNewProductRefusesASetAsAnOption(t *testing.T) {
+	groupID := uuid.New()
+	draft := validDraft()
+	draft.IsSet = true
+	draft.VariantGroupID = &groupID
+	draft.VariantLabel = ptr("Flins")
+
+	product, err := NewProduct(draft, testNow)
+	if product != nil {
+		t.Errorf("a refused draft must yield no product")
+	}
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantGroupID)
+}
+
+// FR-010, FR-021: an edit attaches and detaches the option, and neither touches
+// the price, the slug or the sell state.
+func TestApplyAttachesAndDetachesAnOption(t *testing.T) {
+	product := mustProduct(t)
+	groupID := uuid.New()
+	later := testNow.Add(time.Hour)
+	before := product.Price
+
+	if err := product.Apply(ProductEdit{
+		VariantGroupID:  &groupID,
+		VariantGroupSet: true,
+		VariantLabel:    ptr("  Dottore  "),
+		VariantLabelSet: true,
+	}, later); err != nil {
+		t.Fatalf("Apply attach: %v", err)
+	}
+	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
+		t.Errorf("VariantGroupID = %v, want %s", product.VariantGroupID, groupID)
+	}
+	if product.VariantLabel == nil || *product.VariantLabel != "Dottore" {
+		t.Errorf("VariantLabel = %v, want the trimmed %q", product.VariantLabel, "Dottore")
+	}
+	if product.Price != before {
+		t.Errorf("attaching must not touch the price: %+v vs %+v", product.Price, before)
+	}
+
+	if err := product.Apply(ProductEdit{
+		VariantGroupSet: true,
+		VariantLabelSet: true,
+	}, later.Add(time.Minute)); err != nil {
+		t.Fatalf("Apply detach: %v", err)
+	}
+	if product.VariantGroupID != nil || product.VariantLabel != nil {
+		t.Errorf("detaching must clear both the group and the label, got %v / %v", product.VariantGroupID, product.VariantLabel)
+	}
+}
+
+// An edit that does not name the attachment keeps it (partial update).
+func TestApplyKeepsTheAttachmentWhenOmitted(t *testing.T) {
+	groupID := uuid.New()
+	draft := validDraft()
+	draft.VariantGroupID = &groupID
+	draft.VariantLabel = ptr("Flins")
+	product, err := NewProduct(draft, testNow)
+	if err != nil {
+		t.Fatalf("NewProduct: %v", err)
+	}
+
+	if err := product.Apply(ProductEdit{Name: ptr("Tên mới")}, testNow.Add(time.Hour)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
+		t.Errorf("an omitted attachment must keep the group")
+	}
+	if product.VariantLabel == nil || *product.VariantLabel != "Flins" {
+		t.Errorf("an omitted attachment must keep the label")
+	}
+}
+
+// FR-024: an edit cannot make an existing option a combo set.
+func TestApplyRefusesMakingAnOptionASet(t *testing.T) {
+	groupID := uuid.New()
+	draft := validDraft()
+	draft.VariantGroupID = &groupID
+	draft.VariantLabel = ptr("Flins")
+	product, err := NewProduct(draft, testNow)
+	if err != nil {
+		t.Fatalf("NewProduct: %v", err)
+	}
+
+	err = product.Apply(ProductEdit{IsSet: ptr(true)}, testNow.Add(time.Hour))
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantGroupID)
+	if product.IsSet {
+		t.Errorf("a refused edit must not change the set flag")
+	}
+}
+
+// FR-021: an edit that attaches a group without a label is refused, leaving the
+// entity as it was.
+func TestApplyRefusesAnAttachmentWithoutALabel(t *testing.T) {
+	product := mustProduct(t)
+	before := *product
+	groupID := uuid.New()
+
+	err := product.Apply(ProductEdit{VariantGroupID: &groupID, VariantGroupSet: true}, testNow.Add(time.Hour))
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariantLabel)
+	if *product != before {
+		t.Errorf("a rejected edit must leave the entity untouched: %+v vs %+v", product, before)
+	}
+}
