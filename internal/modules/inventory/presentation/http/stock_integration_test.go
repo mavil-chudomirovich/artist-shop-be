@@ -156,13 +156,13 @@ func TestManualStockOperationsAgainstPostgres(t *testing.T) {
 		t.Fatalf("a never-stocked product answers zero, got %+v", stock.Data)
 	}
 
-	// quickstart 1b: an unknown product is a real not-found.
+	// quickstart 1b: an unknown variant is a real not-found.
 	rec = performJSON(root, http.MethodGet, inventoryAdminPath+"/"+uuid.New().String(), "", "admin-token")
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("read an unknown product: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("read an unknown variant: expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
-		t.Fatalf("expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	if body := decodeError(t, rec); body.Error.Code != "VARIANT_NOT_FOUND" {
+		t.Fatalf("expected VARIANT_NOT_FOUND, got %s", body.Error.Code)
 	}
 
 	// quickstart 2a-2c: restock to 10 and reconcile.

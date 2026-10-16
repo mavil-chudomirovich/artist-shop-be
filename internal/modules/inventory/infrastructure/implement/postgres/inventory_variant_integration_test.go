@@ -232,10 +232,10 @@ func TestReserveSaleReleaseArePerVariantAndWriteTheLedger(t *testing.T) {
 	if _, err := svc.Restock(ctx, inventorydto.RestockInput{VariantID: second, Quantity: 4}); err != nil {
 		t.Fatalf("Restock(second): %v", err)
 	}
-	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: uuid.New(), VariantID: first, Quantity: 2}); err != nil {
+	orderID := uuid.New()
+	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, VariantID: first, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve(first): %v", err)
 	}
-	orderID := uuid.New()
 	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, VariantID: second, Quantity: 1}); err != nil {
 		t.Fatalf("Reserve(second): %v", err)
 	}

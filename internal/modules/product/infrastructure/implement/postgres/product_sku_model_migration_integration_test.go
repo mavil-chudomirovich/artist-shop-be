@@ -342,6 +342,11 @@ func TestMigration00014MigratedProductStillChecksOut(t *testing.T) {
 	// The customer's cart holds two of the migrated default variant at its
 	// migrated price (the product's old price).
 	ownerID := uuid.New()
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO users (id, email, password_hash) VALUES ($1, $2, 'x')`,
+		ownerID, "migrated-"+ownerID.String()+"@example.test"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
 	cartID := uuid.New()
 	if _, err := pool.Exec(ctx, `INSERT INTO carts (id, user_id) VALUES ($1, $2)`, cartID, ownerID); err != nil {
 		t.Fatalf("seed cart: %v", err)
