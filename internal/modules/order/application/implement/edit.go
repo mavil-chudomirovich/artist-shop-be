@@ -29,8 +29,8 @@ import (
 // domain transition reads the current state under the lock and the new line set,
 // the total, the content version and the edit history commit together or not at
 // all. Each new line is re-checked against the product's current sale state and
-// against what is available, and its name, slug, unit price and currency are
-// re-snapshotted: a price that changed since the order was placed is re-taken,
+// against what is available, and its name, product code, unit price and currency
+// are re-snapshotted: a price that changed since the order was placed is re-taken,
 // never refused, because the customer is choosing the items again (FR-015,
 // research D6).
 //
@@ -153,8 +153,8 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 }
 
 // editedLines re-checks each requested line against the product's current sale
-// state and what is available and re-snapshots it — name, slug, unit price and
-// currency — in position order. One bulk read of the products and one of
+// state and what is available and re-snapshots it — name, product code, unit
+// price and currency — in position order. One bulk read of the products and one of
 // availability serve however many lines the edit names (FR-015, research D6).
 //
 // It refuses the whole edit on the first line that is off sale or removed, or
@@ -203,7 +203,6 @@ func (s *Service) editedLines(ctx context.Context, orderID uuid.UUID, inputs []d
 			ProductCode: summary.ProductCode,
 			VariantName: summary.VariantName,
 			SKU:         summary.SKU,
-			Slug:        summary.ProductSlug,
 			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
 			Quantity:    input.Quantity,
 			Position:    i,

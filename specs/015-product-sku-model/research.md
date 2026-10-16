@@ -23,13 +23,14 @@ rejected this).
 ## D2 — What `products` keeps, gains and loses
 
 **Decision**:
-- **Keeps**: `id`, `name`, `slug`, `normalized_slug`, `description`, `category_id`, `position`,
-  `price_amount`/`currency` (its **default price**), `created_at`, `updated_at`; `product_images`
-  (the gallery).
-- **Gains**: `code text NOT NULL` with a unique index — the operator-facing product code (FR-011).
-- **Loses**: `sell_state`, `is_preorder`, `preorder_expected_at`, `is_set` (state moves to the
-  variant; pre-order and combo-set are dropped, spec Clarifications). `product_set_items` is dropped
-  with `is_set`.
+- **Keeps**: `id`, `name`, `description`, `category_id`, `position`, `price_amount`/`currency`
+  (its **default price**), `created_at`, `updated_at`; `product_images` (the gallery).
+- **Gains**: `code text NOT NULL` with a unique index — the operator-facing product code **and the
+  public link segment** (URL-safe, ≤140, unique) (FR-011).
+- **Loses**: `slug`, `normalized_slug` (migration `00015` collapses the duplicate link segment: the
+  code already holds the link value, so the separate slug goes), `sell_state`, `is_preorder`,
+  `preorder_expected_at`, `is_set` (state moves to the variant; pre-order and combo-set are dropped,
+  spec Clarifications). `product_set_items` is dropped with `is_set`.
 
 **Rationale**: a product is no longer sold on its own, so a product-level sell state and the two flags
 do not belong; the default price stays as the fallback a variant may override (FR-017).
@@ -111,7 +112,7 @@ that no longer matches the model); a per-line query per variant (breaks the modu
 
 **Decision**: `cart_items` stores `variant_id` (unique per cart) plus the captured `unit_price_amount`
 and `currency` and `quantity`; adding to the cart requires a `variantId`. The cart read shows the
-product name and the variant name (and slug for a link), the captured price and the availability of
+product name and the variant name (and code for a link), the captured price and the availability of
 the variant, calling the variant-facts contract and the availability contract in bulk as it does today.
 
 **Rationale**: spec FR-006/FR-018; a cart can hold two variants of one product as two lines.
@@ -136,7 +137,7 @@ product); snapshotting only the product id and reading the variant later (breaks
 ## D9 — Public catalogue and product detail
 
 **Decision**:
-- The catalogue (`GET /products`) returns **one entry per product**: name, slug, the **lowest effective
+- The catalogue (`GET /products`) returns **one entry per product**: name, code, the **lowest effective
   price** among the product's **on-sale** variants, and a card image (the default variant's image, else the
   product's primary gallery picture). A product appears only when its category is visible and at least
   one variant is **on sale** (spec Clarifications).
@@ -200,6 +201,11 @@ independently useful).
 **Assumption**: 014 was never applied to a live database (it is committed but not pushed), so 00014
 uses `DROP ... IF EXISTS` for 014's objects and the default-variant backfill assumes every existing
 product maps cleanly to one variant.
+
+**Follow-up migration `00015`**: `00015_product_code_as_link_segment.sql` then drops
+`products.slug`/`normalized_slug` (and their constraints/index) and `order_items.slug`, and swaps the
+code shape check for the URL-safe format — because `00014` already backfilled `code = slug`, the
+surviving code *is* the link segment, so the separate slug is a duplicate that is removed.
 
 ## D12 — Removing feature 014
 

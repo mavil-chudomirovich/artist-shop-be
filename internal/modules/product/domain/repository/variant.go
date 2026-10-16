@@ -31,11 +31,10 @@ type VariantFacts struct {
 	// ProductName is the product's name at read time, for the cart/order snapshot
 	// (FR-019).
 	ProductName string
-	// ProductCode is the operator-facing product code at read time (FR-019).
+	// ProductCode is the product code at read time (FR-019). It is both the
+	// operator-facing code and the product's link segment, so a consumer keeps the
+	// product's public link without resolving the product.
 	ProductCode string
-	// ProductSlug is the product's link segment at read time, snapshotted onto an
-	// order line's slug column (research D8).
-	ProductSlug string
 	// VariantName is the variant's display name at read time (FR-019).
 	VariantName string
 	// SKU is the variant's SKU at read time (FR-019). It is stored on the order

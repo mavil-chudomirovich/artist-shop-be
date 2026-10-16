@@ -49,7 +49,6 @@ func (a *Adapter) Variants(ctx context.Context, variantIDs []uuid.UUID) ([]contr
 			ProductID:   fact.ProductID,
 			ProductName: fact.ProductName,
 			ProductCode: fact.ProductCode,
-			ProductSlug: fact.ProductSlug,
 			VariantName: fact.VariantName,
 			SKU:         fact.SKU,
 			OnSale:      fact.OnSale,

@@ -1,10 +1,10 @@
 // Package model holds the product module's entities and value objects.
 //
-// The domain validates structure and the transitions only. Whether a slug, a
-// product code or a SKU is already used is a catalogue-wide invariant that a single
-// entity cannot decide, so the storage layer enforces it and the application
-// reports it; this package owns the rule a human reads and the shape and bounds of
-// the values (Constitution I).
+// The domain validates structure and the transitions only. Whether a product code
+// or a SKU is already used is a catalogue-wide invariant that a single entity
+// cannot decide, so the storage layer enforces it and the application reports it;
+// this package owns the rule a human reads and the shape and bounds of the values
+// (Constitution I).
 package model
 
 import (
@@ -23,11 +23,10 @@ import (
 const (
 	// FieldName is the request member carrying a product name.
 	FieldName = "name"
-	// FieldCode is the request member carrying the operator-facing product code
-	// (FR-011).
+	// FieldCode is the request member carrying the product code (FR-011). The code
+	// is the public link segment: URL-safe, unique and the value a customer link is
+	// built from.
 	FieldCode = "code"
-	// FieldSlug is the request member carrying a product slug.
-	FieldSlug = "slug"
 	// FieldDescription is the request member carrying a product description.
 	FieldDescription = "description"
 	// FieldPrice is the request member carrying a product price.
@@ -49,31 +48,26 @@ const (
 )
 
 // Product is the parent a customer browses and describes: a name, a unique product
-// code, a default price, a category, a description, a link segment and its own
-// picture gallery. It groups one or more variants and is never sold on its own
-// (FR-001, FR-003, research D1, D2).
+// code, a default price, a category, a description and its own picture gallery. It
+// groups one or more variants and is never sold on its own (FR-001, FR-003,
+// research D1, D2).
 //
 // It has no sell state of its own: the sell state lives on each variant (FR-015).
 // The default price is what a variant with no own price falls back to (FR-017).
 //
-// NormalizedSlug is the folding key the storage layer indexes for catalogue-wide
-// uniqueness. It is recomputed by every edit from the value being stored, so it can
-// never disagree with Slug. It exists only to be stored, indexed and compared: it
-// is never returned to anyone, never audited and never named in the API contract.
+// The code is both the operator-facing product code and the public link segment:
+// lowercase, URL-safe and unique across the catalogue, so a customer-facing link
+// and the operator's label are the same value (FR-011).
 type Product struct {
 	// ID identifies the product. It is generated once and is stable for the
 	// product's lifetime, so a saved link keeps working (FR-009).
 	ID uuid.UUID
 	// Name is the name the operator typed, trimmed. Not unique.
 	Name string
-	// Code is the operator-facing product code, unique across products, compared
-	// after trimming surrounding whitespace and ignoring letter case (FR-011).
+	// Code is the product code: lowercase and URL-safe by validation, unique
+	// across products, compared after trimming surrounding whitespace and ignoring
+	// letter case (FR-011). It is the public link segment.
 	Code string
-	// Slug is the link segment the operator wrote, lowercase and URL-safe by
-	// validation (FR-009).
-	Slug string
-	// NormalizedSlug is the folding key for Slug (FR-011).
-	NormalizedSlug string
 	// Description is what the operator wrote. An empty string is valid.
 	Description string
 	// Price is the default integer amount in the currency's minor unit plus its
@@ -95,12 +89,9 @@ type ProductDraft struct {
 	// Name is the product name. It must not be blank and must fit MaxNameRunes
 	// characters.
 	Name string
-	// Code is the unique operator-facing product code. It must not be blank and
-	// must fit MaxCodeRunes characters (FR-011).
+	// Code is the product code. It must match CodePattern and fit MaxCodeRunes
+	// characters (FR-011).
 	Code string
-	// Slug is the public link segment. It must match SlugPattern and fit
-	// MaxSlugRunes characters.
-	Slug string
 	// Description is the text shown to customers. It may be empty and must fit
 	// MaxDescriptionRunes characters.
 	Description string
@@ -126,8 +117,6 @@ type ProductEdit struct {
 	Name *string
 	// Code is the new product code; nil keeps the current value (FR-011).
 	Code *string
-	// Slug is the new slug; nil keeps the current value.
-	Slug *string
 	// Description is the new description; nil keeps the current value.
 	Description *string
 	// Price is the new default price; nil keeps the current value.
@@ -140,24 +129,20 @@ type ProductEdit struct {
 
 // NewProduct builds a product.
 //
-// It trims the free-text members and the code, validates them and the price, derives
-// the folding key from the slug it is about to store, and refuses a product with no
-// variant (FR-012, research D14). A rejected draft yields no product at all, so a
-// caller cannot persist half of one. The variants themselves are built by the caller
-// through NewVariant, so each is validated with the variant's own rules.
+// It trims the free-text members and the code, validates them and the price, and
+// refuses a product with no variant (FR-012, research D14). A rejected draft yields
+// no product at all, so a caller cannot persist half of one. The variants
+// themselves are built by the caller through NewVariant, so each is validated with
+// the variant's own rules.
 func NewProduct(draft ProductDraft, now time.Time) (*Product, error) {
 	name := strings.TrimSpace(draft.Name)
 	code := strings.TrimSpace(draft.Code)
-	slug := strings.TrimSpace(draft.Slug)
 	description := strings.TrimSpace(draft.Description)
 
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
 	if err := ValidateCode(code); err != nil {
-		return nil, err
-	}
-	if err := ValidateSlug(slug); err != nil {
 		return nil, err
 	}
 	if err := ValidateDescription(description); err != nil {
@@ -172,30 +157,26 @@ func NewProduct(draft ProductDraft, now time.Time) (*Product, error) {
 	}
 
 	return &Product{
-		ID:             uuid.New(),
-		Name:           name,
-		Code:           code,
-		Slug:           slug,
-		NormalizedSlug: FoldKey(slug),
-		Description:    description,
-		Price:          draft.Price,
-		CategoryID:     draft.CategoryID,
-		Position:       draft.Position,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:          uuid.New(),
+		Name:        name,
+		Code:        code,
+		Description: description,
+		Price:       draft.Price,
+		CategoryID:  draft.CategoryID,
+		Position:    draft.Position,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}, nil
 }
 
 // Apply writes a partial edit.
 //
 // It stages the whole change, validates it, and only then writes, so a rejection
-// leaves the product exactly as it was (FR-009, FR-010). The folding key is
-// recomputed from the slug the entity ends up storing, so it always agrees with
-// Slug. The identifier and the creation timestamp are never touched.
+// leaves the product exactly as it was (FR-009, FR-010). The identifier and the
+// creation timestamp are never touched.
 func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	name := p.Name
 	code := p.Code
-	slug := p.Slug
 	description := p.Description
 	price := p.Price
 	categoryID := p.CategoryID
@@ -206,9 +187,6 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	}
 	if edit.Code != nil {
 		code = strings.TrimSpace(*edit.Code)
-	}
-	if edit.Slug != nil {
-		slug = strings.TrimSpace(*edit.Slug)
 	}
 	if edit.Description != nil {
 		description = strings.TrimSpace(*edit.Description)
@@ -229,9 +207,6 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	if err := ValidateCode(code); err != nil {
 		return err
 	}
-	if err := ValidateSlug(slug); err != nil {
-		return err
-	}
 	if err := ValidateDescription(description); err != nil {
 		return err
 	}
@@ -241,8 +216,6 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 
 	p.Name = name
 	p.Code = code
-	p.Slug = slug
-	p.NormalizedSlug = FoldKey(slug)
 	p.Description = description
 	p.Price = price
 	p.CategoryID = categoryID

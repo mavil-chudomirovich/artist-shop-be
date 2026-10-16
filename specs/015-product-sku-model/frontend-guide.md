@@ -11,10 +11,12 @@ endpoint **đổi** thì nêu **trước → sau**. Nguồn authoritative vẫn 
 
 ## 1. Tóm tắt một câu
 
-Một sản phẩm là **cha** giữ nội dung dùng chung (tên, mã sản phẩm, giá mặc định, mô tả, slug, gallery)
-và có một mảng **variant** con; mỗi variant có **tên, SKU, giá riêng (tuỳ chọn), ảnh riêng, thứ tự và
-trạng thái bán riêng**. **Variant là đơn vị mua**: khách chọn một variant, giỏ và đơn khoá theo
-`variantId`, tồn kho theo variant. Catalogue hiện **một mục mỗi sản phẩm**.
+Một sản phẩm là **cha** giữ nội dung dùng chung (tên, mã sản phẩm **`code`**, giá mặc định, mô tả,
+gallery) và có một mảng **variant** con; mỗi variant có **tên, SKU, giá riêng (tuỳ chọn), ảnh riêng, thứ
+tự và trạng thái bán riêng**. **Variant là đơn vị mua**: khách chọn một variant, giỏ và đơn khoá theo
+`variantId`, tồn kho theo variant. Catalogue hiện **một mục mỗi sản phẩm**. **Sản phẩm không còn `slug`
+riêng**: `code` vừa là mã sản phẩm operator viết vừa là **đoạn link công khai** (`/products/{code}`);
+danh mục vẫn giữ `slug` riêng của nó.
 
 ## 2. Bảng endpoint bị ảnh hưởng
 
@@ -23,11 +25,11 @@ trạng thái bán riêng**. **Variant là đơn vị mua**: khách chọn một
 | Method | Path | Trạng thái | Ghi chú |
 |---|---|---|---|
 | GET | `/api/v1/products` | **Đổi** | Một mục mỗi sản phẩm; giá thấp nhất trong variant đang bán; ảnh variant mặc định; **bỏ** `type` |
-| GET | `/api/v1/products/{slug}` | **Đổi** | Thêm `variants[]` (mỗi variant có `sellState`/`inStock`); **bỏ** bộ chọn `variantGroup` |
-| GET | `/api/v1/admin/products` | **Đổi** | Hình dạng `AdminProduct` mới (`code`, `defaultPrice`, `variantCount`) |
-| POST | `/api/v1/admin/products` | **Đổi** | Body **bắt buộc** có `code` và `variants` (≥1) |
+| GET | `/api/v1/products/{code}` | **Đổi** | Địa chỉ theo **`code`** (trước là `{slug}`); thêm `variants[]` (mỗi variant có `sellState`/`inStock`); **bỏ** bộ chọn `variantGroup` |
+| GET | `/api/v1/admin/products` | **Đổi** | Hình dạng `AdminProduct` mới (`code`, `defaultPrice`, `variantCount`; **bỏ** `slug`) |
+| POST | `/api/v1/admin/products` | **Đổi** | Body **bắt buộc** có `code` và `variants` (≥1); `code` là đoạn link công khai (URL-safe); **bỏ** `slug` |
 | GET | `/api/v1/admin/products/{id}` | **Đổi** | Trả kèm `variants[]` (đủ `sku`, `effectivePrice`, `sellState`) |
-| PATCH | `/api/v1/admin/products/{id}` | **Đổi** | Sửa `name`/`code`/`slug`/`description`/`defaultPrice`/`categoryId`/`position`; **không** đụng variant |
+| PATCH | `/api/v1/admin/products/{id}` | **Đổi** | Sửa `name`/`code`/`description`/`defaultPrice`/`categoryId`/`position` (**bỏ** `slug`); **không** đụng variant |
 | DELETE | `/api/v1/admin/products/{id}` | **Đổi** | Xoá theo cả các variant (204) |
 | POST | `/api/v1/admin/products/{id}/variants` | **Mới** | Thêm variant (201) |
 | PATCH | `/api/v1/admin/products/{id}/variants/{variantId}` | **Mới** | Sửa variant; `price` ba trạng thái |
@@ -95,24 +97,28 @@ Catalogue công khai. Giờ là **một mục mỗi sản phẩm** (không còn 
 
 - **Trước**: `data` là mảng `PublicCatalogueEntry` (7 member: `type`, `id`, `name`, `slug`, `price`,
   `imageUrl`, `isPreorder`). `type` là `"product"` hoặc `"variant-group"`.
-- **Sau**: `data` là mảng `PublicProduct` (**5 member**: `id`, `name`, `slug`, `price`, `imageUrl`).
-  **Không còn** `type` và `isPreorder`.
+- **Sau**: `data` là mảng `PublicProduct` (**5 member**: `id`, `name`, **`code`**, `price`, `imageUrl`).
+  **Không còn** `type` và `isPreorder`; `slug` đổi thành `code` (đoạn link công khai).
   - `price` là giá **thấp nhất** trong các variant **đang bán** (một variant hết hàng rẻ hơn **không**
     quyết định giá card).
   - `imageUrl` là ảnh của **variant mặc định** (variant `position` nhỏ nhất), fallback ảnh chính của
     gallery sản phẩm, hoặc `null`.
   - Sản phẩm chỉ xuất hiện khi **danh mục hiển thị** **và** còn **ít nhất một variant đang bán**.
-- **Việc client phải làm**: bỏ nhánh theo `type`; chỉ mở `/api/v1/products/{slug}`. Một sản phẩm hết
+- **Việc client phải làm**: bỏ nhánh theo `type`; mở chi tiết qua `/api/v1/products/{code}` (đoạn link
+  công khai nay là `code`, không còn `slug`). Một sản phẩm hết
   hàng hoàn toàn (mọi variant `OUT_OF_STOCK`/`COMING_SOON`/`DISCONTINUED`) biến mất khỏi danh sách.
 
-### 3.2 `GET /api/v1/products/{slug}` — **Đổi**
+### 3.2 `GET /api/v1/products/{code}` — **Đổi**
 
 Chi tiết sản phẩm.
 
+- **Route**: **Trước** `GET /api/v1/products/{slug}`; **Sau** `GET /api/v1/products/{code}` — đoạn link
+  công khai của sản phẩm nay là `code` (URL-safe), không còn `slug`.
 - **Trước**: `data` là `PublicProductDetail` (8 member `PublicProduct` + `description` + `images`, hoặc
   9 member khi sản phẩm là một lựa chọn, có thêm `variantGroup`).
-- **Sau**: `data` là `PublicProductDetail` (**8 member**: `id`, `name`, `slug`, `price`, `imageUrl`,
-  `description`, `images`, `variants`). **Bỏ** `variantGroup`; **thêm** `variants`.
+- **Sau**: `data` là `PublicProductDetail` (**8 member**: `id`, `name`, **`code`**, `price`, `imageUrl`,
+  `description`, `images`, `variants`). **Bỏ** `variantGroup`; **thêm** `variants`; **đổi** `slug` →
+  `code`.
   - Mỗi phần tử `variants` là `PublicVariant` (**6 member**: `id`, `name`, `price`, `imageUrl`,
     `sellState`, `inStock`). `price` là **giá hiệu lực** (giá riêng của variant, hoặc giá mặc định của
     sản phẩm khi variant không có giá).
@@ -128,26 +134,27 @@ Chi tiết sản phẩm.
 - **Trước**: body `CreateProductRequest` có `name`, `slug`, `description`, `price`, `categoryId`,
   `position`, và các cờ `isSet`/`memberProductIds`/`isPreorder`/`preorderExpectedAt`/
   `variantGroupId`/`variantLabel`.
-- **Sau**: body có `name`, **`code`**, `slug`, `description`, **`defaultPrice`**, `categoryId`,
-  `position`, **`variants`**.
-  - `code` **bắt buộc**, duy nhất toàn bộ sản phẩm (trùng → `409 PRODUCT_CODE_TAKEN`).
+- **Sau**: body có `name`, **`code`**, `description`, **`defaultPrice`**, `categoryId`,
+  `position`, **`variants`** — **bỏ** `slug`.
+  - `code` **bắt buộc**, là **đoạn link công khai** (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140
+    ký tự), duy nhất toàn bộ sản phẩm (trùng → `409 PRODUCT_CODE_TAKEN`).
   - `defaultPrice` là **giá mặc định** (`{ amount, currency }`).
   - `variants` **bắt buộc**, **≥1** phần tử `{ name, sku, price?, position }`; `price` tuỳ chọn
     (`{ "amount": <int> }` hoặc `null`/bỏ trống = dùng giá mặc định; **không** nhận `currency`).
     `sku` duy nhất toàn hệ (trùng → `409 VARIANT_SKU_TAKEN`). Variant mới ở `COMING_SOON`.
   - **Bỏ** `isSet`, `memberProductIds`, `isPreorder`, `preorderExpectedAt`, `variantGroupId`,
     `variantLabel`.
-- **Trả về `201`**: `data` = `AdminProductDetail` (14 member = `AdminProduct` 12 member + `images` +
+- **Trả về `201`**: `data` = `AdminProductDetail` (**13 member** = `AdminProduct` 11 member + `images` +
   `variants`).
 
 ### 3.4 `GET /api/v1/admin/products/{id}` — **Đổi**
 
 - **Trước**: `data` = `AdminProductDetail` 17 member (`AdminProduct` 15 member + `images` + `members`).
-- **Sau**: `data` = `AdminProductDetail` **14 member** = `AdminProduct` **12 member** (`id`, `name`,
-  `code`, `slug`, `description`, `defaultPrice`, `categoryId`, `position`, `variantCount`, `imageUrl`,
+- **Sau**: `data` = `AdminProductDetail` **13 member** = `AdminProduct` **11 member** (`id`, `name`,
+  `code`, `description`, `defaultPrice`, `categoryId`, `position`, `variantCount`, `imageUrl`,
   `createdAt`, `updatedAt`) + `images` (7 member: `id`, `publicId`, `url`, `width`, `height`, `position`,
   `isPrimary`) + `variants` (mỗi phần tử `AdminVariant` **8 member**: `id`, `name`, `sku`, `price`,
-  `effectivePrice`, `imageUrl`, `position`, `sellState`). **Bỏ** `members`, `sellState` cấp sản phẩm,
+  `effectivePrice`, `imageUrl`, `position`, `sellState`). **Bỏ** `members`, `slug`, `sellState` cấp sản phẩm,
   `isSet`, `isPreorder`, `preorderExpectedAt`, `imageCount`. `price` của variant là `null` khi dùng giá
   mặc định; `effectivePrice` là giá thực thu.
 
@@ -155,7 +162,8 @@ Chi tiết sản phẩm.
 
 - **Trước**: nhận thêm `isSet`/`memberProductIds`/`isPreorder`/`preorderExpectedAt` và
   `variantGroupId`/`variantLabel` (ba trạng thái).
-- **Sau**: chỉ nhận `name`, `code`, `slug`, `description`, `defaultPrice`, `categoryId`, `position`.
+- **Sau**: chỉ nhận `name`, `code`, `description`, `defaultPrice`, `categoryId`, `position` (**bỏ**
+  `slug`).
   **Không** đụng variant; **không** đổi trạng thái bán (nằm ở variant). Variant sửa qua các route
   riêng 3.7–3.11.
 
@@ -241,8 +249,9 @@ Chi tiết sản phẩm.
 `VARIANT_LAST_REMOVAL` 409 · `VARIANT_STATE_TRANSITION_INVALID` 409.
 
 **Gỡ:** `VARIANT_GROUP_NOT_FOUND`, `VARIANT_GROUP_SLUG_TAKEN`, `VARIANT_GROUP_HAS_OPTIONS`,
-`VARIANT_LABEL_TAKEN`, `PRODUCT_ALREADY_IN_VARIANT_GROUP` (feature 014) và
-`PRODUCT_STATE_TRANSITION_INVALID` (feature 006).
+`VARIANT_LABEL_TAKEN`, `PRODUCT_ALREADY_IN_VARIANT_GROUP` (feature 014),
+`PRODUCT_STATE_TRANSITION_INVALID` (feature 006) và `PRODUCT_SLUG_TAKEN` (nay `code` là đoạn link công
+khai nên va chạm dùng `409 PRODUCT_CODE_TAKEN`).
 
 **Đổi nghĩa:** `PRODUCT_NOT_FOUND` 404 nay bao gồm "sản phẩm không còn variant nào đang bán" (bỏ nhãn
 pre-order, "chưa lên ACTIVE"). Inventory dùng `VARIANT_NOT_FOUND` (trước `PRODUCT_NOT_FOUND`); cart vẫn
@@ -250,33 +259,37 @@ giữ `PRODUCT_NOT_FOUND` cho một variant lạ (mã cũ đã lập, chỉ đ�
 
 ## 5. Phụ lục đồng bộ (sync appendix)
 
-Phần này là bằng chứng cho lần **đồng bộ guide với source** (T054). Mọi field dưới đây là một thẻ
-`json:"…"` trong DTO của feature (module 04–07, presentation). Con số là số field.
+Phần này là bằng chứng cho lần **đồng bộ guide với source** (đọc lại source ngày 2026-10-16, sau khi
+`code` trở thành đoạn link công khai). Đếm theo source: **module 04 Product có 17 DTO mang thẻ `json`
+(tổng 90 field)** — không tính `OptionalVariantPrice` vì nó không serialize — **10 HTTP status** mà
+guide dùng, **16 route product** đang tồn tại, **1** route cấp-sản-phẩm đã gỡ (`POST
+/admin/products/{id}/state`) và **9** route product-group đã gỡ. Mọi field dưới đây là một thẻ
+`json:"…"` trong DTO của feature (module 04–07, presentation); con số là số field.
 
 ### 5.1 Field của DTO (product)
 
-- `PublicProductResponse` (5): `id`, `name`, `slug`, `price`, `imageUrl`.
+- `PublicProductResponse` (5): `id`, `name`, **`code`**, `price`, `imageUrl`.
 - `PriceResponse` (2): `amount`, `currency`.
 - `PublicImageResponse` (4): `id`, `url`, `width`, `height`.
 - `PublicVariantResponse` (6): `id`, `name`, `price`, `imageUrl`, `sellState`, `inStock`.
-- `PublicProductDetailResponse` (8): `id`, `name`, `slug`, `price`, `imageUrl`, `description`,
+- `PublicProductDetailResponse` (8): `id`, `name`, **`code`**, `price`, `imageUrl`, `description`,
   `images`, `variants`.
-- `CreateProductRequest` (8): `name`, `code`, `slug`, `description`, `defaultPrice`, `categoryId`,
+- `CreateProductRequest` (7): `name`, `code`, `description`, `defaultPrice`, `categoryId`,
   `position`, `variants`.
 - `PriceRequest` (2): `amount`, `currency`.
 - `CreateVariantRequest` (4): `name`, `sku`, `price`, `position`.
 - `VariantPriceRequest` (1): `amount`.
-- `UpdateProductRequest` (7): `name`, `code`, `slug`, `description`, `defaultPrice`, `categoryId`,
+- `UpdateProductRequest` (6): `name`, `code`, `description`, `defaultPrice`, `categoryId`,
   `position`.
 - `UpdateVariantRequest` (4): `name`, `sku`, `price`, `position`.
 - `ChangeVariantStateRequest` (1): `to`.
-- `AdminProductResponse` (12): `id`, `name`, `code`, `slug`, `description`, `defaultPrice`,
+- `AdminProductResponse` (11): `id`, `name`, `code`, `description`, `defaultPrice`,
   `categoryId`, `position`, `variantCount`, `imageUrl`, `createdAt`, `updatedAt`.
 - `AdminImageResponse` (7): `id`, `publicId`, `url`, `width`, `height`, `position`, `isPrimary`.
 - `AdminVariantResponse` (8): `id`, `name`, `sku`, `price`, `effectivePrice`, `imageUrl`, `position`,
   `sellState`.
 - `AdminVariantPriceResponse` (1): `amount`.
-- `AdminProductDetailResponse` (14): 12 của `AdminProductResponse` + `images` + `variants`.
+- `AdminProductDetailResponse` (13): 11 của `AdminProductResponse` + `images` + `variants`.
 
 ### 5.2 Field của DTO (cart)
 

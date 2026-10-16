@@ -233,7 +233,6 @@ type variantAdminDetailBody struct {
 	Data struct {
 		ID       string `json:"id"`
 		Code     string `json:"code"`
-		Slug     string `json:"slug"`
 		Variants []struct {
 			ID        string  `json:"id"`
 			Name      string  `json:"name"`
@@ -338,9 +337,9 @@ func (f *variantMaintenanceFixture) requireAdminAudit(t *testing.T, action, targ
 }
 
 // variantProductBody builds a create body for a product carrying one variant.
-func variantProductBody(name, code, slug, sku string, categoryID uuid.UUID) string {
-	return fmt.Sprintf(`{"name":%q,"code":%q,"slug":%q,"description":"Mô tả","defaultPrice":{"amount":100000,"currency":"VND"},"categoryId":%q,"position":1,"variants":[{"name":"Mặc định","sku":%q,"position":0}]}`,
-		name, code, slug, categoryID.String(), sku)
+func variantProductBody(name, code, sku string, categoryID uuid.UUID) string {
+	return fmt.Sprintf(`{"name":%q,"code":%q,"description":"Mô tả","defaultPrice":{"amount":100000,"currency":"VND"},"categoryId":%q,"position":1,"variants":[{"name":"Mặc định","sku":%q,"position":0}]}`,
+		name, code, categoryID.String(), sku)
 }
 
 // FR-009 to FR-016, FR-013, SC-006 against real PostgreSQL: a full administrator
@@ -353,13 +352,13 @@ func TestVariantMaintenanceLifecycleAgainstPostgres(t *testing.T) {
 
 	// Create a product with one variant (FR-009, FR-012).
 	createRec := f.call(http.MethodPost, productAdminPath,
-		variantProductBody("Bộ card", "CARD-1", "bo-card", "CARD-1-D", category.ID), f.adminToken)
+		variantProductBody("Bộ card", "bo-card", "CARD-1-D", category.ID), f.adminToken)
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("create: expected 201, got %d (%s)", createRec.Code, createRec.Body.String())
 	}
 	created := decodeVariantAdminDetail(t, createRec)
 	productID := created.Data.ID
-	if created.Data.Code != "CARD-1" || len(created.Data.Variants) != 1 {
+	if created.Data.Code != "bo-card" || len(created.Data.Variants) != 1 {
 		t.Fatalf("the created product must carry its variant: %+v", created.Data)
 	}
 	if created.Data.Variants[0].SellState != string(productconstant.SellStateComingSoon) {
@@ -418,7 +417,7 @@ func TestVariantMaintenanceLifecycleAgainstPostgres(t *testing.T) {
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("public list: expected 200, got %d (%s)", listRec.Code, listRec.Body.String())
 	}
-	if !strings.Contains(listRec.Body.String(), `"slug":"bo-card"`) {
+	if !strings.Contains(listRec.Body.String(), `"code":"bo-card"`) {
 		t.Fatalf("the activated product must appear once in the catalogue: %s", listRec.Body.String())
 	}
 
@@ -440,7 +439,7 @@ func TestVariantMaintenanceLifecycleAgainstPostgres(t *testing.T) {
 
 	// A duplicate product code is refused (FR-011).
 	dupCodeRec := f.call(http.MethodPost, productAdminPath,
-		variantProductBody("Trùng mã", "CARD-1", "trung-ma", "OTHER-1", category.ID), f.adminToken)
+		variantProductBody("Trùng mã", "bo-card", "OTHER-1", category.ID), f.adminToken)
 	if dupCodeRec.Code != http.StatusConflict {
 		t.Fatalf("duplicate code: expected 409, got %d (%s)", dupCodeRec.Code, dupCodeRec.Body.String())
 	}
@@ -484,7 +483,7 @@ func TestRemovingAProductRemovesItsVariantsAgainstPostgres(t *testing.T) {
 	category := seedSKUCategory(t, f.categories, "tranh-sku", true)
 
 	createRec := f.call(http.MethodPost, productAdminPath,
-		variantProductBody("Bộ card", "CARD-1", "bo-card", "CARD-1-D", category.ID), f.adminToken)
+		variantProductBody("Bộ card", "bo-card", "CARD-1-D", category.ID), f.adminToken)
 	if createRec.Code != http.StatusCreated {
 		t.Fatalf("create: expected 201, got %d (%s)", createRec.Code, createRec.Body.String())
 	}

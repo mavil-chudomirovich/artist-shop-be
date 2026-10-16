@@ -134,10 +134,10 @@ func (f *catalogueSKUFixture) seedSKUProduct(
 	now := time.Now().UTC()
 	product, err := productmodel.NewProduct(draft, now)
 	if err != nil {
-		t.Fatalf("NewProduct(%q): %v", draft.Slug, err)
+		t.Fatalf("NewProduct(%q): %v", draft.Code, err)
 	}
 	if err := f.products.Create(context.Background(), product); err != nil {
-		t.Fatalf("Create product %q: %v", draft.Slug, err)
+		t.Fatalf("Create product %q: %v", draft.Code, err)
 	}
 	variants := make([]productmodel.Variant, 0, len(draft.Variants))
 	for i, variantDraft := range draft.Variants {
@@ -207,7 +207,7 @@ type skuCatalogueListBody struct {
 	Data []struct {
 		ID    string `json:"id"`
 		Name  string `json:"name"`
-		Slug  string `json:"slug"`
+		Code  string `json:"code"`
 		Price struct {
 			Amount   int64  `json:"amount"`
 			Currency string `json:"currency"`
@@ -221,7 +221,7 @@ type skuCatalogueListBody struct {
 
 type skuProductDetailBody struct {
 	Data struct {
-		Slug  string `json:"slug"`
+		Code  string `json:"code"`
 		Price struct {
 			Amount   int64  `json:"amount"`
 			Currency string `json:"currency"`
@@ -279,7 +279,7 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	// own image and the product carrying a primary gallery picture the default
 	// variant's image must win over.
 	_, cardVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Card set", Code: "CARD-1", Slug: "card-set", Price: skuProductPrice(150000),
+		Name: "Card set", Code: "card-set", Price: skuProductPrice(150000),
 		CategoryID: category.ID, Position: 1,
 		Variants: []productmodel.VariantDraft{
 			{Name: "Small", SKU: "CARD-1-S", PriceAmount: skuPtr[int64](120000), Position: 0, Image: variantImage("v/s", "https://cdn.test/small.jpg")},
@@ -297,7 +297,7 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	// A product whose only variant has no image: the card image falls back to the
 	// product's primary gallery picture.
 	_, fallbackVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Fallback", Code: "FB-1", Slug: "fallback", Price: skuProductPrice(50000),
+		Name: "Fallback", Code: "fallback", Price: skuProductPrice(50000),
 		CategoryID: category.ID, Position: 2,
 		Variants: []productmodel.VariantDraft{{Name: "Mặc định", SKU: "FB-1-D", Position: 0}},
 	}, map[int]func(*productmodel.Variant, time.Time) error{0: (*productmodel.Variant).Launch})
@@ -306,7 +306,7 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	// Every variant out of stock or not yet on sale: the product leaves the
 	// catalogue entirely (FR-004).
 	f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Sold out", Code: "SO-1", Slug: "sold-out", Price: skuProductPrice(90000),
+		Name: "Sold out", Code: "sold-out", Price: skuProductPrice(90000),
 		CategoryID: category.ID, Position: 3,
 		Variants: []productmodel.VariantDraft{{Name: "Hết", SKU: "SO-1-D", Position: 0}},
 	}, map[int]func(*productmodel.Variant, time.Time) error{
@@ -318,7 +318,7 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 		},
 	})
 	f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Coming soon", Code: "CS-1", Slug: "coming-soon", Price: skuProductPrice(70000),
+		Name: "Coming soon", Code: "coming-soon", Price: skuProductPrice(70000),
 		CategoryID: category.ID, Position: 4,
 		Variants: []productmodel.VariantDraft{{Name: "Sắp ra mắt", SKU: "CS-1-D", Position: 0}},
 	}, nil)
@@ -331,7 +331,7 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	if list.Meta.Total != 2 || len(list.Data) != 2 {
 		t.Fatalf("the catalogue must collapse to one entry per on-sale product, got total %d entries %+v", list.Meta.Total, list.Data)
 	}
-	if list.Data[0].Slug != "card-set" || list.Data[1].Slug != "fallback" {
+	if list.Data[0].Code != "card-set" || list.Data[1].Code != "fallback" {
 		t.Fatalf("unexpected catalogue order: %+v", list.Data)
 	}
 	if list.Data[0].Price.Amount != 120000 {
@@ -364,7 +364,7 @@ func TestProductDetailListsVisibleVariantsWithStatusAgainstPostgres(t *testing.T
 	category := seedSKUCategory(t, f.categories, "tranh", true)
 
 	_, variants := f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Card set", Code: "CARD-1", Slug: "card-set", Description: "Bộ card",
+		Name: "Card set", Code: "card-set", Description: "Bộ card",
 		Price: skuProductPrice(100000), CategoryID: category.ID, Position: 1,
 		Variants: []productmodel.VariantDraft{
 			{Name: "Default", SKU: "D", PriceAmount: skuPtr[int64](120000), Position: 0},
@@ -395,7 +395,7 @@ func TestProductDetailListsVisibleVariantsWithStatusAgainstPostgres(t *testing.T
 		t.Fatalf("detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	detail := decodeSKUDetail(t, rec)
-	if detail.Data.Slug != "card-set" {
+	if detail.Data.Code != "card-set" {
 		t.Fatalf("unexpected detail: %+v", detail.Data)
 	}
 	if len(detail.Data.Variants) != 2 {
@@ -417,7 +417,7 @@ func TestHiddenAndUnknownProductAnswerTheSameNotFoundAgainstPostgres(t *testing.
 	hiddenCategory := seedSKUCategory(t, f.categories, "nhap", false)
 
 	_, hiddenVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
-		Name: "Hidden", Code: "HID-1", Slug: "hidden", Price: skuProductPrice(100000),
+		Name: "Hidden", Code: "hidden", Price: skuProductPrice(100000),
 		CategoryID: hiddenCategory.ID, Position: 1,
 		Variants: []productmodel.VariantDraft{{Name: "Mặc định", SKU: "HID-1-D", Position: 0}},
 	}, map[int]func(*productmodel.Variant, time.Time) error{0: (*productmodel.Variant).Launch})

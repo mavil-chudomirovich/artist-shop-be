@@ -197,7 +197,6 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 			ProductCode: summary.ProductCode,
 			VariantName: summary.VariantName,
 			SKU:         summary.SKU,
-			Slug:        summary.ProductSlug,
 			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
 			Quantity:    line.Quantity,
 		})

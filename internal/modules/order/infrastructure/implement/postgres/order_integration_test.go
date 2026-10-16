@@ -78,14 +78,13 @@ func (f *orderFixture) insertProduct(t *testing.T) uuid.UUID {
 	}
 
 	productID := uuid.New()
-	slug := "product-" + productID.String()[:8]
-	code := "CODE-" + productID.String()[:8]
+	code := "product-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position)
-		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
-		productID, "Product "+slug, code, slug, categoryID); err != nil {
+		VALUES ($1, $2, $3, '', 1000, 'VND', $4, 0)`,
+		productID, "Product "+code, code, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
 	// The product's default variant: an order line records a variant, so a line
@@ -95,7 +94,7 @@ func (f *orderFixture) insertProduct(t *testing.T) uuid.UUID {
 		INSERT INTO product_variants
 			(id, product_id, name, sku, price_amount, position, sell_state)
 		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
-		uuid.New(), productID, "Variant "+slug, code); err != nil {
+		uuid.New(), productID, "Variant "+code, code); err != nil {
 		t.Fatalf("insert variant: %v", err)
 	}
 	return productID
@@ -153,7 +152,6 @@ func newLine(productID uuid.UUID, name string, price, quantity int64, position i
 		ProductCode: name,
 		VariantName: name,
 		SKU:         name,
-		Slug:        name,
 		UnitPrice:   model.Price{Amount: price, Currency: "VND"},
 		Quantity:    quantity,
 		Position:    position,
@@ -420,9 +418,9 @@ func TestReplaceLinesReplacesTheSetAndKeepsOneLinePerProduct(t *testing.T) {
 	// the same product code and SKU on one order is refused by the database.
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO order_items
-			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, slug,
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku,
 			 unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, $4, 'dup', 'first', 'dup', 'first', 'dup', 1000, 'VND', 1, 2, now())`,
+		VALUES ($1, $2, $3, $4, 'dup', 'first', 'dup', 'first', 1000, 'VND', 1, 2, now())`,
 		uuid.New(), order.ID, first, uuid.New()); err == nil {
 		t.Fatal("the storage must refuse a duplicate (product code, SKU) on one order")
 	}

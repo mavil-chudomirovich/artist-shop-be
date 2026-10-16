@@ -8,9 +8,10 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 )
 
-// The slug is the segment a public link is built from, so the accepted set is
-// exactly lowercase unaccented letters, digits and single hyphens (FR-029).
-func TestSlugShapeAcceptsURLSafeSegments(t *testing.T) {
+// The product code is the segment a public link is built from, so the accepted
+// set is exactly lowercase unaccented letters, digits and single hyphens
+// (FR-011).
+func TestCodeShapeAcceptsURLSafeSegments(t *testing.T) {
 	valid := []string{
 		"tranh-son-dau",
 		"a",
@@ -22,16 +23,16 @@ func TestSlugShapeAcceptsURLSafeSegments(t *testing.T) {
 		"x-y-z-0",
 	}
 
-	for _, slug := range valid {
-		if !IsValidSlug(slug) {
-			t.Errorf("IsValidSlug(%q) = false, want true", slug)
+	for _, code := range valid {
+		if !IsValidCode(code) {
+			t.Errorf("IsValidCode(%q) = false, want true", code)
 		}
 	}
 }
 
 // Every shape the operator could type that is not URL-safe must be refused
-// (FR-029, spec edge cases).
-func TestSlugShapeRejectsAnythingThatIsNotURLSafe(t *testing.T) {
+// (FR-011, spec edge cases).
+func TestCodeShapeRejectsAnythingThatIsNotURLSafe(t *testing.T) {
 	invalid := map[string]string{
 		"accented letters":  "tranh-sơn-dầu",
 		"uppercase letters": "Tranh-Son-Dau",
@@ -47,10 +48,10 @@ func TestSlugShapeRejectsAnythingThatIsNotURLSafe(t *testing.T) {
 		"whitespace only":   " ",
 	}
 
-	for name, slug := range invalid {
+	for name, code := range invalid {
 		t.Run(name, func(t *testing.T) {
-			if IsValidSlug(slug) {
-				t.Errorf("IsValidSlug(%q) = true, want false", slug)
+			if IsValidCode(code) {
+				t.Errorf("IsValidCode(%q) = true, want false", code)
 			}
 		})
 	}
@@ -153,18 +154,18 @@ func TestNameBoundCountsVietnameseCharactersNotBytes(t *testing.T) {
 	assertField(t, err, FieldName)
 }
 
-// FR-030: the slug bound is 140 characters.
-func TestSlugBoundIsOneHundredAndFortyCharacters(t *testing.T) {
-	atLimit := strings.Repeat("a", MaxSlugRunes)
-	if err := ValidateSlug(atLimit); err != nil {
-		t.Errorf("a slug of exactly %d characters must be accepted: %v", MaxSlugRunes, err)
+// FR-011: the code bound is 140 characters.
+func TestCodeBoundIsOneHundredAndFortyCharacters(t *testing.T) {
+	atLimit := strings.Repeat("a", MaxCodeRunes)
+	if err := ValidateCode(atLimit); err != nil {
+		t.Errorf("a code of exactly %d characters must be accepted: %v", MaxCodeRunes, err)
 	}
 
-	err := ValidateSlug(atLimit + "a")
+	err := ValidateCode(atLimit + "a")
 	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("a slug of %d characters must be refused with ErrProductInvalid, got %v", MaxSlugRunes+1, err)
+		t.Fatalf("a code of %d characters must be refused with ErrProductInvalid, got %v", MaxCodeRunes+1, err)
 	}
-	assertField(t, err, FieldSlug)
+	assertField(t, err, FieldCode)
 }
 
 // FR-030: the description bound is 5000 characters, counted in characters.
@@ -184,7 +185,7 @@ func TestDescriptionBoundIsFiveThousandCharacters(t *testing.T) {
 	assertField(t, err, FieldDescription)
 }
 
-// Every field-level rejection must name the offending member (FR-028, FR-029,
+// Every field-level rejection must name the offending member (FR-011, FR-028,
 // FR-030).
 func TestValidationNamesTheOffendingField(t *testing.T) {
 	cases := []struct {
@@ -194,12 +195,12 @@ func TestValidationNamesTheOffendingField(t *testing.T) {
 	}{
 		{"blank name", ValidateName(""), FieldName},
 		{"over-long name", ValidateName(strings.Repeat("a", MaxNameRunes+1)), FieldName},
-		{"blank slug", ValidateSlug(""), FieldSlug},
-		{"accented slug", ValidateSlug("tranh-sơn"), FieldSlug},
-		{"uppercase slug", ValidateSlug("Tranh"), FieldSlug},
-		{"trailing-hyphen slug", ValidateSlug("tranh-"), FieldSlug},
-		{"double-hyphen slug", ValidateSlug("tranh--son"), FieldSlug},
-		{"over-long slug", ValidateSlug(strings.Repeat("a", MaxSlugRunes+1)), FieldSlug},
+		{"blank code", ValidateCode(""), FieldCode},
+		{"accented code", ValidateCode("tranh-sơn"), FieldCode},
+		{"uppercase code", ValidateCode("Tranh"), FieldCode},
+		{"trailing-hyphen code", ValidateCode("tranh-"), FieldCode},
+		{"double-hyphen code", ValidateCode("tranh--son"), FieldCode},
+		{"over-long code", ValidateCode(strings.Repeat("a", MaxCodeRunes+1)), FieldCode},
 		{"over-long description", ValidateDescription(strings.Repeat("a", MaxDescriptionRunes+1)), FieldDescription},
 	}
 

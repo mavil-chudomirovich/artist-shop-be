@@ -59,7 +59,7 @@ func (f *fakeService) MarkPaid(_ context.Context, orderID uuid.UUID, sourceRefer
 func awaitingPaymentOrder(owner uuid.UUID) *model.Order {
 	deadline := time.Date(2026, time.October, 11, 13, 0, 0, 0, time.UTC)
 	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, []model.OrderLine{{
-		ProductID: uuid.New(), ProductName: "Tranh", Slug: "tranh",
+		ProductID: uuid.New(), ProductName: "Tranh",
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
 	}}, time.Date(2026, time.October, 11, 12, 0, 0, 0, time.UTC))
 	order.Status = constant.StatusPaymentPending

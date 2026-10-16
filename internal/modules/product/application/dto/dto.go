@@ -19,15 +19,15 @@ import (
 
 // PublicProductOutput is one entry of the customer-facing catalogue: exactly one
 // per product, with the product's variants collapsed into a single card price and
-// image (FR-001, FR-002). The code, the sell state, the position and the category
-// are absent by design (FR-008).
+// image (FR-001, FR-002). The sell state, the position and the category are absent
+// by design (FR-008).
 type PublicProductOutput struct {
 	// ID is the product's stable public identifier.
 	ID uuid.UUID
 	// Name is the name the operator wrote.
 	Name string
-	// Slug is the segment a customer-facing link is built from.
-	Slug string
+	// Code is the segment a customer-facing link is built from.
+	Code string
 	// Price is the lowest effective price among the product's on-sale variants,
 	// as an integer amount plus its currency (FR-002).
 	Price model.Price
@@ -116,11 +116,11 @@ type ListPublicInput struct {
 	CategorySlug string
 }
 
-// PublicProductRefInput addresses one product of the public surface by the slug a
+// PublicProductRefInput addresses one product of the public surface by the code a
 // customer-facing link is built from.
 type PublicProductRefInput struct {
-	// Slug is the public link segment.
-	Slug string
+	// Code is the public link segment.
+	Code string
 }
 
 // AdminVariantOutput is one variant of the administrator detail: the members a
@@ -148,17 +148,15 @@ type AdminVariantOutput struct {
 }
 
 // AdminProductOutput is one entry of the administrator surface, including the
-// members a customer must never receive: the code, the description, the category,
-// the position and the variant count (FR-010).
+// members a customer must never receive: the description, the category, the
+// position and the variant count (FR-010).
 type AdminProductOutput struct {
 	// ID is the product's stable identifier.
 	ID uuid.UUID
 	// Name is the name the operator wrote.
 	Name string
-	// Code is the operator-facing product code (FR-011).
+	// Code is the product code (FR-011).
 	Code string
-	// Slug is the link segment the operator wrote.
-	Slug string
 	// Description is the text shown to customers; an empty string is valid.
 	Description string
 	// Price is the product's default price, an integer amount plus its currency.
@@ -254,10 +252,8 @@ type CreateVariantInput struct {
 type CreateProductInput struct {
 	// Name is the product name.
 	Name string
-	// Code is the unique operator-facing product code (FR-011).
+	// Code is the product code (FR-011).
 	Code string
-	// Slug is the public link segment.
-	Slug string
 	// Description is the text shown to customers; an empty string is valid.
 	Description string
 	// Price is the product's default price with its currency.
@@ -282,8 +278,6 @@ type UpdateProductInput struct {
 	Name *string
 	// Code is the new product code; nil keeps the current value (FR-011).
 	Code *string
-	// Slug is the new slug; nil keeps the current value.
-	Slug *string
 	// Description is the new description; nil keeps the current value.
 	Description *string
 	// Price is the new default price; nil keeps the current value.

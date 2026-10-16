@@ -90,13 +90,9 @@ type VariantSummary struct {
 	ProductID uuid.UUID
 	// ProductName is the product's current name, snapped onto an order line.
 	ProductName string
-	// ProductCode is the operator-facing product code, snapped onto an order
-	// line.
+	// ProductCode is the product code, snapped onto an order line. It is both the
+	// operator-facing code and the product's link segment.
 	ProductCode string
-	// ProductSlug is the product's current link segment, snapped onto an order
-	// line's slug column so a historic order keeps a working product link
-	// (research D8). It is informational; no consumer resolves the product by it.
-	ProductSlug string
 	// VariantName is the variant's current display name, snapped onto an order
 	// line.
 	VariantName string

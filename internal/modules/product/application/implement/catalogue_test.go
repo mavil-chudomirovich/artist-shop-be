@@ -22,9 +22,9 @@ import (
 func price(amount int64) model.Price { return model.Price{Amount: amount, Currency: "VND"} }
 
 // productDraft builds a product draft with one default variant.
-func productDraft(name, code, slug string, amount int64, category uuid.UUID, position int) model.ProductDraft {
+func productDraft(name, code string, amount int64, category uuid.UUID, position int) model.ProductDraft {
 	return model.ProductDraft{
-		Name: name, Code: code, Slug: slug, Price: price(amount),
+		Name: name, Code: code, Price: price(amount),
 		CategoryID: category, Position: position,
 		Variants: []model.VariantDraft{{Name: "Mặc định", SKU: "SKU-" + code, Position: 0}},
 	}
@@ -37,10 +37,10 @@ func TestListPublicReturnsOnlyProductsWithAnOnSaleVariant(t *testing.T) {
 	visibleCat, hiddenCat := uuid.New(), uuid.New()
 
 	repo := newMemoryProducts()
-	listed := repo.seedWithVariants(t, productDraft("On sale", "P1", "on-sale", 100, visibleCat, 1), nil, base)
+	listed := repo.seedWithVariants(t, productDraft("On sale", "on-sale", 100, visibleCat, 1), nil, base)
 	repo.launch(t, repo.variantsFor(listed.ID)[0].ID)
-	repo.seedWithVariants(t, productDraft("No variant on sale", "P2", "announced", 100, visibleCat, 2), nil, base.Add(time.Minute))
-	hidden := repo.seedWithVariants(t, productDraft("Hidden", "P3", "hidden", 100, hiddenCat, 3), nil, base.Add(2*time.Minute))
+	repo.seedWithVariants(t, productDraft("No variant on sale", "announced", 100, visibleCat, 2), nil, base.Add(time.Minute))
+	hidden := repo.seedWithVariants(t, productDraft("Hidden", "hidden", 100, hiddenCat, 3), nil, base.Add(2*time.Minute))
 	repo.launch(t, repo.variantsFor(hidden.ID)[0].ID)
 
 	visibility := &fakeVisibility{visible: []uuid.UUID{visibleCat}}
@@ -48,7 +48,7 @@ func TestListPublicReturnsOnlyProductsWithAnOnSaleVariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
-	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Slug != "on-sale" {
+	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Code != "on-sale" {
 		t.Fatalf("expected only the product with an on-sale variant, got %+v", page.Products)
 	}
 }
@@ -61,7 +61,7 @@ func TestListPublicUsesLowestOnSalePrice(t *testing.T) {
 
 	repo := newMemoryProducts()
 	product := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Card set", Code: "P1", Slug: "card-set", Price: price(150000), CategoryID: category, Position: 1,
+		Name: "Card set", Code: "card-set", Price: price(150000), CategoryID: category, Position: 1,
 		Variants: []model.VariantDraft{
 			{Name: "Small", SKU: "S", PriceAmount: ptr[int64](120000), Position: 0},
 			{Name: "Large", SKU: "L", PriceAmount: ptr[int64](180000), Position: 1},
@@ -89,7 +89,7 @@ func TestListPublicPassesTheVisibleSetOnce(t *testing.T) {
 	category := uuid.New()
 
 	repo := newMemoryProducts()
-	product := repo.seedWithVariants(t, productDraft("A", "P1", "a", 100, category, 1), nil, base)
+	product := repo.seedWithVariants(t, productDraft("A", "a", 100, category, 1), nil, base)
 	repo.launch(t, repo.variantsFor(product.ID)[0].ID)
 
 	visibility := &fakeVisibility{visible: []uuid.UUID{category}}
@@ -104,13 +104,13 @@ func TestListPublicPassesTheVisibleSetOnce(t *testing.T) {
 // FR-003, FR-005: the detail carries the visible variants only (on sale or out of
 // stock) with their effective price and stock status, and per-variant availability
 // costs one bulk read.
-func TestGetPublicBySlugReturnsVisibleVariantsWithStockStatus(t *testing.T) {
+func TestGetPublicByCodeReturnsVisibleVariantsWithStockStatus(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Hour)
 	category := uuid.New()
 
 	repo := newMemoryProducts()
 	product := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Card set", Code: "P1", Slug: "card-set", Description: "Bộ card", Price: price(100000),
+		Name: "Card set", Code: "card-set", Description: "Bộ card", Price: price(100000),
 		CategoryID: category, Position: 1,
 		Variants: []model.VariantDraft{
 			{Name: "Active", SKU: "A", PriceAmount: ptr[int64](120000), Position: 0},
@@ -130,9 +130,9 @@ func TestGetPublicBySlugReturnsVisibleVariantsWithStockStatus(t *testing.T) {
 	availability.available[variants[1].ID] = 0
 
 	svc := serviceFor(repo, availability, &fakeVisibility{visible: []uuid.UUID{category}}, nil, nil, nil)
-	out, err := svc.GetPublicBySlug(context.Background(), dto.PublicProductRefInput{Slug: "card-set"})
+	out, err := svc.GetPublicByCode(context.Background(), dto.PublicProductRefInput{Code: "card-set"})
 	if err != nil {
-		t.Fatalf("GetPublicBySlug: %v", err)
+		t.Fatalf("GetPublicByCode: %v", err)
 	}
 	if len(out.Variants) != 2 {
 		t.Fatalf("expected the on-sale and out-of-stock variants, got %+v", out.Variants)
@@ -150,31 +150,31 @@ func TestGetPublicBySlugReturnsVisibleVariantsWithStockStatus(t *testing.T) {
 
 // FR-008: a product with no on-sale variant, in a hidden category, removed or
 // unknown all answer the same not-found.
-func TestGetPublicBySlugAnswersNotFoundForAHiddenProduct(t *testing.T) {
+func TestGetPublicByCodeAnswersNotFoundForAHiddenProduct(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Hour)
 	visibleCat, hiddenCat := uuid.New(), uuid.New()
 
 	repo := newMemoryProducts()
-	visible := repo.seedWithVariants(t, productDraft("Visible", "P1", "visible", 100, visibleCat, 1), nil, base)
+	visible := repo.seedWithVariants(t, productDraft("Visible", "visible", 100, visibleCat, 1), nil, base)
 	repo.launch(t, repo.variantsFor(visible.ID)[0].ID)
-	hidden := repo.seedWithVariants(t, productDraft("Hidden", "P2", "hidden", 100, hiddenCat, 2), nil, base.Add(time.Minute))
+	hidden := repo.seedWithVariants(t, productDraft("Hidden", "hidden", 100, hiddenCat, 2), nil, base.Add(time.Minute))
 	repo.launch(t, repo.variantsFor(hidden.ID)[0].ID)
-	repo.seedWithVariants(t, productDraft("No sale", "P3", "no-sale", 100, visibleCat, 3), nil, base.Add(2*time.Minute))
+	repo.seedWithVariants(t, productDraft("No sale", "no-sale", 100, visibleCat, 3), nil, base.Add(2*time.Minute))
 
 	svc := publicService(repo, &fakeVisibility{visible: []uuid.UUID{visibleCat}})
 	ctx := context.Background()
 
-	if _, err := svc.GetPublicBySlug(ctx, dto.PublicProductRefInput{Slug: "hidden"}); !errors.Is(err, domainerr.ErrProductNotFound) {
+	if _, err := svc.GetPublicByCode(ctx, dto.PublicProductRefInput{Code: "hidden"}); !errors.Is(err, domainerr.ErrProductNotFound) {
 		t.Fatalf("a product in a hidden category must answer not-found, got %v", err)
 	}
-	if _, err := svc.GetPublicBySlug(ctx, dto.PublicProductRefInput{Slug: "no-sale"}); !errors.Is(err, domainerr.ErrProductNotFound) {
+	if _, err := svc.GetPublicByCode(ctx, dto.PublicProductRefInput{Code: "no-sale"}); !errors.Is(err, domainerr.ErrProductNotFound) {
 		t.Fatalf("a product with no on-sale variant must answer not-found, got %v", err)
 	}
-	if _, err := svc.GetPublicBySlug(ctx, dto.PublicProductRefInput{Slug: "never-existed"}); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("an unknown slug must answer not-found, got %v", err)
+	if _, err := svc.GetPublicByCode(ctx, dto.PublicProductRefInput{Code: "never-existed"}); !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("an unknown code must answer not-found, got %v", err)
 	}
-	if _, err := svc.GetPublicBySlug(ctx, dto.PublicProductRefInput{Slug: "visible"}); err != nil {
-		t.Fatalf("a visible slug must resolve, got %v", err)
+	if _, err := svc.GetPublicByCode(ctx, dto.PublicProductRefInput{Code: "visible"}); err != nil {
+		t.Fatalf("a visible code must resolve, got %v", err)
 	}
 }
 
@@ -185,9 +185,9 @@ func TestListPublicResolvesTheCategorySlugFilter(t *testing.T) {
 	catA, catB := uuid.New(), uuid.New()
 
 	repo := newMemoryProducts()
-	inA := repo.seedWithVariants(t, productDraft("A", "P1", "a", 100, catA, 1), nil, base)
+	inA := repo.seedWithVariants(t, productDraft("A", "a", 100, catA, 1), nil, base)
 	repo.launch(t, repo.variantsFor(inA.ID)[0].ID)
-	inB := repo.seedWithVariants(t, productDraft("B", "P2", "b", 100, catB, 2), nil, base.Add(time.Minute))
+	inB := repo.seedWithVariants(t, productDraft("B", "b", 100, catB, 2), nil, base.Add(time.Minute))
 	repo.launch(t, repo.variantsFor(inB.ID)[0].ID)
 
 	visibility := &fakeVisibility{
@@ -199,7 +199,7 @@ func TestListPublicResolvesTheCategorySlugFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered ListPublic: %v", err)
 	}
-	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Slug != "a" {
+	if page.Total != 1 || len(page.Products) != 1 || page.Products[0].Code != "a" {
 		t.Fatalf("expected only category A's product, got %+v", page.Products)
 	}
 
@@ -222,7 +222,7 @@ func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
 
 	repo := newMemoryProducts()
 	variantImage := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Card set", Code: "P1", Slug: "card-set", Price: price(150000),
+		Name: "Card set", Code: "card-set", Price: price(150000),
 		CategoryID: category, Position: 1,
 		Variants: []model.VariantDraft{
 			{Name: "Small", SKU: "S", PriceAmount: ptr[int64](120000), Position: 0,
@@ -238,12 +238,12 @@ func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
 	}
 
 	// No variant image: the primary gallery picture is the card image.
-	fallback := repo.seedWithVariants(t, productDraft("Fallback", "P2", "fallback", 100, category, 2), nil, base.Add(time.Minute))
+	fallback := repo.seedWithVariants(t, productDraft("Fallback", "fallback", 100, category, 2), nil, base.Add(time.Minute))
 	repo.addSeedPicture(fallback.ID, 0, true)
 	repo.launch(t, repo.variantsFor(fallback.ID)[0].ID)
 
 	// Neither: the card carries no image.
-	bare := repo.seedWithVariants(t, productDraft("Bare", "P3", "bare", 100, category, 3), nil, base.Add(2*time.Minute))
+	bare := repo.seedWithVariants(t, productDraft("Bare", "bare", 100, category, 3), nil, base.Add(2*time.Minute))
 	repo.launch(t, repo.variantsFor(bare.ID)[0].ID)
 
 	page, err := publicService(repo, &fakeVisibility{visible: []uuid.UUID{category}}).ListPublic(
@@ -251,18 +251,18 @@ func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPublic: %v", err)
 	}
-	bySlug := make(map[string]dto.PublicProductOutput, len(page.Products))
+	byCode := make(map[string]dto.PublicProductOutput, len(page.Products))
 	for _, entry := range page.Products {
-		bySlug[entry.Slug] = entry
+		byCode[entry.Code] = entry
 	}
 
-	if got := bySlug["card-set"].ImageURL; got == nil || *got != "https://cdn.test/small.jpg" {
+	if got := byCode["card-set"].ImageURL; got == nil || *got != "https://cdn.test/small.jpg" {
 		t.Fatalf("the card image must be the default variant's image, got %+v", got)
 	}
-	if got := bySlug["fallback"].ImageURL; got == nil || *got != "https://cdn.example.test/seed.jpg" {
+	if got := byCode["fallback"].ImageURL; got == nil || *got != "https://cdn.example.test/seed.jpg" {
 		t.Fatalf("with no variant image the card must fall back to the primary picture, got %+v", got)
 	}
-	if got := bySlug["bare"].ImageURL; got != nil {
+	if got := byCode["bare"].ImageURL; got != nil {
 		t.Fatalf("with neither image the card must carry no image, got %+v", got)
 	}
 }
@@ -276,7 +276,7 @@ func TestDetailOrdersVariantsDefaultFirstWithTheSummaryFigure(t *testing.T) {
 
 	repo := newMemoryProducts()
 	product := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Card set", Code: "P1", Slug: "card-set", Description: "Bộ card",
+		Name: "Card set", Code: "card-set", Description: "Bộ card",
 		Price: price(100000), CategoryID: category, Position: 1,
 		Variants: []model.VariantDraft{
 			{Name: "Default", SKU: "D", Position: 0,
@@ -296,9 +296,9 @@ func TestDetailOrdersVariantsDefaultFirstWithTheSummaryFigure(t *testing.T) {
 	availability.available[variants[1].ID] = 0
 
 	svc := serviceFor(repo, availability, &fakeVisibility{visible: []uuid.UUID{category}}, nil, nil, nil)
-	out, err := svc.GetPublicBySlug(context.Background(), dto.PublicProductRefInput{Slug: "card-set"})
+	out, err := svc.GetPublicByCode(context.Background(), dto.PublicProductRefInput{Code: "card-set"})
 	if err != nil {
-		t.Fatalf("GetPublicBySlug: %v", err)
+		t.Fatalf("GetPublicByCode: %v", err)
 	}
 	if len(out.Variants) != 2 {
 		t.Fatalf("only the visible variants must be listed, got %+v", out.Variants)

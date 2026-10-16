@@ -44,12 +44,12 @@ func imageTooLarge() *httpx.AppError {
 // mapError translates the module's sentinel errors into the codes and statuses of
 // specs/015-product-sku-model/contracts/error-codes.md.
 //
-// A slug, code or SKU collision is 409, not 400: the value is well formed and
+// A code or SKU collision is 409, not 400: the value is well formed and
 // simply not available, so the operator's fix is to pick another value rather than
 // to repair the one sent. A picture-format or size refusal names the image, because
 // the client acts on that input. A value invalid on its own stays on the shared
 // VALIDATION_ERROR and names the field the domain reports. The public surface
-// produces only the not-found: an unknown slug, a product with no on-sale variant,
+// produces only the not-found: an unknown code, a product with no on-sale variant,
 // a removed product and a product in a hidden category are all the same answer
 // (FR-008).
 func mapError(err error) *httpx.AppError {
@@ -60,11 +60,6 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeProductNotFound, http.StatusNotFound, "Product not found")
 	case errors.Is(err, domainerr.ErrVariantNotFound):
 		return coded(constant.CodeVariantNotFound, http.StatusNotFound, "Variant not found")
-	case errors.Is(err, domainerr.ErrProductSlugTaken):
-		return withField(
-			coded(constant.CodeProductSlugTaken, http.StatusConflict, "Another product already uses that slug"),
-			model.FieldSlug, "choose a different slug",
-		)
 	case errors.Is(err, domainerr.ErrProductCodeTaken):
 		return withField(
 			coded(constant.CodeProductCodeTaken, http.StatusConflict, "Another product already uses that code"),

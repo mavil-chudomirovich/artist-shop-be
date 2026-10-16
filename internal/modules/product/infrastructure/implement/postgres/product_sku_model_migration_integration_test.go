@@ -113,17 +113,20 @@ func TestMigration00014BackfillsCodesAndDefaultVariants(t *testing.T) {
 		t.Fatalf("seed the stock level: %v", err)
 	}
 
-	// Apply the rest, including 00014.
+	// Apply the rest, including 00014 and 00015.
 	if err := goose.UpContext(ctx, db, "."); err != nil {
 		t.Fatalf("apply migration 00014: %v", err)
 	}
 
-	// Every product carries a code equal to its slug and exactly one variant.
+	// Every product carries a code equal to its old slug and exactly one variant.
+	// After 00015 the slug column is gone, so the surviving code is compared with
+	// the value feature 014 backfilled it from.
+	wantCodes := map[string]bool{"legacy-on-sale": true, "legacy-announced": true}
 	rows, err := db.QueryContext(ctx, `
-		SELECT p.id, p.slug, p.code, p.name, p.price_amount,
+		SELECT p.id, p.code, p.name, p.price_amount,
 		       (SELECT count(*) FROM product_variants v WHERE v.product_id = p.id)
 		FROM products p
-		ORDER BY p.slug`)
+		ORDER BY p.code`)
 	if err != nil {
 		t.Fatalf("read the migrated products: %v", err)
 	}
@@ -132,14 +135,14 @@ func TestMigration00014BackfillsCodesAndDefaultVariants(t *testing.T) {
 	seen := 0
 	for rows.Next() {
 		seen++
-		var id, slug, code, name string
+		var id, code, name string
 		var price int64
 		var variants int
-		if err := rows.Scan(&id, &slug, &code, &name, &price, &variants); err != nil {
+		if err := rows.Scan(&id, &code, &name, &price, &variants); err != nil {
 			t.Fatalf("scan the migrated product: %v", err)
 		}
-		if code != slug {
-			t.Errorf("product %s kept code %q, want its slug %q", id, code, slug)
+		if !wantCodes[code] {
+			t.Errorf("product %s kept code %q, want one of the legacy slugs", id, code)
 		}
 		if variants != 1 {
 			t.Errorf("product %s ended with %d variants, want exactly one", id, variants)

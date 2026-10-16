@@ -8,10 +8,12 @@
 
 Restructure the catalogue from "each choice is its own product + a grouping table" (feature 014) into
 a **parent product with child variants (SKUs)**: a product carries the shared content (name, code,
-default price, category, description, slug, gallery) and owns one or more variants; a variant carries
+default price, category, description, gallery) and owns one or more variants; a variant carries
 its own name, SKU, optional price, image, order and **its own sell state**. Sales, stock and orders
 move to the **variant** as the unit of sale: inventory is keyed by variant, the cart holds a chosen
-variant, and an order line snapshots the product code and SKU it was sold under.
+variant, and an order line snapshots the product code and SKU it was sold under. The product's
+`code` is also its public link segment; a follow-up migration `00015` drops the separate product
+`slug` that `00014` had left in place.
 
 This is a **cross-module restructure**: it changes module 04 (product), module 05 (inventory), module
 06 (cart), module 07 (order) and the cross-module contracts in `internal/contracts`, plus one
@@ -129,7 +131,8 @@ internal/modules/order/         # order line snapshots product code + sku; check
 
 migrations/
 ├── 00013_product_variants.sql        # (existing, feature 014 — superseded)
-└── 00014_product_sku_model.sql       # NEW: create variants, add product code, backfill, drop 014
+├── 00014_product_sku_model.sql       # NEW: create variants, add product code, backfill, drop 014
+└── 00015_product_code_as_link_segment.sql  # NEW: drop products.slug/normalized_slug + order_items.slug
 
 docs/
 ├── api-reference.md, modules/04-product.md, modules/05-inventory.md, modules/06-cart.md, modules/07-order.md

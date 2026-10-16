@@ -26,9 +26,8 @@ const table = "products"
 // The constraint names that carry a meaning this adapter has to translate. A
 // collision is attributed by the constraint name PostgreSQL reports, never by the
 // text of its message, because the message is localized and free to change while
-// the constraint name is part of the schema (FR-011, FR-028).
+// the constraint name is part of the schema (FR-011).
 const (
-	constraintNormalizedSlug = "products_normalized_slug_key"
 	constraintCodeKey        = "products_code_key"
 	constraintCategoryFK     = "products_category_fk"
 	constraintImageProductFK = "product_images_product_fk"
@@ -45,18 +44,16 @@ const (
 // productColumns is the projection every product read selects.
 //
 // It is deliberately the product response columns of data-model.md and matches
-// the scan arity of scanProduct. The folding key normalized_slug appears in no
-// projection, so it cannot leak into a response through this adapter even if a
-// mapper were later changed by mistake: the value is derived on write and
-// recomputed on read from the slug. The identifier is read but never named in an
-// UPDATE, so no code path can rewrite it. Feature 014's attachment columns and
+// the scan arity of scanProduct. The code is both the operator-facing code and the
+// product's public link segment, so it is the only link value the projection
+// carries. The identifier is read but never named in an UPDATE, so no code path
+// can rewrite it. Feature 014's attachment columns and
 // the product-level sell state / pre-order / combo-set flags are gone: the sell
 // state lives on the variant (research D2).
 var productColumns = []string{
 	"id",
 	"name",
 	"code",
-	"slug",
 	"description",
 	"price_amount",
 	"currency",
@@ -84,7 +81,7 @@ var pictureColumns = []string{
 // catalogueColumns is the outer SELECT list over the catalogue CTE. It matches
 // the scan arity of scanCatalogueEntry; category_id is read by the optional
 // filter only and is not scanned.
-const catalogueColumns = "id, name, slug, price_amount, currency, image_url, position, created_at"
+const catalogueColumns = "id, name, code, price_amount, currency, image_url, position, created_at"
 
 // ProductRepository persists products, their pictures and — through the shared
 // variant queries — their variants.
@@ -142,29 +139,20 @@ func (r *ProductRepository) projection() (string, error) {
 
 // Create inserts a new product.
 //
-// The adapter recomputes normalized_slug from the slug it is about to store
-// rather than trusting the entity's copy: the fold is deterministic, so
-// recomputing yields exactly the key the entity already holds for a well-formed
-// product, and no write path can store a stale or empty key. The unique index
-// then has a correct value to enforce.
-//
-// A slug another product already holds is reported as
-// domainerr.ErrProductSlugTaken (PRODUCT_SLUG_TAKEN); a code another product
-// already holds is reported as domainerr.ErrProductCodeTaken (FR-011). A
+// A code another product already holds is reported as
+// domainerr.ErrProductCodeTaken (PRODUCT_CODE_TAKEN). A
 // category identifier no row carries is reported as domainerr.ErrProductInvalid
 // naming model.FieldCategoryID.
 func (r *ProductRepository) Create(ctx context.Context, product *model.Product) error {
 	const query = `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 	_, err := r.querier(ctx).Exec(ctx, query,
 		product.ID,
 		product.Name,
 		product.Code,
-		product.Slug,
-		model.FoldKey(product.Slug),
 		product.Description,
 		product.Price.Amount,
 		product.Price.Currency,
@@ -179,15 +167,14 @@ func (r *ProductRepository) Create(ctx context.Context, product *model.Product) 
 	return nil
 }
 
-// Update writes the editable columns of the product named by its identifier,
-// recomputing the folding key from the slug it is about to store.
+// Update writes the editable columns of the product named by its identifier.
 //
 // It never names id in the SET list, so no code path can rewrite an identifier
 // after creation. The variants are managed through their own operations, so this
 // statement never touches product_variants.
 //
 // A collision with a *different* product is reported as
-// domainerr.ErrProductSlugTaken or domainerr.ErrProductCodeTaken; writing the
+// domainerr.ErrProductCodeTaken; writing the
 // value the product already holds succeeds, because the unique index excludes the
 // row being updated, so a product is never a duplicate of itself (FR-011). A
 // category identifier no row carries is reported as domainerr.ErrProductInvalid
@@ -198,21 +185,17 @@ func (r *ProductRepository) Update(ctx context.Context, product *model.Product) 
 		UPDATE products
 		SET name            = $2,
 		    code            = $3,
-		    slug            = $4,
-		    normalized_slug = $5,
-		    description     = $6,
-		    price_amount    = $7,
-		    currency        = $8,
-		    category_id     = $9,
-		    position        = $10,
+		    description     = $4,
+		    price_amount    = $5,
+		    currency        = $6,
+		    category_id     = $7,
+		    position        = $8,
 		    updated_at      = now()
 		WHERE id = $1`
 	tag, err := r.querier(ctx).Exec(ctx, query,
 		product.ID,
 		product.Name,
 		product.Code,
-		product.Slug,
-		model.FoldKey(product.Slug),
 		product.Description,
 		product.Price.Amount,
 		product.Price.Currency,
@@ -297,7 +280,7 @@ const catalogueCTE = `
 		SELECT
 			p.id AS id,
 			p.name AS name,
-			p.slug AS slug,
+			p.code AS code,
 			(SELECT MIN(COALESCE(v.price_amount, p.price_amount))
 				FROM product_variants v
 				WHERE v.product_id = p.id AND v.sell_state = 'ACTIVE') AS price_amount,
@@ -389,8 +372,8 @@ func (r *ProductRepository) ListAll(ctx context.Context, page, pageSize int) ([]
 	return r.list(ctx, "", nil, page, pageSize)
 }
 
-// FindVisibleBySlug returns one product a customer may see, with its pictures,
-// its visible variants and its card summary, addressing it by the slug a
+// FindVisibleByCode returns one product a customer may see, with its pictures,
+// its visible variants and its card summary, addressing it by the code a
 // customer-facing link is built from (FR-003).
 //
 // The same visibility predicate as ListCatalogue runs in this query — the
@@ -399,7 +382,7 @@ func (r *ProductRepository) ListAll(ctx context.Context, page, pageSize int) ([]
 // removed or unknown answers the same domainerr.ErrProductNotFound and the
 // response never confirms that a hidden product exists (FR-008). An empty visible
 // set answers not-found without touching the database.
-func (r *ProductRepository) FindVisibleBySlug(ctx context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
+func (r *ProductRepository) FindVisibleByCode(ctx context.Context, code string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
 	if len(visibleCategoryIDs) == 0 {
 		return nil, domainerr.ErrProductNotFound
 	}
@@ -409,13 +392,13 @@ func (r *ProductRepository) FindVisibleBySlug(ctx context.Context, slug string, 
 	}
 	query := fmt.Sprintf(`
 		SELECT %s FROM products
-		WHERE slug = $1
+		WHERE code = $1
 		  AND category_id = ANY($2)
 		  AND EXISTS (
 			SELECT 1 FROM product_variants v
 			WHERE v.product_id = products.id AND v.sell_state = 'ACTIVE'
 		  )`, list)
-	product, err := scanProduct(r.querier(ctx).QueryRow(ctx, query, slug, visibleCategoryIDs))
+	product, err := scanProduct(r.querier(ctx).QueryRow(ctx, query, code, visibleCategoryIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -770,18 +753,14 @@ func summarizeProduct(product *model.Product, pictures []model.Picture, variants
 // scanProduct reads one row of the projection declared in NewProductRepository.
 // The number of destinations must match that projection exactly.
 //
-// The folding key is not read: it is in no projection and is never needed by a
-// response. It is derived from the slug just scanned with the domain's pure
-// folding function, because the entity's invariant — the key always agrees with
-// the slug — must hold for a product rehydrated from storage exactly as it does
-// for a constructed one.
+// The identifier is read but never rewritten; the code is the operator-facing
+// value and the public link segment.
 func scanProduct(row baserepo.Row) (*model.Product, error) {
 	var product model.Product
 	err := row.Scan(
 		&product.ID,
 		&product.Name,
 		&product.Code,
-		&product.Slug,
 		&product.Description,
 		&product.Price.Amount,
 		&product.Price.Currency,
@@ -796,7 +775,6 @@ func scanProduct(row baserepo.Row) (*model.Product, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scan product: %w", err)
 	}
-	product.NormalizedSlug = model.FoldKey(product.Slug)
 	return &product, nil
 }
 
@@ -809,7 +787,6 @@ func scanListItem(row baserepo.Row) (domainrepo.ProductListItem, error) {
 		&item.Product.ID,
 		&item.Product.Name,
 		&item.Product.Code,
-		&item.Product.Slug,
 		&item.Product.Description,
 		&item.Product.Price.Amount,
 		&item.Product.Price.Currency,
@@ -827,7 +804,6 @@ func scanListItem(row baserepo.Row) (domainrepo.ProductListItem, error) {
 	if err != nil {
 		return item, fmt.Errorf("scan product list item: %w", err)
 	}
-	item.Product.NormalizedSlug = model.FoldKey(item.Product.Slug)
 	item.ImageURL = imageURL
 	return item, nil
 }
@@ -840,7 +816,7 @@ func scanCatalogueEntry(row baserepo.Row) (domainrepo.CatalogueEntry, error) {
 	err := row.Scan(
 		&entry.ID,
 		&entry.Name,
-		&entry.Slug,
+		&entry.Code,
 		&entry.Price.Amount,
 		&entry.Price.Currency,
 		&imageURL,
@@ -902,10 +878,7 @@ func classifyConstraintViolation(err error) error {
 	}
 	switch pgErr.Code {
 	case uniqueViolationCode:
-		switch pgErr.ConstraintName {
-		case constraintNormalizedSlug:
-			return domainerr.ErrProductSlugTaken
-		case constraintCodeKey:
+		if pgErr.ConstraintName == constraintCodeKey {
 			return domainerr.ErrProductCodeTaken
 		}
 	case foreignKeyViolationCode:

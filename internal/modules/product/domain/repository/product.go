@@ -69,8 +69,8 @@ type CatalogueEntry struct {
 	ID uuid.UUID
 	// Name is the product's name.
 	Name string
-	// Slug is the product's public link segment.
-	Slug string
+	// Code is the product's code, the public link segment.
+	Code string
 	// Price is the lowest on-sale variant price (FR-002).
 	Price model.Price
 	// ImageURL is the card image link, or "" when none exists (FR-002).
@@ -108,7 +108,7 @@ type VisibleListQuery struct {
 //
 // It does not embed share/repository.Repository[model.Product, uuid.UUID]: the
 // generic FindAll cannot express the public visibility predicate, the generic Update
-// cannot classify a slug/code collision or a missing category into the sentinels the
+// cannot classify a code collision or a missing category into the sentinels the
 // use cases answer with, and the picture and catalogue operations are not entity
 // CRUD at all. Every method is stated explicitly, and the adapter embeds
 // share/repository.Base only for the write plumbing, with an explicit Columns
@@ -116,24 +116,22 @@ type VisibleListQuery struct {
 type ProductRepository interface {
 	// Create inserts a new product.
 	//
-	// A slug another product already holds is reported as
-	// domainerr.ErrProductSlugTaken, and a code another product already holds as
-	// domainerr.ErrProductCodeTaken, so the use case can answer
-	// PRODUCT_SLUG_TAKEN / PRODUCT_CODE_TAKEN (FR-011). A category identifier no row
+	// A code another product already holds is reported as
+	// domainerr.ErrProductCodeTaken, so the use case can answer PRODUCT_CODE_TAKEN
+	// (FR-011). A category identifier no row
 	// carries is reported as domainerr.ErrProductInvalid naming model.FieldCategoryID.
 	// Any other storage failure is reported as itself.
 	Create(ctx context.Context, product *model.Product) error
 
-	// Update writes the editable columns of the product named by its identifier,
-	// recomputing the folding key from the slug it is about to store.
+	// Update writes the editable columns of the product named by its identifier.
 	//
 	// A collision with a *different* product is reported as
-	// domainerr.ErrProductSlugTaken or domainerr.ErrProductCodeTaken; writing the
-	// value the product already holds succeeds, because the unique index excludes
-	// the row being updated, so a product is never a duplicate of itself (FR-011). A
-	// category identifier no row carries is reported as domainerr.ErrProductInvalid
-	// naming model.FieldCategoryID. The identifier is never written. An unknown
-	// identifier is reported as domainerr.ErrProductNotFound.
+	// domainerr.ErrProductCodeTaken; writing the value the product already holds
+	// succeeds, because the unique index excludes the row being updated, so a
+	// product is never a duplicate of itself (FR-011). A category identifier no row
+	// carries is reported as domainerr.ErrProductInvalid naming model.FieldCategoryID.
+	// The identifier is never written. An unknown identifier is reported as
+	// domainerr.ErrProductNotFound.
 	Update(ctx context.Context, product *model.Product) error
 
 	// Delete removes the row. Removal is a hard delete; the audit entry is what
@@ -154,16 +152,16 @@ type ProductRepository interface {
 	// gives the total, so pagination and the total stay correct.
 	ListCatalogue(ctx context.Context, query VisibleListQuery) ([]CatalogueEntry, int64, error)
 
-	// FindVisibleBySlug returns one product a customer may see, with its pictures and
-	// its visible variants, addressing it by the slug a customer-facing link is built
-	// from (FR-003).
+	// FindVisibleByCode returns one product a customer may see, with its pictures
+	// and its visible variants, addressing it by the code a customer-facing link is
+	// built from (FR-003).
 	//
 	// The same visibility predicate as ListCatalogue runs here, so a product that is
 	// hidden (no on-sale variant), retired, in a hidden category, removed or unknown
 	// is reported the same way, as domainerr.ErrProductNotFound, and the response
 	// never confirms that a hidden product exists (FR-008). The variants carried are
 	// the on-sale and out-of-stock ones only (FR-005), ordered by position.
-	FindVisibleBySlug(ctx context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*ProductView, error)
+	FindVisibleByCode(ctx context.Context, code string, visibleCategoryIDs []uuid.UUID) (*ProductView, error)
 
 	// ListAll returns a page of every product, including the ones withheld from
 	// customers, plus the total number of them, in the same order (position, then

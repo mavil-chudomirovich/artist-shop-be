@@ -51,9 +51,9 @@ func newPictureFixture(t *testing.T) *pictureFixture {
 	return &pictureFixture{service: service, repo: repo, media: media, audit: audit, actor: actor, tx: tx}
 }
 
-func (f *pictureFixture) seedProduct(t *testing.T, slug string) *model.Product {
+func (f *pictureFixture) seedProduct(t *testing.T, code string) *model.Product {
 	t.Helper()
-	return f.repo.seedWithVariants(t, productDraft("Product "+slug, "C-"+slug, slug, 100, uuid.New(), 0), nil, time.Now().UTC().Add(-time.Hour))
+	return f.repo.seedWithVariants(t, productDraft("Product "+code, code, 100, uuid.New(), 0), nil, time.Now().UTC().Add(-time.Hour))
 }
 
 func (f *pictureFixture) ctx() context.Context {

@@ -291,14 +291,13 @@ func seedOrderProduct(t *testing.T, pool *pgxpool.Pool, amount, quantity int64) 
 	}
 
 	productID := uuid.New()
-	slug := "product-" + productID.String()[:8]
-	code := "CODE-" + productID.String()[:8]
+	code := "product-" + productID.String()[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position)
-		VALUES ($1, $2, $3, $4, $4, '', $5, 'VND', $6, 0)`,
-		productID, "Product "+slug, code, slug, amount, categoryID); err != nil {
+		VALUES ($1, $2, $3, '', $4, 'VND', $5, 0)`,
+		productID, "Product "+code, code, amount, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
 	variantID := uuid.New()
@@ -306,7 +305,7 @@ func seedOrderProduct(t *testing.T, pool *pgxpool.Pool, amount, quantity int64) 
 		INSERT INTO product_variants
 			(id, product_id, name, sku, price_amount, position, sell_state)
 		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
-		variantID, productID, "Variant "+slug, code); err != nil {
+		variantID, productID, "Variant "+code, code); err != nil {
 		t.Fatalf("insert variant: %v", err)
 	}
 	if _, err := pool.Exec(ctx,
@@ -360,17 +359,17 @@ func physicalStock(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 
 	return quantity
 }
 
-// productSlug reads a product's link segment straight from the table — the value
-// checkout snapshots onto the order line (FR-002). The seeded slug differs from
-// the product's name, so a dropped slug cannot pass the assertion.
-func productSlug(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
+// productCode reads a product's code straight from the table — the value checkout
+// snapshots onto the order line (FR-002). The seeded code differs from the
+// product's name, so a dropped code cannot pass the assertion.
+func productCode(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
 	t.Helper()
-	var slug string
+	var code string
 	if err := pool.QueryRow(context.Background(),
-		`SELECT slug FROM products WHERE id = $1`, productID).Scan(&slug); err != nil {
-		t.Fatalf("read product slug: %v", err)
+		`SELECT code FROM products WHERE id = $1`, productID).Scan(&code); err != nil {
+		t.Fatalf("read product code: %v", err)
 	}
-	return slug
+	return code
 }
 
 // heldQuantity reads the quantity every active hold has set aside for one
@@ -416,7 +415,7 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 	f := newOrderIntegrationFixture(t)
 	seedOrderCustomer(t, f.pool, testCustomerID)
 	product := seedOrderProduct(t, f.pool, 120000, 10)
-	slug := productSlug(t, f.pool, product)
+	code := productCode(t, f.pool, product)
 	cartID := seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
 
 	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
@@ -439,8 +438,8 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 	}
 	if body.Data.Lines[0].ProductID != product || body.Data.Lines[0].Quantity != 2 ||
 		body.Data.Lines[0].UnitPrice.Amount != 120000 ||
-		body.Data.Lines[0].ProductName != "Product "+slug ||
-		body.Data.Lines[0].VariantName != "Variant "+slug {
+		body.Data.Lines[0].ProductName != "Product "+code ||
+		body.Data.Lines[0].VariantName != "Variant "+code {
 		t.Fatalf("the line must carry the product and variant snapshot, got %+v", body.Data.Lines[0])
 	}
 	if body.Data.Address.RecipientName != "Nguyễn Văn A" || body.Data.Address.StreetAddress != "1 Đinh Tiên Hoàng" {

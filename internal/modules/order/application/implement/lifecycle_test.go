@@ -202,7 +202,6 @@ func line(variantID uuid.UUID, amount, quantity int64) model.OrderLine {
 	return model.OrderLine{
 		VariantID:   variantID,
 		ProductName: "Tranh",
-		Slug:        "tranh",
 		UnitPrice:   model.Price{Amount: amount, Currency: "VND"},
 		Quantity:    quantity,
 	}

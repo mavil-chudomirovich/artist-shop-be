@@ -26,7 +26,7 @@ func (f *fakeRepository) FindFactsByIDs(context.Context, []uuid.UUID) ([]domainr
 }
 
 // research D6: the adapter maps each variant fact to the contract DTO, carrying
-// the product slugs and the effective price through unchanged.
+// the product codes and the effective price through unchanged.
 func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 	onSaleID := uuid.New()
 	draftID := uuid.New()
@@ -36,8 +36,7 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 			VariantID:   onSaleID,
 			ProductID:   productID,
 			ProductName: "Tranh sơn dầu",
-			ProductCode: "P-1",
-			ProductSlug: "tranh-son-dau",
+			ProductCode: "tranh-son-dau",
 			VariantName: "Khổ lớn",
 			SKU:         "SKU-1",
 			OnSale:      true,
@@ -47,8 +46,7 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 			VariantID:   draftID,
 			ProductID:   productID,
 			ProductName: "Tranh sắp ra mắt",
-			ProductCode: "P-2",
-			ProductSlug: "tranh-sap-ra-mat",
+			ProductCode: "tranh-sap-ra-mat",
 			VariantName: "Khổ nhỏ",
 			SKU:         "SKU-2",
 			OnSale:      false,
@@ -64,7 +62,7 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 		t.Fatalf("expected 2 summaries, got %d", len(got))
 	}
 
-	if got[0].VariantID != onSaleID || got[0].ProductName != "Tranh sơn dầu" || got[0].ProductSlug != "tranh-son-dau" {
+	if got[0].VariantID != onSaleID || got[0].ProductName != "Tranh sơn dầu" || got[0].ProductCode != "tranh-son-dau" {
 		t.Errorf("first summary = %+v", got[0])
 	}
 	if !got[0].OnSale {
@@ -87,7 +85,7 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 func TestVariantsReturnsOnlyTheVariantsThatExist(t *testing.T) {
 	known := uuid.New()
 	repo := &fakeRepository{facts: []domainrepo.VariantFacts{
-		{VariantID: known, ProductName: "Có", ProductSlug: "co", OnSale: true},
+		{VariantID: known, ProductName: "Có", ProductCode: "co", OnSale: true},
 	}}
 
 	got, err := New(repo).Variants(context.Background(), []uuid.UUID{known, uuid.New()})

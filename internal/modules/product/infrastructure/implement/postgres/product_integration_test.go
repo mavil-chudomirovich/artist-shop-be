@@ -42,24 +42,21 @@ const (
 	sqlStateCheck      = "23514"
 )
 
-// The constraint and index names migrations/00006_product.sql and
-// migrations/00014_product_sku_model.sql must create (data-model.md).
+// The constraint and index names migrations/00006_product.sql,
+// migrations/00014_product_sku_model.sql and
+// migrations/00015_product_code_as_link_segment.sql must create (data-model.md).
 const (
-	idxNormalizedSlug     = "products_normalized_slug_key"
-	ckNormalizedSlugShape = "products_normalized_slug_shape_ck"
-	ckSlugFormat          = "products_slug_format_ck"
-	ckNameLength          = "products_name_length_ck"
-	ckSlugLength          = "products_slug_length_ck"
-	ckDescriptionLength   = "products_description_length_ck"
-	ckPriceAmount         = "products_price_amount_ck"
-	ckCurrency            = "products_currency_ck"
-	fkCategory            = "products_category_fk"
-	idxOrdering           = "products_ordering_idx"
-	idxCategory           = "products_category_idx"
+	ckNameLength        = "products_name_length_ck"
+	ckDescriptionLength = "products_description_length_ck"
+	ckPriceAmount       = "products_price_amount_ck"
+	ckCurrency          = "products_currency_ck"
+	fkCategory          = "products_category_fk"
+	idxOrdering         = "products_ordering_idx"
+	idxCategory         = "products_category_idx"
 
 	idxCode          = "products_code_key"
 	ckCodeLength     = "products_code_length_ck"
-	ckCodeShape      = "products_code_shape_ck"
+	ckCodeFormat     = "products_code_format_ck"
 	fkProductVariant = "product_variants_product_fk"
 	ckVariantPrice   = "product_variants_price_ck"
 	ckVariantState   = "product_variants_sell_state_ck"
@@ -140,30 +137,27 @@ func (f *productFixture) requireCategory(t *testing.T, slug string) uuid.UUID {
 // rawProduct carries the columns a raw product insert writes, deliberately
 // skipping the domain and the adapter.
 type rawProduct struct {
-	CategoryID     uuid.UUID
-	Name           string
-	Code           string
-	Slug           string
-	NormalizedSlug string
-	Description    string
-	PriceAmount    int64
-	Currency       string
-	Position       int
+	CategoryID  uuid.UUID
+	Name        string
+	Code        string
+	Description string
+	PriceAmount int64
+	Currency    string
+	Position    int
 }
 
 // validRaw returns a product row every constraint accepts, so a subtest changes
-// only the value it is proving is refused.
+// only the value it is proving is refused. The code is the passed value verbatim,
+// which is the public link segment.
 func validRaw(categoryID uuid.UUID, slug string) rawProduct {
 	return rawProduct{
-		CategoryID:     categoryID,
-		Name:           "Product " + slug,
-		Code:           "code-" + slug,
-		Slug:           slug,
-		NormalizedSlug: slug,
-		Description:    "a description",
-		PriceAmount:    1000,
-		Currency:       "VND",
-		Position:       0,
+		CategoryID:  categoryID,
+		Name:        "Product " + slug,
+		Code:        slug,
+		Description: "a description",
+		PriceAmount: 1000,
+		Currency:    "VND",
+		Position:    0,
 	}
 }
 
@@ -171,10 +165,10 @@ func (f *productFixture) rawInsertProduct(ctx context.Context, p rawProduct) (uu
 	id := uuid.New()
 	const query = `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())`
-	_, err := f.pool.Exec(ctx, query, id, p.Name, p.Code, p.Slug, p.NormalizedSlug, p.Description,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`
+	_, err := f.pool.Exec(ctx, query, id, p.Name, p.Code, p.Description,
 		p.PriceAmount, p.Currency, p.CategoryID, p.Position)
 	return id, err
 }
@@ -246,28 +240,27 @@ func newProduct(t *testing.T, draft model.ProductDraft) *model.Product {
 	t.Helper()
 	product, err := model.NewProduct(draft, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("NewProduct(%q): %v", draft.Slug, err)
+		t.Fatalf("NewProduct(%q): %v", draft.Code, err)
 	}
 	return product
 }
 
-// buildProduct constructs a domain-valid product whose code is derived from the
-// slug, so a subtest can insert it through the adapter.
-func buildProduct(t *testing.T, categoryID uuid.UUID, slug string) *model.Product {
+// buildProduct constructs a domain-valid product whose code is the given value, so
+// a subtest can insert it through the adapter.
+func buildProduct(t *testing.T, categoryID uuid.UUID, code string) *model.Product {
 	t.Helper()
 	price, err := model.NewPrice(1000, "VND")
 	if err != nil {
 		t.Fatalf("NewPrice: %v", err)
 	}
 	return newProduct(t, model.ProductDraft{
-		Name:       "Product " + slug,
-		Code:       "code-" + slug,
-		Slug:       slug,
+		Name:       "Product " + code,
+		Code:       code,
 		Price:      price,
 		CategoryID: categoryID,
 		Position:   0,
 		Variants: []model.VariantDraft{{
-			Name: "Variant " + slug, SKU: "sku-" + slug, Position: 0,
+			Name: "Variant " + code, SKU: "sku-" + code, Position: 0,
 		}},
 	})
 }
@@ -347,9 +340,8 @@ func TestTheProductMigrationAppliesAndCreatesEveryConstraint(t *testing.T) {
 	}
 
 	checks := []string{
-		ckNormalizedSlugShape, ckSlugFormat, ckNameLength, ckSlugLength,
-		ckDescriptionLength, ckPriceAmount, ckCurrency, fkCategory,
-		ckCodeLength, ckCodeShape, fkProductVariant, ckVariantPrice,
+		ckNameLength, ckDescriptionLength, ckPriceAmount, ckCurrency, fkCategory,
+		ckCodeLength, ckCodeFormat, fkProductVariant, ckVariantPrice,
 		ckVariantState, ckVariantName, ckVariantURL, ckVariantWidth,
 		ckVariantHeight, ckVariantImage,
 		ckImageWidth, ckImageHeight, ckImageHTTPS, fkImageProduct,
@@ -371,7 +363,7 @@ func TestTheProductMigrationAppliesAndCreatesEveryConstraint(t *testing.T) {
 	}
 
 	indexes := []string{
-		idxNormalizedSlug, idxOrdering, idxCategory, idxCode,
+		idxOrdering, idxCategory, idxCode,
 		idxVariantSKU, idxVariantOrder, idxOnePrimary, idxImageOrder,
 	}
 	const indexQuery = `SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = $1)`
@@ -416,43 +408,17 @@ func TestStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T) {
 		return err
 	}
 
-	t.Run("duplicate normalised slug", func(t *testing.T) {
-		if _, err := f.rawInsertProduct(ctx, validRaw(categoryID, "dup-slug-one")); err != nil {
+	t.Run("duplicate code", func(t *testing.T) {
+		if _, err := f.rawInsertProduct(ctx, validRaw(categoryID, "dup-code-one")); err != nil {
 			t.Fatalf("seed the first row: %v", err)
 		}
-		p := validRaw(categoryID, "dup-slug-two")
-		p.NormalizedSlug = "dup-slug-one"
-		_, err := f.rawInsertProduct(ctx, p)
-		requireConstraint(t, err, sqlStateUnique, idxNormalizedSlug)
-	})
-
-	t.Run("duplicate code ignoring case", func(t *testing.T) {
-		if _, err := f.rawInsertProduct(ctx, validRaw(categoryID, "code-one")); err != nil {
-			t.Fatalf("seed the first row: %v", err)
-		}
-		p := validRaw(categoryID, "code-two")
-		// A trimmed code differing only in case folds onto the seeded one
-		// (`code-code-one`). The shape check requires the stored code be trimmed,
-		// so no surrounding whitespace is present for it to reject first.
-		p.Code = "CODE-CODE-ONE"
+		// The same code is a catalogue-wide uniqueness violation; the code is
+		// already compared ignoring case, but the format check requires the stored
+		// value be lowercase, so a duplicate is an exact duplicate.
+		p := validRaw(categoryID, "dup-code-two")
+		p.Code = "dup-code-one"
 		_, err := f.rawInsertProduct(ctx, p)
 		requireConstraint(t, err, sqlStateUnique, idxCode)
-	})
-
-	t.Run("un-normalised normalised_slug", func(t *testing.T) {
-		// The slug itself stays valid so only the shape check rejects the row.
-		err := insert(t, func(p *rawProduct) {
-			p.NormalizedSlug = "Shape-One"
-		}, "shape-one")
-		requireConstraint(t, err, sqlStateCheck, ckNormalizedSlugShape)
-	})
-
-	t.Run("slug format", func(t *testing.T) {
-		err := insert(t, func(p *rawProduct) {
-			p.Slug = "Tranh_Son_Dau"
-			p.NormalizedSlug = "tranh_son_dau"
-		}, "unused")
-		requireConstraint(t, err, sqlStateCheck, ckSlugFormat)
 	})
 
 	t.Run("name length", func(t *testing.T) {
@@ -461,23 +427,14 @@ func TestStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T) {
 		requireConstraint(t, err, sqlStateCheck, ckNameLength)
 	})
 
-	t.Run("slug length", func(t *testing.T) {
-		long := strings.Repeat("a", 141)
-		err := insert(t, func(p *rawProduct) {
-			p.Slug = long
-			p.NormalizedSlug = long
-		}, "slug-length")
-		requireConstraint(t, err, sqlStateCheck, ckSlugLength)
-	})
-
 	t.Run("code length", func(t *testing.T) {
 		err := insert(t, func(p *rawProduct) { p.Code = strings.Repeat("a", 141) }, "code-length")
 		requireConstraint(t, err, sqlStateCheck, ckCodeLength)
 	})
 
-	t.Run("code shape", func(t *testing.T) {
-		err := insert(t, func(p *rawProduct) { p.Code = "  padded  " }, "code-shape")
-		requireConstraint(t, err, sqlStateCheck, ckCodeShape)
+	t.Run("code format", func(t *testing.T) {
+		err := insert(t, func(p *rawProduct) { p.Code = "Tranh_Son_Dau" }, "code-format")
+		requireConstraint(t, err, sqlStateCheck, ckCodeFormat)
 	})
 
 	t.Run("description length", func(t *testing.T) {
@@ -693,8 +650,7 @@ func TestCascadingDeletesRemovePicturesAndVariants(t *testing.T) {
 	}
 }
 
-// FR-009, SC-008: the identifier never changes, and no update path can write it,
-// while the folding key is recomputed from the slug the adapter writes.
+// FR-009, SC-008: the identifier never changes, and no update path can write it.
 func TestTheIdentifierSurvivesEveryUpdateAndNoPathRewritesIt(t *testing.T) {
 	f := newProductFixture(t)
 	ctx := context.Background()
@@ -714,15 +670,13 @@ func TestTheIdentifierSurvivesEveryUpdateAndNoPathRewritesIt(t *testing.T) {
 		t.Fatalf("the read returned id %s, want %s", loaded.Product.ID, original)
 	}
 	newName := "Product renamed"
-	newSlug := "stable-id-renamed"
-	newCode := "code-renamed"
+	newCode := "stable-id-renamed"
 	newDescription := "changed"
 	newPosition := 7
 	edited := loaded.Product
 	if err := edited.Apply(model.ProductEdit{
 		Name:        &newName,
 		Code:        &newCode,
-		Slug:        &newSlug,
 		Description: &newDescription,
 		Position:    &newPosition,
 	}, time.Now().UTC().Add(time.Minute)); err != nil {
@@ -738,19 +692,10 @@ func TestTheIdentifierSurvivesEveryUpdateAndNoPathRewritesIt(t *testing.T) {
 	if afterEdit.Product.ID != original {
 		t.Fatalf("the identifier moved after an edit: %s", afterEdit.Product.ID)
 	}
-	if afterEdit.Product.Name != newName || afterEdit.Product.Slug != newSlug ||
+	if afterEdit.Product.Name != newName ||
 		afterEdit.Product.Code != newCode || afterEdit.Product.Description != newDescription ||
 		afterEdit.Product.Position != newPosition {
 		t.Fatalf("the edit was not written: %+v", afterEdit.Product)
-	}
-
-	// The folding key is recomputed by the adapter from the slug it writes.
-	var storedKey string
-	if err := f.pool.QueryRow(ctx, `SELECT normalized_slug FROM products WHERE id = $1`, original).Scan(&storedKey); err != nil {
-		t.Fatalf("read the folding key: %v", err)
-	}
-	if storedKey != model.FoldKey(newSlug) {
-		t.Fatalf("the update stored folding key %q, want %q", storedKey, model.FoldKey(newSlug))
 	}
 
 	// An update carrying a different identifier must not rewrite or create a row.
@@ -777,7 +722,7 @@ func TestPageOrderingIsStableAcrossTwoReads(t *testing.T) {
 			t.Fatalf("insert %q: %v", slug, err)
 		}
 		if _, err := f.pool.Exec(ctx,
-			`UPDATE products SET position = 5, created_at = $2 WHERE slug = $1`, slug, fixed); err != nil {
+			`UPDATE products SET position = 5, created_at = $2 WHERE code = $1`, slug, fixed); err != nil {
 			t.Fatalf("pin %q: %v", slug, err)
 		}
 	}
@@ -785,7 +730,7 @@ func TestPageOrderingIsStableAcrossTwoReads(t *testing.T) {
 		t.Fatalf("insert order-first: %v", err)
 	}
 	if _, err := f.pool.Exec(ctx,
-		`UPDATE products SET position = 1, created_at = $1 WHERE slug = 'order-first'`, fixed); err != nil {
+		`UPDATE products SET position = 1, created_at = $1 WHERE code = 'order-first'`, fixed); err != nil {
 		t.Fatalf("pin order-first: %v", err)
 	}
 
@@ -896,14 +841,14 @@ func TestCatalogueIsOneEntryPerProductWithLowestOnSalePrice(t *testing.T) {
 	if total != 2 || len(entries) != 2 {
 		t.Fatalf("expected the two visible products, got %d of a total %d", len(entries), total)
 	}
-	bySlug := map[string]domainrepo.CatalogueEntry{}
+	byCode := map[string]domainrepo.CatalogueEntry{}
 	for _, entry := range entries {
-		bySlug[entry.Slug] = entry
+		byCode[entry.Code] = entry
 	}
-	if _, ok := bySlug["catalogue-c"]; ok {
+	if _, ok := byCode["catalogue-c"]; ok {
 		t.Fatalf("a product with no on-sale variant leaked into the catalogue")
 	}
-	a, ok := bySlug["catalogue-a"]
+	a, ok := byCode["catalogue-a"]
 	if !ok {
 		t.Fatalf("product A is missing from the catalogue")
 	}
@@ -913,7 +858,7 @@ func TestCatalogueIsOneEntryPerProductWithLowestOnSalePrice(t *testing.T) {
 	if a.ImageURL != "https://example.test/a-default.jpg" {
 		t.Fatalf("product A carried image %q, want the default variant's", a.ImageURL)
 	}
-	b, ok := bySlug["catalogue-b"]
+	b, ok := byCode["catalogue-b"]
 	if !ok {
 		t.Fatalf("product B is missing from the catalogue")
 	}
@@ -986,9 +931,9 @@ func TestProductDetailCarriesVisibleVariantsOnly(t *testing.T) {
 		t.Fatalf("insert the gallery picture: %v", err)
 	}
 
-	view, err := f.repo.FindVisibleBySlug(ctx, "detail-product", visible)
+	view, err := f.repo.FindVisibleByCode(ctx, "detail-product", visible)
 	if err != nil {
-		t.Fatalf("FindVisibleBySlug: %v", err)
+		t.Fatalf("FindVisibleByCode: %v", err)
 	}
 	if len(view.Variants) != 2 {
 		t.Fatalf("the public detail must carry the two visible variants, got %d", len(view.Variants))
@@ -1030,45 +975,31 @@ func TestProductDetailCarriesVisibleVariantsOnly(t *testing.T) {
 	if _, err := f.rawInsertVariant(ctx, validRawVariant(hiddenProduct, "detail-hidden-sku")); err != nil {
 		t.Fatalf("insert the hidden-category variant: %v", err)
 	}
-	if _, err := f.repo.FindVisibleBySlug(ctx, "detail-hidden-category", visible); !errors.Is(err, domainerr.ErrProductNotFound) {
+	if _, err := f.repo.FindVisibleByCode(ctx, "detail-hidden-category", visible); !errors.Is(err, domainerr.ErrProductNotFound) {
 		t.Fatalf("a product in a hidden category must not be found, got %v", err)
 	}
-	if _, err := f.repo.FindVisibleBySlug(ctx, "detail-product", nil); !errors.Is(err, domainerr.ErrProductNotFound) {
+	if _, err := f.repo.FindVisibleByCode(ctx, "detail-product", nil); !errors.Is(err, domainerr.ErrProductNotFound) {
 		t.Fatalf("an empty visible set must answer not-found, got %v", err)
 	}
 }
 
-// FR-011, research D17: a duplicate folded slug or code is reported as the module
-// sentinel, and a category no row carries is reported as an invalid field naming
-// categoryId — all classified from the constraint the database reported.
+// FR-011, research D17: a duplicate code is reported as the module sentinel, and a
+// category no row carries is reported as an invalid field naming categoryId — both
+// classified from the constraint the database reported.
 func TestAConstraintViolationIsReportedAsTheMatchingSentinel(t *testing.T) {
 	f := newProductFixture(t)
 	ctx := context.Background()
 	categoryID := f.requireCategory(t, "category-classify")
 
-	first := buildProduct(t, categoryID, "classify-slug")
+	first := buildProduct(t, categoryID, "classify-code")
 	if err := f.repo.Create(ctx, first); err != nil {
 		t.Fatalf("Create the first product: %v", err)
 	}
 
-	// A different product with the same slug but a different code.
-	collision := newProduct(t, model.ProductDraft{
-		Name:       "Collision",
-		Code:       "code-collision",
-		Slug:       "classify-slug",
-		Price:      first.Price,
-		CategoryID: categoryID,
-		Variants:   []model.VariantDraft{{Name: "V", SKU: "sku-collision", Position: 0}},
-	})
-	if err := f.repo.Create(ctx, collision); !errors.Is(err, domainerr.ErrProductSlugTaken) {
-		t.Fatalf("expected ErrProductSlugTaken, got %v", err)
-	}
-
-	// A different product with a different slug but the same code.
+	// A different product reusing the first product's code.
 	codeClash := newProduct(t, model.ProductDraft{
 		Name:       "Code clash",
-		Code:       "CODE-CLASSIFY-SLUG",
-		Slug:       "classify-code",
+		Code:       "classify-code",
 		Price:      first.Price,
 		CategoryID: categoryID,
 		Variants:   []model.VariantDraft{{Name: "V", SKU: "sku-code-clash", Position: 0}},
@@ -1081,7 +1012,6 @@ func TestAConstraintViolationIsReportedAsTheMatchingSentinel(t *testing.T) {
 	unknown := newProduct(t, model.ProductDraft{
 		Name:       "Unknown category",
 		Code:       "code-unknown-category",
-		Slug:       "classify-unknown-category",
 		Price:      first.Price,
 		CategoryID: uuid.New(),
 		Variants:   []model.VariantDraft{{Name: "V", SKU: "sku-unknown-category", Position: 0}},

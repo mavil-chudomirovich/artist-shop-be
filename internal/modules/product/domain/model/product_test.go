@@ -22,8 +22,7 @@ func ptr[T any](v T) *T { return &v }
 func validDraft() ProductDraft {
 	return ProductDraft{
 		Name:        "Tranh sơn dầu",
-		Code:        "TS-001",
-		Slug:        "tranh-son-dau",
+		Code:        "ts-001",
 		Description: "Tranh vẽ tay trên vải.",
 		Price:       Price{Amount: 1999, Currency: "VND"},
 		CategoryID:  uuid.New(),
@@ -48,14 +47,8 @@ func TestNewProductCarriesTheCodeAndNoSellState(t *testing.T) {
 	if product.Name != "Tranh sơn dầu" {
 		t.Errorf("Name = %q", product.Name)
 	}
-	if product.Code != "TS-001" {
-		t.Errorf("Code = %q, want TS-001", product.Code)
-	}
-	if product.Slug != "tranh-son-dau" {
-		t.Errorf("Slug = %q", product.Slug)
-	}
-	if product.NormalizedSlug != FoldKey(product.Slug) {
-		t.Errorf("NormalizedSlug = %q, want FoldKey(%q)", product.NormalizedSlug, product.Slug)
+	if product.Code != "ts-001" {
+		t.Errorf("Code = %q, want ts-001", product.Code)
 	}
 	if product.Description != "Tranh vẽ tay trên vải." {
 		t.Errorf("Description = %q", product.Description)
@@ -75,18 +68,17 @@ func TestNewProductCarriesTheCodeAndNoSellState(t *testing.T) {
 func TestNewProductTrimsSurroundingWhitespace(t *testing.T) {
 	draft := validDraft()
 	draft.Name = "  Tranh sơn dầu  "
-	draft.Code = "  TS-001  "
-	draft.Slug = "  tranh-son-dau  "
+	draft.Code = "  ts-001  "
 	draft.Description = "  mô tả  "
 
 	product, err := NewProduct(draft, testNow)
 	if err != nil {
 		t.Fatalf("NewProduct: unexpected error %v", err)
 	}
-	if product.Name != "Tranh sơn dầu" || product.Code != "TS-001" ||
-		product.Slug != "tranh-son-dau" || product.Description != "mô tả" {
-		t.Errorf("values were not trimmed: %q / %q / %q / %q",
-			product.Name, product.Code, product.Slug, product.Description)
+	if product.Name != "Tranh sơn dầu" || product.Code != "ts-001" ||
+		product.Description != "mô tả" {
+		t.Errorf("values were not trimmed: %q / %q / %q",
+			product.Name, product.Code, product.Description)
 	}
 }
 
@@ -95,7 +87,6 @@ func TestNewProductTrimsSurroundingWhitespace(t *testing.T) {
 func TestNewProductRejectsInvalidValuesAndNamesTheField(t *testing.T) {
 	overLongName := strings.Repeat("ệ", MaxNameRunes+1)
 	overLongCode := strings.Repeat("a", MaxCodeRunes+1)
-	overLongSlug := strings.Repeat("a", MaxSlugRunes+1)
 	overLongDescription := strings.Repeat("ệ", MaxDescriptionRunes+1)
 
 	cases := []struct {
@@ -103,17 +94,15 @@ func TestNewProductRejectsInvalidValuesAndNamesTheField(t *testing.T) {
 		field string
 		draft ProductDraft
 	}{
-		{"blank name", FieldName, ProductDraft{Name: "  ", Code: "a", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"blank code", FieldCode, ProductDraft{Name: "a", Code: "  ", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"blank slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: "  ", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"accented slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: "tranh-sơn", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"over-long name", FieldName, ProductDraft{Name: overLongName, Code: "a", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"over-long code", FieldCode, ProductDraft{Name: "a", Code: overLongCode, Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"over-long slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: overLongSlug, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"over-long description", FieldDescription, ProductDraft{Name: "a", Code: "a", Slug: "b", Description: overLongDescription, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"zero price", FieldPrice, ProductDraft{Name: "a", Code: "a", Slug: "c", Price: Price{Amount: 0, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"negative price", FieldPrice, ProductDraft{Name: "a", Code: "a", Slug: "d", Price: Price{Amount: -5, Currency: "VND"}, Variants: validDraft().Variants}},
-		{"bad currency", FieldCurrency, ProductDraft{Name: "a", Code: "a", Slug: "e", Price: Price{Amount: 1, Currency: "vnd"}, Variants: validDraft().Variants}},
+		{"blank name", FieldName, ProductDraft{Name: "  ", Code: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"blank code", FieldCode, ProductDraft{Name: "a", Code: "  ", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"accented code", FieldCode, ProductDraft{Name: "a", Code: "tranh-sơn", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long name", FieldName, ProductDraft{Name: overLongName, Code: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long code", FieldCode, ProductDraft{Name: "a", Code: overLongCode, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long description", FieldDescription, ProductDraft{Name: "a", Code: "b", Description: overLongDescription, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"zero price", FieldPrice, ProductDraft{Name: "a", Code: "c", Price: Price{Amount: 0, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"negative price", FieldPrice, ProductDraft{Name: "a", Code: "d", Price: Price{Amount: -5, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"bad currency", FieldCurrency, ProductDraft{Name: "a", Code: "e", Price: Price{Amount: 1, Currency: "vnd"}, Variants: validDraft().Variants}},
 	}
 
 	for _, tc := range cases {
@@ -170,8 +159,7 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 
 	edit := ProductEdit{
 		Name:        ptr("Tranh khắc gỗ"),
-		Code:        ptr("TK-002"),
-		Slug:        ptr("tranh-khac-go"),
+		Code:        ptr("tk-002"),
 		Description: ptr("Mô tả mới."),
 		Price:       ptr(Price{Amount: 250, Currency: "USD"}),
 		CategoryID:  &categoryID,
@@ -181,8 +169,8 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 		t.Fatalf("Apply: unexpected error %v", err)
 	}
 
-	if product.Name != "Tranh khắc gỗ" || product.Code != "TK-002" ||
-		product.Slug != "tranh-khac-go" || product.Description != "Mô tả mới." {
+	if product.Name != "Tranh khắc gỗ" || product.Code != "tk-002" ||
+		product.Description != "Mô tả mới." {
 		t.Errorf("editable text was not applied: %+v", product)
 	}
 	if product.Price.Amount != 250 || product.Price.Currency != "USD" {
@@ -193,9 +181,6 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 	}
 	if product.Position != 9 {
 		t.Errorf("Position = %d, want 9", product.Position)
-	}
-	if product.NormalizedSlug != FoldKey(product.Slug) {
-		t.Errorf("NormalizedSlug = %q, want FoldKey(%q)", product.NormalizedSlug, product.Slug)
 	}
 	if !product.UpdatedAt.Equal(later) {
 		t.Errorf("UpdatedAt = %v, want %v", product.UpdatedAt, later)
@@ -214,7 +199,7 @@ func TestApplyKeepsOmittedFields(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	if product.Name != before.Name || product.Code != before.Code || product.Slug != before.Slug ||
+	if product.Name != before.Name || product.Code != before.Code ||
 		product.Description != before.Description || product.CategoryID != before.CategoryID {
 		t.Errorf("an omitted member must keep its value: %+v vs %+v", product, before)
 	}
@@ -230,7 +215,7 @@ func TestApplyRejectsInvalidChangeAndLeavesEntityUntouched(t *testing.T) {
 		field string
 		edit  ProductEdit
 	}{
-		{"invalid slug", FieldSlug, ProductEdit{Slug: ptr("Tranh Sơn")}},
+		{"invalid code", FieldCode, ProductEdit{Code: ptr("Tranh Sơn")}},
 		{"blank code", FieldCode, ProductEdit{Code: ptr("  ")}},
 	}
 

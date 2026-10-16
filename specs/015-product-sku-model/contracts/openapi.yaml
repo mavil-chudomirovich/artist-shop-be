@@ -58,17 +58,18 @@ paths:
                   meta: { $ref: "#/components/schemas/Meta" }
         "400": { $ref: "#/components/responses/ValidationError" }
 
-  /api/v1/products/{slug}:
+  /api/v1/products/{code}:
     get:
       tags: [catalogue]
-      summary: Read one product by slug (with its variants)
+      summary: Read one product by code (with its variants)
       description: >
         The product's shared content (name, description, gallery) plus its visible variants — those on
         sale or out of stock — each with name, effective price and stock status, ordered by display
         order. A variant not yet on sale or retired is not returned. The default variant is the first.
+        The code is the product's public link segment.
       security: []
       parameters:
-        - { name: slug, in: path, required: true, schema: { type: string } }
+        - { name: code, in: path, required: true, schema: { type: string } }
       responses:
         "200":
           description: A product with its variants.
@@ -400,11 +401,11 @@ components:
     Price: { type: object, required: [amount, currency], properties: { amount: { type: integer, format: int64, minimum: 1 }, currency: { type: string, minLength: 3, maxLength: 3 } } }
     PublicProduct:
       type: object
-      required: [id, name, slug, price]
+      required: [id, name, code, price]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        slug: { type: string }
+        code: { type: string, description: "The product's public link segment." }
         price: { $ref: "#/components/schemas/Price" }
         imageUrl: { type: [string, "null"] }
     PublicVariant:
@@ -422,7 +423,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        slug: { type: string }
+        code: { type: string, description: "The product's public link segment." }
         description: { type: string }
         price: { $ref: "#/components/schemas/Price", description: "Lowest effective variant price among the product's on-sale variants." }
         imageUrl: { type: [string, "null"] }
@@ -445,8 +446,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
-        code: { type: string }
-        slug: { type: string }
+        code: { type: string, description: "The product code, which is also the public link segment." }
         description: { type: string }
         defaultPrice: { $ref: "#/components/schemas/Price" }
         categoryId: { type: string, format: uuid }
@@ -463,11 +463,10 @@ components:
     CreateProductRequest:
       type: object
       additionalProperties: false
-      required: [name, code, slug, description, defaultPrice, categoryId, variants]
+      required: [name, code, description, defaultPrice, categoryId, variants]
       properties:
         name: { type: string, maxLength: 120 }
-        code: { type: string }
-        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        code: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
         description: { type: string, maxLength: 5000 }
         defaultPrice: { $ref: "#/components/schemas/Price" }
         categoryId: { type: string, format: uuid }
@@ -481,8 +480,7 @@ components:
       additionalProperties: false
       properties:
         name: { type: string, maxLength: 120 }
-        code: { type: string }
-        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        code: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
         description: { type: string, maxLength: 5000 }
         defaultPrice: { $ref: "#/components/schemas/Price" }
         categoryId: { type: string, format: uuid }

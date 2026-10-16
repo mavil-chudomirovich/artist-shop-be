@@ -58,7 +58,7 @@ func (s *productServiceStub) ListPublic(context.Context, appdto.ListPublicInput)
 	return s.publicPage, s.err
 }
 
-func (s *productServiceStub) GetPublicBySlug(context.Context, appdto.PublicProductRefInput) (appdto.PublicProductDetailOutput, error) {
+func (s *productServiceStub) GetPublicByCode(context.Context, appdto.PublicProductRefInput) (appdto.PublicProductDetailOutput, error) {
 	return s.publicDetail, s.err
 }
 
@@ -206,8 +206,7 @@ func sampleAdminDetail() appdto.AdminProductDetailOutput {
 		AdminProductOutput: appdto.AdminProductOutput{
 			ID:           uuid.New(),
 			Name:         "Card set",
-			Code:         "P-001",
-			Slug:         "card-set",
+			Code:         "card-set",
 			Price:        model.Price{Amount: 120000, Currency: "VND"},
 			VariantCount: 1,
 		},
@@ -224,8 +223,8 @@ func sampleAdminDetail() appdto.AdminProductDetailOutput {
 // The public routes resolve with no session.
 func TestThePublicProductRoutesResolve(t *testing.T) {
 	stub := &productServiceStub{
-		publicPage:   appdto.PublicProductPage{Products: []appdto.PublicProductOutput{{ID: uuid.New(), Name: "A", Slug: "a", Price: model.Price{Amount: 100, Currency: "VND"}}}, Page: 1, PageSize: 20, Total: 1},
-		publicDetail: appdto.PublicProductDetailOutput{PublicProductOutput: appdto.PublicProductOutput{ID: uuid.New(), Name: "A", Slug: "a", Price: model.Price{Amount: 100, Currency: "VND"}}},
+		publicPage:   appdto.PublicProductPage{Products: []appdto.PublicProductOutput{{ID: uuid.New(), Name: "A", Code: "a", Price: model.Price{Amount: 100, Currency: "VND"}}}, Page: 1, PageSize: 20, Total: 1},
+		publicDetail: appdto.PublicProductDetailOutput{PublicProductOutput: appdto.PublicProductOutput{ID: uuid.New(), Name: "A", Code: "a", Price: model.Price{Amount: 100, Currency: "VND"}}},
 	}
 	router := newRouter(stub, productHooks(nil))
 
@@ -233,7 +232,7 @@ func TestThePublicProductRoutesResolve(t *testing.T) {
 		t.Fatalf("GET /api/v1/products: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if rec := performJSON(router, http.MethodGet, "/api/v1/products/a", "", ""); rec.Code != http.StatusOK {
-		t.Fatalf("GET /api/v1/products/{slug}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("GET /api/v1/products/{code}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -264,7 +263,7 @@ func TestCreateProductPassesVariantsAndTheSessionActor(t *testing.T) {
 	stub := &productServiceStub{adminDetail: sampleAdminDetail()}
 	router := newRouter(stub, productHooks(nil))
 
-	body := `{"name":"Card set","code":"P-001","slug":"card-set","description":"Bộ card",
+	body := `{"name":"Card set","code":"card-set","description":"Bộ card",
 		"defaultPrice":{"amount":120000,"currency":"VND"},"categoryId":"` + uuid.New().String() + `","position":1,
 		"variants":[{"name":"Mặc định","sku":"SKU-001","position":0}]}`
 	rec := performJSON(router, http.MethodPost, productAdminPath, body, "admin-token")
@@ -310,8 +309,8 @@ func TestAMalformedIdentifierIsAFieldError(t *testing.T) {
 	}
 }
 
-// FR-006: an unknown detail slug answers the module's not-found.
-func TestAnUnknownSlugAnswersNotFound(t *testing.T) {
+// FR-006: an unknown detail code answers the module's not-found.
+func TestAnUnknownCodeAnswersNotFound(t *testing.T) {
 	stub := &productServiceStub{err: domainerr.ErrProductNotFound}
 	router := newRouter(stub, productHooks(nil))
 
@@ -339,7 +338,7 @@ func TestTheAdminDetailShapeCarriesItsMembers(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Data.Code != "P-001" || len(body.Data.Variants) != 1 || body.Data.Variants[0].SKU != "SKU-001" {
+	if body.Data.Code != "card-set" || len(body.Data.Variants) != 1 || body.Data.Variants[0].SKU != "SKU-001" {
 		t.Fatalf("the administrator detail shape is wrong: %+v", body.Data)
 	}
 }

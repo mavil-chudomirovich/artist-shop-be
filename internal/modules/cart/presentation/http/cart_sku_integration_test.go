@@ -134,10 +134,9 @@ func (f *skuCartFixture) seedSKUCustomer(t *testing.T) {
 	}
 }
 
-// skuCartProduct is one seeded product with its slug and default currency.
+// skuCartProduct is one seeded product.
 type skuCartProduct struct {
-	id   uuid.UUID
-	slug string
+	id uuid.UUID
 }
 
 // seedSKUProduct writes one category and one product straight into the database,
@@ -158,16 +157,15 @@ func (f *skuCartFixture) seedSKUProduct(t *testing.T, code string, defaultAmount
 	}
 
 	productID := uuid.New()
-	slug := "product-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position)
-		VALUES ($1, $2, $3, $4, $4, '', $5, 'VND', $6, 0)`,
-		productID, "Product "+code, code, slug, defaultAmount, categoryID); err != nil {
+		VALUES ($1, $2, $3, '', $4, 'VND', $5, 0)`,
+		productID, "Product "+code, code, defaultAmount, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
-	return skuCartProduct{id: productID, slug: slug}
+	return skuCartProduct{id: productID}
 }
 
 // seedSKUVariant writes one variant of a product in the given sell state with an
@@ -198,7 +196,7 @@ func skuCartAmount(value int64) *int64 { return &value }
 func TestCartAddByVariantAgainstPostgres(t *testing.T) {
 	f := newSKUCartFixture(t)
 	f.seedSKUCustomer(t)
-	product := f.seedSKUProduct(t, "CARD-1", 150000)
+	product := f.seedSKUProduct(t, "card-1", 150000)
 	variant := f.seedSKUVariant(t, product.id, "Khổ lớn", "CARD-1-L", "ACTIVE", skuCartAmount(120000), 10)
 
 	rec := performJSON(f.root, http.MethodPost, cartPath+"/items",
@@ -214,7 +212,7 @@ func TestCartAddByVariantAgainstPostgres(t *testing.T) {
 	if line.VariantID != variant || line.Quantity != 2 {
 		t.Fatalf("unexpected line identity: %+v", line)
 	}
-	if line.ProductName == nil || *line.ProductName != "Product CARD-1" ||
+	if line.ProductName == nil || *line.ProductName != "Product card-1" ||
 		line.VariantName == nil || *line.VariantName != "Khổ lớn" {
 		t.Fatalf("the line must carry the product and variant names, got %+v", line)
 	}
@@ -242,7 +240,7 @@ func TestCartAddByVariantAgainstPostgres(t *testing.T) {
 func TestCartAddRefusalsAgainstPostgres(t *testing.T) {
 	f := newSKUCartFixture(t)
 	f.seedSKUCustomer(t)
-	product := f.seedSKUProduct(t, "CARD-1", 150000)
+	product := f.seedSKUProduct(t, "card-1", 150000)
 	announced := f.seedSKUVariant(t, product.id, "Sắp ra mắt", "CARD-1-N", "COMING_SOON", nil, 10)
 	scarce := f.seedSKUVariant(t, product.id, "Hiếm", "CARD-1-S", "ACTIVE", nil, 1)
 
@@ -297,7 +295,7 @@ func TestCartAddRefusalsAgainstPostgres(t *testing.T) {
 	// A variant whose product was removed is gone too: adding it answers the same
 	// not-found.
 	t.Run("removed product's variant", func(t *testing.T) {
-		goneProduct := f.seedSKUProduct(t, "GONE-1", 100000)
+		goneProduct := f.seedSKUProduct(t, "gone-1", 100000)
 		gone := f.seedSKUVariant(t, goneProduct.id, "Gone", "GONE-1-D", "ACTIVE", nil, 5)
 		if _, err := f.pool.Exec(context.Background(), `DELETE FROM products WHERE id = $1`, goneProduct.id); err != nil {
 			t.Fatalf("delete product: %v", err)
@@ -320,7 +318,7 @@ func TestCartAddRefusalsAgainstPostgres(t *testing.T) {
 func TestCheckoutStoresOneLinePerProductCodeAndSKUAgainstPostgres(t *testing.T) {
 	f := newSKUCartFixture(t)
 	f.seedSKUCustomer(t)
-	product := f.seedSKUProduct(t, "CARD-1", 150000)
+	product := f.seedSKUProduct(t, "card-1", 150000)
 	small := f.seedSKUVariant(t, product.id, "Khổ nhỏ", "CARD-1-S", "ACTIVE", skuCartAmount(120000), 5)
 	large := f.seedSKUVariant(t, product.id, "Khổ lớn", "CARD-1-L", "ACTIVE", skuCartAmount(180000), 5)
 
@@ -378,11 +376,11 @@ func TestCheckoutStoresOneLinePerProductCodeAndSKUAgainstPostgres(t *testing.T) 
 	if len(stored) != 2 {
 		t.Fatalf("expected exactly one line per (product code, SKU), got %+v", stored)
 	}
-	if stored[0].productCode != "CARD-1" || stored[0].sku != "CARD-1-L" || stored[0].variantName != "Khổ lớn" ||
+	if stored[0].productCode != "card-1" || stored[0].sku != "CARD-1-L" || stored[0].variantName != "Khổ lớn" ||
 		stored[0].unitPrice != 180000 || stored[0].quantity != 2 {
 		t.Fatalf("the large line's snapshot is wrong: %+v", stored[0])
 	}
-	if stored[1].productCode != "CARD-1" || stored[1].sku != "CARD-1-S" || stored[1].variantName != "Khổ nhỏ" ||
+	if stored[1].productCode != "card-1" || stored[1].sku != "CARD-1-S" || stored[1].variantName != "Khổ nhỏ" ||
 		stored[1].unitPrice != 120000 || stored[1].quantity != 1 {
 		t.Fatalf("the small line's snapshot is wrong: %+v", stored[1])
 	}

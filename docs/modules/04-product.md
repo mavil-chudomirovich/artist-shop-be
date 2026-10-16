@@ -15,7 +15,8 @@
 - **Frontend guide**: [`specs/015-product-sku-model/frontend-guide.md`](../../specs/015-product-sku-model/frontend-guide.md)
   — thay thế guide của 014
 - **Code**: `internal/modules/product/{domain,application,infrastructure,presentation}`,
-  `migrations/00006_product.sql`, `migrations/00014_product_sku_model.sql`
+  `migrations/00006_product.sql`, `migrations/00014_product_sku_model.sql`,
+  `migrations/00015_product_code_as_link_segment.sql`
 - **Ưu tiên / Giai đoạn**: V1.0
 - **Phụ thuộc**: category
 
@@ -36,7 +37,9 @@ Có:
 - **Variant**: tên, SKU (duy nhất toàn hệ), giá riêng **tuỳ chọn** (bỏ trống → dùng giá mặc định của
   sản phẩm), ảnh riêng, thứ tự, và **trạng thái bán riêng** với state machine
   `COMING_SOON → ACTIVE ↔ OUT_OF_STOCK`, mọi trạng thái → `DISCONTINUED` (cuối).
-- Mã sản phẩm (`code`) bắt buộc và duy nhất; mỗi sản phẩm ≥1 variant (gỡ variant cuối bị từ chối).
+- Mã sản phẩm (`code`) bắt buộc và duy nhất; **`code` cũng là đoạn link công khai** của sản phẩm
+  (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140 ký tự) — sản phẩm **không** có `slug` riêng
+  (danh mục vẫn giữ `slug` của nó). Mỗi sản phẩm ≥1 variant (gỡ variant cuối bị từ chối).
 
 Không (hoãn):
 - Biến thể **nhiều chiều** (màu × size) và ma trận tổ hợp; xem
@@ -48,10 +51,11 @@ Không (hoãn):
 
 ## Thực thể dữ liệu
 
-- `products`: tên, mã sản phẩm (`code`, duy nhất trên `lower(btrim(code))`), slug, mô tả, **giá mặc
-  định** (`price_amount` đơn vị nhỏ + `currency`), danh mục (`category_id` → `categories(id)`
-  `ON DELETE RESTRICT`), vị trí, `normalized_slug` (khoá chuẩn hoá, chỉ để index/so khớp — không bao
-  giờ trả ra ngoài). Sản phẩm **không** còn trạng thái bán, cờ pre-order/combo hay cột gắn nhóm.
+- `products`: tên, mã sản phẩm (`code`, duy nhất trên `lower(btrim(code))`, **cũng là đoạn link công
+  khai** `/products/{code}` — URL-safe, ≤140 ký tự), mô tả, **giá mặc định** (`price_amount` đơn vị
+  nhỏ + `currency`), danh mục (`category_id` → `categories(id)` `ON DELETE RESTRICT`), vị trí. Sản
+  phẩm **không** còn trạng thái bán, cờ pre-order/combo, cột gắn nhóm, hay `slug`/`normalized_slug`
+  (hai cột này bị migration `00015` gỡ; `code` đã giữ đoạn link).
 - `product_variants`: con của sản phẩm — `product_id` (FK `ON DELETE CASCADE`), tên hiển thị, `sku`
   (duy nhất trên `lower(btrim(sku))`), `price_amount NULL` (null → dùng giá mặc định), bốn cột ảnh
   nullable (một ảnh, hoặc không), `position` (nhỏ nhất là variant mặc định), `sell_state`, thời gian.
@@ -98,7 +102,7 @@ này. Ghi rõ ở đây để một luật chưa xong không trở nên vô hìn
 | Điểm | Vì sao / Trạng thái | Gỡ ở đâu |
 |---|---|---|
 | **Trạng thái tự chuyển khi hết/hồi kho** — **đã đóng bởi feature 007** | Module 05 Inventory thêm thực thể kho và **gọi hai cạnh `ACTIVE ↔ OUT_OF_STOCK`** qua hợp đồng hiển thị của module 04, không cần tác nhân admin. **Feature 015 chuyển trạng thái này xuống variant**: cùng hai cạnh, nay theo `variantID` (`MarkVariantOutOfStock`/`MarkVariantOnSale`) | **Đã gỡ:** `internal/contracts/product.go` (hợp đồng hai chiều), adapter `product/infrastructure/implement/{availability,catalog}/`, và nghĩa vụ D1 trong `specs/006-product-catalog/deferred.md` nay ghi đã đóng. Xem [decisions/014](../decisions/014-inventory-hold-and-availability.md) và [decisions/021](../decisions/021-product-sku-model.md) |
-| **Xoá mềm (`xóa mềm`)** | Module doc ghi xoá mềm, feature 006 chọn **hard delete**; feature 015 giữ hard delete (xoá sản phẩm xoá theo các variant) vì module 07 Order nay **chụp** nội dung đã mua vào dòng đơn, nên đơn không phụ thuộc sản phẩm còn tồn tại | **Đã đóng:** module 07 Order chụp `name`/`slug`/giá vào `order_items` (và, sau 015, thêm mã sản phẩm + SKU + tên variant). `deferred.md` D3, [decisions/013](../decisions/013-product-visibility-media-and-hard-delete.md) |
+| **Xoá mềm (`xóa mềm`)** | Module doc ghi xoá mềm, feature 006 chọn **hard delete**; feature 015 giữ hard delete (xoá sản phẩm xoá theo các variant) vì module 07 Order nay **chụp** nội dung đã mua vào dòng đơn, nên đơn không phụ thuộc sản phẩm còn tồn tại | **Đã đóng:** module 07 Order chụp `name`/giá vào `order_items` (và, sau 015, thêm mã sản phẩm + SKU + tên variant; cột `slug` của dòng đơn bị `00015` gỡ). `deferred.md` D3, [decisions/013](../decisions/013-product-visibility-media-and-hard-delete.md) |
 
 Mục "Không (hoãn)" còn lại ở trên (đa ngôn ngữ nội dung sản phẩm) vẫn hoãn, là một feature riêng khi
 có nhu cầu — `specs/006-product-catalog/deferred.md` D7. Cơ chế **variant group một chiều** của feature

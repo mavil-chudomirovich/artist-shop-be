@@ -8,14 +8,11 @@ package constant
 // A code is part of the module's public contract: renaming one breaks every client
 // that already handles it.
 const (
-	// CodeProductNotFound covers an unknown identifier or slug, a product hidden
+	// CodeProductNotFound covers an unknown identifier or code, a product hidden
 	// because no variant is on sale, a product whose category is hidden, and a
 	// removed product. On the public surface the situations are deliberately one
 	// answer (FR-008).
 	CodeProductNotFound = "PRODUCT_NOT_FOUND"
-	// CodeProductSlugTaken reports that another product already uses the slug,
-	// ignoring letter case and surrounding whitespace.
-	CodeProductSlugTaken = "PRODUCT_SLUG_TAKEN"
 	// CodeProductCodeTaken reports that another product already uses the product
 	// code, compared after trimming surrounding whitespace and ignoring letter
 	// case (FR-011).

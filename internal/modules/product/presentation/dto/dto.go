@@ -31,8 +31,8 @@ type PublicProductResponse struct {
 	ID uuid.UUID `json:"id"`
 	// Name is the name the operator wrote.
 	Name string `json:"name"`
-	// Slug is the segment a customer-facing link is built from.
-	Slug string `json:"slug"`
+	// Code is the segment a customer-facing link is built from.
+	Code string `json:"code"`
 	// Price is the lowest on-sale variant price with its currency.
 	Price PriceResponse `json:"price"`
 	// ImageURL is the card image's link, or null when the product has none.
@@ -148,10 +148,8 @@ type CreateVariantRequest struct {
 type CreateProductRequest struct {
 	// Name is the product name.
 	Name string `json:"name"`
-	// Code is the unique operator-facing product code (FR-011).
+	// Code is the product code (FR-011).
 	Code string `json:"code"`
-	// Slug is the public link segment.
-	Slug string `json:"slug"`
 	// Description is the text shown to customers; an omitted or empty value is
 	// stored empty.
 	Description string `json:"description"`
@@ -174,8 +172,6 @@ type UpdateProductRequest struct {
 	Name *string `json:"name"`
 	// Code is the new product code; nil keeps the current value.
 	Code *string `json:"code"`
-	// Slug is the new slug; nil keeps the current value.
-	Slug *string `json:"slug"`
 	// Description is the new description; nil keeps the current value, an empty
 	// string clears it.
 	Description *string `json:"description"`
@@ -262,17 +258,15 @@ type AdminImageResponse struct {
 }
 
 // AdminProductResponse is one entry of the administrator surface, including the
-// members a customer must not receive: the code, the description, the category,
+// members a customer must not receive: the description, the category,
 // the position and the variant count (FR-010).
 type AdminProductResponse struct {
 	// ID is the product's stable identifier.
 	ID uuid.UUID `json:"id"`
 	// Name is the name the operator wrote.
 	Name string `json:"name"`
-	// Code is the operator-facing product code (FR-011).
+	// Code is the product code (FR-011).
 	Code string `json:"code"`
-	// Slug is the link segment the operator wrote.
-	Slug string `json:"slug"`
 	// Description is the text shown to customers; an empty string is valid.
 	Description string `json:"description"`
 	// DefaultPrice is the product's default price with its currency.

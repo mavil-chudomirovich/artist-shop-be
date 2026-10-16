@@ -191,9 +191,8 @@ member lạ → `MALFORMED_REQUEST` 400.
 
 | Code | HTTP | Nghĩa |
 |------|------|-------|
-| `PRODUCT_NOT_FOUND` | 404 | Không có sản phẩm nào mang định danh/slug đó, hoặc sản phẩm bị ẩn — **không còn variant nào đang bán**, **danh mục của nó bị ẩn**, hoặc đã bị xoá. Trên bề mặt công khai các tình huống này **cố ý** trả lời giống nhau (mục 6) |
-| `PRODUCT_SLUG_TAKEN` | 409 | Một sản phẩm khác đã dùng slug đó (so khớp sau khi trim và bỏ qua hoa/thường) |
-| `PRODUCT_CODE_TAKEN` | 409 | Một sản phẩm khác đã dùng mã sản phẩm đó (so khớp sau khi trim và bỏ qua hoa/thường) |
+| `PRODUCT_NOT_FOUND` | 404 | Không có sản phẩm nào mang định danh/code đó, hoặc sản phẩm bị ẩn — **không còn variant nào đang bán**, **danh mục của nó bị ẩn**, hoặc đã bị xoá. Trên bề mặt công khai các tình huống này **cố ý** trả lời giống nhau (mục 6) |
+| `PRODUCT_CODE_TAKEN` | 409 | Một sản phẩm khác đã dùng mã sản phẩm đó (so khớp sau khi trim và bỏ qua hoa/thường). `code` cũng là đoạn link công khai nên va chạm này bao luôn trường hợp trùng đoạn link |
 | `VARIANT_SKU_TAKEN` | 409 | Một variant khác đã dùng SKU đó (so khớp sau khi trim và bỏ qua hoa/thường) |
 | `VARIANT_NOT_FOUND` | 404 | Không có variant nào mang định danh đó cho sản phẩm (một `variantId` lạ). Một variant tồn tại nhưng không mua được **không** phải mã này: trên bề mặt công khai nó đơn giản vắng mặt, còn khi thêm vào giỏ nó là từ chối của cart |
 | `VARIANT_LAST_REMOVAL` | 409 | Variant là cái cuối cùng của sản phẩm; mỗi sản phẩm phải giữ **ít nhất một** variant |
@@ -204,7 +203,7 @@ member lạ → `MALFORMED_REQUEST` 400.
 | `PRODUCT_MEDIA_UNAVAILABLE` | 503 | Dịch vụ media từ chối hoặc không lưu được; **không có gì bị đổi** nên thử lại được |
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module product (xem
-`specs/015-product-sku-model/contracts/error-codes.md`): slug không an toàn URL, một trường vượt
+`specs/015-product-sku-model/contracts/error-codes.md`): code không an toàn URL, một trường vượt
 độ dài, giá không dương, `currency` không phải ba chữ in hoa, `categoryId` không tồn tại, một
 variant thiếu tên/SKU hoặc `to` không thuộc bốn trạng thái bán, `price` của variant không dương
 → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không phải UUID →
@@ -222,10 +221,10 @@ cũng không có mã riêng.
 > `PRODUCT_IMAGE_PRIMARY_SET`, `PRODUCT_DELETED`, và ba action của variant
 > `PRODUCT_VARIANT_ADDED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_REMOVED` — xem
 > `internal/modules/product/domain/constant/audit.go`. Metadata của mỗi dòng chỉ mang giá trị
-> do operator gõ (`slug` ở create/update sản phẩm, `imageId` ở thao tác ảnh, `sku` ở thao tác
-> variant), **không** mang cột khoá chuẩn hoá `normalized_slug` hay dữ liệu cá nhân — cột
-> `normalized_slug` không bao giờ xuất hiện trong response, audit hay log
-> (`specs/006-product-catalog/data-model.md`).
+> do operator gõ (`code` ở create/update sản phẩm, `imageId` ở thao tác ảnh, `sku` ở thao tác
+> variant), **không** mang dữ liệu cá nhân hay giá trị nội bộ nào — sản phẩm **không** còn cột
+> khoá chuẩn hoá `normalized_slug` (bị migration `00015` gỡ), và `code` là đoạn link công khai nên
+> được trả ra bình thường (`specs/015-product-sku-model/data-model.md`).
 
 **Riêng module inventory** (`internal/modules/inventory/domain/constant/codes.go`):
 
@@ -1700,20 +1699,24 @@ Ghi chú:
 
 ## 6. Module 04 — Product (`/api/v1`)
 
-Sản phẩm của shop: một **sản phẩm cha** với nội dung dùng chung (tên, mã sản phẩm, giá mặc định,
-danh mục, mô tả, slug, bộ ảnh) và một mảng **variant** con — mỗi variant có tên, SKU, giá riêng (tuỳ
+Sản phẩm của shop: một **sản phẩm cha** với nội dung dùng chung (tên, mã sản phẩm `code`, giá mặc
+định, danh mục, mô tả, bộ ảnh) và một mảng **variant** con — mỗi variant có tên, SKU, giá riêng (tuỳ
 chọn), ảnh riêng, thứ tự và **trạng thái bán riêng**; variant là **đơn vị mua** (giỏ, đơn và tồn kho
 đều theo variant). **Một tài nguyên sản phẩm, hai bề mặt**: bề mặt công khai (`/products`, không cần
-token, địa chỉ theo **slug**) và bề mặt quản trị (`/admin/products`, vai trò `ADMIN`, địa chỉ theo
-**định danh**).
+token, địa chỉ theo **`code`** — đoạn link công khai) và bề mặt quản trị (`/admin/products`, vai trò
+`ADMIN`, địa chỉ theo **định danh**).
 
-Bảy điều dễ đọc sai, nói ngay:
+Tám điều dễ đọc sai, nói ngay:
+
+- **Mã sản phẩm là đoạn link công khai.** Sản phẩm **không** còn `slug` riêng: `code` vừa là mã
+  operator viết vừa là đoạn link của URL công khai (`/products/{code}`, URL-safe: chữ thường, chữ số,
+  dấu gạch đơn; ≤140 ký tự, duy nhất). Danh mục vẫn giữ `slug` riêng của nó (mục 5).
 
 - **Danh mục hiển thị một mục cho mỗi sản phẩm.** Mọi variant của một sản phẩm gộp vào **một** phần
   tử; giá của card là giá **thấp nhất** trong các variant **đang bán**, ảnh là ảnh của **variant mặc
   định** (variant có `position` nhỏ nhất), fallback về ảnh chính của gallery sản phẩm. Phần tử không
   còn `type`: chỉ còn một loại.
-- **Sản phẩm bị ẩn và một slug chưa từng tồn tại trả lời y hệt nhau** (`404 PRODUCT_NOT_FOUND`).
+- **Sản phẩm bị ẩn và một code chưa từng tồn tại trả lời y hệt nhau** (`404 PRODUCT_NOT_FOUND`).
   Gồm cả sản phẩm nằm trong **danh mục bị ẩn** và sản phẩm **không còn variant nào đang bán**. Xem
   `6.2`.
 - **Sản phẩm chỉ hiện khi còn ít nhất một variant đang bán.** Một variant hết hàng vẫn được liệt kê
@@ -1736,7 +1739,7 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
 {
   "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
   "name": "Acrylic stand Aki",
-  "slug": "acrylic-stand-aki",
+  "code": "acrylic-stand-aki",
   "price": { "amount": 120000, "currency": "VND" },
   "imageUrl": "https://res.cloudinary.com/demo/image/upload/stand.jpg"
 }
@@ -1745,14 +1748,13 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
 `price` là **giá thấp nhất** trong các variant đang bán, `imageUrl` là ảnh variant mặc định fallback
 ảnh chính gallery, hoặc `null` khi không có ảnh nào.
 
-**Hình dạng quản trị** `AdminProduct` (12 member) — một phần tử của danh sách quản trị:
+**Hình dạng quản trị** `AdminProduct` (11 member) — một phần tử của danh sách quản trị:
 
 ```json
 {
   "id": "0f5c6e0c-1a44-4a1e-9b3d-9a1b2c3d4e5f",
   "name": "Acrylic stand Aki",
-  "code": "AKI-STAND",
-  "slug": "acrylic-stand-aki",
+  "code": "acrylic-stand-aki",
   "description": "Acrylic stand 15cm",
   "defaultPrice": { "amount": 120000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
@@ -1798,10 +1800,11 @@ Ghi chú:
 - `meta.total` đếm đúng số **sản phẩm** hiển thị; thiếu `total` nghĩa là `0` (§1.3).
 - Catalogue rỗng trả `data: []`, **không** phải `null` và **không** phải lỗi.
 
-### 6.2 `GET /products/{slug}`
+### 6.2 `GET /products/{code}`
 
-Đọc một sản phẩm khách thấy được theo slug: nội dung dùng chung (tên, mô tả, bộ ảnh) **cộng danh
-sách variant hiển thị** — mỗi variant mang tên, giá hiệu lực, ảnh, trạng thái bán và cờ còn hàng.
+Đọc một sản phẩm khách thấy được theo `code` (đoạn link công khai): nội dung dùng chung (tên, mô tả,
+bộ ảnh) **cộng danh sách variant hiển thị** — mỗi variant mang tên, giá hiệu lực, ảnh, trạng thái bán
+và cờ còn hàng.
 
 | | |
 |---|---|
@@ -1816,9 +1819,9 @@ là `PublicVariant` (6 member: `id`, `name`, `price`, `imageUrl`, `sellState`, `
 
 Lỗi: `PRODUCT_NOT_FOUND` 404 · `RATE_LIMITED` 429
 
-> **Sản phẩm bị ẩn, không còn variant nào đang bán, nằm trong danh mục bị ẩn, đã xoá và slug chưa
+> **Sản phẩm bị ẩn, không còn variant nào đang bán, nằm trong danh mục bị ẩn, đã xoá và code chưa
 > từng tồn tại trả lời y hệt nhau** — cùng status, cùng mã `PRODUCT_NOT_FOUND`, cùng câu chữ. Đây là
-> bắt buộc, không chỉ tiện (FR-008): nếu một sản phẩm bị ẩn trả lời khác một slug chưa dùng, endpoint
+> bắt buộc, không chỉ tiện (FR-008): nếu một sản phẩm bị ẩn trả lời khác một code chưa dùng, endpoint
 > sẽ xác nhận sản phẩm/danh mục operator đã chọn **không** công bố.
 >
 > Một variant `OUT_OF_STOCK` **vẫn** được trả (đánh dấu `sellState: "OUT_OF_STOCK"`, `inStock:
@@ -1837,7 +1840,7 @@ Danh sách **toàn bộ** sản phẩm, kể cả sản phẩm không hiển th�
 
 Query: như `6.1` (không có `category`).
 
-Response `200`: `data` là mảng `AdminProduct` (12 member, gồm `code`, `defaultPrice`,
+Response `200`: `data` là mảng `AdminProduct` (11 member, gồm `code`, `defaultPrice`,
 `variantCount` và `imageUrl` là ảnh chính của gallery); `meta` là khối phân trang chung.
 
 Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
@@ -1859,8 +1862,7 @@ Request (`CreateProductRequest`, `additionalProperties: false`)
 ```json
 {
   "name": "Acrylic stand Aki",
-  "code": "AKI-STAND",
-  "slug": "acrylic-stand-aki",
+  "code": "acrylic-stand-aki",
   "description": "Acrylic stand 15cm",
   "defaultPrice": { "amount": 120000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
@@ -1872,23 +1874,24 @@ Request (`CreateProductRequest`, `additionalProperties: false`)
 }
 ```
 
-`name`, `code`, `slug`, `description`, `defaultPrice`, `categoryId`, `variants` **bắt buộc**;
+`name`, `code`, `description`, `defaultPrice`, `categoryId`, `variants` **bắt buộc**;
 `position` mặc định `0`. `variants` phải có **≥1** phần tử; mỗi phần tử cần `name`, `sku`,
 `position`, còn `price` là **tuỳ chọn** (`{ "amount": … }`; bỏ trống hoặc `null` nghĩa là dùng giá
 mặc định của sản phẩm — currency luôn là currency của sản phẩm, nên variant **không** nhận
-currency). `slug` và `code` do operator viết; **không** sinh từ `name`.
+currency). `code` do operator viết (**cũng là đoạn link công khai**, URL-safe), **không** sinh từ
+`name`.
 
-Response `201`: `data` = `AdminProductDetail` (14 member = `AdminProduct` + `images` + `variants`);
+Response `201`: `data` = `AdminProductDetail` (13 member = `AdminProduct` + `images` + `variants`);
 mỗi phần tử `variants` là `AdminVariant` (8 member: `id`, `name`, `sku`, `price`,
 `effectivePrice`, `imageUrl`, `position`, `sellState`), `price` là `null` khi variant dùng giá mặc
 định.
 
-Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng/quá 120 ký tự; `code` rỗng hoặc quá dài; `slug` rỗng, quá
-140 ký tự hoặc không khớp mẫu URL-safe; `description` quá 5000 ký tự; `defaultPrice.amount` không
+Lỗi: `VALIDATION_ERROR` 400 (`name` rỗng/quá 120 ký tự; `code` rỗng, quá 140 ký tự hoặc không khớp
+mẫu URL-safe; `description` quá 5000 ký tự; `defaultPrice.amount` không
 dương hoặc `currency` không phải ba chữ in hoa; `categoryId` không tồn tại; `variants` rỗng hoặc một
 variant thiếu `name`/`sku` hoặc có `price.amount` không dương — `details[].field` chỉ đúng member) ·
 `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) · `UNAUTHENTICATED` 401 ·
-`FORBIDDEN` 403 · `PRODUCT_CODE_TAKEN` 409 · `PRODUCT_SLUG_TAKEN` 409 · `VARIANT_SKU_TAKEN` 409 ·
+`FORBIDDEN` 403 · `PRODUCT_CODE_TAKEN` 409 · `VARIANT_SKU_TAKEN` 409 ·
 `RATE_LIMITED` 429
 
 Ghi chú:
@@ -1897,7 +1900,7 @@ Ghi chú:
   cho tới khi ít nhất một variant được đưa sang `ACTIVE` (`6.13`).
 - Combo set và pre-order đã **bị bỏ** ở phiên bản này; `isSet`/`isPreorder`/`preorderExpectedAt` và
   cơ chế variant group của feature 014 không còn.
-- Mỗi lần tạo ghi `audit_logs` với action `PRODUCT_CREATED`, metadata `{"slug": ...}`.
+- Mỗi lần tạo ghi `audit_logs` với action `PRODUCT_CREATED`, metadata `{"code": ...}`.
 
 ### 6.5 `GET /admin/products/{id}`
 
@@ -1910,7 +1913,7 @@ variant (kể cả variant `COMING_SOON`/`DISCONTINUED`) — để operator qu�
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Response `200`: `data` = `AdminProductDetail` (14 member = `AdminProduct` + `images` + `variants`);
+Response `200`: `data` = `AdminProductDetail` (13 member = `AdminProduct` + `images` + `variants`);
 mỗi phần tử `images` là `{ id, publicId, url, width, height, position, isPrimary }`; mỗi phần tử
 `variants` là `AdminVariant` (8 member, gồm `sku`, `effectivePrice` và `sellState`).
 
@@ -1933,8 +1936,7 @@ Request (`UpdateProductRequest`, mọi member tuỳ chọn, `additionalPropertie
 ```json
 {
   "name": "Acrylic stand Aki mới",
-  "code": "AKI-STAND-V2",
-  "slug": "acrylic-stand-aki-moi",
+  "code": "acrylic-stand-aki-moi",
   "description": "Mô tả mới",
   "defaultPrice": { "amount": 130000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
@@ -1942,20 +1944,20 @@ Request (`UpdateProductRequest`, mọi member tuỳ chọn, `additionalPropertie
 }
 ```
 
-Gửi lại **đúng** `code`/`slug` sản phẩm đang giữ thành công — một sản phẩm không bao giờ trùng với
+Gửi lại **đúng** `code` sản phẩm đang giữ thành công — một sản phẩm không bao giờ trùng với
 chính nó. `description` chuỗi rỗng xoá mô tả.
 
 Response `200`: `data` = `AdminProductDetail`.
 
 Lỗi: `VALIDATION_ERROR` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN`
-403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_CODE_TAKEN` 409 · `PRODUCT_SLUG_TAKEN` 409 ·
+403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_CODE_TAKEN` 409 ·
 `RATE_LIMITED` 429
 
 Ghi chú:
 
 - **Variant không đổi qua request này**: thêm/sửa/gỡ variant đi qua các route `.../variants*` (§6.8
   trở đi).
-- Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"slug": ...}`.
+- Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"code": ...}`.
 
 ### 6.7 `DELETE /admin/products/{id}`
 
@@ -3271,7 +3273,7 @@ Ghi chú:
 | PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục |
 | DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204; `409 CATEGORY_IN_USE` nếu còn sản phẩm — feature 006) |
 | GET | `/api/v1/products` | — | Catalogue: **một mục mỗi sản phẩm** khách thấy được, giá thấp nhất trong variant đang bán (có phân trang, lọc `?category=`) |
-| GET | `/api/v1/products/{slug}` | — | Chi tiết sản phẩm theo slug (kèm danh sách variant hiển thị + trạng thái còn hàng) |
+| GET | `/api/v1/products/{code}` | — | Chi tiết sản phẩm theo `code` (đoạn link công khai; kèm danh sách variant hiển thị + trạng thái còn hàng) |
 | GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang) |
 | POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm **kèm ≥1 variant** (`201`) |
 | GET | `/api/v1/admin/products/{id}` | ADMIN | Chi tiết sản phẩm, kể cả không hiển thị, kèm ảnh + mọi variant |
@@ -3334,6 +3336,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-16 | **Mã sản phẩm trở thành đoạn link công khai (module 04 Product, feature 015).** Sản phẩm **không** còn `slug` riêng: `code` vừa là mã sản phẩm operator viết vừa là đoạn link của URL công khai. **Đổi** `GET /products/{slug}` → `GET /products/{code}` (path param `code`). **Đổi** hình dạng công khai: entry và detail mang `code` thay `slug`; body `POST`/`PATCH /admin/products` **bỏ** `slug`, `code` là đoạn link (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140 ký tự, duy nhất trên `lower(btrim(code))`). Dòng đơn **bỏ** snapshot `slug` (giữ `product_code` + `sku`). **Gỡ** mã `PRODUCT_SLUG_TAKEN` 409; va chạm dùng `409 PRODUCT_CODE_TAKEN`. Migration `00015_product_code_as_link_segment.sql` gỡ `products.slug`/`normalized_slug` và `order_items.slug`; danh mục vẫn giữ `slug` riêng. Cập nhật mục 1.4, mục 6 và bảng tổng hợp; `docs/swagger/` sinh lại khớp. | `migrations/00015_product_code_as_link_segment.sql`, `internal/modules/product/presentation/http/router.go`, `internal/modules/product/domain/model/code.go` |
 | 2026-10-16 | **Tái cấu trúc sản phẩm thành sản phẩm cha + variant (SKU) (module 04, feature 015); thay thế feature 014.** Một `products` cha giữ nội dung dùng chung (tên, mã sản phẩm `code`, giá mặc định, danh mục, mô tả, slug, gallery) và sở hữu mảng **variant** con (`product_variants`: tên, `sku`, giá riêng tuỳ chọn, ảnh riêng, thứ tự, trạng thái bán riêng). **Variant là đơn vị bán**: tồn kho, giỏ và đơn đều theo variant. **Đổi** `GET /products` thành **một mục mỗi sản phẩm** (giá thấp nhất trong variant đang bán, ảnh variant mặc định; **bỏ** `type`). **Đổi** `GET /products/{slug}`: `data` mang thêm `variants[]` (`id`, `name`, `price`, `imageUrl`, `sellState`, `inStock`; SKU không lộ). **Đổi** `POST /admin/products`: **bắt buộc** `variants` (≥1) và `code`; variant mới ở `COMING_SOON`. **Thêm sáu** endpoint variant: `POST`/`PATCH`/`DELETE /admin/products/{id}/variants[/{variantId}]`, `POST`/`DELETE .../variants/{variantId}/image`, `POST .../variants/{variantId}/state`. **Gỡ** endpoint cấp sản phẩm `POST /admin/products/{id}/state` (feature 006) và toàn bộ route variant group của **feature 014** (`GET /product-groups/{slug}`, `GET`/`POST`/`PATCH`/`DELETE /admin/product-groups*` cùng các route ảnh nhóm). **Đổi** giỏ: dòng khoá theo `variantId` (`POST /cart/items` nhận `variantId`, `PATCH`/`DELETE /cart/items/{variantId}`); `CartLineResponse` **9 member** (`productName`/`variantName` thay `name`/`slug`). **Đổi** tồn kho (module 05): `/admin/inventory/*` khoá theo `{variantId}`, `StockMovement.variantId`. **Đổi** đơn (module 07): `OrderLineResponse` **8 member** chụp `productName`/`variantName` (mỗi cặp mã sản phẩm + SKU là một dòng; SKU/mã không trả ra view khách); `EditLineRequest.variantId` và các `details[].field` đổi sang `variantId`. **Thêm năm** mã `PRODUCT_CODE_TAKEN` 409, `VARIANT_SKU_TAKEN` 409, `VARIANT_NOT_FOUND` 404, `VARIANT_LAST_REMOVAL` 409, `VARIANT_STATE_TRANSITION_INVALID` 409; **gỡ** năm mã variant group của feature 014 và `PRODUCT_STATE_TRANSITION_INVALID` của feature 006. Cập nhật mục 1.4 (mã lỗi) và §6/§7/§8/§9. Xem ADR-021. | `internal/modules/product/presentation/http/router.go`, `internal/modules/cart/presentation/http/router.go`, `internal/modules/inventory/presentation/http/router.go`, `internal/modules/order/presentation/http/router.go` |
 | 2026-10-15 | **Thêm variant group một chiều vào module 04 Product (feature 014).** Một nhóm gom nhiều **lựa chọn**, mỗi lựa chọn là một **sản phẩm đầy đủ, độc lập** (giá/tồn/trạng thái/ảnh/link riêng), nên **không** đổi bất kỳ hợp đồng liên module nào — khách vẫn thêm một `productId` vào giỏ. **Đổi** `GET /products` thành danh sách **gộp**: mỗi phần tử là `PublicCatalogueEntry` **7 member** (thêm `type` = `"product"` hoặc `"variant-group"`); một sản phẩm đã thuộc nhóm **không** còn xuất hiện riêng lẻ mà được đại diện bởi nhóm; nhóm chỉ hiện khi còn ít nhất một lựa chọn hiển thị, và giá card là giá lựa chọn thấp nhất. **Đổi** `GET /products/{slug}`: khi sản phẩm là lựa chọn, `data` mang thêm bộ chọn `variantGroup` (nhóm + các lựa chọn đang hiển thị); `data` là 8 hoặc 9 member. **Thêm tám** endpoint nhóm: công khai `GET /api/v1/product-groups/{slug}`; quản trị `GET`/`POST /admin/product-groups`, `GET`/`PATCH`/`DELETE /admin/product-groups/{id}`, `POST /{id}/images`, `DELETE /{id}/images/{imageId}`, `POST /{id}/images/{imageId}/primary` (tất cả `ADMIN`). **Đổi** body `POST`/`PATCH /admin/products`: thêm `variantGroupId`+`variantLabel` — với `PATCH` là **ba trạng thái** (bỏ qua = giữ, `null` = gỡ, có giá trị = gắn), gắn/gỡ **không** đụng giá/ảnh/trạng thái/slug. **Thêm năm** mã `VARIANT_GROUP_NOT_FOUND` 404, `VARIANT_GROUP_SLUG_TAKEN` 409, `VARIANT_GROUP_HAS_OPTIONS` 409, `VARIANT_LABEL_TAKEN` 409, `PRODUCT_ALREADY_IN_VARIANT_GROUP` 409 vào mục 1.4, cùng các action audit nhóm. Nhóm và sản phẩm dùng **hai không gian tên slug riêng** (trùng trong cùng một loại vẫn `409`). Gallery nhóm dùng chung luật media và mã `PRODUCT_IMAGE_*`. Ba hình dạng mới: công khai `PublicVariantGroupDetail` **7 member** / `PublicVariantOption` **6 member**; quản trị `AdminVariantGroup` **11 member** / `AdminVariantGroupDetail` **13 member** / `AdminGroupOption` **9 member**. Mục 6 thêm `6.12`–`6.20`; bảng tổng hợp §11 cập nhật. Xem ADR-020. | `internal/modules/product/presentation/http/router.go`, `internal/modules/product/presentation/http/handler.go` |
 | 2026-10-12 | **Đổi luồng quên mật khẩu sang xác minh bằng mã OTP (module 01 Auth, feature 013).** `POST /password/forgot` nay gửi một **mã OTP 6 chữ số** qua email thay vì gửi thẳng reset token, và trả lại `429 AUTH_RESEND_COOLDOWN` khi còn trong khoảng chờ (bước này **cũng là** bước gửi lại). **Thêm** endpoint `POST /password/forgot/verify-otp`: xác minh `{ email, otp }`, thành công trả `{ resetToken, expiresIn }` — reset token dùng **một lần**, không phải phiên và không xác thực được request khác. `POST /password/reset` **không** còn trả cặp token (**bỏ đăng nhập tự động**); nay trả `200` kèm message thành công, đồng thời thu hồi mọi phiên và vô hiệu access token cũ. Mã OTP lưu ở Redis (băm Argon2id, TTL riêng, chặn sau `OTP_MAX_ATTEMPTS`, cooldown `OTP_RESEND_COOLDOWN`); reset token giữ ở bảng `password_reset_requests` (`PASSWORD_RESET_TTL`). **Không** thêm mã lỗi mới. Các mục §3.9–3.12 dời xuống §3.10–3.13 (chèn mục verify-otp mới); `docs/swagger/` sinh lại khớp. | `internal/modules/auth/presentation/http/router.go`, `internal/modules/auth/application/implement/password.go` |

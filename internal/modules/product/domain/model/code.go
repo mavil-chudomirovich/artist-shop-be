@@ -9,37 +9,32 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 )
 
-// SlugPattern is the URL-safe shape of a product slug: lowercase unaccented
+// CodePattern is the URL-safe shape of a product code: lowercase unaccented
 // letters, digits and single hyphens, with no leading or trailing hyphen
-// (FR-029).
+// (FR-011).
 //
-// It is the one home of the rule; the database check in
-// migrations/00006_product.sql and specs/006-product-catalog/contracts/openapi.yaml
-// carry the same pattern, and the three must keep agreeing. A product slug follows
-// exactly the rule a category slug follows (research D4), so the operator learns
-// the shape once.
-const SlugPattern = `^[a-z0-9]+(-[a-z0-9]+)*$`
+// The product code is the public link segment, so it follows exactly the rule a
+// category slug follows and the operator learns the shape once. It is the one
+// home of the rule; the database check in
+// migrations/00015_product_code_as_link_segment.sql carries the same pattern.
+const CodePattern = `^[a-z0-9]+(-[a-z0-9]+)*$`
 
-// slugPattern compiles SlugPattern once, at package init, so validation does not
+// codePattern compiles CodePattern once, at package init, so validation does not
 // recompile it on every call.
-var slugPattern = regexp.MustCompile(SlugPattern)
+var codePattern = regexp.MustCompile(CodePattern)
 
-// Character bounds of the three operator-written values (FR-030).
+// Character bounds of the operator-written values (FR-011, FR-030).
 //
 // They count characters (runes), not bytes: a 120-character Vietnamese name is up
-// to about 360 bytes, so a byte-counted bound would refuse it at roughly a third of
-// its allowance. The database's length() counts characters too, which is what the
-// matching checks rely on. Name and slug take the same 120/140 bounds module 03
-// uses; the description is wider because a product description carries material,
-// dimensions and condition.
+// to about 360 bytes, so a byte-counted bound would refuse it at roughly a third
+// of its allowance. The database's length() counts characters too, which is what
+// the matching checks rely on.
 const (
 	// MaxNameRunes is the ceiling on a product name.
 	MaxNameRunes = 120
-	// MaxCodeRunes is the ceiling on an operator-facing product code (FR-011).
-	// It mirrors the storage check products_code_length_ck.
+	// MaxCodeRunes is the ceiling on the product code (FR-011). It mirrors the
+	// storage check products_code_length_ck.
 	MaxCodeRunes = 140
-	// MaxSlugRunes is the ceiling on a product slug.
-	MaxSlugRunes = 140
 	// MaxDescriptionRunes is the ceiling on a product description.
 	MaxDescriptionRunes = 5000
 )
@@ -49,7 +44,7 @@ const (
 // operator acts on it.
 const (
 	requiredIssue  = "is required"
-	slugShapeIssue = "must be lowercase letters, digits and single hyphens, with no leading or trailing hyphen"
+	codeShapeIssue = "must be lowercase letters, digits and single hyphens, with no leading or trailing hyphen"
 )
 
 // limitIssue explains a rejection caused by a character bound.
@@ -57,11 +52,11 @@ func limitIssue(limit int) string {
 	return fmt.Sprintf("must be at most %d characters", limit)
 }
 
-// IsValidSlug reports whether slug matches the URL-safe shape. The value is
+// IsValidCode reports whether code matches the URL-safe shape. The value is
 // expected to be already trimmed; the shape rule itself does not trim, so a
 // surrounding space is a rejection rather than something quietly discarded.
-func IsValidSlug(slug string) bool {
-	return slugPattern.MatchString(slug)
+func IsValidCode(code string) bool {
+	return codePattern.MatchString(code)
 }
 
 // FoldKey returns the folding key a value is compared by for catalogue-wide
@@ -72,7 +67,7 @@ func IsValidSlug(slug string) bool {
 // of computing the key in the application (research D4): PostgreSQL's lower()
 // follows the database collation and under the C collation folds ASCII only, so a
 // Vietnamese uppercase letter such as Đ (U+0110) would not fold and the catalogue
-// would silently accept two slugs differing only by its case.
+// would silently accept two codes differing only by its case.
 //
 // It deliberately does not collapse internal runs of whitespace: FR-028 scopes
 // sameness to letter case and *surrounding* whitespace.
@@ -92,9 +87,14 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// ValidateCode refuses a blank product code or one over its character bound, naming
-// the member (FR-011). A code has no shape rule beyond being present and bounded:
-// its uniqueness is the storage layer's job.
+// ValidateCode refuses a blank product code, one over its character bound, or one
+// that is not URL-safe, naming the member (FR-011). The code is the public link
+// segment, so its shape is part of the rule; its uniqueness is the storage layer's
+// job.
+//
+// The bound is checked before the shape so a URL-safe code that is merely too long
+// is reported as a length problem; a code that fails both is reported by whichever
+// rule it trips first, and either answer names the same member.
 func ValidateCode(code string) error {
 	if code == "" {
 		return domainerr.InvalidProductField(FieldCode, requiredIssue)
@@ -102,24 +102,8 @@ func ValidateCode(code string) error {
 	if utf8.RuneCountInString(code) > MaxCodeRunes {
 		return domainerr.InvalidProductField(FieldCode, limitIssue(MaxCodeRunes))
 	}
-	return nil
-}
-
-// ValidateSlug refuses a blank slug, one over its character bound, or one that is
-// not URL-safe, naming the member (FR-029, FR-030).
-//
-// The bound is checked before the shape so a URL-safe slug that is merely too long
-// is reported as a length problem; a slug that fails both is reported by whichever
-// rule it trips first, and either answer names the same member.
-func ValidateSlug(slug string) error {
-	if slug == "" {
-		return domainerr.InvalidProductField(FieldSlug, requiredIssue)
-	}
-	if utf8.RuneCountInString(slug) > MaxSlugRunes {
-		return domainerr.InvalidProductField(FieldSlug, limitIssue(MaxSlugRunes))
-	}
-	if !IsValidSlug(slug) {
-		return domainerr.InvalidProductField(FieldSlug, slugShapeIssue)
+	if !IsValidCode(code) {
+		return domainerr.InvalidProductField(FieldCode, codeShapeIssue)
 	}
 	return nil
 }

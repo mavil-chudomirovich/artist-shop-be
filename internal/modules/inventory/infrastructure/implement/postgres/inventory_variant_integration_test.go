@@ -58,14 +58,12 @@ func seedVariantProduct(t *testing.T, f *inventoryFixture, states ...string) (uu
 	}
 
 	productID := uuid.New()
-	slug := "product-" + productID.String()[:8]
-	code := "CODE-" + productID.String()[:8]
+	code := "code-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position)
-		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
-		productID, "Product "+slug, code, slug, categoryID); err != nil {
+			(id, name, code, description, price_amount, currency, category_id, position)
+		VALUES ($1, $2, $3, '', 1000, 'VND', $4, 0)`,
+		productID, "Product "+code, code, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
 

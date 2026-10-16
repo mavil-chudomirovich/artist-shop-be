@@ -17,7 +17,7 @@ and **removes** feature 014's grouping codes.
 
 | Code | HTTP | Change |
 |---|---|---|
-| `PRODUCT_NOT_FOUND` | 404 | Still covers an unknown or hidden product; a product now hidden because **none of its variants is on sale** joins its hidden cases. The public product detail and slug still answer it |
+| `PRODUCT_NOT_FOUND` | 404 | Still covers an unknown or hidden product; a product now hidden because **none of its variants is on sale** joins its hidden cases. The public product detail and code still answer it |
 | `CART_*`, `ORDER_*`, `VALIDATION_ERROR`, `MALFORMED_REQUEST`, `UNAUTHENTICATED`, `FORBIDDEN`, `RATE_LIMITED`, `INTERNAL_ERROR` | as today | Unchanged; reused by the cart/order modules, whose routes are only re-keyed to a variant id |
 
 ## Codes this feature removes (feature 014)
@@ -34,7 +34,7 @@ the variant state endpoint.
 ## Why the code/SKU collisions are conflicts and not validation failures
 
 A duplicate product code or SKU is a well-formed value that the current data does not allow — the same
-shape as module 04's existing `PRODUCT_SLUG_TAKEN`. A `400` would say the request was malformed when
+shape as module 04's existing `PRODUCT_CODE_TAKEN`. A `400` would say the request was malformed when
 what is wrong is the value's uniqueness.
 
 ## Why the last-variant removal is a conflict

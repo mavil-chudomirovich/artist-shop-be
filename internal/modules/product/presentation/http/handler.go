@@ -90,21 +90,21 @@ func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccessList(w, r, toPublicProductResponses(out.Products), out.Page, out.PageSize, out.Total)
 }
 
-// GetPublicBySlug returns one visible product with its shared content, gallery and
-// its visible variants, addressed by the slug a customer-facing link is built from
-// (FR-003). A hidden, removed or unknown slug answers the same not-found (FR-008).
+// GetPublicByCode returns one visible product with its shared content, gallery and
+// its visible variants, addressed by the code a customer-facing link is built from
+// (FR-003). A hidden, removed or unknown code answers the same not-found (FR-008).
 //
-//	@Summary		Read one product by slug (with its variants)
-//	@Description	Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown slug answers the same not-found. No session is required.
+//	@Summary		Read one product by code (with its variants)
+//	@Description	Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown code answers the same not-found. No session is required.
 //	@Tags			Product
 //	@Produce		json
-//	@Param			slug	path	string	true	"Product slug"
+//	@Param			code	path	string	true	"Product code"
 //	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.PublicProductDetailResponse}
 //	@Failure		404		{object}	httpx.SwaggerError
-//	@Router			/products/{slug} [get]
-func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	out, err := h.svc.GetPublicBySlug(r.Context(), appdto.PublicProductRefInput{Slug: slug})
+//	@Router			/products/{code} [get]
+func (h *Handler) GetPublicByCode(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	out, err := h.svc.GetPublicByCode(r.Context(), appdto.PublicProductRefInput{Code: code})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -210,7 +210,6 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	out, err := h.svc.CreateProduct(ctx, appdto.CreateProductInput{
 		Name:        req.Name,
 		Code:        req.Code,
-		Slug:        req.Slug,
 		Description: req.Description,
 		Price:       model.Price{Amount: req.DefaultPrice.Amount, Currency: req.DefaultPrice.Currency},
 		CategoryID:  req.CategoryID,
@@ -262,7 +261,6 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		ID:          id,
 		Name:        req.Name,
 		Code:        req.Code,
-		Slug:        req.Slug,
 		Description: req.Description,
 		Price:       toPrice(req.DefaultPrice),
 		CategoryID:  req.CategoryID,
@@ -879,7 +877,7 @@ func toPublicProductResponse(product appdto.PublicProductOutput) httpdto.PublicP
 	return httpdto.PublicProductResponse{
 		ID:       product.ID,
 		Name:     product.Name,
-		Slug:     product.Slug,
+		Code:     product.Code,
 		Price:    toPriceResponse(product.Price),
 		ImageURL: product.ImageURL,
 	}
@@ -952,7 +950,6 @@ func toAdminProductResponse(product appdto.AdminProductOutput) httpdto.AdminProd
 		ID:           product.ID,
 		Name:         product.Name,
 		Code:         product.Code,
-		Slug:         product.Slug,
 		Description:  product.Description,
 		DefaultPrice: toPriceResponse(product.Price),
 		CategoryID:   product.CategoryID,

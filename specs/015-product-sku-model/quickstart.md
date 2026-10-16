@@ -6,7 +6,9 @@ A run/validation guide proving the restructure end-to-end. It does not restate t
 ## Prerequisites
 
 - Local stack up (see `docs/getting-started.md` / `docs/docker.md`); `make migrate` runs migrations
-  **including `00014_product_sku_model.sql`** (which also backfills existing products).
+  **including `00014_product_sku_model.sql`** (which backfills existing products) **and
+  `00015_product_code_as_link_segment.sql`** (which makes the product code the public link segment,
+  dropping the separate slug and the order line's slug snapshot).
 - An ADMIN account + token (`docs/development/api-testing.md`), and a visible category.
 - **Note:** the integration suite needs Docker; where it is unavailable, run the gates in CI/Linux.
 
@@ -35,7 +37,7 @@ A run/validation guide proving the restructure end-to-end. It does not restate t
 
 ## Scenario B — product detail lists variants with status (spec US1.2, FR-003/FR-005)
 
-`GET /api/v1/products/{slug}` returns the product's shared content and its on-sale / out-of-stock
+`GET /api/v1/products/{code}` returns the product's shared content and its on-sale / out-of-stock
 variants, each with `name`, `price`, `sellState`, `inStock`, ordered by display order; the default
 variant is the first. A `COMING_SOON` or `DISCONTINUED` variant is not returned. No `sku` is exposed.
 
@@ -68,7 +70,10 @@ variant is the first. A `COMING_SOON` or `DISCONTINUED` variant is not returned.
 
 1. Apply `00014`. Each pre-existing product has a `code` equal to its old slug and exactly one default
    variant (`sku = code`, price = the old product price, sell state = the old product state).
-2. The migrated product appears and sells as before; its variant can be edited/replaced.
+2. Apply `00015`. The product's link segment is now its `code`: `products.slug`/`normalized_slug` and
+   `order_items.slug` are gone, and an existing product's public link `/products/{code}` still works
+   because `code` already held the slug value.
+3. The migrated product appears and sells as before; its variant can be edited/replaced.
 
 ## Scenario G — storage-level invariants (spec FR-023, SC-006)
 

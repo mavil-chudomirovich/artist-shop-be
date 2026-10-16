@@ -22,14 +22,14 @@ type Mapper struct{}
 // New creates a Mapper.
 func New() *Mapper { return &Mapper{} }
 
-// PublicProduct maps one catalogue entry to the customer-facing card. The code,
-// the position and the variant count are deliberately not carried (FR-001,
+// PublicProduct maps one catalogue entry to the customer-facing card. The
+// position and the variant count are deliberately not carried (FR-001,
 // FR-008).
 func (m *Mapper) PublicProduct(item repository.CatalogueEntry) dto.PublicProductOutput {
 	return dto.PublicProductOutput{
 		ID:       item.ID,
 		Name:     item.Name,
-		Slug:     item.Slug,
+		Code:     item.Code,
 		Price:    item.Price,
 		ImageURL: imageURL(item.ImageURL),
 	}
@@ -59,7 +59,7 @@ func (m *Mapper) PublicProductDetail(view repository.ProductView, available map[
 		PublicProductOutput: dto.PublicProductOutput{
 			ID:       view.Product.ID,
 			Name:     view.Product.Name,
-			Slug:     view.Product.Slug,
+			Code:     view.Product.Code,
 			Price:    view.Summary.Price,
 			ImageURL: imageURL(view.Summary.ImageURL),
 		},
@@ -107,7 +107,6 @@ func adminProduct(product model.Product, variantCount int, mainURL *string) dto.
 		ID:           product.ID,
 		Name:         product.Name,
 		Code:         product.Code,
-		Slug:         product.Slug,
 		Description:  product.Description,
 		Price:        product.Price,
 		CategoryID:   product.CategoryID,

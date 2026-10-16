@@ -212,7 +212,7 @@ func TestExpireOrdersCancelsOnlyTheExpiredUnpaidOrder(t *testing.T) {
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	lines := func() []model.OrderLine {
 		return []model.OrderLine{{
-			ProductID: uuid.New(), ProductName: "Tranh", Slug: "tranh",
+			ProductID: uuid.New(), ProductName: "Tranh",
 			UnitPrice: model.Price{Amount: 1000, Currency: "VND"}, Quantity: 2,
 		}}
 	}

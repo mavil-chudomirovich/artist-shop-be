@@ -129,11 +129,11 @@ type ProductService interface {
 	// with the lowest on-sale variant price and the default variant's image — in
 	// the configured order (FR-001, FR-002).
 	ListPublic(ctx context.Context, in dto.ListPublicInput) (dto.PublicProductPage, error)
-	// GetPublicBySlug returns one product a customer may see: its shared content
+	// GetPublicByCode returns one product a customer may see: its shared content
 	// and gallery plus its visible variants with their stock status, addressed by
-	// its slug. A hidden, removed or unknown slug answers the same not-found
+	// its code. A hidden, removed or unknown code answers the same not-found
 	// (FR-003, FR-005, FR-008).
-	GetPublicBySlug(ctx context.Context, in dto.PublicProductRefInput) (dto.PublicProductDetailOutput, error)
+	GetPublicByCode(ctx context.Context, in dto.PublicProductRefInput) (dto.PublicProductDetailOutput, error)
 
 	// ListAdmin returns one page of every product, including the ones withheld
 	// from customers (FR-010).

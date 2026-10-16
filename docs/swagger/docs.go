@@ -4543,21 +4543,21 @@ const docTemplate = `{
                 }
             }
         },
-        "/products/{slug}": {
+        "/products/{code}": {
             "get": {
-                "description": "Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown slug answers the same not-found. No session is required.",
+                "description": "Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown code answers the same not-found. No session is required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Product"
                 ],
-                "summary": "Read one product by slug (with its variants)",
+                "summary": "Read one product by code (with its variants)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product slug",
-                        "name": "slug",
+                        "description": "Product code",
+                        "name": "code",
                         "in": "path",
                         "required": true
                     }
@@ -6109,7 +6109,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "code": {
-                    "description": "Code is the operator-facing product code (FR-011).",
+                    "description": "Code is the product code (FR-011).",
                     "type": "string"
                 },
                 "createdAt": {
@@ -6151,10 +6151,6 @@ const docTemplate = `{
                     "description": "Position is the operator's ordering preference.",
                     "type": "integer"
                 },
-                "slug": {
-                    "description": "Slug is the link segment the operator wrote.",
-                    "type": "string"
-                },
                 "updatedAt": {
                     "type": "string"
                 },
@@ -6179,7 +6175,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "code": {
-                    "description": "Code is the operator-facing product code (FR-011).",
+                    "description": "Code is the product code (FR-011).",
                     "type": "string"
                 },
                 "createdAt": {
@@ -6213,10 +6209,6 @@ const docTemplate = `{
                 "position": {
                     "description": "Position is the operator's ordering preference.",
                     "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the link segment the operator wrote.",
-                    "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -6298,7 +6290,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "code": {
-                    "description": "Code is the unique operator-facing product code (FR-011).",
+                    "description": "Code is the product code (FR-011).",
                     "type": "string"
                 },
                 "defaultPrice": {
@@ -6320,10 +6312,6 @@ const docTemplate = `{
                 "position": {
                     "description": "Position is the ordering preference.",
                     "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the public link segment.",
-                    "type": "string"
                 },
                 "variants": {
                     "description": "Variants is the variants the product is created with; it must hold at least\none (FR-012).",
@@ -6425,6 +6413,10 @@ const docTemplate = `{
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductDetailResponse": {
             "type": "object",
             "properties": {
+                "code": {
+                    "description": "Code is the segment a customer-facing link is built from.",
+                    "type": "string"
+                },
                 "description": {
                     "description": "Description may be empty; an empty description is valid.",
                     "type": "string"
@@ -6456,10 +6448,6 @@ const docTemplate = `{
                         }
                     ]
                 },
-                "slug": {
-                    "description": "Slug is the segment a customer-facing link is built from.",
-                    "type": "string"
-                },
                 "variants": {
                     "description": "Variants holds the visible variants in display order. It is always an\narray, never null.",
                     "type": "array",
@@ -6472,6 +6460,10 @@ const docTemplate = `{
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse": {
             "type": "object",
             "properties": {
+                "code": {
+                    "description": "Code is the segment a customer-facing link is built from.",
+                    "type": "string"
+                },
                 "id": {
                     "description": "ID is the product's stable public identifier.",
                     "type": "string"
@@ -6491,10 +6483,6 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
                         }
                     ]
-                },
-                "slug": {
-                    "description": "Slug is the segment a customer-facing link is built from.",
-                    "type": "string"
                 }
             }
         },
@@ -6561,10 +6549,6 @@ const docTemplate = `{
                 "position": {
                     "description": "Position is the new position; nil keeps the current value.",
                     "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the new slug; nil keeps the current value.",
-                    "type": "string"
                 }
             }
         },

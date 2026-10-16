@@ -60,10 +60,10 @@ func (s *Service) GetAdmin(ctx context.Context, in dto.AdminProductRefInput) (dt
 // The product and each variant are validated before anything is written, so a
 // rejected draft persists nothing and names the offending member. The product and
 // its variants are written in one transaction, so a product is never stored
-// without its variants (FR-012, research D14). A slug or code another product
-// already holds is reported by the repository as the collision sentinel, a SKU
-// another variant already holds as the SKU sentinel, and a category identifier no
-// row carries as the invalid-field sentinel naming categoryId.
+// without its variants (FR-012, research D14). A code another product already
+// holds is reported by the repository as the collision sentinel, a SKU another
+// variant already holds as the SKU sentinel, and a category identifier no row
+// carries as the invalid-field sentinel naming categoryId.
 //
 // The acting administrator is taken from the context the session filled, never
 // from the input (FR-015).
@@ -81,7 +81,6 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 	product, err := model.NewProduct(model.ProductDraft{
 		Name:        in.Name,
 		Code:        in.Code,
-		Slug:        in.Slug,
 		Description: in.Description,
 		Price:       in.Price,
 		CategoryID:  in.CategoryID,
@@ -115,7 +114,7 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 		return dto.AdminProductDetailOutput{}, err
 	}
 
-	s.recordProduct(ctx, constant.AuditProductCreated, product.ID, map[string]any{"slug": product.Slug})
+	s.recordProduct(ctx, constant.AuditProductCreated, product.ID, map[string]any{"code": product.Code})
 	return s.adminDetail(ctx, product.ID)
 }
 
@@ -124,8 +123,8 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 // An omitted member keeps its current value. The entity validates the whole change
 // before writing any of it, so a rejection leaves the row untouched. The variants
 // are managed through their own operations, so they are absent here. Re-sending
-// the product's own slug or code succeeds because the storage unique indexes
-// exclude the row being updated (FR-011).
+// the product's own code succeeds because the storage unique index
+// excludes the row being updated (FR-011).
 func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) (dto.AdminProductDetailOutput, error) {
 	stored, err := s.Products.FindByID(ctx, in.ID)
 	if err != nil {
@@ -135,7 +134,6 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 	if err := product.Apply(model.ProductEdit{
 		Name:        in.Name,
 		Code:        in.Code,
-		Slug:        in.Slug,
 		Description: in.Description,
 		Price:       in.Price,
 		CategoryID:  in.CategoryID,
@@ -146,7 +144,7 @@ func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) 
 	if err := s.Products.Update(ctx, &product); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
-	s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"slug": product.Slug})
+	s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"code": product.Code})
 	return s.adminDetail(ctx, in.ID)
 }
 
@@ -189,8 +187,8 @@ func variantIDs(variants []model.Variant) []uuid.UUID {
 //
 // The event always names the acting administrator when the call has a session, and
 // the product identifier as the target. Metadata carries only the operator's own
-// slug, never the folding key, so an audit entry can never leak the normalised
-// value the contract never exposes (FR-014, Constitution VI).
+// code, so an audit entry can never leak a value the contract never exposes
+// (FR-014, Constitution VI).
 //
 // Emission never fails the business operation: the shared writer queues and reports
 // a dropped event through the logger. An absent auditor is tolerated so a read-only

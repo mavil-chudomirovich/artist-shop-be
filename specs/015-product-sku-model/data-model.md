@@ -7,16 +7,17 @@ and one migration with backfill that also removes feature 014's structures. All 
 
 | Column | Change | Notes |
 |---|---|---|
-| `id, name, slug, normalized_slug, description, category_id, position, price_amount, currency, created_at, updated_at` | kept | `price_amount`/`currency` is now the **default price** a variant falls back to |
-| `code` | **added** | `text NOT NULL`, unique index — the operator-facing product code (FR-011) |
+| `id, name, description, category_id, position, price_amount, currency, created_at, updated_at` | kept | `price_amount`/`currency` is now the **default price** a variant falls back to |
+| `code` | **added** | `text NOT NULL` — the operator-facing product code **and the public link segment**; URL-safe format `^[a-z0-9]+(-[a-z0-9]+)*$`, ≤140 characters, unique on `lower(btrim(code))` (FR-011) |
 | `sell_state` | **dropped** | moved to the variant (FR-015) |
 | `is_preorder`, `preorder_expected_at` | **dropped** | pre-order is out of scope (spec) |
 | `is_set` | **dropped** | combo-set is out of scope (spec); `product_set_items` is dropped too |
 | `variant_group_id`, `variant_label` | **dropped** | feature 014's grouping removed |
 
-New constraints: `products_code_key` unique on `code`; a code length/format check (trimmed; compared
-ignoring case — the uniqueness index is on `lower(btrim(code))`); the existing slug/price/category
-constraints stay. `product_images` (gallery) is unchanged.
+New constraints: `products_code_key` unique on `lower(btrim(code))`; `products_code_format_ck`
+(`code ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`) and `products_code_length_ck` (`length(code) <= 140`). The
+price and category constraints stay; the product's `slug`/`normalized_slug` constraints and unique
+index are **dropped** by migration `00015`. `product_images` (gallery) is unchanged.
 
 ## Table `product_variants` (new)
 
@@ -99,7 +100,7 @@ Line uniqueness becomes `(cart_id, variant_id)`. The captured price stays a snap
 | `variant_name` | **added** | variant name at purchase (FR-019) |
 | `sku` | **added** | SKU at purchase (FR-019) |
 | `product_id` | **kept** | informational, no FK (unchanged role) |
-| `name`, `slug`, `unit_price_amount`, `currency`, `quantity`, `position` | kept | `name` is **reused as the product-name snapshot** (no second name column); `slug` remains the product link snapshot |
+| `name`, `unit_price_amount`, `currency`, `quantity`, `position` | kept | `name` is **reused as the product-name snapshot** (no second name column). The line's `slug` snapshot was **dropped** by migration `00015`; the snapshot now keeps `product_code` + `sku` (`order_items.slug` no longer exists) |
 
 The natural key becomes `(order_id, product_code, sku)` (FR-020). The `orders` table is unchanged
 (total/currency/address snapshot).
@@ -136,9 +137,14 @@ then `00014` ends in the new model and an existing one that never ran `00013` al
 guard test (`migrations/product_variants_guard_test.go`) stays as the historical record of that
 migration; `00014` gets its own guard test.
 
+**`00015` collapsed the link segment**: `00015_product_code_as_link_segment.sql` drops
+`products.slug` / `normalized_slug` (and their constraints and unique index) and `order_items.slug`,
+and replaces the code shape check with the URL-safe format above — a product's link segment is now its
+`code`, and a category keeps its own slug.
+
 ## Reads (projections)
 
-- **Catalogue entry** (`ListCatalogue`, one entry per product): product `id, name, slug`, `position`,
+- **Catalogue entry** (`ListCatalogue`, one entry per product): product `id, name, code`, `position`,
   `created_at`, the **lowest effective variant price** (`MIN(COALESCE(v.price_amount, p.price_amount))`
   over on-sale variants), the default variant's image else the product's primary gallery picture.
   Visible only when the category is visible **and** an on-sale variant exists.

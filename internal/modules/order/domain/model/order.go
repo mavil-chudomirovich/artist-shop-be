@@ -64,11 +64,6 @@ type OrderLine struct {
 	// SKU is the variant's SKU at checkout, part of the line's natural key. It is
 	// stored but never shown to a customer (FR-019, FR-020).
 	SKU string
-	// Slug is the product's link segment at checkout, the OrderLine.Slug column
-	// the historic rows already carried. The variant-facts contract reports the
-	// product's current slug, so a line written after the SKU model keeps a
-	// working product link without resolving the product (research D8).
-	Slug string
 	// UnitPrice is the price at checkout, as an integer amount plus its currency.
 	UnitPrice Price
 	// Quantity is how many, at least 1.

@@ -126,14 +126,13 @@ func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64)
 	}
 
 	productID := uuid.New()
-	slug := "product-" + productID.String()[:8]
-	code := "CODE-" + productID.String()[:8]
+	code := "product-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			(id, name, code, description, price_amount, currency,
 			 category_id, position)
-		VALUES ($1, $2, $3, $4, $4, '', $5, 'VND', $6, 0)`,
-		productID, "Product "+slug, code, slug, amount, categoryID); err != nil {
+		VALUES ($1, $2, $3, '', $4, 'VND', $5, 0)`,
+		productID, "Product "+code, code, amount, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
 	variantID := uuid.New()
@@ -141,7 +140,7 @@ func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64)
 		INSERT INTO product_variants
 			(id, product_id, name, sku, price_amount, position, sell_state)
 		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
-		variantID, productID, "Variant "+slug, code); err != nil {
+		variantID, productID, "Variant "+code, code); err != nil {
 		t.Fatalf("insert variant: %v", err)
 	}
 	if _, err := f.pool.Exec(ctx,

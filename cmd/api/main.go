@@ -484,7 +484,7 @@ func run() error {
 			r.Mount("/admin/categories", categoryHandler.AdminRouter(authHooks))
 			// The public catalogue: one entry per product with its lowest on-sale
 			// variant price and default image, in a category the operator has left
-			// on display, addressed by slug. No session is required (FR-001). The
+			// on display, addressed by code. No session is required (FR-001). The
 			// /admin/products group is addressed by identifier behind the
 			// administrator role guard; its variants are their own sub-resource
 			// (FR-012, FR-015).

@@ -19,11 +19,6 @@ var (
 	// a hidden product exists (FR-008). The administrator surface uses it for the
 	// unknown and removed cases.
 	ErrProductNotFound = errors.New("product not found")
-	// ErrProductSlugTaken is returned when another product already uses the slug,
-	// compared after trimming surrounding whitespace and ignoring letter case. It
-	// is a catalogue-wide invariant, so the storage layer enforces it and the
-	// adapter reports it here.
-	ErrProductSlugTaken = errors.New("product slug taken")
 	// ErrProductImageLimitReached is returned when adding a picture would exceed
 	// the ten-picture ceiling.
 	ErrProductImageLimitReached = errors.New("product image limit reached")
@@ -38,7 +33,7 @@ var (
 	// only retryable error.
 	ErrProductMediaUnavailable = errors.New("product media unavailable")
 	// ErrProductInvalid is returned when a value fails its own rule: a blank
-	// required member, a value over its bound, a slug that is not URL-safe, a
+	// required member, a value over its bound, a code that is not URL-safe, a
 	// price that is not positive, or a currency that is not three uppercase
 	// letters.
 	//
@@ -112,7 +107,7 @@ func InvalidVariantStateTransition(current, requested constant.SellState) error 
 // Field holds the contract's member name, which is what presentation puts into the
 // response detail; Issue is a short, non-sensitive explanation.
 type ProductFieldError struct {
-	// Field is the contract member name, such as "slug".
+	// Field is the contract member name, such as "code".
 	Field string
 	// Issue explains what is wrong with it.
 	Issue string

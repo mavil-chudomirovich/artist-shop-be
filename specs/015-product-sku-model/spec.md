@@ -104,7 +104,7 @@ variant is refused and adding without a variant is refused.
 
 ### User Story 2 - An operator maintains a product and its variants (Priority: P1)
 
-An administrator creates a product (name, product code, default price, category, description, slug,
+An administrator creates a product (name, product code, default price, category, description,
 picture gallery), then manages its list of variants: adding, editing and removing variants, setting
 each variant's name, SKU, price, image, order and sell state.
 
@@ -117,8 +117,8 @@ refused, and confirm a duplicate product code or SKU is refused.
 **Acceptance Scenarios**:
 
 1. **Given** an administrator, **When** they create a product, **Then** it requires a name, a product
-   code, a default price, a category, a description and a slug, and at least one variant; a new variant
-   starts not yet on sale.
+   code (which is also the public link segment), a default price, a category, a description, and at
+   least one variant; a new variant starts not yet on sale.
 2. **Given** a product, **When** a variant's price is left blank, **Then** the variant uses the
    product's default price; when a price is given, it overrides the default.
 3. **Given** a SKU another variant already uses, **When** the administrator assigns it, **Then** it is
@@ -222,7 +222,8 @@ and exactly one default variant, and that buying it behaves as before.
 ### Functional Requirements — operator maintenance
 
 - **FR-009**: System MUST let an administrator create, edit and remove a product with a name, a
-  product code, a default price, a category, a description, a link segment and a picture gallery.
+  product code (which is also the public link segment), a default price, a category, a description
+  and a picture gallery.
 - **FR-010**: System MUST let an administrator manage a product's variants: add, edit and remove a
   variant, setting its name, SKU, price, image and display order, and moving its sell state through the
   transition endpoint.
@@ -290,8 +291,8 @@ and exactly one default variant, and that buying it behaves as before.
 ### Key Entities
 
 - **Product**: the parent a customer browses and describes. Carries a name, a unique product code, a
-  default price, the category it belongs to, a description, a link segment, and its own picture
-  gallery. It groups one or more variants and is never sold on its own.
+  default price, the category it belongs to, a description, and its own picture gallery. Its product
+  code is also the public link segment. It groups one or more variants and is never sold on its own.
 - **Variant**: one sellable choice within a product. Carries a display name, a globally unique SKU, an
   optional price (falling back to the product's default price), its own image, a display order, its own
   sell state, and its own stock. It is the unit a customer selects, adds to a cart and buys.
@@ -327,8 +328,10 @@ and exactly one default variant, and that buying it behaves as before.
   - Pre-order and combo-set are dropped for now and will return as a separate capability.
 - **The default variant is the one with the smallest display order**, ties broken by creation time and
   then identifier, so "the first variant" is deterministic.
-- **A product keeps a link segment** (as today) used for its public link; the product code is a
-  separate, operator-facing identifier and is not the link segment.
+- **A product's link segment is its `code`.** There is no separate `slug`: the product code is both
+  the operator-facing identifier and the public link segment (`/products/{code}`). (Migration
+  `00015_product_code_as_link_segment.sql` made this change: it dropped `products.slug` /
+  `normalized_slug` and `order_items.slug`.)
 - **Money is a single currency per product**; a variant carries only an amount and inherits the
   product's currency.
 - **Showing per-variant stock status crosses a module boundary** (the product surface needs to know the
@@ -356,5 +359,5 @@ and exactly one default variant, and that buying it behaves as before.
   (first) variant's image; when that variant has no image it falls back to the product's primary
   gallery picture, and to no image when neither exists.
 - **Product code and SKU are operator-written and bounded in length**, and uniqueness is compared after
-  trimming surrounding whitespace and ignoring letter case, following the catalogue's existing
-  slug rule, so "ABC" and "abc" cannot coexist.
+  trimming surrounding whitespace and ignoring letter case, following the same case-fold rule the
+  category slug uses, so "ABC" and "abc" cannot coexist.

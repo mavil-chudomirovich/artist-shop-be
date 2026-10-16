@@ -121,21 +121,21 @@ func (s *Service) ListPublic(ctx context.Context, in dto.ListPublicInput) (dto.P
 	}, nil
 }
 
-// GetPublicBySlug returns one visible product with its shared content, gallery and
+// GetPublicByCode returns one visible product with its shared content, gallery and
 // its visible variants — each with its effective price and stock status —
-// addressed by the slug a customer-facing link is built from (FR-003, FR-005).
+// addressed by the code a customer-facing link is built from (FR-003, FR-005).
 //
 // The same visible set drives the detail read, so a product with no on-sale
 // variant, retired, removed, unknown or in a hidden category answers the same
 // not-found and the response never confirms that a hidden product exists
 // (FR-008). The per-variant stock status costs one bulk inventory read however
 // many variants the product lists (research D10).
-func (s *Service) GetPublicBySlug(ctx context.Context, in dto.PublicProductRefInput) (dto.PublicProductDetailOutput, error) {
+func (s *Service) GetPublicByCode(ctx context.Context, in dto.PublicProductRefInput) (dto.PublicProductDetailOutput, error) {
 	visible, err := s.Visibility.VisibleCategoryIDs(ctx)
 	if err != nil {
 		return dto.PublicProductDetailOutput{}, err
 	}
-	view, err := s.Products.FindVisibleBySlug(ctx, in.Slug, visible)
+	view, err := s.Products.FindVisibleByCode(ctx, in.Code, visible)
 	if err != nil {
 		return dto.PublicProductDetailOutput{}, err
 	}

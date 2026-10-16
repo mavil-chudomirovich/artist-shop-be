@@ -36,8 +36,7 @@ func TestCreateProductStoresItsVariantAndAudits(t *testing.T) {
 
 	out, err := maintenanceService(repo, recorder).CreateProduct(adminContext(actor), dto.CreateProductInput{
 		Name:       "  Acrylic stand  ",
-		Code:       "P-001",
-		Slug:       "acrylic-stand",
+		Code:       "acrylic-stand",
 		Price:      price(120000),
 		CategoryID: category,
 		Position:   10,
@@ -46,7 +45,7 @@ func TestCreateProductStoresItsVariantAndAudits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
-	if out.Name != "Acrylic stand" || out.Code != "P-001" || out.Price.Amount != 120000 {
+	if out.Name != "Acrylic stand" || out.Code != "acrylic-stand" || out.Price.Amount != 120000 {
 		t.Fatalf("the created product does not carry the stored values: %+v", out)
 	}
 	if out.VariantCount != 1 || len(out.Variants) != 1 || out.Variants[0].SKU != "SKU-001" {
@@ -67,7 +66,7 @@ func TestCreateProductWithoutAVariantIsRefused(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
 
 	_, err := maintenanceService(repo, recorder).CreateProduct(adminContext(actor), dto.CreateProductInput{
-		Name: "No variant", Code: "P-001", Slug: "no-variant", Price: price(100), CategoryID: category,
+		Name: "No variant", Code: "no-variant", Price: price(100), CategoryID: category,
 	})
 	if !errors.Is(err, domainerr.ErrProductInvalid) {
 		t.Fatalf("expected ErrProductInvalid, got %v", err)
@@ -88,19 +87,19 @@ func TestDuplicateCodeAndSKUAreRefused(t *testing.T) {
 	ctx := adminContext(actor)
 
 	if _, err := svc.CreateProduct(ctx, dto.CreateProductInput{
-		Name: "First", Code: "P-001", Slug: "first", Price: price(100), CategoryID: category,
+		Name: "First", Code: "p-1", Price: price(100), CategoryID: category,
 		Variants: []dto.CreateVariantInput{{Name: "A", SKU: "SKU-1"}},
 	}); err != nil {
 		t.Fatalf("CreateProduct first: %v", err)
 	}
 	if _, err := svc.CreateProduct(ctx, dto.CreateProductInput{
-		Name: "Second", Code: "P-001", Slug: "second", Price: price(100), CategoryID: category,
+		Name: "Second", Code: "p-1", Price: price(100), CategoryID: category,
 		Variants: []dto.CreateVariantInput{{Name: "B", SKU: "SKU-2"}},
 	}); !errors.Is(err, domainerr.ErrProductCodeTaken) {
 		t.Fatalf("expected ErrProductCodeTaken, got %v", err)
 	}
 	if _, err := svc.CreateProduct(ctx, dto.CreateProductInput{
-		Name: "Third", Code: "P-003", Slug: "third", Price: price(100), CategoryID: category,
+		Name: "Third", Code: "p-3", Price: price(100), CategoryID: category,
 		Variants: []dto.CreateVariantInput{{Name: "C", SKU: "SKU-1"}},
 	}); !errors.Is(err, domainerr.ErrVariantSKUTaken) {
 		t.Fatalf("expected ErrVariantSKUTaken, got %v", err)
@@ -110,7 +109,7 @@ func TestDuplicateCodeAndSKUAreRefused(t *testing.T) {
 // FR-010: an edit changes the fields it carries and leaves the rest.
 func TestUpdateProductChangesCarriedFields(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	seeded := repo.seedWithVariants(t, productDraft("Cũ", "P-001", "cu", 100, category, 3), nil, time.Now().UTC().Add(-time.Hour))
+	seeded := repo.seedWithVariants(t, productDraft("Cũ", "cu", 100, category, 3), nil, time.Now().UTC().Add(-time.Hour))
 
 	name := "Mới"
 	newPrice := price(555)
@@ -123,7 +122,7 @@ func TestUpdateProductChangesCarriedFields(t *testing.T) {
 	if out.Name != name || out.Price.Amount != 555 {
 		t.Fatalf("the edit did not change the fields it carried: %+v", out)
 	}
-	if out.Slug != "cu" || out.Position != 3 {
+	if out.Code != "cu" || out.Position != 3 {
 		t.Fatalf("the edit changed a field it did not carry: %+v", out)
 	}
 	requireAudited(t, recorder, constant.AuditProductUpdated, actor, "product", seeded.ID)
@@ -132,7 +131,7 @@ func TestUpdateProductChangesCarriedFields(t *testing.T) {
 // FR-010: removing a product cascades to its variants and records PRODUCT_DELETED.
 func TestDeleteProductRemovesItsVariants(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	seeded := repo.seedWithVariants(t, productDraft("Alpha", "P-001", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
+	seeded := repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 
 	if err := maintenanceService(repo, recorder).DeleteProduct(adminContext(actor), dto.AdminProductRefInput{ID: seeded.ID}); err != nil {
 		t.Fatalf("DeleteProduct: %v", err)
@@ -146,7 +145,7 @@ func TestDeleteProductRemovesItsVariants(t *testing.T) {
 // FR-014: adding a variant records PRODUCT_VARIANT_ADDED.
 func TestAddVariantAudits(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	seeded := repo.seedWithVariants(t, productDraft("Alpha", "P-001", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
+	seeded := repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 
 	out, err := maintenanceService(repo, recorder).AddVariant(adminContext(actor), dto.AddVariantInput{
 		ProductID: seeded.ID, Name: "Khổ lớn", SKU: "SKU-L", Position: 1,
@@ -165,7 +164,7 @@ func TestAddVariantAudits(t *testing.T) {
 func TestUpdateVariantChangesFieldsAndRecords(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
 	product := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Alpha", Code: "P-001", Slug: "alpha", Price: price(100000), CategoryID: category,
+		Name: "Alpha", Code: "alpha", Price: price(100000), CategoryID: category,
 		Variants: []model.VariantDraft{{Name: "Old", SKU: "SKU-1", PriceAmount: ptr[int64](120000), Position: 0}},
 	}, nil, time.Now().UTC().Add(-time.Hour))
 	variant := repo.variantsFor(product.ID)[0]
@@ -190,7 +189,7 @@ func TestUpdateVariantChangesFieldsAndRecords(t *testing.T) {
 // succeeds.
 func TestRemoveVariantRefusesTheLastOne(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	single := repo.seedWithVariants(t, productDraft("One", "P-001", "one", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
+	single := repo.seedWithVariants(t, productDraft("One", "one", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 	singleVariant := repo.variantsFor(single.ID)[0]
 
 	svc := maintenanceService(repo, recorder)
@@ -199,7 +198,7 @@ func TestRemoveVariantRefusesTheLastOne(t *testing.T) {
 	}
 
 	two := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Two", Code: "P-002", Slug: "two", Price: price(100), CategoryID: category,
+		Name: "Two", Code: "two", Price: price(100), CategoryID: category,
 		Variants: []model.VariantDraft{{Name: "A", SKU: "A", Position: 0}, {Name: "B", SKU: "B", Position: 1}},
 	}, nil, time.Now().UTC().Add(-time.Minute))
 	variants := repo.variantsFor(two.ID)
@@ -216,7 +215,7 @@ func TestRemoveVariantRefusesTheLastOne(t *testing.T) {
 // the current state; an unknown target names the field.
 func TestChangeVariantState(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	product := repo.seedWithVariants(t, productDraft("Alpha", "P-001", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
+	product := repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 	variant := repo.variantsFor(product.ID)[0]
 	svc := maintenanceService(repo, recorder)
 	ctx := adminContext(actor)
@@ -252,7 +251,7 @@ func TestChangeVariantState(t *testing.T) {
 func TestVariantAvailabilitySignals(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
 	product := repo.seedWithVariants(t, model.ProductDraft{
-		Name: "Alpha", Code: "P-001", Slug: "alpha", Price: price(100), CategoryID: category,
+		Name: "Alpha", Code: "alpha", Price: price(100), CategoryID: category,
 		Variants: []model.VariantDraft{{Name: "Active", SKU: "A", Position: 0}, {Name: "Announced", SKU: "B", Position: 1}},
 	}, nil, time.Now().UTC().Add(-time.Hour))
 	variants := repo.variantsFor(product.ID)
@@ -292,7 +291,7 @@ func TestVariantAvailabilitySignals(t *testing.T) {
 // image releases the asset.
 func TestVariantImageAddAndRemove(t *testing.T) {
 	repo, recorder, actor, category := adminFixture(t)
-	product := repo.seedWithVariants(t, productDraft("Alpha", "P-001", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
+	product := repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 	variant := repo.variantsFor(product.ID)[0]
 	media := newFakeMedia()
 	svc := serviceFor(repo, newFakeAvailability(), nil, recorder, media, &fauxUnitOfWork{})

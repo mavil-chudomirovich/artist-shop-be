@@ -23,7 +23,7 @@ import (
 // The products fake and the variants fake share one backing state, so a view read
 // through the product port sees the variants written through the variant port,
 // exactly as the two adapters share one database. Each mirrors its adapter's
-// observable behaviour where a use case depends on it — a slug/code/SKU collision,
+// observable behaviour where a use case depends on it — a code/SKU collision,
 // a missing category, the catalogue visibility predicate and the card summary —
 // because a fake more permissive than the adapter would let a use case pass a test
 // the real storage would refuse.
@@ -216,9 +216,6 @@ func (m *memoryProducts) Create(ctx context.Context, product *model.Product) err
 	if !m.categoryAllowed(product.CategoryID) {
 		return invalidCategory()
 	}
-	if m.slugTakenLocked(product) {
-		return errSlugTaken()
-	}
 	if m.codeTakenLocked(product) {
 		return errCodeTaken()
 	}
@@ -235,9 +232,6 @@ func (m *memoryProducts) Update(ctx context.Context, product *model.Product) err
 	}
 	if !m.categoryAllowed(product.CategoryID) {
 		return invalidCategory()
-	}
-	if m.slugTakenLocked(product) {
-		return errSlugTaken()
 	}
 	if m.codeTakenLocked(product) {
 		return errCodeTaken()
@@ -260,16 +254,6 @@ func (m *memoryProducts) Delete(_ context.Context, id uuid.UUID) error {
 		}
 	}
 	return nil
-}
-
-func (m *memoryProducts) slugTakenLocked(product *model.Product) bool {
-	key := model.FoldKey(product.Slug)
-	for _, existing := range m.state.products {
-		if existing.ID != product.ID && model.FoldKey(existing.Slug) == key {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *memoryProducts) codeTakenLocked(product *model.Product) bool {
@@ -304,7 +288,7 @@ func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.Visib
 		all = append(all, domainrepo.CatalogueEntry{
 			ID:        product.ID,
 			Name:      product.Name,
-			Slug:      product.Slug,
+			Code:      product.Code,
 			Price:     summary.Price,
 			ImageURL:  summary.ImageURL,
 			Position:  product.Position,
@@ -325,12 +309,12 @@ func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.Visib
 	return all[start:end], total, nil
 }
 
-func (m *memoryProducts) FindVisibleBySlug(_ context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
+func (m *memoryProducts) FindVisibleByCode(_ context.Context, code string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
 	m.state.mu.Lock()
 	defer m.state.mu.Unlock()
 	visible := uuidSet(visibleCategoryIDs)
 	for _, product := range m.state.products {
-		if product.Slug != slug {
+		if product.Code != code {
 			continue
 		}
 		if !visible[product.CategoryID] || !m.hasOnSaleVariantLocked(product.ID) {
@@ -565,7 +549,6 @@ func (m *memoryVariants) FindFactsByIDs(_ context.Context, ids []uuid.UUID) ([]d
 			ProductID:   product.ID,
 			ProductName: product.Name,
 			ProductCode: product.Code,
-			ProductSlug: product.Slug,
 			VariantName: variant.Name,
 			SKU:         variant.SKU,
 			OnSale:      variant.Buyable(),
@@ -933,7 +916,6 @@ func adminContext(actor appinterface.Actor) context.Context {
 // exactly as it would against the adapters.
 func errProductNotFound() error { return domainerr.ErrProductNotFound }
 func errVariantNotFound() error { return domainerr.ErrVariantNotFound }
-func errSlugTaken() error       { return domainerr.ErrProductSlugTaken }
 func errCodeTaken() error       { return domainerr.ErrProductCodeTaken }
 func errSKUTaken() error        { return domainerr.ErrVariantSKUTaken }
 
