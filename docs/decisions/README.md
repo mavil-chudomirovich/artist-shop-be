@@ -45,6 +45,8 @@ Dùng [template.md](template.md).
 | [017](017-order-checkout.md) | Đơn hàng: dòng snapshot không FK, `expires_at` do order sở hữu, chuyển nhượng là đổi chủ, bước `PAID` giao nhưng để module 08 điều khiển, và `WithTx` tái dùng transaction | Accepted (state machine bị [018](018-order-confirmation-and-editing.md) thay thế) |
 | [018](018-order-confirmation-and-editing.md) | Đơn hàng: state machine sáu trạng thái, giữ hàng chỉ khi artist xác nhận, hạn thanh toán 60 phút, sửa đơn toàn bộ quay về `PENDING`, `order_version` cho module 08, và mailer dùng chung tối thiểu | Accepted |
 | [019](019-payos-payment.md) | Payment: tích hợp PayOS bằng thư viện chuẩn, hai hợp đồng liên module, `orderCode` ngẫu nhiên, áp-một-lần hai tầng, và "ghi nhận bất thường, không bao giờ hoàn tiền" | Accepted |
+| [020](020-product-variants.md) | Product Variants: nhóm là bảng riêng, lựa chọn là sản phẩm thường, danh mục gộp bằng một câu SQL union, hai không gian tên slug, và xoá nhóm RESTRICT | Superseded by [021](021-product-sku-model.md) |
+| [021](021-product-sku-model.md) | Product SKU Model: sản phẩm cha + variant (SKU) là đơn vị bán, tồn/giỏ/đơn khoá theo variant, mã sản phẩm & SKU duy nhất, và thay thế 020 | Accepted |
 
 ## Khi nào phải viết ADR
 

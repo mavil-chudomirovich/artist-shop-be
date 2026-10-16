@@ -530,5 +530,6 @@ components:
         variantId: { type: string, format: uuid }
         variantName: { type: string }
         unitPrice: { $ref: "#/components/schemas/Price" }
+        lineTotal: { $ref: "#/components/schemas/Price" }
         quantity: { type: integer }
         position: { type: integer }

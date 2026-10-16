@@ -184,22 +184,22 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 **Purpose**: contract docs, ADR supersede, swagger, the frontend hand-off and the full gate
 
-- [ ] T049 [P] Update `docs/api-reference.md` for module 04 (and the cart/order sections, **and module 05 inventory whose `/admin/inventory/*` routes are now keyed by `variantId`**): the one-entry catalogue, the product detail with variants, the admin product+variant routes, the cart-by-variant routes, the new/removed error codes, the summary table and the change log; **remove** feature 014's product-group endpoints **and feature 006's product-level state endpoint** (Constitution VIII)
-- [ ] T050 [P] Update `docs/modules/04-product.md` (product/variant model), `docs/modules/05-inventory.md` (per-variant stock), `docs/modules/06-cart.md` and `docs/modules/07-order.md` (variant + snapshots)
-- [ ] T051 [P] Write `docs/decisions/021-product-sku-model.md` superseding `020-product-variants.md`, and add the superseding note to `specs/014-product-variants/`
+- [x] T049 [P] Update `docs/api-reference.md` for module 04 (and the cart/order sections, **and module 05 inventory whose `/admin/inventory/*` routes are now keyed by `variantId`**): the one-entry catalogue, the product detail with variants, the admin product+variant routes, the cart-by-variant routes, the new/removed error codes, the summary table and the change log; **remove** feature 014's product-group endpoints **and feature 006's product-level state endpoint** (Constitution VIII)
+- [x] T050 [P] Update `docs/modules/04-product.md` (product/variant model), `docs/modules/05-inventory.md` (per-variant stock), `docs/modules/06-cart.md` and `docs/modules/07-order.md` (variant + snapshots)
+- [x] T051 [P] Write `docs/decisions/021-product-sku-model.md` superseding `020-product-variants.md`, and add the superseding note to `specs/014-product-variants/`
 
 ### Swagger annotations *(bắt buộc — feature có endpoint)*
 
-- [ ] T052 Ensure every new/changed handler carries `@Summary`/`@Tags`/`@Param`/`@Success`/`@Failure`/`@Router` and that 014's removed paths are gone; run `make swagger` to regenerate `docs/swagger/`; `make swagger-check` must pass (Constitution VIII)
+- [x] T052 Ensure every new/changed handler carries `@Summary`/`@Tags`/`@Param`/`@Success`/`@Failure`/`@Router` and that 014's removed paths are gone; run `make swagger` to regenerate `docs/swagger/`; `make swagger-check` must pass (Constitution VIII)
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance; feature CÓ đổi bề mặt client)*
 
-- [ ] T053 Write `specs/015-product-sku-model/frontend-guide.md` enumerating every affected endpoint with method + path and **before → after** — at minimum: `GET /products` (one entry per product; lowest price; default image; no `type`), `GET /products/{slug}` (gains `variants[]`), `POST/PATCH/DELETE /admin/products/{id}/variants*` (new), `POST /api/v1/admin/products` (requires `variants`), `GET /api/v1/cart` and `POST /api/v1/cart/items` / `PATCH` / `DELETE /api/v1/cart/items/{variantId}` (keyed by `variantId`), the order line `variantName` (customer view) with `productCode`/`sku` stored but not shown; and mark feature 014's `/product-groups*` routes **removed**, the product-level `POST /admin/products/{id}/state` **removed** (replaced by the variant state endpoint), and the inventory admin routes now keyed by `variantId`
-- [ ] T054 **Đồng bộ guide** after the source is stable: re-read `frontend-guide.md` and compare against the source **with counts** — every `json:"…"` field of the feature's DTOs, every enum value, every route (gin `:param` → `{param}`), every HTTP status. Fix every mismatch; state any part that could not be checked and why
+- [x] T053 Write `specs/015-product-sku-model/frontend-guide.md` enumerating every affected endpoint with method + path and **before → after** — at minimum: `GET /products` (one entry per product; lowest price; default image; no `type`), `GET /products/{slug}` (gains `variants[]`), `POST/PATCH/DELETE /admin/products/{id}/variants*` (new), `POST /api/v1/admin/products` (requires `variants`), `GET /api/v1/cart` and `POST /api/v1/cart/items` / `PATCH` / `DELETE /api/v1/cart/items/{variantId}` (keyed by `variantId`), the order line `variantName` (customer view) with `productCode`/`sku` stored but not shown; and mark feature 014's `/product-groups*` routes **removed**, the product-level `POST /admin/products/{id}/state` **removed** (replaced by the variant state endpoint), and the inventory admin routes now keyed by `variantId`
+- [x] T054 **Đồng bộ guide** after the source is stable: re-read `frontend-guide.md` and compare against the source **with counts** — every `json:"…"` field of the feature's DTOs, every enum value, every route (gin `:param` → `{param}`), every HTTP status. Fix every mismatch; state any part that could not be checked and why
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T055 Write `specs/015-product-sku-model/deferred.md` for any out-of-scope debt found (e.g. the product→inventory availability edge, multi-dimension options carried from 014, any migration-window issue). Do not leave unchecked tasks here
+- [x] T055 Write `specs/015-product-sku-model/deferred.md` for any out-of-scope debt found (e.g. the product→inventory availability edge, multi-dimension options carried from 014, any migration-window issue). Do not leave unchecked tasks here
 
 ### Validation
 

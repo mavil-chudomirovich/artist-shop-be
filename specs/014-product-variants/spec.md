@@ -1,5 +1,10 @@
 # Feature Specification: Product Variants
 
+> **ĐÃ BỊ THAY THẾ.** Feature 014 bị thay thế bởi
+> [`specs/015-product-sku-model/`](../015-product-sku-model/spec.md) — xem
+> [`superseded.md`](superseded.md). File này được giữ lại như bản ghi lịch sử, không còn là nguồn
+> authoritative.
+
 **Feature Branch**: `014-product-variants`
 
 **Created**: 2026-10-14

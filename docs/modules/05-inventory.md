@@ -2,14 +2,16 @@
 
 - **Trạng thái Spec Kit**: Hoàn tất phần giao được (implement + converge; nửa tự động do đơn hàng
   điều khiển **chưa** giao hết — Order (07) đã giao và wire reserve/release, chỉ còn bước "đã thanh
-  toán" chờ Payment (08) — nêu rõ ở phần "Phần chưa giao")
+  toán" chờ Payment (08) — nêu rõ ở phần "Phần chưa giao"). **Feature 015** chuyển tồn kho xuống
+  **từng variant** (SKU).
 - **Spec**: [`specs/007-inventory-tracking/spec.md`](../../specs/007-inventory-tracking/spec.md)
 - **Plan**: [`specs/007-inventory-tracking/plan.md`](../../specs/007-inventory-tracking/plan.md)
 - **Tasks**: [`specs/007-inventory-tracking/tasks.md`](../../specs/007-inventory-tracking/tasks.md)
 - **Contract**: [`specs/007-inventory-tracking/contracts/openapi.yaml`](../../specs/007-inventory-tracking/contracts/openapi.yaml),
   [`error-codes.md`](../../specs/007-inventory-tracking/contracts/error-codes.md)
 - **Code**: `internal/modules/inventory/{domain,application,infrastructure,presentation}`,
-  `migrations/00007_inventory.sql`, `internal/contracts/product.go` (hai hợp đồng liên module)
+  `migrations/00007_inventory.sql`, `migrations/00014_product_sku_model.sql`,
+  `internal/contracts/{inventory.go,product.go}` (hai hợp đồng liên module)
 - **Ưu tiên / Giai đoạn**: V1.0
 - **Phụ thuộc**: product
 
@@ -20,7 +22,7 @@ Theo dõi tồn kho và lịch sử biến động kho một cách chính xác, 
 ## Phạm vi MVP
 
 Có:
-- Tồn kho theo sản phẩm.
+- Tồn kho theo **từng variant (SKU)**.
 - Tự động: đơn đã thanh toán → giảm kho; đơn hủy → hoàn kho.
 - Thủ công: nhập thêm (restock), hư hỏng (damage), điều chỉnh (adjustment).
 - Mọi thay đổi tạo một bản ghi `inventory_transactions`.
@@ -31,12 +33,14 @@ Không (hoãn):
 
 ## Thực thể dữ liệu
 
-- `stock_levels`: số vật lý trên kệ, mỗi sản phẩm một dòng, là **chốt chặn đồng thời** mà luật
-  "không âm" được thực thi trên đó (`UPDATE ... WHERE quantity >= $n`).
-- `inventory_transactions`: sản phẩm, loại biến động, số lượng thay đổi, số lượng kết quả, tham
+- `stock_levels`: số vật lý trên kệ, **mỗi variant một dòng**, là **chốt chặn đồng thời** mà luật
+  "không âm" được thực thi trên đó (`UPDATE ... WHERE quantity >= $n`). Khoá chính là `variant_id`
+  (FK → `product_variants(id)` `ON DELETE CASCADE`).
+- `inventory_transactions`: **variant**, loại biến động, số lượng thay đổi, số lượng kết quả, tham
   chiếu nguồn (đơn/điều chỉnh), ghi chú, người thao tác, thời gian. Append-only.
-- `stock_holds`: phần đang được giữ cho một đơn đang thanh toán, có hạn 60 phút. **Không** phải
-  biến động vật lý nên không nằm trong ledger.
+- `stock_holds`: phần đang được giữ cho một đơn đang thanh toán, có hạn 60 phút; khoá theo
+  `(order_id, variant_id)` cho giữ chỗ đang hoạt động. **Không** phải biến động vật lý nên không nằm
+  trong ledger.
 
 Khả dụng = `stock_levels.quantity` − tổng `stock_holds` đang hoạt động; được **tính**, không lưu.
 
@@ -45,8 +49,8 @@ Khả dụng = `stock_levels.quantity` − tổng `stock_holds` đang hoạt đ�
 1. Thanh toán thành công → tiêu thụ giữ chỗ → giảm kho + ghi transaction (`SALE`).
 2. Hủy đơn **chưa** thanh toán → nhả giữ chỗ, **không** đổi kho vật lý.
 3. Admin restock/damage/adjustment → ghi transaction.
-4. Khả dụng cắt qua 0 → module 04 tự chuyển `sellState` (`ACTIVE ↔ OUT_OF_STOCK`) trong cùng
-   transaction.
+4. Khả dụng của một variant cắt qua 0 → module 04 tự chuyển **trạng thái bán của variant đó**
+   (`ACTIVE ↔ OUT_OF_STOCK`) trong cùng transaction.
 
 ## Yêu cầu chức năng sơ bộ
 
@@ -65,11 +69,13 @@ Khả dụng = `stock_levels.quantity` − tổng `stock_holds` đang hoạt đ�
 - [x] Tuân thủ constitution về tính toàn vẹn giao dịch kho/tiền — mọi thay đổi vật lý + dòng ledger
   + hệ quả khả dụng nằm trong một transaction (FR-011); tiền không tham gia module này.
 - [x] Khả dụng là dữ kiện **dẫn xuất** (vật lý − giữ chỗ hoạt động), không lưu sẵn.
-- [x] Nghĩa vụ kế thừa từ feature 006 (D1): sản phẩm tự chuyển trạng thái bán khi khả dụng cắt qua
-  0 — xem [decisions/014](../decisions/014-inventory-hold-and-availability.md).
+- [x] Nghĩa vụ kế thừa từ feature 006 (D1): **variant** tự chuyển trạng thái bán khi khả dụng cắt qua
+  0 — xem [decisions/014](../decisions/014-inventory-hold-and-availability.md). Feature 015 đổi hợp
+  đồng tín hiệu sang khoá theo `variantID`; xem [decisions/021](../decisions/021-product-sku-model.md).
 
-Năm endpoint quản trị (`GET`/`POST /api/v1/admin/inventory/{productId}...`) nằm ở
-[api-reference.md](../api-reference.md) mục 7.
+Năm endpoint quản trị (`GET`/`POST /api/v1/admin/inventory/{variantId}...`) nằm ở
+[api-reference.md](../api-reference.md) mục 7. Route định địa chỉ theo **định danh variant**; một
+variant không tồn tại trả `404 VARIANT_NOT_FOUND`.
 
 ### Phần chưa giao
 
@@ -86,8 +92,8 @@ và 010 (Order confirmation) đã giao phần lớn, phần còn lại chỉ ch�
 Hai mục từng nằm ở đây đã được feature 009 (Order) đóng: hợp đồng liên module
 `InventoryReservation` (`internal/contracts/inventory.go`) đã được publish và module 07 là consumer
 đầu tiên; và câu hỏi "dòng đơn làm gì khi sản phẩm bị xoá cứng" đã được chốt — module 07 **chụp**
-sản phẩm vào `order_items`, sản phẩm vẫn xoá cứng nên lịch sử kho vẫn cascade theo sản phẩm (hành
-vi đã chấp nhận cho MVP).
+sản phẩm vào `order_items`, sản phẩm vẫn xoá cứng nên lịch sử kho vẫn cascade theo **variant**
+(hành vi đã chấp nhận cho MVP).
 
 ## Ghi chú / câu hỏi mở
 
@@ -110,3 +116,5 @@ mã lỗi chỉ có ở đó, file này không nhân bản.
   điểm cố ý hoãn
 - [decisions/014](../decisions/014-inventory-hold-and-availability.md) — hai hợp đồng liên module,
   mô hình ba bảng, và sweeper nhả giữ chỗ
+- [decisions/021](../decisions/021-product-sku-model.md) — tồn kho chuyển xuống từng variant; hợp
+  đồng tín hiệu trạng thái khoá theo `variantID`

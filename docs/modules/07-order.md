@@ -61,10 +61,13 @@ Không (hoãn):
   `confirmed_at` (mốc artist xác nhận, `NULL` khi còn chờ xác nhận), `payment_expires_at` (**hạn thanh
   toán**, `NULL` khi còn chờ artist), `order_version` (**phiên bản nội dung**, `CHECK (>= 1)`, seam nội
   bộ cho module 08), `created_at`/`updated_at`.
-- `order_items`: dòng đơn — **snapshot** sản phẩm tại checkout/sửa (`name`, `slug`, `unit_price_amount
-  CHECK (> 0)`, `currency`) và `quantity CHECK (>= 1)`, `position`; `product_id` là **tham chiếu thông
-  tin — không foreign key** (dòng không bao giờ join lại sản phẩm), FK `order_id` → `orders(id)`
-  **ON DELETE CASCADE**, **unique index** trên `(order_id, product_id)`.
+- `order_items`: dòng đơn — **snapshot** thứ đã mua tại checkout/sửa: tên sản phẩm (`name`), **mã
+  sản phẩm** (`product_code`), **tên variant** (`variant_name`), **SKU** (`sku`), `slug`,
+  `unit_price_amount CHECK (> 0)`, `currency`, `quantity CHECK (>= 1)`, `position`; `product_id` và
+  `variant_id` là **tham chiếu thông tin — không foreign key** (dòng không bao giờ join lại sản
+  phẩm), FK `order_id` → `orders(id)` **ON DELETE CASCADE**, **unique index** trên
+  `(order_id, product_code, sku)` — **mỗi cặp (mã sản phẩm, SKU) là một dòng đơn**, nên một sản phẩm
+  mua hai variant cho ra hai dòng.
 - `order_edit_history`: **một dòng mỗi lần sửa được chấp nhận** — `order_id` (FK → `orders(id)` **ON
   DELETE CASCADE**), `version` (phiên bản mà lần sửa tạo ra), `actor_id` (tham chiếu lỏng, không FK),
   `before`/`after` (JSONB — dòng và địa chỉ trước/sau), `created_at`. Đọc trọn, không truy vấn theo
@@ -73,8 +76,9 @@ Không (hoãn):
 ## Luồng nghiệp vụ chính
 
 1. **Checkout** (`POST /orders`): đọc giỏ (module 06), **đối chiếu lại** từng dòng với trạng thái
-   bán/giá hiện tại (module 04) và tồn khả dụng (module 05); từ chối cả lần nếu bất kỳ dòng không đạt;
-   chụp địa chỉ (module 02); tạo đơn `PENDING` với `order_version = 1` và **không** hạn thanh toán;
+   bán/giá hiện tại của **variant** (module 04) và tồn khả dụng (module 05); từ chối cả lần nếu bất
+   kỳ dòng không đạt; chụp địa chỉ (module 02) và chụp dòng (tên sản phẩm + mã sản phẩm + tên variant
+   + SKU + giá + số lượng); tạo đơn `PENDING` với `order_version = 1` và **không** hạn thanh toán;
    **làm rỗng** giỏ — trong **một** transaction. **Không** giữ hàng. Thông báo artist cần xác nhận.
 2. **Artist xác nhận** (`POST /admin/orders/{orderId}/confirm`): **giữ toàn bộ** các dòng (module 05)
    trong **một** transaction (all-or-nothing); đặt `confirmed_at = now`, `payment_expires_at = now +
@@ -158,7 +162,8 @@ hiện tại** và để đơn nguyên vẹn.
   thực, **không** làm tròn, **không** gồm phí ship (FR-025, ADR 015 §5).
 - Checkout chạy trong **một** transaction; không tạo đơn thiếu dòng, không giữ nửa vời. Xác nhận giữ
   hàng all-or-nothing trong **một** transaction, chống oversell.
-- Mỗi dòng là **snapshot**, nên đơn không phụ thuộc sản phẩm/địa chỉ còn tồn tại.
+- Mỗi dòng là **snapshot** (tên sản phẩm, mã sản phẩm, tên variant, SKU, giá, số lượng), nên đơn
+  không phụ thuộc sản phẩm/variant/địa chỉ còn tồn tại.
 - Trạng thái đơn là state machine sáu trạng thái có danh sách chuyển hợp lệ; ghi thẳng trạng thái là
   bất khả. Mỗi lần sửa và mỗi lần xác nhận tăng `order_version`.
 - Chủ sở hữu lấy từ **session**, không bao giờ từ request; mọi route của admin cần vai trò `ADMIN`.
@@ -167,10 +172,12 @@ hiện tại** và để đơn nguyên vẹn.
 
 ## Tiêu chí hoàn thành
 
-- [x] Checkout có test: tạo đơn `PENDING` kèm snapshot dòng + địa chỉ, **không** giữ hàng (khả dụng
-  không đổi), làm rỗng giỏ, trong một transaction; và các từ chối — giỏ rỗng, sản phẩm không bán/đã xoá,
-  giá đổi sau khi thêm, số lượng vượt khả dụng, khách không có địa chỉ — mỗi ca để lại **không có gì**
-  bị tạo (SC-001, SC-002). Hai checkout đồng thời một giỏ sinh **đúng một** đơn trên PostgreSQL thật.
+- [x] Checkout có test: tạo đơn `PENDING` kèm snapshot dòng (tên sản phẩm + mã sản phẩm + tên variant
+  + SKU + giá) + địa chỉ, **không** giữ hàng (khả dụng không đổi), làm rỗng giỏ, trong một transaction;
+  và các từ chối — giỏ rỗng, variant không bán/đã xoá, giá đổi sau khi thêm, số lượng vượt khả dụng,
+  khách không có địa chỉ — mỗi ca để lại **không có gì** bị tạo (SC-001, SC-002). Một sản phẩm mua hai
+  variant cho ra **hai** dòng (mỗi cặp mã sản phẩm + SKU một dòng). Hai checkout đồng thời một giỏ sinh
+  **đúng một** đơn trên PostgreSQL thật.
 - [x] **Xác nhận** giữ **toàn bộ** dòng all-or-nothing, mở hạn 60 phút, chuyển sang `PAYMENT_PENDING`;
   một dòng thiếu thì bị từ chối và **không** giữ gì; hai xác nhận tranh đơn vị cuối chỉ **một** thắng
   (SC-002, SC-005) — chứng minh trên PostgreSQL thật.
@@ -238,4 +245,6 @@ Ghi rõ ở đây để một luật chưa xong không trở nên vô hình khi 
   transaction trong context
 - [decisions/014](../decisions/014-inventory-hold-and-availability.md) — giữ chỗ và khả dụng của module
   05 mà order tiêu thụ
+- [decisions/021](../decisions/021-product-sku-model.md) — dòng đơn chụp mã sản phẩm + SKU + tên
+  variant; đơn vị mua là variant
 - [decisions/015](../decisions/015-shop-first-version-plan-and-payos.md) — kế hoạch V1.0 và PayOS
