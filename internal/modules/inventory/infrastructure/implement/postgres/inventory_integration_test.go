@@ -26,14 +26,14 @@ import (
 
 // This file exercises the inventory adapter and the migration against a real
 // PostgreSQL container. Its centre of gravity is what a fake repository cannot
-// prove: that a level row for a product that does not exist is refused by the
-// foreign key; that removing a product takes its level, ledger and hold rows with
-// it; that the non-negative and non-zero checks reject a writer that bypassed the
-// application; that the partial unique indexes refuse a duplicate source reference
-// and a duplicate active hold; and that the history read is stable across two reads
-// sharing a timestamp. Most constraint tests write the tables directly, with no
-// domain validation and no use case, because a guard against a future writer can
-// only be proven by pretending to be that writer.
+// prove: that a level row for a variant that does not exist is refused by the
+// foreign key; that removing a product (cascading its variants) takes its level,
+// ledger and hold rows with it; that the non-negative and non-zero checks reject a
+// writer that bypassed the application; that the partial unique indexes refuse a
+// duplicate source reference and a duplicate active hold; and that the history read
+// is stable across two reads sharing a timestamp. Most constraint tests write the
+// tables directly, with no domain validation and no use case, because a guard
+// against a future writer can only be proven by pretending to be that writer.
 //
 // Every rejection asserts both the SQLSTATE and the constraint name, so a test
 // fails if the constraint it names is removed from the migration.
@@ -56,11 +56,11 @@ const (
 const (
 	insertMovementSQL = `
 		INSERT INTO inventory_transactions
-			(id, product_id, kind, delta, resulting_quantity, source_reference, actor_id, created_at)
+			(id, variant_id, kind, delta, resulting_quantity, source_reference, actor_id, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	insertHoldSQL = `
 		INSERT INTO stock_holds
-			(id, product_id, order_id, quantity, status, expires_at, created_at, resolved_at)
+			(id, variant_id, order_id, quantity, status, expires_at, created_at, resolved_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 )
 
@@ -93,10 +93,11 @@ func newInventoryFixture(t *testing.T) *inventoryFixture {
 	return &inventoryFixture{pool: pool, repo: NewInventoryRepository(pool)}
 }
 
-// insertProduct writes one category and one on-sale product straight into the
-// database, so the inventory tables have a real product to reference. The test may
-// do this because it is not production code: the boundary the constitution
-// protects is between modules, not between a test and a fixture.
+// insertProduct writes one category, one on-sale product and its on-sale default
+// variant straight into the database, so the inventory tables have a real variant
+// to reference. It returns the variant identifier, the unit every inventory row is
+// keyed by. The test may do this because it is not production code: the boundary
+// the constitution protects is between modules, not between a test and a fixture.
 func (f *inventoryFixture) insertProduct(t *testing.T) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -114,15 +115,25 @@ func (f *inventoryFixture) insertProduct(t *testing.T) uuid.UUID {
 
 	productID := uuid.New()
 	slug := "product-" + productID.String()[:8]
+	code := "CODE-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', 1000, 'VND', $5, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
+		productID, "Product "+slug, code, slug, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
-	return productID
+
+	variantID := uuid.New()
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
+		variantID, productID, "Variant "+slug, code); err != nil {
+		t.Fatalf("insert variant: %v", err)
+	}
+	return variantID
 }
 
 // sqlState returns the PostgreSQL SQLSTATE an error carries, or "" for a
@@ -169,13 +180,13 @@ func TestStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T) {
 	ctx := context.Background()
 	productID := f.insertProduct(t)
 
-	t.Run("level row for a missing product", func(t *testing.T) {
-		_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (product_id, quantity) VALUES ($1, 1)`, uuid.New())
-		requireConstraint(t, err, sqlStateForeignKey, "stock_levels_product_fk")
+	t.Run("level row for a missing variant", func(t *testing.T) {
+		_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, 1)`, uuid.New())
+		requireConstraint(t, err, sqlStateForeignKey, "stock_levels_variant_fk")
 	})
 
 	t.Run("negative level quantity", func(t *testing.T) {
-		_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (product_id, quantity) VALUES ($1, -1)`, productID)
+		_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, -1)`, productID)
 		requireConstraint(t, err, sqlStateCheck, "stock_levels_quantity_ck")
 	})
 
@@ -220,34 +231,36 @@ func TestStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T) {
 	})
 }
 
-// FR-011, research D11: removing a product takes its level, its ledger and its
-// holds with it, through the cascading foreign keys, and leaves nothing behind.
+// FR-011, research D11: removing a product (cascading its variant) takes the
+// variant's level, its ledger and its holds with it, through the cascading foreign
+// keys, and leaves nothing behind.
 func TestRemovingAProductCascadesItsInventory(t *testing.T) {
 	f := newInventoryFixture(t)
 	ctx := context.Background()
-	productID := f.insertProduct(t)
+	variantID := f.insertProduct(t)
 
-	if _, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (product_id, quantity) VALUES ($1, 5)`, productID); err != nil {
+	if _, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, 5)`, variantID); err != nil {
 		t.Fatalf("seed the level: %v", err)
 	}
-	if _, err := f.pool.Exec(ctx, insertMovementSQL, uuid.New(), productID, "RESTOCK", 5, 5, nil, nil, time.Now().UTC()); err != nil {
+	if _, err := f.pool.Exec(ctx, insertMovementSQL, uuid.New(), variantID, "RESTOCK", 5, 5, nil, nil, time.Now().UTC()); err != nil {
 		t.Fatalf("seed the movement: %v", err)
 	}
-	if _, err := f.pool.Exec(ctx, insertHoldSQL, uuid.New(), productID, uuid.New(), 1, "ACTIVE", time.Now().UTC().Add(time.Hour), time.Now().UTC(), nil); err != nil {
+	if _, err := f.pool.Exec(ctx, insertHoldSQL, uuid.New(), variantID, uuid.New(), 1, "ACTIVE", time.Now().UTC().Add(time.Hour), time.Now().UTC(), nil); err != nil {
 		t.Fatalf("seed the hold: %v", err)
 	}
 
-	if _, err := f.pool.Exec(ctx, `DELETE FROM products WHERE id = $1`, productID); err != nil {
+	if _, err := f.pool.Exec(ctx,
+		`DELETE FROM products WHERE id = (SELECT product_id FROM product_variants WHERE id = $1)`, variantID); err != nil {
 		t.Fatalf("delete the product: %v", err)
 	}
 
 	for _, table := range []string{"stock_levels", "inventory_transactions", "stock_holds"} {
 		var count int
-		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE product_id = $1`, productID).Scan(&count); err != nil {
+		if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE variant_id = $1`, variantID).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", table, err)
 		}
 		if count != 0 {
-			t.Errorf("%s still holds %d rows for the removed product", table, count)
+			t.Errorf("%s still holds %d rows for the removed variant", table, count)
 		}
 	}
 }
@@ -278,13 +291,13 @@ func TestTheAdapterRefusesOversell(t *testing.T) {
 	}
 }
 
-// research D2, D12: a level row for a product that does not exist is refused by
+// research D2, D12: a level row for a variant that does not exist is refused by
 // the foreign key, which the adapter classifies into the not-found sentinel.
-func TestIncreaseForAMissingProductIsNotFound(t *testing.T) {
+func TestIncreaseForAMissingVariantIsNotFound(t *testing.T) {
 	f := newInventoryFixture(t)
 
-	if _, err := f.repo.Increase(context.Background(), uuid.New(), 1, time.Now().UTC()); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("expected ErrProductNotFound, got %v", err)
+	if _, err := f.repo.Increase(context.Background(), uuid.New(), 1, time.Now().UTC()); !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("expected ErrVariantNotFound, got %v", err)
 	}
 }
 
@@ -332,11 +345,11 @@ type holdClock struct{ at time.Time }
 func (c *holdClock) Now() time.Time          { return c.at }
 func (c *holdClock) advance(d time.Duration) { c.at = c.at.Add(d) }
 
-// existingProducts answers the ProductLookup contract with "present", so the
+// existingVariants answers the ProductLookup contract with "present", so the
 // hold test can focus on the hold rather than on existence (research D4).
-type existingProducts struct{}
+type existingVariants struct{}
 
-func (existingProducts) ProductExists(context.Context, uuid.UUID) (bool, error) { return true, nil }
+func (existingVariants) VariantExists(context.Context, uuid.UUID) (bool, error) { return true, nil }
 
 // FR-014, FR-015, FR-018, research D2, D6, D15: the hold lifecycle against real
 // PostgreSQL. A reserve leaves the stored level unchanged while the active-hold
@@ -353,7 +366,7 @@ func TestHoldLifecycleAgainstPostgres(t *testing.T) {
 	clock := &holdClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	svc := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: f.repo,
-		Lookup:    existingProducts{},
+		Lookup:    existingVariants{},
 		Tx:        &database.DB{Pool: f.pool},
 		Clock:     clock,
 		Mapper:    inventorymapper.New(),
@@ -364,7 +377,7 @@ func TestHoldLifecycleAgainstPostgres(t *testing.T) {
 	}
 
 	orderID := uuid.New()
-	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 
@@ -401,7 +414,7 @@ func TestHoldLifecycleAgainstPostgres(t *testing.T) {
 	readHold := func() {
 		t.Helper()
 		if err := f.pool.QueryRow(ctx,
-			`SELECT status, resolved_at FROM stock_holds WHERE order_id = $1 AND product_id = $2`,
+			`SELECT status, resolved_at FROM stock_holds WHERE order_id = $1 AND variant_id = $2`,
 			orderID, productID).Scan(&status, &resolvedAt); err != nil {
 			t.Fatalf("read the hold: %v", err)
 		}
@@ -475,7 +488,7 @@ func TestConcurrentSaleApplicationsChangeStockExactlyOnce(t *testing.T) {
 	clock := &holdClock{at: time.Now().UTC().Truncate(time.Millisecond)}
 	svc := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: f.repo,
-		Lookup:    existingProducts{},
+		Lookup:    existingVariants{},
 		Tx:        &database.DB{Pool: f.pool},
 		Clock:     clock,
 		Mapper:    inventorymapper.New(),
@@ -485,11 +498,11 @@ func TestConcurrentSaleApplicationsChangeStockExactlyOnce(t *testing.T) {
 		t.Fatalf("seed the level: %v", err)
 	}
 	orderID := uuid.New()
-	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 
-	in := inventorydto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-concurrent-1"}
+	in := inventorydto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-concurrent-1"}
 	var (
 		wg    sync.WaitGroup
 		errs  [2]error
@@ -532,7 +545,7 @@ func TestConcurrentSaleApplicationsChangeStockExactlyOnce(t *testing.T) {
 
 	var sales int
 	if err := f.pool.QueryRow(ctx,
-		`SELECT count(*) FROM inventory_transactions WHERE product_id = $1 AND kind = 'SALE'`,
+		`SELECT count(*) FROM inventory_transactions WHERE variant_id = $1 AND kind = 'SALE'`,
 		productID).Scan(&sales); err != nil {
 		t.Fatalf("count SALE movements: %v", err)
 	}
@@ -542,7 +555,7 @@ func TestConcurrentSaleApplicationsChangeStockExactlyOnce(t *testing.T) {
 
 	var status string
 	if err := f.pool.QueryRow(ctx,
-		`SELECT status FROM stock_holds WHERE order_id = $1 AND product_id = $2`,
+		`SELECT status FROM stock_holds WHERE order_id = $1 AND variant_id = $2`,
 		orderID, productID).Scan(&status); err != nil {
 		t.Fatalf("read the hold: %v", err)
 	}

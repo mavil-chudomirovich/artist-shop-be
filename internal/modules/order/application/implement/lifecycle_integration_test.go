@@ -52,15 +52,15 @@ type lifecycleClock struct{}
 
 func (lifecycleClock) Now() time.Time { return time.Now().UTC() }
 
-// lifecycleProductExists answers the inventory module's ProductLookup over the
-// products table, so Reserve can tell an unknown product from an unstocked one.
-// It is a test-local adapter: the boundary the constitution protects is between
-// modules, not between a test and a fixture.
-type lifecycleProductExists struct{ pool *pgxpool.Pool }
+// lifecycleVariantExists answers the inventory module's ProductLookup over the
+// product_variants table, so Reserve can tell an unknown variant from an unstocked
+// one. It is a test-local adapter: the boundary the constitution protects is
+// between modules, not between a test and a fixture.
+type lifecycleVariantExists struct{ pool *pgxpool.Pool }
 
-func (p lifecycleProductExists) ProductExists(ctx context.Context, productID uuid.UUID) (bool, error) {
+func (p lifecycleVariantExists) VariantExists(ctx context.Context, variantID uuid.UUID) (bool, error) {
 	var exists bool
-	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM products WHERE id = $1)`, productID).Scan(&exists); err != nil {
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM product_variants WHERE id = $1)`, variantID).Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists, nil
@@ -89,7 +89,7 @@ func newLifecycleDBFixture(t *testing.T) *lifecycleDBFixture {
 	inventoryRepo := inventorypostgres.NewInventoryRepository(pool)
 	inventoryService := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: inventoryRepo,
-		Lookup:    lifecycleProductExists{pool: pool},
+		Lookup:    lifecycleVariantExists{pool: pool},
 		Tx:        &database.DB{Pool: pool},
 		Clock:     lifecycleClock{},
 		Mapper:    inventorymapper.New(),
@@ -105,10 +105,11 @@ func newLifecycleDBFixture(t *testing.T) *lifecycleDBFixture {
 	return &lifecycleDBFixture{pool: pool, svc: svc, inventory: inventoryService}
 }
 
-// insertProduct writes one category and one on-sale product straight into the
-// database and puts a physical quantity on its shelf. The test may do this: the
-// boundary the constitution protects is between modules, not between a test and a
-// fixture.
+// insertProduct writes one category, one on-sale product and its on-sale default
+// variant straight into the database and puts a physical quantity on the variant's
+// shelf. It returns the variant identifier, which is the unit reserve, sale and
+// release act on. The test may do this: the boundary the constitution protects is
+// between modules, not between a test and a fixture.
 func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -126,19 +127,28 @@ func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64)
 
 	productID := uuid.New()
 	slug := "product-" + productID.String()[:8]
+	code := "CODE-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', $5, 'VND', $6, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, amount, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', $5, 'VND', $6, 0)`,
+		productID, "Product "+slug, code, slug, amount, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
+	variantID := uuid.New()
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
+		variantID, productID, "Variant "+slug, code); err != nil {
+		t.Fatalf("insert variant: %v", err)
+	}
 	if _, err := f.pool.Exec(ctx,
-		`INSERT INTO stock_levels (product_id, quantity) VALUES ($1, $2)`, productID, quantity); err != nil {
+		`INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, $2)`, variantID, quantity); err != nil {
 		t.Fatalf("insert stock level: %v", err)
 	}
-	return productID
+	return variantID
 }
 
 // createOrder inserts one order over the given lines and returns it. The order is
@@ -154,29 +164,29 @@ func (f *lifecycleDBFixture) createOrder(t *testing.T, owner uuid.UUID, _ time.T
 }
 
 // reserve holds the ordered quantity through the real reservation use cases.
-func (f *lifecycleDBFixture) reserve(t *testing.T, order *model.Order, productID uuid.UUID, quantity int64) {
+func (f *lifecycleDBFixture) reserve(t *testing.T, order *model.Order, variantID uuid.UUID, quantity int64) {
 	t.Helper()
-	if err := f.svc.Reservations.Reserve(context.Background(), order.ID, productID, quantity); err != nil {
+	if err := f.svc.Reservations.Reserve(context.Background(), order.ID, variantID, quantity); err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
 }
 
-func (f *lifecycleDBFixture) physicalStock(t *testing.T, productID uuid.UUID) int64 {
+func (f *lifecycleDBFixture) physicalStock(t *testing.T, variantID uuid.UUID) int64 {
 	t.Helper()
 	var quantity int64
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT quantity FROM stock_levels WHERE product_id = $1`, productID).Scan(&quantity); err != nil {
+		`SELECT quantity FROM stock_levels WHERE variant_id = $1`, variantID).Scan(&quantity); err != nil {
 		t.Fatalf("read stock level: %v", err)
 	}
 	return quantity
 }
 
-func (f *lifecycleDBFixture) heldQuantity(t *testing.T, productID uuid.UUID) int64 {
+func (f *lifecycleDBFixture) heldQuantity(t *testing.T, variantID uuid.UUID) int64 {
 	t.Helper()
 	var held int64
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT COALESCE(SUM(quantity), 0) FROM stock_holds WHERE product_id = $1 AND status = 'ACTIVE'`,
-		productID).Scan(&held); err != nil {
+		`SELECT COALESCE(SUM(quantity), 0) FROM stock_holds WHERE variant_id = $1 AND status = 'ACTIVE'`,
+		variantID).Scan(&held); err != nil {
 		t.Fatalf("read held quantity: %v", err)
 	}
 	return held
@@ -210,7 +220,8 @@ func TestStorageRefusesAnUnlistedOrderState(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 1000, 5)
 	order := f.createOrder(t, uuid.New(), time.Now().Add(time.Hour), model.OrderLine{
-		ProductID: product, Name: "Tranh", Slug: "tranh",
+		ProductID: product, VariantID: product, ProductName: "Tranh", ProductCode: product.String(),
+		VariantName: "Tranh", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 1000, Currency: "VND"}, Quantity: 1,
 	})
 
@@ -226,7 +237,8 @@ func TestConfirmingPaymentSellsTheHeldQuantityOnce(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 10)
 	order := f.createOrder(t, uuid.New(), time.Now().Add(time.Hour), model.OrderLine{
-		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
+		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
 	})
 	f.reserve(t, order, product, 2)
@@ -268,7 +280,8 @@ func TestExpiredOrderFreesItsGoodsExactlyOnceAcrossBothSweeps(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 10)
 	order := f.createOrder(t, uuid.New(), time.Now().Add(time.Hour), model.OrderLine{
-		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
+		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
 	})
 	f.reserve(t, order, product, 2)
@@ -326,7 +339,8 @@ func TestAnOrderAwaitingTheArtistNeverExpires(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 5)
 	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"}, []model.OrderLine{{
-		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
+		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
 	}}, time.Now().UTC())
 	if order.Status != constant.StatusPending || order.PaymentExpiresAt != nil {
@@ -367,7 +381,8 @@ func TestTwoConfirmationsForTheLastUnitConfirmAtMostOne(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 1)
 	orderLine := model.OrderLine{
-		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
+		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 1,
 	}
 	first := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
@@ -452,7 +467,8 @@ func TestCancelReleasesGoodsAndNotifiesThePaymentModule(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 10)
 	order := f.createOrder(t, uuid.New(), time.Now().Add(time.Hour), model.OrderLine{
-		ProductID: product, Name: "Tranh sơn dầu", Slug: "tranh-son-dau",
+		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
+		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
 	})
 	f.reserve(t, order, product, 2)

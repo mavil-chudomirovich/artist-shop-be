@@ -57,15 +57,15 @@ type orderIntegrationClock struct{}
 
 func (orderIntegrationClock) Now() time.Time { return time.Now().UTC() }
 
-// productExists answers the inventory module's ProductLookup over the products
-// table, so Reserve can tell an unknown product from an unstocked one. It is a
-// test-local adapter: the boundary the constitution protects is between modules,
-// not between a test and a fixture.
-type productExists struct{ pool *pgxpool.Pool }
+// variantExists answers the inventory module's ProductLookup over the
+// product_variants table, so Reserve can tell an unknown variant from an unstocked
+// one. It is a test-local adapter: the boundary the constitution protects is
+// between modules, not between a test and a fixture.
+type variantExists struct{ pool *pgxpool.Pool }
 
-func (p productExists) ProductExists(ctx context.Context, productID uuid.UUID) (bool, error) {
+func (p variantExists) VariantExists(ctx context.Context, variantID uuid.UUID) (bool, error) {
 	var exists bool
-	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM products WHERE id = $1)`, productID).Scan(&exists); err != nil {
+	if err := p.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM product_variants WHERE id = $1)`, variantID).Scan(&exists); err != nil {
 		return false, err
 	}
 	return exists, nil
@@ -73,7 +73,7 @@ func (p productExists) ProductExists(ctx context.Context, productID uuid.UUID) (
 
 // customerAddresses answers the CustomerLookupService contract over the addresses
 // table, default-first, so checkout can snapshot the delivery address. It is a
-// test-local adapter for the same reason as productExists. It also carries the
+// test-local adapter for the same reason as variantExists. It also carries the
 // account's email, read from the users table, so the order module can address a
 // status-change notification to the customer (FR-020, research D9).
 type customerAddresses struct{ pool *pgxpool.Pool }
@@ -206,7 +206,7 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 	inventoryRepo := inventorypostgres.NewInventoryRepository(pool)
 	inventoryService := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: inventoryRepo,
-		Lookup:    productExists{pool: pool},
+		Lookup:    variantExists{pool: pool},
 		Tx:        &database.DB{Pool: pool},
 		Clock:     orderIntegrationClock{},
 		Mapper:    inventorymapper.New(),
@@ -230,7 +230,7 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 	svc := orderimplement.New(orderimplement.Service{
 		Orders:       orderpostgres.NewOrderRepository(pool),
 		Carts:        cartcheckout.New(cartpostgres.NewCartRepository(pool)),
-		Products:     productcatalog.New(productpostgres.NewProductRepository(pool)),
+		Variants:     productcatalog.New(productpostgres.NewVariantRepository(pool)),
 		Availability: inventoryavailability.New(inventoryRepo, orderIntegrationClock{}),
 		Reservations: inventoryreservation.New(inventoryService),
 		Customers:    customerAddresses{pool: pool},
@@ -271,8 +271,10 @@ func seedOrderCustomer(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 	}
 }
 
-// seedOrderProduct writes one category and one on-sale product straight into the
-// database and puts a physical quantity on its shelf.
+// seedOrderProduct writes one category, one on-sale product and its on-sale
+// default variant straight into the database and puts a physical quantity on the
+// variant's shelf. It returns the product identifier; the line-addressed helpers
+// below resolve the default variant from it.
 func seedOrderProduct(t *testing.T, pool *pgxpool.Pool, amount, quantity int64) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -290,23 +292,46 @@ func seedOrderProduct(t *testing.T, pool *pgxpool.Pool, amount, quantity int64) 
 
 	productID := uuid.New()
 	slug := "product-" + productID.String()[:8]
+	code := "CODE-" + productID.String()[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', $5, 'VND', $6, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, amount, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', $5, 'VND', $6, 0)`,
+		productID, "Product "+slug, code, slug, amount, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
+	variantID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
+		variantID, productID, "Variant "+slug, code); err != nil {
+		t.Fatalf("insert variant: %v", err)
+	}
 	if _, err := pool.Exec(ctx,
-		`INSERT INTO stock_levels (product_id, quantity) VALUES ($1, $2)`, productID, quantity); err != nil {
+		`INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, $2)`, variantID, quantity); err != nil {
 		t.Fatalf("insert stock level: %v", err)
 	}
 	return productID
 }
 
-// seedOrderCart writes one cart for the owner with one line for the product, then
-// returns the cart's identifier.
+// defaultVariantID resolves the product's default variant: the first by position,
+// created_at and id. A seeded product owns exactly one variant, so this is that
+// variant.
+func defaultVariantID(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT id FROM product_variants WHERE product_id = $1 ORDER BY position, created_at, id LIMIT 1`,
+		productID).Scan(&id); err != nil {
+		t.Fatalf("read the default variant: %v", err)
+	}
+	return id
+}
+
+// seedOrderCart writes one cart for the owner with one line for the product's
+// default variant, then returns the cart's identifier.
 func seedOrderCart(t *testing.T, pool *pgxpool.Pool, ownerID, productID uuid.UUID, quantity, unitPrice int64) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -315,20 +340,21 @@ func seedOrderCart(t *testing.T, pool *pgxpool.Pool, ownerID, productID uuid.UUI
 		t.Fatalf("insert cart: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cart_items (id, cart_id, product_id, quantity, unit_price_amount, currency)
+		INSERT INTO cart_items (id, cart_id, variant_id, quantity, unit_price_amount, currency)
 		VALUES ($1, $2, $3, $4, $5, 'VND')`,
-		uuid.New(), cartID, productID, quantity, unitPrice); err != nil {
+		uuid.New(), cartID, defaultVariantID(t, pool, productID), quantity, unitPrice); err != nil {
 		t.Fatalf("insert cart line: %v", err)
 	}
 	return cartID
 }
 
-// physicalStock reads a product's physical quantity straight from the table.
+// physicalStock reads a product's default variant's physical quantity straight
+// from the table.
 func physicalStock(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 {
 	t.Helper()
 	var quantity int64
 	if err := pool.QueryRow(context.Background(),
-		`SELECT quantity FROM stock_levels WHERE product_id = $1`, productID).Scan(&quantity); err != nil {
+		`SELECT quantity FROM stock_levels WHERE variant_id = $1`, defaultVariantID(t, pool, productID)).Scan(&quantity); err != nil {
 		t.Fatalf("read stock level: %v", err)
 	}
 	return quantity
@@ -347,13 +373,14 @@ func productSlug(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
 	return slug
 }
 
-// heldQuantity reads the quantity every active hold has set aside for one product.
+// heldQuantity reads the quantity every active hold has set aside for one
+// product's default variant.
 func heldQuantity(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 {
 	t.Helper()
 	var held int64
 	if err := pool.QueryRow(context.Background(),
-		`SELECT COALESCE(SUM(quantity), 0) FROM stock_holds WHERE product_id = $1 AND status = 'ACTIVE'`,
-		productID).Scan(&held); err != nil {
+		`SELECT COALESCE(SUM(quantity), 0) FROM stock_holds WHERE variant_id = $1 AND status = 'ACTIVE'`,
+		defaultVariantID(t, pool, productID)).Scan(&held); err != nil {
 		t.Fatalf("read held quantity: %v", err)
 	}
 	return held
@@ -411,9 +438,10 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 		t.Fatalf("expected one line, got %+v", body.Data.Lines)
 	}
 	if body.Data.Lines[0].ProductID != product || body.Data.Lines[0].Quantity != 2 ||
-		body.Data.Lines[0].UnitPrice.Amount != 120000 || body.Data.Lines[0].Name == "" ||
-		body.Data.Lines[0].Slug != slug {
-		t.Fatalf("the line must carry the product's snapshot, got %+v", body.Data.Lines[0])
+		body.Data.Lines[0].UnitPrice.Amount != 120000 ||
+		body.Data.Lines[0].ProductName != "Product "+slug ||
+		body.Data.Lines[0].VariantName != "Variant "+slug {
+		t.Fatalf("the line must carry the product and variant snapshot, got %+v", body.Data.Lines[0])
 	}
 	if body.Data.Address.RecipientName != "Nguyễn Văn A" || body.Data.Address.StreetAddress != "1 Đinh Tiên Hoàng" {
 		t.Fatalf("the order must carry the delivery address snapshot, got %+v", body.Data.Address)
@@ -999,6 +1027,7 @@ func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
 	seedOrderCustomer(t, f.pool, testCustomerID)
 	firstProduct := seedOrderProduct(t, f.pool, 120000, 10)
 	secondProduct := seedOrderProduct(t, f.pool, 50000, 10)
+	secondVariant := defaultVariantID(t, f.pool, secondProduct)
 	seedOrderCart(t, f.pool, testCustomerID, firstProduct, 2, 120000)
 
 	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
@@ -1014,7 +1043,7 @@ func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
 	// FR-012, FR-013: editing a PENDING order replaces its lines, recomputes the
 	// total and leaves it awaiting the artist, holding nothing.
 	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
-		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":3}]}`, "customer-token")
+		`{"lines":[{"variantId":"`+secondVariant.String()+`","quantity":3}]}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("edit: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1059,7 +1088,7 @@ func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
 	// FR-014, SC-003: editing the awaiting-payment order releases its hold exactly
 	// once and returns it to awaiting confirmation; nothing physical moves.
 	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
-		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":1}]}`, "customer-token")
+		`{"lines":[{"variantId":"`+secondVariant.String()+`","quantity":1}]}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("edit a confirmed order: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1082,7 +1111,7 @@ func TestCustomerEditsOrderBeforePayingAgainstPostgres(t *testing.T) {
 
 	// FR-022: another customer's edit answers 404 ORDER_NOT_FOUND.
 	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(),
-		`{"lines":[{"productId":"`+secondProduct.String()+`","quantity":1}]}`, "customer2-token")
+		`{"lines":[{"variantId":"`+secondVariant.String()+`","quantity":1}]}`, "customer2-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("another customer's edit: expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}

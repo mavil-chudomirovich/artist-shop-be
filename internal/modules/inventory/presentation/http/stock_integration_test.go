@@ -42,8 +42,10 @@ type integrationClock struct{}
 
 func (integrationClock) Now() time.Time { return time.Now().UTC() }
 
-// insertInventoryProduct writes one category and one on-sale product straight
-// into the database, so the inventory tables have a real product to reference.
+// insertInventoryProduct writes one category, one on-sale product and its on-sale
+// default variant straight into the database, so the inventory tables have a real
+// variant to reference. It returns the variant identifier, the unit stock is keyed
+// by.
 func insertInventoryProduct(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -61,32 +63,42 @@ func insertInventoryProduct(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 
 	productID := uuid.New()
 	slug := "product-" + productID.String()[:8]
+	code := "CODE-" + productID.String()[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', 1000, 'VND', $5, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
+		productID, "Product "+slug, code, slug, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
-	return productID
+
+	variantID := uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
+		variantID, productID, "Variant "+slug, code); err != nil {
+		t.Fatalf("insert variant: %v", err)
+	}
+	return variantID
 }
 
-// assertLedgerReconciles asserts SC-001: the sum of a product's ledger deltas
+// assertLedgerReconciles asserts SC-001: the sum of a variant's ledger deltas
 // equals its stored level, and both equal want.
-func assertLedgerReconciles(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID, want int64) {
+func assertLedgerReconciles(t *testing.T, pool *pgxpool.Pool, variantID uuid.UUID, want int64) {
 	t.Helper()
 	ctx := context.Background()
 
 	var sum int64
 	if err := pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(delta), 0) FROM inventory_transactions WHERE product_id = $1`,
-		productID).Scan(&sum); err != nil {
+		`SELECT COALESCE(SUM(delta), 0) FROM inventory_transactions WHERE variant_id = $1`,
+		variantID).Scan(&sum); err != nil {
 		t.Fatalf("sum the ledger: %v", err)
 	}
 	var level int64
 	if err := pool.QueryRow(ctx,
-		`SELECT quantity FROM stock_levels WHERE product_id = $1`, productID).Scan(&level); err != nil {
+		`SELECT quantity FROM stock_levels WHERE variant_id = $1`, variantID).Scan(&level); err != nil {
 		t.Fatalf("read the level: %v", err)
 	}
 	if sum != level {
@@ -120,9 +132,9 @@ func TestManualStockOperationsAgainstPostgres(t *testing.T) {
 	neverStockedID := insertInventoryProduct(t, pool)
 
 	// The real service over the real adapter; the existence question is answered
-	// by module 04's adapter over its own repository. Only the lookup half is
-	// reached here, so the product service it also carries is nil.
-	lookup := productavailability.New(nil, productpostgres.NewProductRepository(pool))
+	// by module 04's adapter over its own variant repository. Only the lookup half
+	// is reached here, so the product service it also carries is nil.
+	lookup := productavailability.New(nil, productpostgres.NewVariantRepository(pool))
 	svc := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: inventorypostgres.NewInventoryRepository(pool),
 		Lookup:    lookup,
@@ -186,7 +198,7 @@ func TestManualStockOperationsAgainstPostgres(t *testing.T) {
 	// The ledger carries one row per change with the kind each operation implies.
 	var kinds []string
 	rows, err := pool.Query(ctx,
-		`SELECT kind FROM inventory_transactions WHERE product_id = $1 ORDER BY created_at, id`, productID)
+		`SELECT kind FROM inventory_transactions WHERE variant_id = $1 ORDER BY created_at, id`, productID)
 	if err != nil {
 		t.Fatalf("read the movement kinds: %v", err)
 	}
@@ -241,7 +253,7 @@ func newOversellFixture(t *testing.T) *oversellFixture {
 	}
 	t.Cleanup(pool.Close)
 
-	lookup := productavailability.New(nil, productpostgres.NewProductRepository(pool))
+	lookup := productavailability.New(nil, productpostgres.NewVariantRepository(pool))
 	svc := inventoryimplement.New(inventoryimplement.Service{
 		Inventory: inventorypostgres.NewInventoryRepository(pool),
 		Lookup:    lookup,
@@ -305,7 +317,7 @@ func TestConcurrentDamagesCannotDriveTheStoredQuantityBelowZero(t *testing.T) {
 	}
 
 	var level int64
-	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE product_id = $1`, productID).Scan(&level); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE variant_id = $1`, productID).Scan(&level); err != nil {
 		t.Fatalf("read the level: %v", err)
 	}
 	if level != 0 {
@@ -322,7 +334,7 @@ func TestTheStockLevelCheckRefusesANegativeQuantity(t *testing.T) {
 	ctx := context.Background()
 	productID := insertInventoryProduct(t, f.pool)
 
-	_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (product_id, quantity) VALUES ($1, -1)`, productID)
+	_, err := f.pool.Exec(ctx, `INSERT INTO stock_levels (variant_id, quantity) VALUES ($1, -1)`, productID)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
 		t.Fatalf("the storage layer accepted a negative level: %v", err)
@@ -365,11 +377,13 @@ func newReconciliationFixture(t *testing.T) *reconciliationFixture {
 	t.Cleanup(pool.Close)
 
 	productRepository := productpostgres.NewProductRepository(pool)
+	variantRepository := productpostgres.NewVariantRepository(pool)
 	productService := productimplement.New(productimplement.Service{
 		Products: productRepository,
+		Variants: variantRepository,
 		Mapper:   productmapper.New(),
 	})
-	adapter := productavailability.New(productService, productRepository)
+	adapter := productavailability.New(productService, variantRepository)
 	svc := inventoryimplement.New(inventoryimplement.Service{
 		Inventory:    inventorypostgres.NewInventoryRepository(pool),
 		Lookup:       adapter,
@@ -382,24 +396,24 @@ func newReconciliationFixture(t *testing.T) *reconciliationFixture {
 	return &reconciliationFixture{pool: pool, svc: svc}
 }
 
-// readSellState reads a product's stored sell state straight from the table, so
+// readSellState reads a variant's stored sell state straight from the table, so
 // the assertion is on what was committed rather than on a returned DTO.
-func readSellState(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) string {
+func readSellState(t *testing.T, pool *pgxpool.Pool, variantID uuid.UUID) string {
 	t.Helper()
 	var state string
 	if err := pool.QueryRow(context.Background(),
-		`SELECT sell_state FROM products WHERE id = $1`, productID).Scan(&state); err != nil {
+		`SELECT sell_state FROM product_variants WHERE id = $1`, variantID).Scan(&state); err != nil {
 		t.Fatalf("read sell_state: %v", err)
 	}
 	return state
 }
 
-// setSellState moves a product to a state directly, bypassing the product use
-// case, so a test can set up an announced or retired product without an actor.
-func setSellState(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID, state string) {
+// setSellState moves a variant to a state directly, bypassing the variant use
+// case, so a test can set up an announced or retired variant without an actor.
+func setSellState(t *testing.T, pool *pgxpool.Pool, variantID uuid.UUID, state string) {
 	t.Helper()
 	if _, err := pool.Exec(context.Background(),
-		`UPDATE products SET sell_state = $2 WHERE id = $1`, productID, state); err != nil {
+		`UPDATE product_variants SET sell_state = $2 WHERE id = $1`, variantID, state); err != nil {
 		t.Fatalf("set sell_state: %v", err)
 	}
 }
@@ -418,13 +432,13 @@ func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
 	// quickstart 6a: restock one unit (zero -> positive crosses, a no-op because
 	// the product is already on sale), then damage it (positive -> zero).
 	crossing := insertInventoryProduct(t, f.pool)
-	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: crossing, Quantity: 1}); err != nil {
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{VariantID: crossing, Quantity: 1}); err != nil {
 		t.Fatalf("restock: %v", err)
 	}
 	if got := readSellState(t, f.pool, crossing); got != "ACTIVE" {
 		t.Fatalf("a restock from zero must leave an on-sale product on sale, got %s", got)
 	}
-	if _, err := f.svc.Damage(ctx, inventorydto.DamageInput{ProductID: crossing, Quantity: 1}); err != nil {
+	if _, err := f.svc.Damage(ctx, inventorydto.DamageInput{VariantID: crossing, Quantity: 1}); err != nil {
 		t.Fatalf("damage: %v", err)
 	}
 	if got := readSellState(t, f.pool, crossing); got != "OUT_OF_STOCK" {
@@ -432,7 +446,7 @@ func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
 	}
 
 	// quickstart 6b: a restock returns it to sale.
-	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: crossing, Quantity: 1}); err != nil {
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{VariantID: crossing, Quantity: 1}); err != nil {
 		t.Fatalf("restock back: %v", err)
 	}
 	if got := readSellState(t, f.pool, crossing); got != "ACTIVE" {
@@ -443,7 +457,7 @@ func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
 	// restocked.
 	retired := insertInventoryProduct(t, f.pool)
 	setSellState(t, f.pool, retired, "DISCONTINUED")
-	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: retired, Quantity: 3}); err != nil {
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{VariantID: retired, Quantity: 3}); err != nil {
 		t.Fatalf("restock a retired product: %v", err)
 	}
 	if got := readSellState(t, f.pool, retired); got != "DISCONTINUED" {
@@ -453,7 +467,7 @@ func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
 	// quickstart 7a: an announced product is never moved by a stock crossing.
 	announced := insertInventoryProduct(t, f.pool)
 	setSellState(t, f.pool, announced, "COMING_SOON")
-	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: announced, Quantity: 2}); err != nil {
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{VariantID: announced, Quantity: 2}); err != nil {
 		t.Fatalf("restock an announced product: %v", err)
 	}
 	if got := readSellState(t, f.pool, announced); got != "COMING_SOON" {
@@ -463,17 +477,17 @@ func TestAvailabilityDrivesTheProductSellState(t *testing.T) {
 	// quickstart 6c: holding the last available unit moves the product out of
 	// stock while the physical count is unchanged.
 	held := insertInventoryProduct(t, f.pool)
-	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{ProductID: held, Quantity: 1}); err != nil {
+	if _, err := f.svc.Restock(ctx, inventorydto.RestockInput{VariantID: held, Quantity: 1}); err != nil {
 		t.Fatalf("restock held product: %v", err)
 	}
-	if err := f.svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: uuid.New(), ProductID: held, Quantity: 1}); err != nil {
+	if err := f.svc.Reserve(ctx, inventorydto.ReserveInput{OrderID: uuid.New(), VariantID: held, Quantity: 1}); err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
 	if got := readSellState(t, f.pool, held); got != "OUT_OF_STOCK" {
 		t.Fatalf("holding the last unit must move the product out of stock, got %s", got)
 	}
 	var physical int64
-	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE product_id = $1`, held).Scan(&physical); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT quantity FROM stock_levels WHERE variant_id = $1`, held).Scan(&physical); err != nil {
 		t.Fatalf("read the level: %v", err)
 	}
 	if physical != 1 {

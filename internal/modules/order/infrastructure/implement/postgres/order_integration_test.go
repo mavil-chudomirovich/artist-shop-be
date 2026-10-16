@@ -22,9 +22,10 @@ import (
 // centre of gravity is what a fake repository cannot prove: that an order and its
 // snapshot lines round-trip, that the lines come back in position order whatever
 // order they were written in, that the owner and admin lists come back newest
-// first and stay separated by owner, and that a removed product leaves its line in
-// place — there is no foreign key on order_items.product_id (research D3, FR-001,
-// FR-002, FR-018, FR-021).
+// first and stay separated by owner, that one (product code, SKU) pair is one line
+// (FR-020), and that a removed product leaves its line in place — there is no
+// foreign key on order_items.product_id (research D3, FR-001, FR-002, FR-018,
+// FR-021).
 //
 // Docker is required to run it; the file still compiles without a container so
 // `go vet -tags integration ./...` covers it.
@@ -57,10 +58,10 @@ func newOrderFixture(t *testing.T) *orderFixture {
 	return &orderFixture{pool: pool, repo: NewOrderRepository(pool)}
 }
 
-// insertProduct writes one category and one product straight into the database, so
-// an order line has a real product to record. The test may do this because it is
-// not production code: the boundary the constitution protects is between modules,
-// not between a test and a fixture.
+// insertProduct writes one category, one on-sale product and its default variant
+// straight into the database, so an order line has a real product and variant to
+// snap. The test may do this because it is not production code: the boundary the
+// constitution protects is between modules, not between a test and a fixture.
 func (f *orderFixture) insertProduct(t *testing.T) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
@@ -78,13 +79,24 @@ func (f *orderFixture) insertProduct(t *testing.T) uuid.UUID {
 
 	productID := uuid.New()
 	slug := "product-" + productID.String()[:8]
+	code := "CODE-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', 1000, 'VND', $5, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
+		productID, "Product "+slug, code, slug, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
+	}
+	// The product's default variant: an order line records a variant, so a line
+	// has a real variant to snap. It is on sale, the state a migrated product's
+	// default variant carries.
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, NULL, 0, 'ACTIVE')`,
+		uuid.New(), productID, "Variant "+slug, code); err != nil {
+		t.Fatalf("insert variant: %v", err)
 	}
 	return productID
 }
@@ -130,15 +142,21 @@ func buildOrder(owner uuid.UUID, at time.Time, lines []model.OrderLine) *model.O
 	return order
 }
 
-// newLine builds one snapshot line at the given position.
+// newLine builds one snapshot line at the given position. The name doubles as the
+// product code and the SKU, which keeps each test's (order_id, product_code, sku)
+// natural key distinct without a second parameter.
 func newLine(productID uuid.UUID, name string, price, quantity int64, position int) model.OrderLine {
 	return model.OrderLine{
-		ProductID: productID,
-		Name:      name,
-		Slug:      name,
-		UnitPrice: model.Price{Amount: price, Currency: "VND"},
-		Quantity:  quantity,
-		Position:  position,
+		ProductID:   productID,
+		VariantID:   uuid.New(),
+		ProductName: name,
+		ProductCode: name,
+		VariantName: name,
+		SKU:         name,
+		Slug:        name,
+		UnitPrice:   model.Price{Amount: price, Currency: "VND"},
+		Quantity:    quantity,
+		Position:    position,
 	}
 }
 
@@ -178,7 +196,7 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 	if len(got.Lines) != 2 {
 		t.Fatalf("expected 2 lines, got %d", len(got.Lines))
 	}
-	if got.Lines[0].ProductID != first || got.Lines[0].Name != "Ink wash" ||
+	if got.Lines[0].ProductID != first || got.Lines[0].ProductName != "Ink wash" ||
 		got.Lines[0].UnitPrice.Amount != 120000 || got.Lines[0].Quantity != 2 {
 		t.Errorf("first line does not round-trip: %+v", got.Lines[0])
 	}
@@ -198,8 +216,8 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 func TestLinesComeBackInPositionOrder(t *testing.T) {
 	f := newOrderFixture(t)
 	ctx := context.Background()
-	// One product per line: an order holds at most one line per product, so the
-	// (order_id, product_id) unique index would refuse a repeated product.
+	// One product per line: each (product code, SKU) pair is one order line, so
+	// the (order_id, product_code, sku) unique index would refuse a repeated line.
 	first, second, third := f.insertProduct(t), f.insertProduct(t), f.insertProduct(t)
 	at := time.Now().UTC().Truncate(time.Millisecond)
 
@@ -219,8 +237,8 @@ func TestLinesComeBackInPositionOrder(t *testing.T) {
 	}
 	want := []string{"first", "second", "third"}
 	for i, line := range got.Lines {
-		if line.Position != i || line.Name != want[i] {
-			t.Fatalf("line %d = %q position %d, want %q position %d", i, line.Name, line.Position, want[i], i)
+		if line.Position != i || line.ProductName != want[i] {
+			t.Fatalf("line %d = %q position %d, want %q position %d", i, line.ProductName, line.Position, want[i], i)
 		}
 	}
 }
@@ -344,15 +362,15 @@ func TestRemovedProductLeavesTheLine(t *testing.T) {
 		t.Fatalf("the line must survive its product's removal, got %+v", got.Lines)
 	}
 	line := got.Lines[0]
-	if line.ProductID != product || line.Name != "Gone" || line.UnitPrice.Amount != 120000 || line.Quantity != 2 {
+	if line.ProductID != product || line.ProductName != "Gone" || line.UnitPrice.Amount != 120000 || line.Quantity != 2 {
 		t.Fatalf("the snapshot must be unchanged: %+v", line)
 	}
 }
 
 // FR-015, FR-016, research D6: ReplaceLines replaces the order's line set — it
 // drops the old set, inserts the new one and persists the order's total, version
-// and state — and the replacement still holds the one-line-per-product rule. The
-// lines come back in position order whatever order they were written in.
+// and state — and the replacement still holds the one-line-per-(product code, SKU)
+// rule. The lines come back in position order whatever order they were written in.
 func TestReplaceLinesReplacesTheSetAndKeepsOneLinePerProduct(t *testing.T) {
 	f := newOrderFixture(t)
 	ctx := context.Background()
@@ -398,14 +416,15 @@ func TestReplaceLinesReplacesTheSetAndKeepsOneLinePerProduct(t *testing.T) {
 		t.Fatalf("the replaced order did not persist its total/version/state: %+v", got)
 	}
 
-	// The unique (order_id, product_id) still holds: a duplicate product on one
-	// order is refused by the database.
+	// The unique (order_id, product_code, sku) still holds: a second line naming
+	// the same product code and SKU on one order is refused by the database.
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO order_items
-			(id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, 'dup', 'dup', 1000, 'VND', 1, 2, now())`,
-		uuid.New(), order.ID, first); err == nil {
-		t.Fatal("the storage must refuse a duplicate product on one order")
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, slug,
+			 unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, $4, 'dup', 'first', 'dup', 'first', 'dup', 1000, 'VND', 1, 2, now())`,
+		uuid.New(), order.ID, first, uuid.New()); err == nil {
+		t.Fatal("the storage must refuse a duplicate (product code, SKU) on one order")
 	}
 }
 

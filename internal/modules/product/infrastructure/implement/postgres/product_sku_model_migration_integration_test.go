@@ -8,10 +8,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	// Registers the "pgx" driver with database/sql for goose.
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
+	cartcheckout "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/checkout"
+	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
+	inventoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/implement"
+	inventorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/application/mapper"
+	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
+	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
+	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
+	orderappdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
+	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
+	orderappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
+	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
+	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
+	productavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/availability"
+	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 	"github.com/mavil-chudomirovich/artist-shop-be/migrations"
 )
@@ -210,5 +228,164 @@ func TestMigration00014BackfillsCodesAndDefaultVariants(t *testing.T) {
 		if exists {
 			t.Errorf("the migration left feature 014's %s table in place", tbl)
 		}
+	}
+}
+
+// migrationTestClock is the production-like clock the checkout wired by the
+// migrated-product test reads.
+type migrationTestClock struct{}
+
+func (migrationTestClock) Now() time.Time { return time.Now().UTC() }
+
+// migratedCustomerLookup answers the CustomerLookupService contract with one
+// default address, so a checkout over migrated data has somewhere to deliver. It
+// is a test-local adapter: the boundary the constitution protects is between
+// modules, not between a test and a fixture.
+type migratedCustomerLookup struct{ address contracts.CustomerAddress }
+
+func (m migratedCustomerLookup) LookupCustomer(_ context.Context, userID uuid.UUID) (contracts.Customer, error) {
+	return contracts.Customer{ID: userID, Addresses: []contracts.CustomerAddress{m.address}}, nil
+}
+
+// TestMigration00014MigratedProductStillChecksOut proves FR-027: after 00014, a
+// product that predates the change keeps selling. It migrates a legacy on-sale
+// product with a stock row, then drives the real checkout use case over the real
+// order, cart, product-facts and inventory adapters, and asserts the resulting
+// order line snapshots the migrated product's code and SKU (FR-019, FR-020,
+// FR-026, SC-003, SC-005).
+func TestMigration00014MigratedProductStillChecksOut(t *testing.T) {
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open migration database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	applyUpTo(t, ctx, db, 13)
+
+	// A legacy database: a category and one on-sale product with a stock row.
+	categoryID := "55555555-5555-5555-5555-555555555555"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO categories (id, name, normalized_name, slug, normalized_slug, description, position, is_visible)
+		VALUES ($1, 'Legacy', 'legacy', 'legacy', 'legacy', '', 0, true)`, categoryID); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+
+	productID := "66666666-6666-6666-6666-666666666666"
+	const slug = "legacy-checkout"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO products
+			(id, name, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position, sell_state, is_set, is_preorder,
+			 preorder_expected_at, created_at, updated_at)
+		VALUES ($1, 'Legacy Checkout', $2, $2, 'legacy description', 120000, 'VND',
+		 $3, 0, 'ACTIVE', false, false, NULL, now(), now())`,
+		productID, slug, categoryID); err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO stock_levels (product_id, quantity, updated_at) VALUES ($1, 5, now())`, productID); err != nil {
+		t.Fatalf("seed the stock level: %v", err)
+	}
+
+	// Apply 00014: the legacy product gains a code equal to its slug and one
+	// default variant whose SKU equals that code.
+	if err := goose.UpContext(ctx, db, "."); err != nil {
+		t.Fatalf("apply migration 00014: %v", err)
+	}
+
+	var variantID, variantSKU, variantState string
+	if err := db.QueryRowContext(ctx, `
+		SELECT id, sku, sell_state FROM product_variants WHERE product_id = $1`,
+		productID).Scan(&variantID, &variantSKU, &variantState); err != nil {
+		t.Fatalf("read the migrated default variant: %v", err)
+	}
+	if variantSKU != slug || variantState != "ACTIVE" {
+		t.Fatalf("the migrated variant must be sellable with sku = code, got sku %q state %q", variantSKU, variantState)
+	}
+
+	// The real checkout stack over the migrated database.
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	inventoryRepo := inventorypostgres.NewInventoryRepository(pool)
+	lookup := productavailability.New(nil, NewVariantRepository(pool))
+	inventoryService := inventoryimplement.New(inventoryimplement.Service{
+		Inventory: inventoryRepo,
+		Lookup:    lookup,
+		Tx:        &database.DB{Pool: pool},
+		Clock:     migrationTestClock{},
+		Mapper:    inventorymapper.New(),
+	})
+	orderService := orderimplement.New(orderimplement.Service{
+		Orders:       orderpostgres.NewOrderRepository(pool),
+		Carts:        cartcheckout.New(cartpostgres.NewCartRepository(pool)),
+		Variants:     productcatalog.New(NewVariantRepository(pool)),
+		Availability: inventoryavailability.New(inventoryRepo, migrationTestClock{}),
+		Reservations: inventoryreservation.New(inventoryService),
+		Customers: migratedCustomerLookup{address: contracts.CustomerAddress{
+			ID:            uuid.New(),
+			RecipientName: "Nguyễn Văn A",
+			WardName:      "Phúc Xá",
+			IsDefault:     true,
+		}},
+		Tx:     &database.DB{Pool: pool},
+		Clock:  migrationTestClock{},
+		Mapper: ordermapper.New(),
+	})
+
+	// The customer's cart holds two of the migrated default variant at its
+	// migrated price (the product's old price).
+	ownerID := uuid.New()
+	cartID := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO carts (id, user_id) VALUES ($1, $2)`, cartID, ownerID); err != nil {
+		t.Fatalf("seed cart: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cart_items (id, cart_id, variant_id, quantity, unit_price_amount, currency)
+		VALUES ($1, $2, $3, $4, $5, 'VND')`,
+		uuid.New(), cartID, variantID, 2, 120000); err != nil {
+		t.Fatalf("seed cart line: %v", err)
+	}
+
+	actorCtx := orderappinterface.WithActor(ctx, orderappinterface.Actor{ID: ownerID})
+	view, err := orderService.Checkout(actorCtx, orderappdto.CheckoutInput{})
+	if err != nil {
+		t.Fatalf("a migrated product must still check out: %v", err)
+	}
+	if len(view.Lines) != 1 {
+		t.Fatalf("expected one order line, got %d", len(view.Lines))
+	}
+
+	// The order line snapshots the migrated product's code and SKU, and the cart
+	// was emptied (FR-019, FR-020).
+	var lineCode, lineSKU, lineVariant string
+	var lineQuantity int64
+	if err := db.QueryRowContext(ctx, `
+		SELECT product_code, sku, variant_id, quantity FROM order_items WHERE order_id = $1`,
+		view.ID).Scan(&lineCode, &lineSKU, &lineVariant, &lineQuantity); err != nil {
+		t.Fatalf("read the migrated order line: %v", err)
+	}
+	if lineCode != slug || lineSKU != slug {
+		t.Fatalf("the order line must snapshot the migrated code and SKU %q, got %q/%q", slug, lineCode, lineSKU)
+	}
+	if lineQuantity != 2 {
+		t.Fatalf("the order line quantity = %d, want 2", lineQuantity)
+	}
+	if lineVariant != variantID {
+		t.Fatalf("the order line must name the migrated variant %s, got %s", variantID, lineVariant)
+	}
+	var remaining int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM cart_items WHERE cart_id = $1`, cartID).Scan(&remaining); err != nil {
+		t.Fatalf("count the cart lines: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("checkout must empty the cart, %d lines remain", remaining)
 	}
 }

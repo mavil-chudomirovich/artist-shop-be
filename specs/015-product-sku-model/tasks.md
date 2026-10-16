@@ -156,12 +156,12 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Tests for User Story 3
 
-- [ ] T044 [P] [US3] Write the integration test `internal/modules/inventory/infrastructure/implement/postgres/inventory_variant_integration_test.go`: per-variant stock, the hold/sale/release per variant, and the automatic `ACTIVE ↔ OUT_OF_STOCK` transition on the variant as availability crosses zero
-- [ ] T045 [P] [US3] Write the integration test proving variant price/state/picture independence and the null-price fallback (`internal/modules/product/infrastructure/implement/postgres/product_sku_model_integration_test.go`)
+- [x] T044 [P] [US3] Write the integration test `internal/modules/inventory/infrastructure/implement/postgres/inventory_variant_integration_test.go`: per-variant stock, the hold/sale/release per variant, and the automatic `ACTIVE ↔ OUT_OF_STOCK` transition on the variant as availability crosses zero
+- [x] T045 [P] [US3] Write the integration test proving variant price/state/picture independence and the null-price fallback (`internal/modules/product/infrastructure/implement/postgres/product_sku_model_integration_test.go`)
 
 ### Implementation for User Story 3
 
-- [ ] T046 [US3] Confirm/adjust the per-variant availability read path and the variant-facts projection (`internal/modules/inventory/...` and `.../product/...`) so nothing is inherited from a sibling; T044/T045 are the proof
+- [x] T046 [US3] Confirm/adjust the per-variant availability read path and the variant-facts projection (`internal/modules/inventory/...` and `.../product/...`) so nothing is inherited from a sibling; T044/T045 are the proof
 
 **Checkpoint**: variant independence holds end-to-end
 
@@ -173,8 +173,8 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Tests for User Story 4
 
-- [ ] T047 [P] [US4] Extend the migration integration test (`T013`) to assert every seeded legacy product has `code` = slug and exactly one default variant, and that a migrated product still checks out
-- [ ] T048 [US4] Update the affected existing integration tests (catalogue, cart, order, inventory) that seeded products directly, so they seed a product **and its variant** after `00014`
+- [x] T047 [P] [US4] Extend the migration integration test (`T013`) to assert every seeded legacy product has `code` = slug and exactly one default variant, and that a migrated product still checks out
+- [x] T048 [US4] Update the affected existing integration tests (catalogue, cart, order, inventory) that seeded products directly, so they seed a product **and its variant** after `00014`
 
 **Checkpoint**: migrated data behaves as before
 

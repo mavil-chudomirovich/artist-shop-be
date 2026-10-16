@@ -407,9 +407,9 @@ func seedCategoryProduct(t *testing.T, pool *pgxpool.Pool, categoryID uuid.UUID)
 	slug := "tranh-thu-" + id.String()[:8]
 	const query = `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency, category_id, position, sell_state)
-		VALUES ($1, $2, $3, $4, '', 100, 'VND', $5, 1, 'COMING_SOON')`
-	if _, err := pool.Exec(context.Background(), query, id, "Tranh thử", slug, slug, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency, category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', 100, 'VND', $5, 1)`
+	if _, err := pool.Exec(context.Background(), query, id, "Tranh thử", "CODE-"+id.String()[:8], slug, categoryID); err != nil {
 		t.Fatalf("seed a product referencing the category: %v", err)
 	}
 	return id
