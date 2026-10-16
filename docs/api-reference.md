@@ -171,6 +171,7 @@ phân trang sai → `VALIDATION_ERROR` 400; một member của địa chỉ sai 
 | `CATEGORY_NAME_TAKEN` | 409 | Một danh mục khác đã dùng tên đó (so khớp sau khi trim và bỏ qua hoa/thường) |
 | `CATEGORY_SLUG_TAKEN` | 409 | Một danh mục khác đã dùng slug đó |
 | `CATEGORY_IN_USE` | 409 | Danh mục còn sản phẩm tham chiếu nên không xoá được. **Mới trở nên khả thi ở feature 006**: module 04 Product thêm `products.category_id` với `ON DELETE RESTRICT`, nên tầng lưu trữ từ chối thay vì xoá thành công |
+| `CATEGORY_HAS_PENDING_ORDERS` | 409 | Ẩn danh mục bị từ chối: còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ một variant của danh mục (feature 016). Thân từ chối nêu từng đơn chặn trong `error.details` — mỗi đơn một phần tử `{"field": "orderId", "issue": "<định danh đơn>"}`; không gì bị đổi |
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module (xem
 `specs/005-category-catalog/contracts/error-codes.md`): slug không an toàn URL hoặc một
@@ -197,6 +198,8 @@ member lạ → `MALFORMED_REQUEST` 400.
 | `VARIANT_NOT_FOUND` | 404 | Không có variant nào mang định danh đó cho sản phẩm (một `variantId` lạ). Một variant tồn tại nhưng không mua được **không** phải mã này: trên bề mặt công khai nó đơn giản vắng mặt, còn khi thêm vào giỏ nó là từ chối của cart |
 | `VARIANT_LAST_REMOVAL` | 409 | Variant là cái cuối cùng của sản phẩm; mỗi sản phẩm phải giữ **ít nhất một** variant |
 | `VARIANT_STATE_TRANSITION_INVALID` | 409 | Bước chuyển trạng thái bán không được trạng thái hiện tại của variant cho phép; message nêu trạng thái hiện tại |
+| `PRODUCT_HAS_PENDING_ORDERS` | 409 | Tắt cờ hiển thị của sản phẩm (`isVisible: false`) bị từ chối vì còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ một variant của sản phẩm (feature 016). Thân từ chối nêu từng đơn chặn như mã danh mục trên; không gì bị đổi |
+| `VARIANT_HAS_PENDING_ORDERS` | 409 | Chuyển variant khỏi trạng thái đang bán bị từ chối vì còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ variant đó (feature 016). Thân từ chối nêu từng đơn chặn như trên; không gì bị đổi |
 | `PRODUCT_IMAGE_LIMIT_REACHED` | 409 | Sản phẩm đã có đủ 10 ảnh |
 | `PRODUCT_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte tải lên không phải JPEG, PNG hoặc WebP (nhận theo chữ ký nội dung) |
 | `PRODUCT_IMAGE_TOO_LARGE` | 413 | Ảnh vượt trần 2 MB |
@@ -1666,7 +1669,13 @@ Response `200` giống `data` của `5.3`.
 Lỗi: `VALIDATION_ERROR` 400 (giá trị sai hình dạng hoặc quá độ dài, `categoryId` không phải
 UUID) · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
 `CATEGORY_NOT_FOUND` 404 · `CATEGORY_NAME_TAKEN` 409 · `CATEGORY_SLUG_TAKEN` 409 ·
-`RATE_LIMITED` 429. Va chạm để lại **cả hai** danh mục nguyên vẹn.
+`CATEGORY_HAS_PENDING_ORDERS` 409 (chỉ khi ẩn — `isVisible: false` — mà còn đơn chờ giữ một
+variant của danh mục) · `RATE_LIMITED` 429. Va chạm để lại **cả hai** danh mục nguyên vẹn.
+
+Ẩn bị từ chối thì **không gì đổi**: danh mục giữ nguyên, các dòng giỏ giữ nguyên. Thân từ chối
+mang một phần tử `error.details` cho **mỗi** đơn chặn — `{"field": "orderId", "issue": "<định
+danh đơn>"}` — để operator xử lý đúng đơn. Hiện danh mục (`isVisible: true`) không bao giờ bị
+chặn; ẩn thành công gỡ các variant của danh mục khỏi mọi giỏ trong cùng transaction.
 
 ### 5.7 `DELETE /admin/categories/{categoryId}`
 
@@ -1748,7 +1757,7 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
 `price` là **giá thấp nhất** trong các variant đang bán, `imageUrl` là ảnh variant mặc định fallback
 ảnh chính gallery, hoặc `null` khi không có ảnh nào.
 
-**Hình dạng quản trị** `AdminProduct` (11 member) — một phần tử của danh sách quản trị:
+**Hình dạng quản trị** `AdminProduct` (12 member, thêm `isVisible`) — một phần tử của danh sách quản trị:
 
 ```json
 {
@@ -1759,6 +1768,7 @@ khoảng `1..100`. Thứ tự ổn định: `position`, rồi `createdAt`, rồi
   "defaultPrice": { "amount": 120000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
   "position": 10,
+  "isVisible": true,
   "variantCount": 2,
   "imageUrl": "https://res.cloudinary.com/demo/image/upload/stand.jpg",
   "createdAt": "2026-10-07T08:15:04Z",
@@ -1840,8 +1850,8 @@ Danh sách **toàn bộ** sản phẩm, kể cả sản phẩm không hiển th�
 
 Query: như `6.1` (không có `category`).
 
-Response `200`: `data` là mảng `AdminProduct` (11 member, gồm `code`, `defaultPrice`,
-`variantCount` và `imageUrl` là ảnh chính của gallery); `meta` là khối phân trang chung.
+Response `200`: `data` là mảng `AdminProduct` (12 member, gồm `code`, `defaultPrice`,
+`isVisible`, `variantCount` và `imageUrl` là ảnh chính của gallery); `meta` là khối phân trang chung.
 
 Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
 (ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
@@ -1881,7 +1891,7 @@ mặc định của sản phẩm — currency luôn là currency của sản ph�
 currency). `code` do operator viết (**cũng là đoạn link công khai**, URL-safe), **không** sinh từ
 `name`.
 
-Response `201`: `data` = `AdminProductDetail` (13 member = `AdminProduct` + `images` + `variants`);
+Response `201`: `data` = `AdminProductDetail` (14 member = `AdminProduct` + `images` + `variants`);
 mỗi phần tử `variants` là `AdminVariant` (8 member: `id`, `name`, `sku`, `price`,
 `effectivePrice`, `imageUrl`, `position`, `sellState`), `price` là `null` khi variant dùng giá mặc
 định.
@@ -1913,7 +1923,7 @@ variant (kể cả variant `COMING_SOON`/`DISCONTINUED`) — để operator qu�
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Response `200`: `data` = `AdminProductDetail` (13 member = `AdminProduct` + `images` + `variants`);
+Response `200`: `data` = `AdminProductDetail` (14 member = `AdminProduct` + `images` + `variants`);
 mỗi phần tử `images` là `{ id, publicId, url, width, height, position, isPrimary }`; mỗi phần tử
 `variants` là `AdminVariant` (8 member, gồm `sku`, `effectivePrice` và `sellState`).
 
@@ -1940,7 +1950,8 @@ Request (`UpdateProductRequest`, mọi member tuỳ chọn, `additionalPropertie
   "description": "Mô tả mới",
   "defaultPrice": { "amount": 130000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
-  "position": 5
+  "position": 5,
+  "isVisible": false
 }
 ```
 
@@ -1950,13 +1961,19 @@ chính nó. `description` chuỗi rỗng xoá mô tả.
 Response `200`: `data` = `AdminProductDetail`.
 
 Lỗi: `VALIDATION_ERROR` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN`
-403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_CODE_TAKEN` 409 ·
+403 · `PRODUCT_NOT_FOUND` 404 · `PRODUCT_CODE_TAKEN` 409 · `PRODUCT_HAS_PENDING_ORDERS` 409
+(chỉ khi tắt hiển thị — `isVisible: false` — mà còn đơn chờ giữ một variant của sản phẩm) ·
 `RATE_LIMITED` 429
 
 Ghi chú:
 
 - **Variant không đổi qua request này**: thêm/sửa/gỡ variant đi qua các route `.../variants*` (§6.8
   trở đi).
+- **Tắt hiển thị bị chặn khi còn đơn chờ**: `PRODUCT_HAS_PENDING_ORDERS` 409 khi
+  `isVisible: false` mà còn đơn `PENDING`/`PAYMENT_PENDING` giữ một variant của sản phẩm. Thân
+  từ chối mang một phần tử `error.details` cho mỗi đơn chặn (`{"field": "orderId", "issue": "<định
+  danh đơn>"}`); sản phẩm và giỏ nguyên vẹn. Bật hiển thị (`isVisible: true`) không bao giờ bị
+  chặn; tắt hiển thị thành công gỡ các variant của sản phẩm khỏi mọi giỏ trong cùng transaction.
 - Ghi `audit_logs` với action `PRODUCT_UPDATED`, metadata `{"code": ...}`.
 
 ### 6.7 `DELETE /admin/products/{id}`
@@ -2145,12 +2162,19 @@ Response `200`: `data` = `AdminProductDetail`.
 Lỗi: `VALIDATION_ERROR` 400 (`to` không thuộc bốn trạng thái; `details[].field` là `"to"`) ·
 `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 ·
 `VARIANT_NOT_FOUND` 404 · `VARIANT_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
+`VARIANT_HAS_PENDING_ORDERS` 409 (mọi bước **rời** trạng thái đang bán khi còn đơn chờ giữ variant) ·
 `RATE_LIMITED` 429
 
 Ghi chú:
 
 - Một lần chuyển bị từ chối **không đổi gì**. Module 05 Inventory **tự gọi** hai cạnh
   `ACTIVE ↔ OUT_OF_STOCK` khi khả dụng của variant cắt qua 0 / hồi kho (xem §7).
+- **Chuyển rời trạng thái bán bị chặn khi còn đơn chờ**: `ACTIVE → OUT_OF_STOCK`,
+  `ACTIVE → DISCONTINUED` và mọi bước rời đang bán khác trả `409 VARIANT_HAS_PENDING_ORDERS`
+  khi còn đơn `PENDING`/`PAYMENT_PENDING` giữ variant; thân từ chối nêu từng đơn chặn trong
+  `error.details` (`{"field": "orderId", "issue": "<định danh đơn>"}`), variant và giỏ nguyên
+  vẹn. Chuyển **về** đang bán không bao giờ bị chặn. Tín hiệu hết hàng của hệ thống (module 05)
+  bị chặn thì thành **no-op đã ghi nhận**, không phải lỗi — tồn kho vẫn ghi đúng.
 - Ghi `audit_logs` với action `PRODUCT_VARIANT_UPDATED`.
 
 ### 6.14 `POST /admin/products/{id}/images`
@@ -3270,21 +3294,21 @@ Ghi chú:
 | GET | `/api/v1/admin/categories` | ADMIN | Toàn bộ danh mục, kể cả ẩn (có phân trang) |
 | POST | `/api/v1/admin/categories` | ADMIN | Tạo danh mục (201) |
 | GET | `/api/v1/admin/categories/{categoryId}` | ADMIN | Chi tiết danh mục, kể cả ẩn |
-| PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục |
+| PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục (`409 CATEGORY_HAS_PENDING_ORDERS` khi ẩn mà còn đơn chờ — feature 016) |
 | DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204; `409 CATEGORY_IN_USE` nếu còn sản phẩm — feature 006) |
 | GET | `/api/v1/products` | — | Catalogue: **một mục mỗi sản phẩm** khách thấy được, giá thấp nhất trong variant đang bán (có phân trang, lọc `?category=`) |
 | GET | `/api/v1/products/{code}` | — | Chi tiết sản phẩm theo `code` (đoạn link công khai; kèm danh sách variant hiển thị + trạng thái còn hàng) |
 | GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang) |
 | POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm **kèm ≥1 variant** (`201`) |
 | GET | `/api/v1/admin/products/{id}` | ADMIN | Chi tiết sản phẩm, kể cả không hiển thị, kèm ảnh + mọi variant |
-| PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đụng variant) |
+| PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đụng variant; `409 PRODUCT_HAS_PENDING_ORDERS` khi tắt hiển thị mà còn đơn chờ — feature 016) |
 | DELETE | `/api/v1/admin/products/{id}` | ADMIN | Xoá cứng sản phẩm và các variant (`204`) |
 | POST | `/api/v1/admin/products/{id}/variants` | ADMIN | Thêm variant (`201`) |
 | PATCH | `/api/v1/admin/products/{id}/variants/{variantId}` | ADMIN | Sửa một phần variant (`price` ba trạng thái) |
 | DELETE | `/api/v1/admin/products/{id}/variants/{variantId}` | ADMIN | Gỡ variant (`204`; `409 VARIANT_LAST_REMOVAL` nếu là cái cuối) |
 | POST | `/api/v1/admin/products/{id}/variants/{variantId}/image` | ADMIN | Tải ảnh variant (multipart, ≤ 2 MB) (`201`) |
 | DELETE | `/api/v1/admin/products/{id}/variants/{variantId}/image` | ADMIN | Gỡ ảnh variant (`204`) |
-| POST | `/api/v1/admin/products/{id}/variants/{variantId}/state` | ADMIN | Chuyển trạng thái bán của variant |
+| POST | `/api/v1/admin/products/{id}/variants/{variantId}/state` | ADMIN | Chuyển trạng thái bán của variant (`409 VARIANT_HAS_PENDING_ORDERS` khi rời trạng thái bán mà còn đơn chờ — feature 016) |
 | POST | `/api/v1/admin/products/{id}/images` | ADMIN | Gắn ảnh gallery sản phẩm (multipart, ≤ 2 MB, ≤ 10 ảnh) (`201`) |
 | DELETE | `/api/v1/admin/products/{id}/images/{imageId}` | ADMIN | Gỡ ảnh gallery (`204`) |
 | POST | `/api/v1/admin/products/{id}/images/{imageId}/primary` | ADMIN | Đặt ảnh chính của gallery |
@@ -3336,6 +3360,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-16 | **Chặn ẩn khi còn đơn chờ (feature 016).** Ẩn danh mục (`PATCH /admin/categories/{categoryId}` với `isVisible: false`), tắt cờ hiển thị sản phẩm (`PATCH /admin/products/{id}` với `isVisible: false`) và mọi bước chuyển variant **rời** trạng thái đang bán (`POST .../variants/{variantId}/state`) bị từ chối `409` khi còn đơn `PENDING`/`PAYMENT_PENDING` giữ variant liên quan. **Thêm ba** mã vào mục 1.4: `CATEGORY_HAS_PENDING_ORDERS`, `PRODUCT_HAS_PENDING_ORDERS`, `VARIANT_HAS_PENDING_ORDERS` — thân từ chối mang một phần tử `error.details` cho mỗi đơn chặn (`{"field": "orderId", "issue": "<định danh đơn>"}`); không gì bị đổi. Ẩn thành công gỡ các variant khỏi mọi giỏ trong cùng transaction; hiện/bật hiển thị và chuyển **về** đang bán không bao giờ bị chặn; tín hiệu hết hàng của hệ thống bị chặn thành no-op đã ghi nhận. Không thêm route, không đổi method/path; DTO chỉ thêm member `isVisible` (tuỳ chọn ở request, thêm ở response quản trị). | `specs/016-hide-guard/contracts/error-codes.md`, `internal/modules/category/presentation/http/errors.go`, `internal/modules/product/presentation/http/errors.go` |
 | 2026-10-16 | **Mã sản phẩm trở thành đoạn link công khai (module 04 Product, feature 015).** Sản phẩm **không** còn `slug` riêng: `code` vừa là mã sản phẩm operator viết vừa là đoạn link của URL công khai. **Đổi** `GET /products/{slug}` → `GET /products/{code}` (path param `code`). **Đổi** hình dạng công khai: entry và detail mang `code` thay `slug`; body `POST`/`PATCH /admin/products` **bỏ** `slug`, `code` là đoạn link (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140 ký tự, duy nhất trên `lower(btrim(code))`). Dòng đơn **bỏ** snapshot `slug` (giữ `product_code` + `sku`). **Gỡ** mã `PRODUCT_SLUG_TAKEN` 409; va chạm dùng `409 PRODUCT_CODE_TAKEN`. Migration `00015_product_code_as_link_segment.sql` gỡ `products.slug`/`normalized_slug` và `order_items.slug`; danh mục vẫn giữ `slug` riêng. Cập nhật mục 1.4, mục 6 và bảng tổng hợp; `docs/swagger/` sinh lại khớp. | `migrations/00015_product_code_as_link_segment.sql`, `internal/modules/product/presentation/http/router.go`, `internal/modules/product/domain/model/code.go` |
 | 2026-10-16 | **Tái cấu trúc sản phẩm thành sản phẩm cha + variant (SKU) (module 04, feature 015); thay thế feature 014.** Một `products` cha giữ nội dung dùng chung (tên, mã sản phẩm `code`, giá mặc định, danh mục, mô tả, slug, gallery) và sở hữu mảng **variant** con (`product_variants`: tên, `sku`, giá riêng tuỳ chọn, ảnh riêng, thứ tự, trạng thái bán riêng). **Variant là đơn vị bán**: tồn kho, giỏ và đơn đều theo variant. **Đổi** `GET /products` thành **một mục mỗi sản phẩm** (giá thấp nhất trong variant đang bán, ảnh variant mặc định; **bỏ** `type`). **Đổi** `GET /products/{slug}`: `data` mang thêm `variants[]` (`id`, `name`, `price`, `imageUrl`, `sellState`, `inStock`; SKU không lộ). **Đổi** `POST /admin/products`: **bắt buộc** `variants` (≥1) và `code`; variant mới ở `COMING_SOON`. **Thêm sáu** endpoint variant: `POST`/`PATCH`/`DELETE /admin/products/{id}/variants[/{variantId}]`, `POST`/`DELETE .../variants/{variantId}/image`, `POST .../variants/{variantId}/state`. **Gỡ** endpoint cấp sản phẩm `POST /admin/products/{id}/state` (feature 006) và toàn bộ route variant group của **feature 014** (`GET /product-groups/{slug}`, `GET`/`POST`/`PATCH`/`DELETE /admin/product-groups*` cùng các route ảnh nhóm). **Đổi** giỏ: dòng khoá theo `variantId` (`POST /cart/items` nhận `variantId`, `PATCH`/`DELETE /cart/items/{variantId}`); `CartLineResponse` **9 member** (`productName`/`variantName` thay `name`/`slug`). **Đổi** tồn kho (module 05): `/admin/inventory/*` khoá theo `{variantId}`, `StockMovement.variantId`. **Đổi** đơn (module 07): `OrderLineResponse` **8 member** chụp `productName`/`variantName` (mỗi cặp mã sản phẩm + SKU là một dòng; SKU/mã không trả ra view khách); `EditLineRequest.variantId` và các `details[].field` đổi sang `variantId`. **Thêm năm** mã `PRODUCT_CODE_TAKEN` 409, `VARIANT_SKU_TAKEN` 409, `VARIANT_NOT_FOUND` 404, `VARIANT_LAST_REMOVAL` 409, `VARIANT_STATE_TRANSITION_INVALID` 409; **gỡ** năm mã variant group của feature 014 và `PRODUCT_STATE_TRANSITION_INVALID` của feature 006. Cập nhật mục 1.4 (mã lỗi) và §6/§7/§8/§9. Xem ADR-021. | `internal/modules/product/presentation/http/router.go`, `internal/modules/cart/presentation/http/router.go`, `internal/modules/inventory/presentation/http/router.go`, `internal/modules/order/presentation/http/router.go` |
 | 2026-10-15 | **Thêm variant group một chiều vào module 04 Product (feature 014).** Một nhóm gom nhiều **lựa chọn**, mỗi lựa chọn là một **sản phẩm đầy đủ, độc lập** (giá/tồn/trạng thái/ảnh/link riêng), nên **không** đổi bất kỳ hợp đồng liên module nào — khách vẫn thêm một `productId` vào giỏ. **Đổi** `GET /products` thành danh sách **gộp**: mỗi phần tử là `PublicCatalogueEntry` **7 member** (thêm `type` = `"product"` hoặc `"variant-group"`); một sản phẩm đã thuộc nhóm **không** còn xuất hiện riêng lẻ mà được đại diện bởi nhóm; nhóm chỉ hiện khi còn ít nhất một lựa chọn hiển thị, và giá card là giá lựa chọn thấp nhất. **Đổi** `GET /products/{slug}`: khi sản phẩm là lựa chọn, `data` mang thêm bộ chọn `variantGroup` (nhóm + các lựa chọn đang hiển thị); `data` là 8 hoặc 9 member. **Thêm tám** endpoint nhóm: công khai `GET /api/v1/product-groups/{slug}`; quản trị `GET`/`POST /admin/product-groups`, `GET`/`PATCH`/`DELETE /admin/product-groups/{id}`, `POST /{id}/images`, `DELETE /{id}/images/{imageId}`, `POST /{id}/images/{imageId}/primary` (tất cả `ADMIN`). **Đổi** body `POST`/`PATCH /admin/products`: thêm `variantGroupId`+`variantLabel` — với `PATCH` là **ba trạng thái** (bỏ qua = giữ, `null` = gỡ, có giá trị = gắn), gắn/gỡ **không** đụng giá/ảnh/trạng thái/slug. **Thêm năm** mã `VARIANT_GROUP_NOT_FOUND` 404, `VARIANT_GROUP_SLUG_TAKEN` 409, `VARIANT_GROUP_HAS_OPTIONS` 409, `VARIANT_LABEL_TAKEN` 409, `PRODUCT_ALREADY_IN_VARIANT_GROUP` 409 vào mục 1.4, cùng các action audit nhóm. Nhóm và sản phẩm dùng **hai không gian tên slug riêng** (trùng trong cùng một loại vẫn `409`). Gallery nhóm dùng chung luật media và mã `PRODUCT_IMAGE_*`. Ba hình dạng mới: công khai `PublicVariantGroupDetail` **7 member** / `PublicVariantOption` **6 member**; quản trị `AdminVariantGroup` **11 member** / `AdminVariantGroupDetail` **13 member** / `AdminGroupOption` **9 member**. Mục 6 thêm `6.12`–`6.20`; bảng tổng hợp §11 cập nhật. Xem ADR-020. | `internal/modules/product/presentation/http/router.go`, `internal/modules/product/presentation/http/handler.go` |

@@ -9,6 +9,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/constant"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 )
@@ -100,10 +101,22 @@ func (s *Service) CreateCategory(ctx context.Context, in dto.CreateCategoryInput
 // and records both actions: they are two transitions of the transition table, and
 // a single PATCH is allowed to ask for two. A patch that asks for no change at
 // all answers the current category without writing or auditing anything.
+//
+// Hiding a visible category (turning its display off) runs through the pending
+// orders guard in updateCategoryGuarded: the category's variants are resolved,
+// checked against PENDING and PAYMENT_PENDING orders, and — only when none
+// covers them — hidden with every cart line holding those variants removed in
+// the same transaction (specs/016-hide-guard FR-004, FR-007, research D3, D4).
+// Showing a category again, or an edit that does not touch visibility, never
+// runs the guard and never restores removed cart lines.
 func (s *Service) UpdateCategory(ctx context.Context, in dto.UpdateCategoryInput) (dto.AdminCategoryOutput, error) {
 	category, err := s.Categories.FindByID(ctx, in.ID)
 	if err != nil {
 		return dto.AdminCategoryOutput{}, err
+	}
+
+	if in.IsVisible != nil && !*in.IsVisible && category.IsVisible && s.Tx != nil {
+		return s.updateCategoryGuarded(ctx, in)
 	}
 
 	contentChanged := in.Name != nil || in.Slug != nil || in.Description != nil || in.Position != nil
@@ -149,6 +162,121 @@ func (s *Service) UpdateCategory(ctx context.Context, in dto.UpdateCategoryInput
 	return s.Mapper.AdminCategory(*category), nil
 }
 
+// updateCategoryGuarded hides a visible category behind the pending-orders
+// guard. The caller has already established that the request asks to hide and
+// the category is currently visible; everything below — the re-read, the
+// content edit, the variant resolution, the pending-order check, the hide and
+// the cart cleanup — runs inside one transaction.
+//
+// A blocking order refuses the whole patch with the order identifiers: neither
+// the hide nor any content change the same patch carries is persisted, and no
+// cart line is touched (spec SC-001). Showing again is never guarded and never
+// restores removed cart lines.
+func (s *Service) updateCategoryGuarded(ctx context.Context, in dto.UpdateCategoryInput) (dto.AdminCategoryOutput, error) {
+	contentChanged := in.Name != nil || in.Slug != nil || in.Description != nil || in.Position != nil
+
+	var out dto.AdminCategoryOutput
+	var audited model.Category
+	var removed int64
+	var wroteContent, hid bool
+
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		category, err := s.Categories.FindByID(txCtx, in.ID)
+		if err != nil {
+			return err
+		}
+		if contentChanged {
+			if err := category.Apply(model.CategoryEdit{
+				Name:        in.Name,
+				Slug:        in.Slug,
+				Description: in.Description,
+				Position:    in.Position,
+			}, now()); err != nil {
+				return err
+			}
+		}
+		if !category.Hide(now()) {
+			// A racing hide already took the category off display: there is
+			// nothing left to guard. A content change the patch carries is
+			// still persisted; a patch that asks for nothing else answers the
+			// current category without writing or auditing anything.
+			if contentChanged {
+				if err := s.Categories.Update(txCtx, category); err != nil {
+					return err
+				}
+				wroteContent = true
+				audited = *category
+			}
+			out = s.Mapper.AdminCategory(*category)
+			return nil
+		}
+
+		variantIDs, err := s.guardVariantIDs(txCtx, category.ID)
+		if err != nil {
+			return err
+		}
+		blocking, err := s.guardPendingOrders(txCtx, variantIDs)
+		if err != nil {
+			return err
+		}
+		if len(blocking) > 0 {
+			return domainerr.CategoryHasPendingOrders(blocking)
+		}
+
+		if err := s.Categories.Update(txCtx, category); err != nil {
+			return err
+		}
+		removed, err = s.guardCleanCarts(txCtx, variantIDs)
+		if err != nil {
+			return err
+		}
+		hid = true
+		wroteContent = contentChanged
+		audited = *category
+		out = s.Mapper.AdminCategory(*category)
+		return nil
+	}); err != nil {
+		return dto.AdminCategoryOutput{}, err
+	}
+
+	if wroteContent {
+		s.recordCategory(ctx, constant.AuditCategoryUpdated, &audited)
+	}
+	if hid {
+		s.recordCategoryHidden(ctx, &audited, removed)
+	}
+	return out, nil
+}
+
+// guardVariantIDs resolves the category's variants through the product
+// contract in one bulk read. A nil port resolves none.
+func (s *Service) guardVariantIDs(ctx context.Context, categoryID uuid.UUID) ([]uuid.UUID, error) {
+	if s.Variants == nil {
+		return []uuid.UUID{}, nil
+	}
+	return s.Variants.VariantIDsByCategories(ctx, []uuid.UUID{categoryID})
+}
+
+// guardPendingOrders returns the blocking PENDING or PAYMENT_PENDING orders
+// holding any of the given variants in one bulk read. A nil port blocks
+// nothing.
+func (s *Service) guardPendingOrders(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if s.Orders == nil {
+		return []uuid.UUID{}, nil
+	}
+	return s.Orders.PendingOrdersForVariants(ctx, variantIDs)
+}
+
+// guardCleanCarts removes every cart line holding any of the given variants in
+// one statement and returns how many lines were removed. A nil port removes
+// nothing.
+func (s *Service) guardCleanCarts(ctx context.Context, variantIDs []uuid.UUID) (int64, error) {
+	if s.Carts == nil {
+		return 0, nil
+	}
+	return s.Carts.RemoveVariantsFromAllCarts(ctx, variantIDs)
+}
+
 // DeleteCategory removes a category and audits the removal (FR-012, FR-013).
 //
 // Removal is a hard delete (research D5): the row goes, the audit entry stays. An
@@ -185,6 +313,20 @@ func (s *Service) recordCategory(ctx context.Context, action string, category *m
 	}
 	s.Audit.Record(ctx, action, string(audit.OutcomeSuccess),
 		auditActor(ctx), auditActorRole(ctx), targetTypeCategory, category.ID.String(), metadata,
+	)
+}
+
+// recordCategoryHidden emits the hide event with the cart-cleanup count as
+// metadata, so the trail records how many cart lines the hide removed without
+// a new audit action (specs/016-hide-guard research D8). Emission never fails
+// the business operation: it runs after the transaction committed.
+func (s *Service) recordCategoryHidden(ctx context.Context, category *model.Category, removedCartLines int64) {
+	if s.Audit == nil {
+		return
+	}
+	s.Audit.Record(ctx, constant.AuditCategoryHidden, string(audit.OutcomeSuccess),
+		auditActor(ctx), auditActorRole(ctx), targetTypeCategory, category.ID.String(),
+		map[string]any{"name": category.Name, "slug": category.Slug, "removedCartLines": removedCartLines},
 	)
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/repository"
 )
@@ -16,6 +17,35 @@ import (
 // domain's contract, aliased here so this package names the dependency without
 // declaring a second interface that could drift (Constitution I).
 type CategoryRepository = repository.CategoryRepository
+
+// OrderHideGuard is the cross-module contract this module asks module 07: which
+// PENDING or PAYMENT_PENDING orders hold given variants, so hiding a category
+// can be refused while one is pending without reading module 07's tables
+// (specs/016-hide-guard research D1, Constitution I).
+type OrderHideGuard = contracts.OrderHideGuard
+
+// ProductCategoryVariants is the cross-module contract this module asks module
+// 04: which variants belong to given categories, so the hide guard can resolve
+// "my variants" without reading module 04's tables (specs/016-hide-guard
+// research D2, Constitution I).
+type ProductCategoryVariants = contracts.ProductCategoryVariants
+
+// CartHideCleanup is the cross-module contract this module asks module 06: remove
+// the hidden variants from every cart inside the same transaction as the hide
+// (specs/016-hide-guard research D4, Constitution I).
+type CartHideCleanup = contracts.CartHideCleanup
+
+// UnitOfWork runs a function inside a single database transaction. The
+// application layer owns every transaction boundary; repositories never open one
+// themselves (Constitution I).
+//
+// The guarded category hide is the module's one genuine use of it: the
+// pending-order check, the hide and the cart cleanup commit together or not at
+// all, so a racing checkout either completes before the check (and then blocks
+// the hide) or starts after the hide (spec edge case, research D3).
+type UnitOfWork interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
 
 // Auditor records the module's administrative mutations: every create, edit,
 // display change and removal, naming the category and the acting administrator

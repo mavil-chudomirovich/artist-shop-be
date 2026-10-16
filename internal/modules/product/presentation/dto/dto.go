@@ -181,6 +181,9 @@ type UpdateProductRequest struct {
 	CategoryID *uuid.UUID `json:"categoryId"`
 	// Position is the new position; nil keeps the current value.
 	Position *int `json:"position"`
+	// IsVisible is the requested display state; nil keeps the current value.
+	// Turning it off runs the pending-orders hide guard (specs/016-hide-guard).
+	IsVisible *bool `json:"isVisible"`
 }
 
 // UpdateVariantRequest is the administrator variant partial-edit body
@@ -275,6 +278,9 @@ type AdminProductResponse struct {
 	CategoryID uuid.UUID `json:"categoryId"`
 	// Position is the operator's ordering preference.
 	Position int `json:"position"`
+	// IsVisible reports whether a customer can see the product
+	// (specs/016-hide-guard).
+	IsVisible bool `json:"isVisible"`
 	// VariantCount is how many variants the product carries.
 	VariantCount int `json:"variantCount"`
 	// ImageURL is the main picture's link, or null when the product has none.

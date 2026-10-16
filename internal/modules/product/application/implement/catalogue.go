@@ -53,10 +53,20 @@ type Service struct {
 	// (FR-016). It is reached only by the picture use cases, which is what keeps
 	// a provider outage from failing a product read or edit.
 	Media appinterface.MediaStore
-	// Tx owns the create operation's transaction boundaries and the gallery
-	// ceiling's checks. The ten-picture ceiling is a count no unique index can
-	// express, so it is checked while the product's row is locked inside this
-	// transaction.
+	// Orders answers which PENDING or PAYMENT_PENDING orders hold given
+	// variants. It is the order module's hide-guard adapter, supplied at the
+	// composition root. A nil port blocks nothing.
+	Orders appinterface.OrderHideGuard
+	// Carts removes hidden variants from every cart. It is the cart module's
+	// hide-guard adapter, supplied at the composition root. A nil port removes
+	// nothing.
+	Carts appinterface.CartHideCleanup
+	// Tx owns the create operation's transaction boundaries, the gallery
+	// ceiling's checks, and the guarded variant hide. The ten-picture ceiling
+	// is a count no unique index can express, so it is checked while the
+	// product's row is locked inside this transaction; the pending-order check,
+	// the state change and the cart cleanup commit together or not at all
+	// (specs/016-hide-guard research D3).
 	Tx appinterface.UnitOfWork
 	// Config carries the picture upload ceilings the composition resolved. A
 	// zero value falls back to the documented contract defaults.

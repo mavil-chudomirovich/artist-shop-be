@@ -111,6 +111,7 @@ func adminProduct(product model.Product, variantCount int, mainURL *string) dto.
 		Price:        product.Price,
 		CategoryID:   product.CategoryID,
 		Position:     product.Position,
+		IsVisible:    product.IsVisible,
 		VariantCount: variantCount,
 		ImageURL:     mainURL,
 		CreatedAt:    product.CreatedAt,

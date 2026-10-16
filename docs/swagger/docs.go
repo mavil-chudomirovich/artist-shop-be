@@ -6143,6 +6143,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse"
                     }
                 },
+                "isVisible": {
+                    "description": "IsVisible reports whether a customer can see the product\n(specs/016-hide-guard).",
+                    "type": "boolean"
+                },
                 "name": {
                     "description": "Name is the name the operator wrote.",
                     "type": "string"
@@ -6201,6 +6205,10 @@ const docTemplate = `{
                 "imageUrl": {
                     "description": "ImageURL is the main picture's link, or null when the product has none.",
                     "type": "string"
+                },
+                "isVisible": {
+                    "description": "IsVisible reports whether a customer can see the product\n(specs/016-hide-guard).",
+                    "type": "boolean"
                 },
                 "name": {
                     "description": "Name is the name the operator wrote.",
@@ -6541,6 +6549,10 @@ const docTemplate = `{
                 "description": {
                     "description": "Description is the new description; nil keeps the current value, an empty\nstring clears it.",
                     "type": "string"
+                },
+                "isVisible": {
+                    "description": "IsVisible is the requested display state; nil keeps the current value.\nTurning it off runs the pending-orders hide guard (specs/016-hide-guard).",
+                    "type": "boolean"
                 },
                 "name": {
                     "description": "Name is the new name; nil keeps the current value.",

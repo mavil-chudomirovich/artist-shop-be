@@ -109,6 +109,29 @@ func (r *memoryRepo) ClearLines(_ context.Context, cartID uuid.UUID) error {
 	return nil
 }
 
+// DeleteLinesByVariants removes every line holding one of the given variants,
+// from every cart, mirroring the adapter's one-statement delete the hide guards
+// use (specs/016-hide-guard research D4).
+func (r *memoryRepo) DeleteLinesByVariants(_ context.Context, variantIDs []uuid.UUID) (int64, error) {
+	held := make(map[uuid.UUID]bool, len(variantIDs))
+	for _, id := range variantIDs {
+		held[id] = true
+	}
+	var removed int64
+	for cartID, lines := range r.lines {
+		kept := lines[:0]
+		for _, line := range lines {
+			if held[line.VariantID] {
+				removed++
+				continue
+			}
+			kept = append(kept, line)
+		}
+		r.lines[cartID] = kept
+	}
+	return removed, nil
+}
+
 var _ domainrepo.CartRepository = (*memoryRepo)(nil)
 
 // fakeVariants answers the ProductVariants contract from a fixed set of variants.
@@ -404,6 +427,23 @@ func TestAddUnknownVariantIsNotFound(t *testing.T) {
 	_, err := svc.Add(actorContext(uuid.New()), appdto.AddItemInput{VariantID: uuid.New(), Quantity: 1})
 	if !errors.Is(err, domainerr.ErrProductNotFound) {
 		t.Fatalf("expected ErrProductNotFound, got %v", err)
+	}
+}
+
+// specs/016-hide-guard FR-006 edge case: a hidden variant's ACTIVE facts are
+// absent from the variant-facts read exactly like a removed variant's, so adding
+// it after the hide is refused with the shared PRODUCT_NOT_FOUND and no line is
+// written.
+func TestAddHiddenVariantAbsentIsNotFound(t *testing.T) {
+	svc, repo, _, _ := newCartService(t)
+	hidden := uuid.New()
+
+	_, err := svc.Add(actorContext(uuid.New()), appdto.AddItemInput{VariantID: hidden, Quantity: 1})
+	if !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("adding a hidden variant must be refused as not-found, got %v", err)
+	}
+	if len(repo.lines) != 0 {
+		t.Fatalf("a refused add must write no line, got %+v", repo.lines)
 	}
 }
 

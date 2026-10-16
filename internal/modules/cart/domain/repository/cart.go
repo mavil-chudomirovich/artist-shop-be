@@ -74,4 +74,13 @@ type CartRepository interface {
 	// two reads return the same order even when they share a timestamp. It joins
 	// the caller's transaction.
 	Lines(ctx context.Context, cartID uuid.UUID) ([]model.CartLine, error)
+
+	// DeleteLinesByVariants removes every line that holds one of the given
+	// variants, from every cart, in one statement, and returns how many lines
+	// were removed, so a hiding use case can clean the hidden variants out of
+	// carts inside the same transaction as the hide and record the count in its
+	// event metadata (specs/016-hide-guard research D4, data-model.md). An
+	// empty input removes nothing and answers zero, never an error. It joins
+	// the caller's transaction.
+	DeleteLinesByVariants(ctx context.Context, variantIDs []uuid.UUID) (int64, error)
 }

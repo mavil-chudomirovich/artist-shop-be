@@ -278,8 +278,15 @@ func (r *VariantRepository) CountByProduct(ctx context.Context, productID uuid.U
 // the read behind the cross-module variant-facts contract that the cart and order
 // consume (research D6). An identifier no variant carries is absent from the
 // result rather than an error, so the caller can tell a removed variant from an
-// available one. OnSale is true exactly when the variant is ACTIVE, so the
-// consumer never re-derives the rule (FR-007).
+// available one. A variant whose product flag is off or whose category is hidden
+// is absent too, exactly like a removed variant, so the cart reports its lines as
+// unavailable and refuses to re-add it (specs/016-hide-guard FR-006, FR-007).
+// OnSale is true exactly when the variant is ACTIVE: the statement keeps only
+// variants of visible products in visible categories — the same visibility
+// predicate the catalogue read uses, with the visible-category set read as the
+// categories' own flags in the same statement — so a returned fact counts as
+// on-sale only while the variant is ACTIVE and its product flag is on and its
+// category is visible, and the consumer never re-derives the rule (FR-007).
 func (r *VariantRepository) FindFactsByIDs(ctx context.Context, ids []uuid.UUID) ([]domainrepo.VariantFacts, error) {
 	if len(ids) == 0 {
 		return []domainrepo.VariantFacts{}, nil
@@ -287,7 +294,10 @@ func (r *VariantRepository) FindFactsByIDs(ctx context.Context, ids []uuid.UUID)
 	query := `SELECT` + variantFactsColumns + `
 		FROM product_variants v
 		JOIN products p ON p.id = v.product_id
+		JOIN categories c ON c.id = p.category_id
 		WHERE v.id = ANY($1)
+		  AND p.is_visible
+		  AND c.is_visible
 		ORDER BY v.position, v.created_at, v.id`
 	rows, err := r.querier(ctx).Query(ctx, query, ids)
 	if err != nil {

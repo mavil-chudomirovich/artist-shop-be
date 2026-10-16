@@ -6,6 +6,22 @@ import (
 	"github.com/google/uuid"
 )
 
+// CartHideCleanup exposes the bulk cart-line removal the hide guards need, so a
+// hiding use case can remove the hidden variants from every cart inside the
+// same transaction as the hide, without ever writing the cart's tables itself
+// (Constitution I, specs/016-hide-guard research D4). The cart module (06)
+// supplies an adapter at the composition root.
+//
+// The removal is one bounded DELETE however many variants are passed, so hiding
+// a category of hundreds of variants stays bounded (spec SC-004).
+type CartHideCleanup interface {
+	// RemoveVariantsFromAllCarts deletes every cart line that holds one of the
+	// given variants and returns how many lines were removed, so the hide can
+	// record the count in its event metadata. A refused hide never calls it;
+	// an empty input removes nothing and answers zero, never an error.
+	RemoveVariantsFromAllCarts(ctx context.Context, variantIDs []uuid.UUID) (int64, error)
+}
+
 // CartCheckout exposes a customer's cart to the order module, so checkout can
 // turn it into an order and empty it without reading the cart's tables
 // (Constitution I, research D1). The cart module (06) supplies an adapter at the

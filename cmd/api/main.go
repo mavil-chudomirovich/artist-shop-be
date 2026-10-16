@@ -26,6 +26,7 @@ import (
 	cartimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/implement"
 	cartmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/mapper"
 	cartcheckout "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/checkout"
+	carthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/hideguard"
 	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
 	carthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/presentation/http"
 	categoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
@@ -45,6 +46,7 @@ import (
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
+	orderhideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/hideguard"
 	ordernotifier "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/notifier"
 	orderpayment "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/payment"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
@@ -63,6 +65,7 @@ import (
 	productauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/auditor"
 	productavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/availability"
 	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
+	producthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/hideguard"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
 	producthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
@@ -436,6 +439,27 @@ func run() error {
 		CancelURL: cfg.Payment.CancelURL,
 		Logger:    logger,
 	})
+	// The category hide guard (specs/016-hide-guard, research D1-D4). The three
+	// guard dependencies are assigned here, not in the category service's
+	// literal, because the category service is built before the product, cart
+	// and order repositories it guards through exist. Each adapter answers one
+	// cross-module question over its own module's repository, so the category
+	// never reads another module's tables (Constitution I); the database owns
+	// the guarded hide's transaction boundary (research D3).
+	categoryService.Tx = db
+	categoryService.Orders = orderhideguard.New(orderRepository)
+	categoryService.Variants = producthideguard.New(productRepository)
+	categoryService.Carts = carthideguard.New(cartRepository)
+
+	// The variant hide guard (specs/016-hide-guard US2, research D1-D4). The
+	// product service gains the pending-order check and the cart cleanup the
+	// same way the category service did above: each adapter answers one
+	// cross-module question over its own module's repository, so the product
+	// never reads another module's tables (Constitution I); the database owns
+	// the guarded hide's transaction boundary (research D3).
+	productService.Orders = orderhideguard.New(orderRepository)
+	productService.Carts = carthideguard.New(cartRepository)
+
 	// The order module now gets module 08's real PaymentCancellation adapter, so a
 	// customer's CancelMine and the expiry sweep both ask the payment module to
 	// cancel the order's provider link after the order's transaction commits,

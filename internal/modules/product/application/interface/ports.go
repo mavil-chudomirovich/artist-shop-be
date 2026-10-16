@@ -49,13 +49,26 @@ type MediaReference = media.Reference
 // (FR-004, FR-006, research D1).
 type CategoryQuery = contracts.CategoryQuery
 
+// OrderHideGuard is the cross-module contract this module asks module 07: which
+// PENDING or PAYMENT_PENDING orders hold given variants, so a move away from
+// on-sale can be refused while one is pending without reading module 07's
+// tables (specs/016-hide-guard research D1, Constitution I).
+type OrderHideGuard = contracts.OrderHideGuard
+
+// CartHideCleanup is the cross-module contract this module asks module 06:
+// remove the hidden variants from every cart inside the same transaction as
+// the hide (specs/016-hide-guard research D4, Constitution I).
+type CartHideCleanup = contracts.CartHideCleanup
+
 // UnitOfWork runs a function inside a single database transaction. The
 // application layer owns every transaction boundary; repositories never open one
 // themselves (Constitution I).
 //
 // The picture operations are the module's one genuine use of it: the ten-picture
 // ceiling is a count, which no unique index can express, so it is checked while
-// the product's row is locked inside this transaction.
+// the product's row is locked inside this transaction. The guarded variant hide
+// is the second: the pending-order check, the state change and the cart cleanup
+// commit together or not at all (specs/016-hide-guard research D3).
 type UnitOfWork interface {
 	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
 }

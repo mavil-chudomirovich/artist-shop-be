@@ -234,6 +234,24 @@ func (r *CartRepository) Lines(ctx context.Context, cartID uuid.UUID) ([]model.C
 	return out, nil
 }
 
+// DeleteLinesByVariants removes every line that holds one of the given
+// variants, from every cart, in one statement, and returns how many lines were
+// removed, so a hiding use case can clean the hidden variants out of carts
+// inside the same transaction as the hide (specs/016-hide-guard research D4,
+// data-model.md). An empty input removes nothing and answers zero without
+// touching the database. It joins the caller's transaction.
+func (r *CartRepository) DeleteLinesByVariants(ctx context.Context, variantIDs []uuid.UUID) (int64, error) {
+	if len(variantIDs) == 0 {
+		return 0, nil
+	}
+	const query = `DELETE FROM cart_items WHERE variant_id = ANY($1)`
+	tag, err := r.querier(ctx).Exec(ctx, query, variantIDs)
+	if err != nil {
+		return 0, fmt.Errorf("delete cart lines by variants: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 // projection joins a declared column list for a SELECT. Every query in this
 // adapter builds its projection from a package-level list, never from caller text,
 // so a value can never reach the SQL grammar.

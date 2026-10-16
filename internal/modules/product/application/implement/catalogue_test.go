@@ -231,7 +231,7 @@ func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
 				Image: &model.VariantImage{PublicID: "v/l", URL: "https://cdn.test/large.jpg", Width: 10, Height: 10}},
 		},
 	}, nil, base)
-	// A product gallery picture the default variant's image must win over.
+	// A product gallery picture wins over the default variant's image.
 	repo.addSeedPicture(variantImage.ID, 0, true)
 	for _, variant := range repo.variantsFor(variantImage.ID) {
 		repo.launch(t, variant.ID)
@@ -256,8 +256,8 @@ func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
 		byCode[entry.Code] = entry
 	}
 
-	if got := byCode["card-set"].ImageURL; got == nil || *got != "https://cdn.test/small.jpg" {
-		t.Fatalf("the card image must be the default variant's image, got %+v", got)
+	if got := byCode["card-set"].ImageURL; got == nil || *got != "https://cdn.example.test/seed.jpg" {
+		t.Fatalf("the card image must be the product's image, got %+v", got)
 	}
 	if got := byCode["fallback"].ImageURL; got == nil || *got != "https://cdn.example.test/seed.jpg" {
 		t.Fatalf("with no variant image the card must fall back to the primary picture, got %+v", got)

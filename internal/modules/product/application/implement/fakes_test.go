@@ -276,6 +276,11 @@ func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.Visib
 		if !visible[product.CategoryID] {
 			continue
 		}
+		if !product.IsVisible {
+			// A product whose own flag is off leaves the catalogue however many
+			// on-sale variants it holds (specs/016-hide-guard FR-006).
+			continue
+		}
 		if query.CategoryID != nil && product.CategoryID != *query.CategoryID {
 			continue
 		}
@@ -317,7 +322,7 @@ func (m *memoryProducts) FindVisibleByCode(_ context.Context, code string, visib
 		if product.Code != code {
 			continue
 		}
-		if !visible[product.CategoryID] || !m.hasOnSaleVariantLocked(product.ID) {
+		if !visible[product.CategoryID] || !product.IsVisible || !m.hasOnSaleVariantLocked(product.ID) {
 			return nil, errProductNotFound()
 		}
 		return m.viewLocked(product, true), nil
@@ -764,13 +769,15 @@ func summarizeProduct(product model.Product, pictures []model.Picture, variants 
 	if lowest != nil {
 		summary.Price = model.Price{Amount: *lowest, Currency: product.Price.Currency}
 	}
-	if len(variants) > 0 && variants[0].Image != nil {
-		summary.ImageURL = variants[0].Image.URL
-	}
-	if summary.ImageURL == "" {
+	if len(pictures) > 0 {
 		if picture, ok := model.PrimaryPicture(pictures); ok {
 			summary.ImageURL = picture.URL
+		} else {
+			summary.ImageURL = pictures[0].URL
 		}
+	}
+	if summary.ImageURL == "" && len(variants) > 0 && variants[0].Image != nil {
+		summary.ImageURL = variants[0].Image.URL
 	}
 	return summary
 }

@@ -21,8 +21,10 @@ import (
 //
 // Price is the variant's effective price (its own amount, else the product's
 // default), in the product's currency (FR-017, FR-024). OnSale is true exactly when
-// the variant's sell state is ACTIVE, so a consumer can refuse a not-buyable line
-// without re-deriving the rule (FR-007).
+// the variant's sell state is ACTIVE; a variant whose product flag is off or whose
+// category is hidden is absent from the read rather than reported with
+// OnSale=false (specs/016-hide-guard FR-006), so a consumer can refuse a
+// not-buyable line without re-deriving the rule (FR-007).
 type VariantFacts struct {
 	// VariantID is the variant's stable identifier.
 	VariantID uuid.UUID

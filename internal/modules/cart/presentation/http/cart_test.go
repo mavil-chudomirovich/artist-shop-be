@@ -129,6 +129,29 @@ func (r *httpRepo) ClearLines(_ context.Context, cartID uuid.UUID) error {
 	return nil
 }
 
+// DeleteLinesByVariants removes every line holding one of the given variants,
+// from every cart, mirroring the adapter's one-statement delete the hide guards
+// use (specs/016-hide-guard research D4).
+func (r *httpRepo) DeleteLinesByVariants(_ context.Context, variantIDs []uuid.UUID) (int64, error) {
+	held := make(map[uuid.UUID]bool, len(variantIDs))
+	for _, id := range variantIDs {
+		held[id] = true
+	}
+	var removed int64
+	for cartID, lines := range r.lines {
+		kept := lines[:0]
+		for _, line := range lines {
+			if held[line.VariantID] {
+				removed++
+				continue
+			}
+			kept = append(kept, line)
+		}
+		r.lines[cartID] = kept
+	}
+	return removed, nil
+}
+
 // httpVariants answers the ProductVariants contract from a fixed set.
 type httpVariants struct {
 	variants map[uuid.UUID]contracts.VariantSummary

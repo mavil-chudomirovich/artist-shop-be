@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -359,6 +360,412 @@ func TestDeleteUnknownCategoryAnswersNotFound(t *testing.T) {
 	if err := svc.DeleteCategory(context.Background(), dto.AdminCategoryRefInput{ID: uuid.New()}); !errors.Is(err, domainerr.ErrCategoryNotFound) {
 		t.Fatalf("expected ErrCategoryNotFound, got %v", err)
 	}
+}
+
+// --- Hide-guard fakes (specs/016-hide-guard US1, T009) ---
+//
+// The guard crosses module boundaries through the three contracts, so the unit
+// tests fake all three plus the UnitOfWork. Every fake records its call count
+// and whether each call ran inside the transaction, which is what proves the
+// check and the cleanup stay bounded (one bulk call however many variants, spec
+// SC-004) and atomic (research D3).
+
+// guardTxKey marks a context that is inside the fake transaction.
+type guardTxKey struct{}
+
+func inGuardTx(ctx context.Context) bool {
+	inTx, _ := ctx.Value(guardTxKey{}).(bool)
+	return inTx
+}
+
+// fakeUnitOfWork runs the function directly while marking the context, so the
+// contract fakes and the repository can record whether they ran inside it.
+type fakeUnitOfWork struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (u *fakeUnitOfWork) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	u.mu.Lock()
+	u.calls++
+	u.mu.Unlock()
+	return fn(context.WithValue(ctx, guardTxKey{}, true))
+}
+
+func (u *fakeUnitOfWork) callCount() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.calls
+}
+
+var _ appinterface.UnitOfWork = (*fakeUnitOfWork)(nil)
+
+// fakeCategoryVariants answers the category-to-variant resolution with a fixed
+// mapping. It records every call, so a test proves the resolution is one bulk
+// read however many variants the category holds.
+type fakeCategoryVariants struct {
+	mu         sync.Mutex
+	calls      int
+	inTx       []bool
+	byCategory map[uuid.UUID][]uuid.UUID
+}
+
+func (f *fakeCategoryVariants) VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.inTx = append(f.inTx, inGuardTx(ctx))
+	var out []uuid.UUID
+	for _, id := range categoryIDs {
+		out = append(out, f.byCategory[id]...)
+	}
+	if out == nil {
+		out = []uuid.UUID{}
+	}
+	return out, nil
+}
+
+var _ appinterface.ProductCategoryVariants = (*fakeCategoryVariants)(nil)
+
+// guardOrder is one order the fake order guard knows: its state decides whether
+// it blocks a hide (FR-001: only PENDING and PAYMENT_PENDING block).
+type guardOrder struct {
+	id       uuid.UUID
+	status   string
+	variants []uuid.UUID
+}
+
+// fakeOrderGuard answers the pending-order lookup by filtering its orders to the
+// two pending states, the same rule the storage layer enforces. It records every
+// call, so a test proves the check is one bulk read.
+type fakeOrderGuard struct {
+	mu     sync.Mutex
+	calls  int
+	inTx   []bool
+	orders []guardOrder
+}
+
+func (f *fakeOrderGuard) PendingOrdersForVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.inTx = append(f.inTx, inGuardTx(ctx))
+	wanted := make(map[uuid.UUID]bool, len(variantIDs))
+	for _, id := range variantIDs {
+		wanted[id] = true
+	}
+	var out []uuid.UUID
+	for _, order := range f.orders {
+		if order.status != "PENDING" && order.status != "PAYMENT_PENDING" {
+			continue
+		}
+		for _, variant := range order.variants {
+			if wanted[variant] {
+				out = append(out, order.id)
+				break
+			}
+		}
+	}
+	if out == nil {
+		out = []uuid.UUID{}
+	}
+	return out, nil
+}
+
+var _ appinterface.OrderHideGuard = (*fakeOrderGuard)(nil)
+
+// fakeCartCleanup answers the bulk cart-line removal with a fixed removed count.
+// It records every call and its input, so a test proves the cleanup runs once,
+// with exactly the hidden variants, and never on a refused hide.
+type fakeCartCleanup struct {
+	mu     sync.Mutex
+	calls  int
+	inTx   []bool
+	inputs [][]uuid.UUID
+	remove int64
+}
+
+func (f *fakeCartCleanup) RemoveVariantsFromAllCarts(ctx context.Context, variantIDs []uuid.UUID) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.inTx = append(f.inTx, inGuardTx(ctx))
+	f.inputs = append(f.inputs, append([]uuid.UUID(nil), variantIDs...))
+	return f.remove, nil
+}
+
+var _ appinterface.CartHideCleanup = (*fakeCartCleanup)(nil)
+
+// guardedService builds the service with the hide-guard dependencies wired to
+// the fakes above. The existing maintenanceService helper keeps building the
+// dependency-free service the earlier tests drive.
+func guardedService(repo *memoryCategories, authority appinterface.Auditor, variants *fakeCategoryVariants,
+	orders *fakeOrderGuard, carts *fakeCartCleanup, tx *fakeUnitOfWork) *Service {
+	return New(Service{
+		Categories: repo,
+		Audit:      authority,
+		Mapper:     mapper.New(),
+		Tx:         tx,
+		Orders:     orders,
+		Variants:   variants,
+		Carts:      carts,
+	})
+}
+
+// requireNoGuardCalls asserts the guard never ran: no resolution, no
+// pending-order check and no cart cleanup.
+func requireNoGuardCalls(t *testing.T, variants *fakeCategoryVariants, orders *fakeOrderGuard, carts *fakeCartCleanup) {
+	t.Helper()
+	if variants.calls != 0 || orders.calls != 0 || carts.calls != 0 {
+		t.Fatalf("the guard must not run, got variant=%d order=%d cart=%d calls",
+			variants.calls, orders.calls, carts.calls)
+	}
+}
+
+// requireGuardRanOnce asserts each guard step ran exactly once, inside the
+// transaction: one bounded resolution, one bounded check and one bounded cleanup
+// however many variants the category holds (spec SC-004, research D3).
+func requireGuardRanOnce(t *testing.T, variants *fakeCategoryVariants, orders *fakeOrderGuard, carts *fakeCartCleanup) {
+	t.Helper()
+	if variants.calls != 1 || orders.calls != 1 || carts.calls != 1 {
+		t.Fatalf("each guard step must run exactly once, got variant=%d order=%d cart=%d calls",
+			variants.calls, orders.calls, carts.calls)
+	}
+	for _, ran := range variants.inTx {
+		if !ran {
+			t.Fatal("the variant resolution must run inside the transaction")
+		}
+	}
+	for _, ran := range orders.inTx {
+		if !ran {
+			t.Fatal("the pending-order check must run inside the transaction")
+		}
+	}
+	for _, ran := range carts.inTx {
+		if !ran {
+			t.Fatal("the cart cleanup must run inside the transaction")
+		}
+	}
+}
+
+// hideCategoryID is the category under test with its two variants, the unit
+// shared by the hide-guard tests below.
+func hideGuardSetup(t *testing.T) (*memoryCategories, *model.Category, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	repo := newMemoryCategories()
+	seeded := repo.add(t, model.CategoryDraft{Name: "Tranh", Slug: "tranh", Description: "Mô tả", Position: 2},
+		time.Now().UTC().Add(-time.Hour))
+	return repo, seeded, uuid.New(), uuid.New()
+}
+
+// FR-004, SC-001 (specs/016-hide-guard US1): hiding a category covered by a
+// PENDING order is refused with the blocking order named, and the category is
+// byte-for-byte unchanged while carts are untouched.
+func TestGuardedHideRefusedWhilePendingOrdersHoldItsVariants(t *testing.T) {
+	repo, seeded, v1, v2 := hideGuardSetup(t)
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+
+	blocking := uuid.New()
+	settled := uuid.New()
+	variants := &fakeCategoryVariants{byCategory: map[uuid.UUID][]uuid.UUID{seeded.ID: {v1, v2}}}
+	orders := &fakeOrderGuard{orders: []guardOrder{
+		{id: blocking, status: "PENDING", variants: []uuid.UUID{v1}},
+		{id: settled, status: "PAID", variants: []uuid.UUID{v2}},
+	}}
+	carts := &fakeCartCleanup{}
+	tx := &fakeUnitOfWork{}
+	svc := guardedService(repo, recorder, variants, orders, carts, tx)
+
+	before, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the seeded category: %v", err)
+	}
+
+	hidden := false
+	out, err := svc.UpdateCategory(ctx, dto.UpdateCategoryInput{ID: seeded.ID, IsVisible: &hidden})
+	if !errors.Is(err, domainerr.ErrCategoryHasPendingOrders) {
+		t.Fatalf("expected ErrCategoryHasPendingOrders, got %v", err)
+	}
+	if out != (dto.AdminCategoryOutput{}) {
+		t.Fatalf("a refused hide must not answer a category, got %+v", out)
+	}
+	var pending *domainerr.CategoryPendingOrdersError
+	if !errors.As(err, &pending) {
+		t.Fatal("the refusal must carry the blocking order identifiers")
+	}
+	if len(pending.OrderIDs) != 1 || pending.OrderIDs[0] != blocking {
+		t.Fatalf("the refusal must name exactly the blocking order, got %v", pending.OrderIDs)
+	}
+
+	after, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the category after the refused hide: %v", err)
+	}
+	if !reflect.DeepEqual(*before, *after) {
+		t.Fatalf("a refused hide must leave the category byte-for-byte unchanged: %+v -> %+v", before, after)
+	}
+	if carts.calls != 0 {
+		t.Fatalf("a refused hide must never touch carts, got %d cleanup calls", carts.calls)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused hide must record nothing, got %v", recorder.actions())
+	}
+	if variants.calls != 1 || orders.calls != 1 {
+		t.Fatalf("the guard must still check before refusing, got variant=%d order=%d calls", variants.calls, orders.calls)
+	}
+	if tx.callCount() != 1 {
+		t.Fatalf("the refused hide must run inside one transaction, got %d", tx.callCount())
+	}
+}
+
+// FR-001, FR-004, FR-007 (specs/016-hide-guard US1): orders in PAID, SHIPPED,
+// COMPLETED or CANCELLED never block; the hide succeeds, every cart line holding
+// the category's variants is removed in the same transaction, and the hide emits
+// its audit action carrying the removed line count.
+func TestGuardedHideSucceedsWithOnlySettledOrdersAndCleansCarts(t *testing.T) {
+	repo, seeded, v1, v2 := hideGuardSetup(t)
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+
+	variants := &fakeCategoryVariants{byCategory: map[uuid.UUID][]uuid.UUID{seeded.ID: {v1, v2}}}
+	orders := &fakeOrderGuard{orders: []guardOrder{
+		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{v1}},
+		{id: uuid.New(), status: "SHIPPED", variants: []uuid.UUID{v2}},
+		{id: uuid.New(), status: "COMPLETED", variants: []uuid.UUID{v1, v2}},
+		{id: uuid.New(), status: "CANCELLED", variants: []uuid.UUID{v1}},
+	}}
+	carts := &fakeCartCleanup{remove: 3}
+	tx := &fakeUnitOfWork{}
+	svc := guardedService(repo, recorder, variants, orders, carts, tx)
+
+	hidden := false
+	out, err := svc.UpdateCategory(ctx, dto.UpdateCategoryInput{ID: seeded.ID, IsVisible: &hidden})
+	if err != nil {
+		t.Fatalf("a hide covered only by settled orders must succeed, got %v", err)
+	}
+	if out.IsVisible {
+		t.Fatal("the category must be hidden")
+	}
+	if out.Name != "Tranh" || out.Slug != "tranh" || out.Description != "Mô tả" || out.Position != 2 {
+		t.Fatalf("hide must not destroy a member: %+v", out)
+	}
+
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the hidden category: %v", err)
+	}
+	if stored.IsVisible {
+		t.Fatal("the stored row must be hidden")
+	}
+
+	requireGuardRanOnce(t, variants, orders, carts)
+	if len(carts.inputs) != 1 || len(carts.inputs[0]) != 2 {
+		t.Fatalf("the cleanup must run once with exactly the hidden variants, got %v", carts.inputs)
+	}
+	for _, id := range carts.inputs[0] {
+		if id != v1 && id != v2 {
+			t.Fatalf("the cleanup must remove exactly the hidden variants, got %v", carts.inputs[0])
+		}
+	}
+
+	requireAudited(t, recorder, constant.AuditCategoryHidden, actor, seeded.ID)
+	requireAuditCount(t, recorder, constant.AuditCategoryHidden, 1)
+	// The cart-cleanup count travels as metadata on the hide event (research D8).
+	found := false
+	for _, event := range recorder.snapshot() {
+		if event.action != constant.AuditCategoryHidden {
+			continue
+		}
+		found = true
+		if got, ok := event.metadata["removedCartLines"]; !ok || got != int64(3) {
+			t.Fatalf("the hide event must carry the removed cart-line count, got %v", event.metadata)
+		}
+	}
+	if !found {
+		t.Fatal("the hide must emit its audit action")
+	}
+}
+
+// Spec edge case (specs/016-hide-guard US1): showing a category again, or an
+// edit that does not touch visibility, is never blocked and never runs the
+// guard — even while a PENDING order covers the category.
+func TestShowAndContentEditsSkipTheHideGuard(t *testing.T) {
+	repo, seeded, v1, _ := hideGuardSetup(t)
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+
+	blocking := uuid.New()
+	variants := &fakeCategoryVariants{byCategory: map[uuid.UUID][]uuid.UUID{seeded.ID: {v1}}}
+	orders := &fakeOrderGuard{orders: []guardOrder{
+		{id: blocking, status: "PENDING", variants: []uuid.UUID{v1}},
+	}}
+	carts := &fakeCartCleanup{}
+	tx := &fakeUnitOfWork{}
+	svc := guardedService(repo, recorder, variants, orders, carts, tx)
+
+	// A content-only edit succeeds without the guard.
+	name := "Tranh mới"
+	out, err := svc.UpdateCategory(ctx, dto.UpdateCategoryInput{ID: seeded.ID, Name: &name})
+	if err != nil {
+		t.Fatalf("a content edit must never be guarded, got %v", err)
+	}
+	if out.Name != name || !out.IsVisible {
+		t.Fatalf("the edit must apply without touching visibility: %+v", out)
+	}
+	requireNoGuardCalls(t, variants, orders, carts)
+	requireAudited(t, recorder, constant.AuditCategoryUpdated, actor, seeded.ID)
+
+	// Showing a hidden category back succeeds without the guard.
+	repo.hide(seeded.ID)
+	shown := true
+	out, err = svc.UpdateCategory(ctx, dto.UpdateCategoryInput{ID: seeded.ID, IsVisible: &shown})
+	if err != nil {
+		t.Fatalf("showing again must never be guarded, got %v", err)
+	}
+	if !out.IsVisible {
+		t.Fatal("the category must be visible again")
+	}
+	requireNoGuardCalls(t, variants, orders, carts)
+	requireAudited(t, recorder, constant.AuditCategoryShown, actor, seeded.ID)
+}
+
+// A patch that carries both a content change and a hide performs both inside
+// the one transaction and records both actions.
+func TestGuardedHideWithContentChangePersistsBothAndAuditsBoth(t *testing.T) {
+	repo, seeded, v1, _ := hideGuardSetup(t)
+	recorder := &recordingAuditor{}
+	actor := adminActor()
+	ctx := appinterface.WithActor(context.Background(), actor)
+
+	variants := &fakeCategoryVariants{byCategory: map[uuid.UUID][]uuid.UUID{seeded.ID: {v1}}}
+	orders := &fakeOrderGuard{}
+	carts := &fakeCartCleanup{remove: 1}
+	tx := &fakeUnitOfWork{}
+	svc := guardedService(repo, recorder, variants, orders, carts, tx)
+
+	name := "Tranh mới"
+	hidden := false
+	out, err := svc.UpdateCategory(ctx, dto.UpdateCategoryInput{ID: seeded.ID, Name: &name, IsVisible: &hidden})
+	if err != nil {
+		t.Fatalf("UpdateCategory: %v", err)
+	}
+	if out.Name != name || out.IsVisible {
+		t.Fatalf("both the content change and the hide must apply: %+v", out)
+	}
+	stored, err := repo.FindByID(context.Background(), seeded.ID)
+	if err != nil {
+		t.Fatalf("read the hidden category: %v", err)
+	}
+	if stored.Name != name || stored.IsVisible {
+		t.Fatalf("the stored row must carry both changes: %+v", stored)
+	}
+	requireGuardRanOnce(t, variants, orders, carts)
+	requireAudited(t, recorder, constant.AuditCategoryUpdated, actor, seeded.ID)
+	requireAudited(t, recorder, constant.AuditCategoryHidden, actor, seeded.ID)
 }
 
 // FR-013, SC-005: a whole lifecycle records exactly the transition table's five

@@ -453,4 +453,83 @@ func TestHiddenAndUnknownProductAnswerTheSameNotFoundAgainstPostgres(t *testing.
 	}
 }
 
+// specs/016-hide-guard US3 (T019) against real PostgreSQL: a product whose own
+// visibility flag is off is absent from the catalogue browse, the category
+// filter and the direct link — like a product with no on-sale variant — while
+// a visible product in the same category still answers every read.
+func TestFlagOffProductLeavesTheCatalogueAgainstPostgres(t *testing.T) {
+	f := newCatalogueSKUFixture(t)
+	category := seedSKUCategory(t, f.categories, "tranh", true)
+
+	visibleProduct, visibleVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
+		Name: "Visible", Code: "visible", Price: skuProductPrice(100000),
+		CategoryID: category.ID, Position: 1,
+		Variants: []productmodel.VariantDraft{{Name: "Mặc định", SKU: "VIS-1-D", Position: 0}},
+	}, map[int]func(*productmodel.Variant, time.Time) error{0: (*productmodel.Variant).Launch})
+	hiddenProduct, hiddenVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
+		Name: "Hidden flag", Code: "hidden-flag", Price: skuProductPrice(90000),
+		CategoryID: category.ID, Position: 2,
+		Variants: []productmodel.VariantDraft{{Name: "Mặc định", SKU: "HID-1-D", Position: 0}},
+	}, map[int]func(*productmodel.Variant, time.Time) error{0: (*productmodel.Variant).Launch})
+	f.setSKUStock(t, visibleVariants[0].ID, 5)
+	f.setSKUStock(t, hiddenVariants[0].ID, 5)
+
+	// Turn the flag off through the real adapter, so the persistence path is
+	// exercised together with the reads below.
+	view, err := f.products.FindByID(context.Background(), hiddenProduct.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if !view.Product.IsVisible {
+		t.Fatal("a seeded product must start visible")
+	}
+	flagOff := view.Product
+	if !flagOff.Hide(time.Now().UTC()) {
+		t.Fatal("Hide must take a visible product off display")
+	}
+	if err := f.products.Update(context.Background(), &flagOff); err != nil {
+		t.Fatalf("persist the flag edit: %v", err)
+	}
+
+	// Browse carries only the visible product.
+	rec := getSKU(t, f.handler, skuCataloguePath, "browse")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("browse: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	browse := decodeSKUCatalogueList(t, rec)
+	if browse.Meta.Total != 1 || len(browse.Data) != 1 || browse.Data[0].Code != visibleProduct.Code {
+		t.Fatalf("the browse must carry only the visible product, got %+v", browse.Data)
+	}
+
+	// The category filter agrees: same category narrowed, same single entry.
+	rec = getSKU(t, f.handler, skuCataloguePath+"?category=tranh", "filter")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filter: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	filtered := decodeSKUCatalogueList(t, rec)
+	if filtered.Meta.Total != 1 || len(filtered.Data) != 1 || filtered.Data[0].Code != visibleProduct.Code {
+		t.Fatalf("the filter must carry only the visible product, got %+v", filtered.Data)
+	}
+
+	// The direct link to the hidden code answers not-found, like an unknown one.
+	rec = getSKU(t, f.handler, skuCataloguePath+"/"+hiddenProduct.Code, "direct-hidden")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("the hidden direct link must answer 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	envelope := decodeSKUEnvelope(t, rec)
+	errBody, ok := envelope["error"].(map[string]any)
+	if !ok || errBody["code"] != "PRODUCT_NOT_FOUND" {
+		t.Fatalf("the hidden direct link must answer PRODUCT_NOT_FOUND, got %s", rec.Body.String())
+	}
+
+	// The visible product in the same category still answers its detail.
+	rec = getSKU(t, f.handler, skuCataloguePath+"/"+visibleProduct.Code, "direct-visible")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the visible direct link must answer 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if detail := decodeSKUDetail(t, rec); detail.Data.Code != visibleProduct.Code {
+		t.Fatalf("unexpected detail: %+v", detail.Data)
+	}
+}
+
 func skuPtr[T any](value T) *T { return &value }

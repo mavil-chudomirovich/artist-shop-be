@@ -31,6 +31,22 @@ func fieldError(field, issue string) *httpx.AppError {
 	return httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: field, Issue: issue})
 }
 
+// withPendingOrders attaches the blocking order identifiers the hide guard
+// refused with, one detail per order. The detail field is the contract's member
+// name for an order identifier, so an administrator client can map each detail
+// straight onto the order it names. An untyped sentinel — one that carries no
+// identifiers — answers without details rather than failing.
+func withPendingOrders(err *httpx.AppError, cause error) *httpx.AppError {
+	var pending *domainerr.CategoryPendingOrdersError
+	if !errors.As(cause, &pending) {
+		return err
+	}
+	for _, id := range pending.OrderIDs {
+		err.Details = append(err.Details, httpx.Detail{Field: fieldOrderID, Issue: id.String()})
+	}
+	return err
+}
+
 // mapError translates the module's sentinel errors into the codes and statuses
 // of specs/005-category-catalog/contracts/error-codes.md.
 //
@@ -65,6 +81,18 @@ func mapError(err error) *httpx.AppError {
 		// conflict, not a validation failure, and the message names the operator's
 		// own fact rather than the database's wording (FR-036, FR-037).
 		return coded(constant.CodeCategoryInUse, http.StatusConflict, "Category still has products and cannot be removed")
+	case errors.Is(err, domainerr.ErrCategoryHasPendingOrders):
+		// Hiding the category is refused because at least one PENDING or
+		// PAYMENT_PENDING order holds one of its variants. Like the removal
+		// above it is a conflict: the request is well formed and the current
+		// data forbids it. The refusal names the blocking orders — one detail
+		// per order — so the administrator can act on them; the hide actions
+		// sit behind the ADMIN guard, so no customer information leaks
+		// (specs/016-hide-guard research D7).
+		return withPendingOrders(
+			coded(constant.CodeCategoryHasPendingOrders, http.StatusConflict, "Category has pending orders and cannot be hidden"),
+			err,
+		)
 	case errors.As(err, &invalid):
 		// A value that is invalid on its own is a request-shape problem the
 		// client fixes, so it stays on the shared VALIDATION_ERROR and adds no
@@ -85,4 +113,5 @@ const (
 	fieldPage       = "page"
 	fieldPageSize   = "pageSize"
 	fieldCategoryID = "categoryId"
+	fieldOrderID    = "orderId"
 )

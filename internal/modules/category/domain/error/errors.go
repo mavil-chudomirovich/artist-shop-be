@@ -4,7 +4,12 @@
 // errors in presentation/http; the domain never knows an HTTP status.
 package domainerr
 
-import "errors"
+import (
+	"errors"
+	"strings"
+
+	"github.com/google/uuid"
+)
 
 // Business errors returned by the category module.
 var (
@@ -29,6 +34,11 @@ var (
 	// code an operator can act on rather than an unexplained server failure
 	// (FR-036, FR-037).
 	ErrCategoryInUse = errors.New("category still has products")
+	// ErrCategoryHasPendingOrders is returned when hiding a category is refused
+	// because at least one PENDING or PAYMENT_PENDING order holds one of its
+	// variants. The refusal names the blocking orders so an operator can act on
+	// them; it is an admin-surface answer only (specs/016-hide-guard).
+	ErrCategoryHasPendingOrders = errors.New("category has pending orders")
 	// ErrCategoryInvalid is returned when a value fails its own rule: a blank
 	// required member, a value longer than its bound, or a slug that is not
 	// URL-safe.
@@ -40,6 +50,41 @@ var (
 	// the response to name the field a client has to fix.
 	ErrCategoryInvalid = errors.New("invalid category")
 )
+
+// CategoryPendingOrdersError carries the blocking order identifiers behind a
+// refused category hide, so the response can name them without the caller
+// re-reading the orders. It is the single typed carrier for
+// ErrCategoryHasPendingOrders, so the module keeps one sentinel to map and one
+// type to test.
+type CategoryPendingOrdersError struct {
+	// OrderIDs identifies the PENDING or PAYMENT_PENDING orders that hold at
+	// least one variant of the category.
+	OrderIDs []uuid.UUID
+}
+
+// Error implements the error interface.
+func (e *CategoryPendingOrdersError) Error() string {
+	ids := make([]string, 0, len(e.OrderIDs))
+	for _, id := range e.OrderIDs {
+		ids = append(ids, id.String())
+	}
+	return ErrCategoryHasPendingOrders.Error() + ": " + strings.Join(ids, ", ")
+}
+
+// Is makes errors.Is(err, ErrCategoryHasPendingOrders) match this error, so a
+// caller can branch on the single sentinel without knowing the carrier type.
+func (e *CategoryPendingOrdersError) Is(target error) bool {
+	return target == ErrCategoryHasPendingOrders
+}
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *CategoryPendingOrdersError) Unwrap() error { return ErrCategoryHasPendingOrders }
+
+// CategoryHasPendingOrders builds the typed refusal for a category hide blocked
+// by the given pending orders.
+func CategoryHasPendingOrders(orderIDs []uuid.UUID) error {
+	return &CategoryPendingOrdersError{OrderIDs: orderIDs}
+}
 
 // CategoryFieldError reports which member of a category is not acceptable. It
 // is one typed carrier for ErrCategoryInvalid rather than a family of

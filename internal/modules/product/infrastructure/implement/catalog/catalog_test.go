@@ -97,6 +97,25 @@ func TestVariantsReturnsOnlyTheVariantsThatExist(t *testing.T) {
 	}
 }
 
+// specs/016-hide-guard FR-006: a hidden variant's ACTIVE facts are absent from
+// the repository read exactly like a removed variant's, so the adapter carries
+// nothing through and the cart reports the line as unavailable.
+func TestVariantsTreatsHiddenVariantsAsAbsent(t *testing.T) {
+	visible := uuid.New()
+	hidden := uuid.New()
+	repo := &fakeRepository{facts: []domainrepo.VariantFacts{
+		{VariantID: visible, ProductName: "Hiện", ProductCode: "hien", OnSale: true},
+	}}
+
+	got, err := New(repo).Variants(context.Background(), []uuid.UUID{visible, hidden})
+	if err != nil {
+		t.Fatalf("Variants: %v", err)
+	}
+	if len(got) != 1 || got[0].VariantID != visible {
+		t.Fatalf("a hidden variant must stay absent like a removed one, got %+v", got)
+	}
+}
+
 // A repository failure is reported as itself, never swallowed or replaced: the
 // cart decides what an unavailable variant-facts read means for its own answer.
 func TestVariantsReportsTheRepositoryError(t *testing.T) {

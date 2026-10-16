@@ -45,4 +45,12 @@ const (
 	// CodeVariantStateTransitionInvalid reports a sell-state change the variant's
 	// current state does not allow. The message names the current state (FR-015).
 	CodeVariantStateTransitionInvalid = "VARIANT_STATE_TRANSITION_INVALID"
+	// CodeProductHasPendingOrders reports that turning the product's visibility
+	// flag off was refused because at least one PENDING or PAYMENT_PENDING order
+	// holds one of its variants. The refusal names the blocking orders so an
+	// operator can act on them (specs/016-hide-guard).
+	CodeProductHasPendingOrders = "PRODUCT_HAS_PENDING_ORDERS"
+	// CodeVariantHasPendingOrders reports that moving a variant away from its
+	// on-sale state was refused for the same reason (specs/016-hide-guard).
+	CodeVariantHasPendingOrders = "VARIANT_HAS_PENDING_ORDERS"
 )

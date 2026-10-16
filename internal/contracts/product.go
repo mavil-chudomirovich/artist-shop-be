@@ -49,6 +49,20 @@ type ProductLookup interface {
 	VariantExists(ctx context.Context, variantID uuid.UUID) (bool, error)
 }
 
+// ProductCategoryVariants answers which variants belong to given categories,
+// so the category hide guard can resolve "my variants" without reading the
+// product module's tables (Constitution I, specs/016-hide-guard research D2).
+//
+// The provider module (product, 04) supplies an adapter at the composition
+// root. The answer is a flat variant-ID set in one bounded bulk read — all the
+// check and the cleanup need — and no product internals cross the boundary.
+type ProductCategoryVariants interface {
+	// VariantIDsByCategories returns the identifiers of every variant whose
+	// product belongs to one of the given categories, in a stable order. An
+	// empty input answers an empty slice, never an error.
+	VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error)
+}
+
 // ProductVariants answers the facts about variants that the cart needs and cannot
 // read itself: the product a variant belongs to, the product's current name and
 // code, the variant's current name and SKU, whether it may be sold, and its
@@ -100,7 +114,9 @@ type VariantSummary struct {
 	// but never shown to a customer.
 	SKU string
 	// OnSale reports whether the variant may currently be sold. It is true only
-	// for a variant that is on sale.
+	// while the variant is ACTIVE and its product flag is on and its category
+	// is visible; a hidden variant is absent from the result rather than
+	// reported with OnSale=false, exactly like a removed variant.
 	OnSale bool
 	// Price is the variant's current effective price: its own amount, or the
 	// product's default when the variant carries none.

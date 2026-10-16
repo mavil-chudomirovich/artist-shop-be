@@ -37,6 +37,24 @@ type Service struct {
 	Audit appinterface.Auditor
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
+	// Tx owns the guarded hide's transaction boundary, so the pending-order
+	// check, the hide and the cart cleanup commit together or not at all
+	// (specs/016-hide-guard research D3). It is optional: a construction without
+	// it hides through the legacy unguarded write, which is what the earlier
+	// maintenance tests drive.
+	Tx appinterface.UnitOfWork
+	// Orders answers which PENDING or PAYMENT_PENDING orders hold given
+	// variants. It is the order module's hide-guard adapter, supplied at the
+	// composition root. A nil port answers no blocking orders.
+	Orders appinterface.OrderHideGuard
+	// Variants answers which variants belong to given categories. It is the
+	// product module's hide-guard adapter, supplied at the composition root. A
+	// nil port resolves no variants.
+	Variants appinterface.ProductCategoryVariants
+	// Carts removes hidden variants from every cart. It is the cart module's
+	// hide-guard adapter, supplied at the composition root. A nil port removes
+	// nothing.
+	Carts appinterface.CartHideCleanup
 }
 
 // New creates the category use-case service.

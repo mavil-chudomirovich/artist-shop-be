@@ -165,6 +165,9 @@ type AdminProductOutput struct {
 	CategoryID uuid.UUID
 	// Position is the operator's ordering preference.
 	Position int
+	// IsVisible reports whether a customer can see the product. It is the only
+	// product-level display state (specs/016-hide-guard).
+	IsVisible bool
 	// VariantCount is how many variants the product carries.
 	VariantCount int
 	// ImageURL is the main picture's link, or nil when the product has none.
@@ -286,6 +289,11 @@ type UpdateProductInput struct {
 	CategoryID *uuid.UUID
 	// Position is the new position; nil keeps the current value.
 	Position *int
+	// IsVisible is the requested display state; nil keeps the current value. It
+	// is routed to the hide or show transition, never assigned directly. Turning
+	// it off runs the pending-orders hide guard; turning it on never does
+	// (specs/016-hide-guard FR-006).
+	IsVisible *bool
 }
 
 // AddVariantInput adds one variant to a product.

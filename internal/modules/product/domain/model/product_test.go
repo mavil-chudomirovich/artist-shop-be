@@ -249,6 +249,71 @@ func assertField(t *testing.T, err error, want string) {
 	}
 }
 
+// A newly created product is on display: the visibility flag defaults to
+// visible, matching the storage default the migration declares
+// (specs/016-hide-guard research D6).
+func TestNewProductIsVisibleByDefault(t *testing.T) {
+	product, err := NewProduct(validDraft(), testNow)
+	if err != nil {
+		t.Fatalf("NewProduct: unexpected error %v", err)
+	}
+	if !product.IsVisible {
+		t.Errorf("a created product must be visible")
+	}
+}
+
+// Hide takes the product off display and bumps updated_at, while hiding an
+// already hidden product is a no-op that leaves updated_at untouched.
+func TestHideTakesProductOffDisplay(t *testing.T) {
+	product := mustProduct(t)
+	later := testNow.Add(time.Hour)
+
+	if !product.Hide(later) {
+		t.Errorf("Hide on a visible product must report a change")
+	}
+	if product.IsVisible {
+		t.Errorf("the product must be hidden after Hide")
+	}
+	if !product.UpdatedAt.Equal(later) {
+		t.Errorf("UpdatedAt = %v, want %v", product.UpdatedAt, later)
+	}
+
+	before := *product
+	if product.Hide(later.Add(time.Hour)) {
+		t.Errorf("Hide on a hidden product must be a no-op")
+	}
+	if *product != before {
+		t.Errorf("a repeated Hide must leave the entity untouched: %+v vs %+v", product, before)
+	}
+}
+
+// Show puts the product back on display and bumps updated_at, while showing an
+// already visible product is a no-op that leaves updated_at untouched.
+func TestShowPutsProductBackOnDisplay(t *testing.T) {
+	product := mustProduct(t)
+	hiddenAt := testNow.Add(time.Hour)
+	product.Hide(hiddenAt)
+	shownAt := hiddenAt.Add(time.Hour)
+
+	if !product.Show(shownAt) {
+		t.Errorf("Show on a hidden product must report a change")
+	}
+	if !product.IsVisible {
+		t.Errorf("the product must be visible after Show")
+	}
+	if !product.UpdatedAt.Equal(shownAt) {
+		t.Errorf("UpdatedAt = %v, want %v", product.UpdatedAt, shownAt)
+	}
+
+	before := *product
+	if product.Show(shownAt.Add(time.Hour)) {
+		t.Errorf("Show on a visible product must be a no-op")
+	}
+	if *product != before {
+		t.Errorf("a repeated Show must leave the entity untouched: %+v vs %+v", product, before)
+	}
+}
+
 // mustProduct builds a product from validDraft for tests that only need a starting
 // entity.
 func mustProduct(t *testing.T) *Product {

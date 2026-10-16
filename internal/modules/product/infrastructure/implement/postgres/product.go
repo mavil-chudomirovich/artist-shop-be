@@ -59,6 +59,7 @@ var productColumns = []string{
 	"currency",
 	"category_id",
 	"position",
+	"is_visible",
 	"created_at",
 	"updated_at",
 }
@@ -147,8 +148,8 @@ func (r *ProductRepository) Create(ctx context.Context, product *model.Product) 
 	const query = `
 		INSERT INTO products
 			(id, name, code, description, price_amount, currency,
-			 category_id, position, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			 category_id, position, is_visible, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err := r.querier(ctx).Exec(ctx, query,
 		product.ID,
 		product.Name,
@@ -158,6 +159,7 @@ func (r *ProductRepository) Create(ctx context.Context, product *model.Product) 
 		product.Price.Currency,
 		product.CategoryID,
 		product.Position,
+		product.IsVisible,
 		product.CreatedAt,
 		product.UpdatedAt,
 	)
@@ -190,6 +192,7 @@ func (r *ProductRepository) Update(ctx context.Context, product *model.Product) 
 		    currency        = $6,
 		    category_id     = $7,
 		    position        = $8,
+		    is_visible      = $9,
 		    updated_at      = now()
 		WHERE id = $1`
 	tag, err := r.querier(ctx).Exec(ctx, query,
@@ -201,6 +204,7 @@ func (r *ProductRepository) Update(ctx context.Context, product *model.Product) 
 		product.Price.Currency,
 		product.CategoryID,
 		product.Position,
+		product.IsVisible,
 	)
 	if err != nil {
 		return classifyWriteError("update product", err)
@@ -263,11 +267,49 @@ func (r *ProductRepository) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]m
 	return out, nil
 }
 
+// VariantIDsByCategories returns the identifiers of every variant whose product
+// belongs to one of the given categories, so a category hide guard can resolve
+// "my variants" without reading another module's tables (specs/016-hide-guard
+// research D2, data-model.md).
+//
+// It is a single bounded statement however many categories are passed — the
+// variants are read through their parent products — so hiding a category of
+// hundreds of variants stays bounded (spec SC-004). An empty input answers an
+// empty slice without touching the database. It joins the caller's transaction.
+func (r *ProductRepository) VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(categoryIDs) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	const query = `
+		SELECT id FROM product_variants
+		WHERE product_id IN (SELECT id FROM products WHERE category_id = ANY($1))
+		ORDER BY id`
+	rows, err := r.querier(ctx).Query(ctx, query, categoryIDs)
+	if err != nil {
+		return nil, fmt.Errorf("find variant ids by categories: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan variant id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // catalogueCTE is the one-statement public catalogue read: exactly one row per
 // product, with the product's variants collapsed into it (FR-001).
 //
 // The whole predicate runs here, not in Go (FR-004): a product is visible when
-// its category is in $1 AND at least one of its variants is on sale. The price is
+// its own flag is on AND its category is in $1 AND at least one of its variants
+// is on sale. The price is
 // the lowest effective price among the on-sale variants — COALESCE(v.price_amount,
 // p.price_amount) is the fallback a variant with no own price takes (FR-017) — so
 // an out-of-stock variant's cheaper price never headlines the product (FR-002).
@@ -285,21 +327,22 @@ const catalogueCTE = `
 				FROM product_variants v
 				WHERE v.product_id = p.id AND v.sell_state = 'ACTIVE') AS price_amount,
 			p.currency AS currency,
-			COALESCE(
-				(SELECT v.image_secure_url FROM product_variants v
-					WHERE v.product_id = p.id
-					ORDER BY v.position, v.created_at, v.id
-					LIMIT 1),
-				(SELECT i.secure_url FROM product_images i
-					WHERE i.product_id = p.id AND i.is_primary
-					ORDER BY i.position, i.id
-					LIMIT 1),
-				'') AS image_url,
+		COALESCE(
+			(SELECT v.image_secure_url FROM product_variants v
+				WHERE v.product_id = p.id
+				ORDER BY v.position, v.created_at, v.id
+				LIMIT 1),
+			(SELECT i.secure_url FROM product_images i
+				WHERE i.product_id = p.id AND i.is_primary
+				ORDER BY i.position, i.id
+				LIMIT 1),
+			'') AS image_url,
 			p.category_id AS category_id,
 			p.position AS position,
 			p.created_at AS created_at
 		FROM products p
 		WHERE p.category_id = ANY($1)
+		  AND p.is_visible
 		  AND EXISTS (
 			SELECT 1 FROM product_variants v
 			WHERE v.product_id = p.id AND v.sell_state = 'ACTIVE'
@@ -311,8 +354,9 @@ const catalogueCTE = `
 //
 // Everything runs in one statement (catalogueCTE): the visibility predicate, the
 // derived price and image, the ordering and the count, so a page and its total
-// can never disagree. An empty visible set answers an empty page without touching
-// the database.
+// can never disagree. A product whose own flag is off is absent however many
+// on-sale variants it holds (specs/016-hide-guard FR-006). An empty visible set
+// answers an empty page without touching the database.
 func (r *ProductRepository) ListCatalogue(ctx context.Context, query domainrepo.VisibleListQuery) ([]domainrepo.CatalogueEntry, int64, error) {
 	if len(query.VisibleCategoryIDs) == 0 {
 		return []domainrepo.CatalogueEntry{}, 0, nil
@@ -377,11 +421,12 @@ func (r *ProductRepository) ListAll(ctx context.Context, page, pageSize int) ([]
 // customer-facing link is built from (FR-003).
 //
 // The same visibility predicate as ListCatalogue runs in this query — the
-// product's category is in visibleCategoryIDs AND at least one variant is on
-// sale — so a product that is hidden (no on-sale variant), in a hidden category,
-// removed or unknown answers the same domainerr.ErrProductNotFound and the
-// response never confirms that a hidden product exists (FR-008). An empty visible
-// set answers not-found without touching the database.
+// product's own flag is on, the product's category is in visibleCategoryIDs
+// AND at least one variant is on sale — so a product that is hidden (flag off
+// or no on-sale variant), in a hidden category, removed or unknown answers the
+// same domainerr.ErrProductNotFound and the response never confirms that a
+// hidden product exists (FR-008). An empty visible set answers not-found
+// without touching the database.
 func (r *ProductRepository) FindVisibleByCode(ctx context.Context, code string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
 	if len(visibleCategoryIDs) == 0 {
 		return nil, domainerr.ErrProductNotFound
@@ -394,6 +439,7 @@ func (r *ProductRepository) FindVisibleByCode(ctx context.Context, code string, 
 		SELECT %s FROM products
 		WHERE code = $1
 		  AND category_id = ANY($2)
+		  AND is_visible
 		  AND EXISTS (
 			SELECT 1 FROM product_variants v
 			WHERE v.product_id = products.id AND v.sell_state = 'ACTIVE'
@@ -739,13 +785,15 @@ func summarizeProduct(product *model.Product, pictures []model.Picture, variants
 	if lowest != nil {
 		summary.Price = model.Price{Amount: *lowest, Currency: product.Price.Currency}
 	}
-	if len(variants) > 0 && variants[0].Image != nil {
-		summary.ImageURL = variants[0].Image.URL
-	}
-	if summary.ImageURL == "" {
+	if len(pictures) > 0 {
 		if picture, ok := model.PrimaryPicture(pictures); ok {
 			summary.ImageURL = picture.URL
+		} else {
+			summary.ImageURL = pictures[0].URL
 		}
+	}
+	if summary.ImageURL == "" && len(variants) > 0 && variants[0].Image != nil {
+		summary.ImageURL = variants[0].Image.URL
 	}
 	return summary
 }
@@ -766,6 +814,7 @@ func scanProduct(row baserepo.Row) (*model.Product, error) {
 		&product.Price.Currency,
 		&product.CategoryID,
 		&product.Position,
+		&product.IsVisible,
 		&product.CreatedAt,
 		&product.UpdatedAt,
 	)
@@ -792,6 +841,7 @@ func scanListItem(row baserepo.Row) (domainrepo.ProductListItem, error) {
 		&item.Product.Price.Currency,
 		&item.Product.CategoryID,
 		&item.Product.Position,
+		&item.Product.IsVisible,
 		&item.Product.CreatedAt,
 		&item.Product.UpdatedAt,
 		&item.PictureCount,

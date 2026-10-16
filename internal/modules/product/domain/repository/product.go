@@ -144,8 +144,8 @@ type ProductRepository interface {
 	// product — plus the total number of entries.
 	//
 	// The whole predicate runs in this single statement: a product is visible when
-	// its category is in query.VisibleCategoryIDs and at least one of its variants
-	// is on sale (FR-004). The entry's price is the lowest effective price among the
+	// its own flag is on, its category is in query.VisibleCategoryIDs and at least
+	// one of its variants is on sale (FR-004, specs/016-hide-guard FR-006). The entry's price is the lowest effective price among the
 	// product's on-sale variants and its image is the default variant's image falling
 	// back to the product's primary gallery picture (FR-001, FR-002). The order is
 	// position, then created_at, then id (FR-001), and a COUNT(*) over the same rows
@@ -157,8 +157,8 @@ type ProductRepository interface {
 	// built from (FR-003).
 	//
 	// The same visibility predicate as ListCatalogue runs here, so a product that is
-	// hidden (no on-sale variant), retired, in a hidden category, removed or unknown
-	// is reported the same way, as domainerr.ErrProductNotFound, and the response
+	// hidden (own flag off or no on-sale variant), retired, in a hidden category,
+	// removed or unknown is reported the same way, as domainerr.ErrProductNotFound, and the response
 	// never confirms that a hidden product exists (FR-008). The variants carried are
 	// the on-sale and out-of-stock ones only (FR-005), ordered by position.
 	FindVisibleByCode(ctx context.Context, code string, visibleCategoryIDs []uuid.UUID) (*ProductView, error)
@@ -220,4 +220,13 @@ type ProductRepository interface {
 	// error. A picture that does not belong to the product, or a product that does
 	// not exist, answers domainerr.ErrProductNotFound.
 	SetPrimaryPicture(ctx context.Context, productID, pictureID uuid.UUID) error
+
+	// VariantIDsByCategories returns the identifiers of every variant whose
+	// product belongs to one of the given categories, in a stable order, so a
+	// category hide guard can resolve "my variants" without reading another
+	// module's tables (specs/016-hide-guard research D2, data-model.md). It is a
+	// single bounded statement however many categories are passed, and an empty
+	// input answers an empty slice without touching the database. It joins the
+	// caller's transaction and never opens one itself.
+	VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error)
 }

@@ -7,7 +7,9 @@ package domainerr
 import (
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 )
 
@@ -64,7 +66,86 @@ var (
 	// variant sell-state move; the message names the state the move started from
 	// (FR-015).
 	ErrVariantStateTransitionInvalid = errors.New("variant state transition invalid")
+	// ErrProductHasPendingOrders is returned when turning a product's visibility
+	// flag off is refused because at least one PENDING or PAYMENT_PENDING order
+	// holds one of its variants. The refusal names the blocking orders so an
+	// operator can act on them; it is an admin-surface answer only
+	// (specs/016-hide-guard).
+	ErrProductHasPendingOrders = errors.New("product has pending orders")
+	// ErrVariantHasPendingOrders is returned when moving a variant away from its
+	// on-sale state is refused for the same reason (specs/016-hide-guard).
+	ErrVariantHasPendingOrders = errors.New("variant has pending orders")
 )
+
+// ProductPendingOrdersError carries the blocking order identifiers behind a
+// refused product-flag hide, so the response can name them without the caller
+// re-reading the orders. It is the single typed carrier for
+// ErrProductHasPendingOrders, so the module keeps one sentinel to map and one
+// type to test.
+type ProductPendingOrdersError struct {
+	// OrderIDs identifies the PENDING or PAYMENT_PENDING orders that hold at
+	// least one variant of the product.
+	OrderIDs []uuid.UUID
+}
+
+// Error implements the error interface.
+func (e *ProductPendingOrdersError) Error() string {
+	ids := make([]string, 0, len(e.OrderIDs))
+	for _, id := range e.OrderIDs {
+		ids = append(ids, id.String())
+	}
+	return ErrProductHasPendingOrders.Error() + ": " + strings.Join(ids, ", ")
+}
+
+// Is makes errors.Is(err, ErrProductHasPendingOrders) match this error, so a
+// caller can branch on the single sentinel without knowing the carrier type.
+func (e *ProductPendingOrdersError) Is(target error) bool {
+	return target == ErrProductHasPendingOrders
+}
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *ProductPendingOrdersError) Unwrap() error { return ErrProductHasPendingOrders }
+
+// ProductHasPendingOrders builds the typed refusal for a product hide blocked
+// by the given pending orders.
+func ProductHasPendingOrders(orderIDs []uuid.UUID) error {
+	return &ProductPendingOrdersError{OrderIDs: orderIDs}
+}
+
+// VariantPendingOrdersError carries the blocking order identifiers behind a
+// refused variant state move, so the response can name them without the caller
+// re-reading the orders. It is the single typed carrier for
+// ErrVariantHasPendingOrders, so the module keeps one sentinel to map and one
+// type to test.
+type VariantPendingOrdersError struct {
+	// OrderIDs identifies the PENDING or PAYMENT_PENDING orders that hold the
+	// variant.
+	OrderIDs []uuid.UUID
+}
+
+// Error implements the error interface.
+func (e *VariantPendingOrdersError) Error() string {
+	ids := make([]string, 0, len(e.OrderIDs))
+	for _, id := range e.OrderIDs {
+		ids = append(ids, id.String())
+	}
+	return ErrVariantHasPendingOrders.Error() + ": " + strings.Join(ids, ", ")
+}
+
+// Is makes errors.Is(err, ErrVariantHasPendingOrders) match this error, so a
+// caller can branch on the single sentinel without knowing the carrier type.
+func (e *VariantPendingOrdersError) Is(target error) bool {
+	return target == ErrVariantHasPendingOrders
+}
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *VariantPendingOrdersError) Unwrap() error { return ErrVariantHasPendingOrders }
+
+// VariantHasPendingOrders builds the typed refusal for a variant state move
+// blocked by the given pending orders.
+func VariantHasPendingOrders(orderIDs []uuid.UUID) error {
+	return &VariantPendingOrdersError{OrderIDs: orderIDs}
+}
 
 // VariantStateTransitionError carries the state a refused variant sell-state change
 // started from, so the response can name it without the caller re-reading the

@@ -4,10 +4,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,14 +21,21 @@ import (
 
 	authdomainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	authtoken "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
+	carthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/hideguard"
+	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
 	categoryimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/implement"
 	categorymapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/domain/model"
 	categoryauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/auditor"
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
+	orderhideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/hideguard"
+	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
+	producthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/hideguard"
+	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
@@ -394,6 +404,454 @@ func TestTheAdministratorListIncludesHiddenCategoriesAgainstPostgres(t *testing.
 
 	if got := f.publicList(t); len(got) != 1 || got[0] != "cong-khai" {
 		t.Fatalf("the public list must hide the withheld category, got %v", got)
+	}
+}
+
+// --- Hide-guard journey (specs/016-hide-guard US1, T010) ---
+//
+// These tests drive the guarded category hide against real PostgreSQL: real
+// migrations, the real repositories, the real hide-guard adapters and the real
+// audit writer. Raw SQL seeds across module boundaries on purpose — products,
+// variants, orders and carts belong to other modules — to prove the guard and
+// the cleanup end to end, not one module's unit.
+
+// countingCategoryVariants wraps the real product hide-guard adapter and counts
+// its calls, so a test proves the variant resolution stays one bulk read
+// however many variants the category holds (spec SC-004).
+type countingCategoryVariants struct {
+	inner *producthideguard.Adapter
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingCategoryVariants) VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.inner.VariantIDsByCategories(ctx, categoryIDs)
+}
+
+func (c *countingCategoryVariants) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// countingOrderGuard wraps the real order hide-guard adapter and counts its
+// calls, so a test proves the pending-order check stays one bulk read.
+type countingOrderGuard struct {
+	inner *orderhideguard.Adapter
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingOrderGuard) PendingOrdersForVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.inner.PendingOrdersForVariants(ctx, variantIDs)
+}
+
+func (c *countingOrderGuard) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// countingCartCleanup wraps the real cart hide-guard adapter and counts its
+// calls, so a test proves the cleanup stays one bulk delete.
+type countingCartCleanup struct {
+	inner *carthideguard.Adapter
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingCartCleanup) RemoveVariantsFromAllCarts(ctx context.Context, variantIDs []uuid.UUID) (int64, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.inner.RemoveVariantsFromAllCarts(ctx, variantIDs)
+}
+
+func (c *countingCartCleanup) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// hideGuardFixture is the category module wired with the real hide-guard
+// adapters against real infrastructure, with call-counting wrappers around
+// each adapter for the boundedness assertions.
+type hideGuardFixture struct {
+	handler  http.Handler
+	pool     *pgxpool.Pool
+	adminID  uuid.UUID
+	adminTok string
+	variants *countingCategoryVariants
+	orders   *countingOrderGuard
+	carts    *countingCartCleanup
+}
+
+func newHideGuardFixture(t *testing.T) *hideGuardFixture {
+	t.Helper()
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	runner, err := migrate.New(dsn, 30*time.Second)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer runner.Close()
+	if err := runner.Up(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	writer := audit.NewWriter(audit.NewRepository(pool), testLogger, 64, 1, 1)
+	writer.Start(ctx)
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		writer.Stop(stopCtx)
+	})
+
+	categoryRepo := categorypostgres.NewCategoryRepository(pool)
+	variants := &countingCategoryVariants{inner: producthideguard.New(productpostgres.NewProductRepository(pool))}
+	guardOrders := &countingOrderGuard{inner: orderhideguard.New(orderpostgres.NewOrderRepository(pool))}
+	cleanCarts := &countingCartCleanup{inner: carthideguard.New(cartpostgres.NewCartRepository(pool))}
+	service := categoryimplement.New(categoryimplement.Service{
+		Categories: categoryRepo,
+		Audit:      categoryauditor.New(writer),
+		Mapper:     categorymapper.New(),
+		Tx:         &database.DB{Pool: pool},
+		Orders:     guardOrders,
+		Variants:   variants,
+		Carts:      cleanCarts,
+	})
+	handler := New(service, testLogger)
+
+	adminID := seedCategoryAccount(t, pool, "hideguard-admin@example.com", access.RoleAdmin)
+
+	hooks := categoryAuthHooks(t)
+	root := chi.NewRouter()
+	root.Mount(publicCategoriesPath, handler.Router(middleware.AuthHooks{}))
+	root.Mount(adminCategoriesPath, handler.AdminRouter(hooks))
+
+	adminTok, _, err := authtoken.NewAccessIssuer(categoryIntegrationSecret, categoryIntegrationTokenTTL).Issue(adminID, access.RoleAdmin)
+	if err != nil {
+		t.Fatalf("issue the administrator token: %v", err)
+	}
+
+	return &hideGuardFixture{
+		handler:  root,
+		pool:     pool,
+		adminID:  adminID,
+		adminTok: adminTok,
+		variants: variants,
+		orders:   guardOrders,
+		carts:    cleanCarts,
+	}
+}
+
+func (f *hideGuardFixture) call(method, path, body string) *httptest.ResponseRecorder {
+	return performJSON(f.handler, method, path, body, f.adminTok)
+}
+
+// seedHideGuardProduct inserts a product referencing the category, the way the
+// product module would. Raw SQL is deliberate: the product belongs to another
+// module, and this test seeds across that boundary on purpose.
+func (f *hideGuardFixture) seedHideGuardProduct(t *testing.T, categoryID uuid.UUID, code string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	const query = `
+		INSERT INTO products
+			(id, name, code, description, price_amount, currency, category_id, position)
+		VALUES ($1, $2, $3, '', 100, 'VND', $4, 1)`
+	if _, err := f.pool.Exec(context.Background(), query, id, "Product "+code, code, categoryID); err != nil {
+		t.Fatalf("seed product %s: %v", code, err)
+	}
+	return id
+}
+
+// seedHideGuardVariant inserts one on-sale variant of the product.
+func (f *hideGuardFixture) seedHideGuardVariant(t *testing.T, productID uuid.UUID, sku string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	const query = `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, $3, $4, 100, 1, 'ACTIVE')`
+	if _, err := f.pool.Exec(context.Background(), query, id, productID, "Variant "+sku, sku); err != nil {
+		t.Fatalf("seed variant %s: %v", sku, err)
+	}
+	return id
+}
+
+// seedHideGuardOrder inserts an order in the given status holding the variant,
+// the way checkout would. The line snapshots mirror what the order module
+// stores; only the status and the variant reference matter to the guard.
+func (f *hideGuardFixture) seedHideGuardOrder(t *testing.T, ownerID uuid.UUID, status string, productID, variantID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	const orderQuery = `
+		INSERT INTO orders
+			(id, user_id, status, total_amount, currency,
+			 recipient_name, recipient_phone,
+			 province_code, province_name, ward_code, ward_name, street_address,
+			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
+		VALUES ($1, $2, $3, 100, 'VND', 'Buyer', '0123456789',
+			'P', 'Province', 'W', 'Ward', 'Street',
+			NULL, 1, NULL, now(), now())`
+	if _, err := f.pool.Exec(context.Background(), orderQuery, id, ownerID, status); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	const lineQuery = `
+		INSERT INTO order_items
+			(order_id, product_id, variant_id, name, product_code, variant_name, sku,
+			 unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, 'Product', 'bulk-prod', 'Variant', $4, 100, 'VND', 1, 1, now())`
+	if _, err := f.pool.Exec(context.Background(), lineQuery, id, productID, variantID, "SKU-"+id.String()[:8]); err != nil {
+		t.Fatalf("seed order line: %v", err)
+	}
+	return id
+}
+
+// seedHideGuardCartLine inserts a cart holding the variant for the owner,
+// creating the cart lazily the way the cart module would.
+func (f *hideGuardFixture) seedHideGuardCartLine(t *testing.T, ownerID, variantID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	cartID := uuid.New()
+	const cartQuery = `INSERT INTO carts (id, user_id) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`
+	if _, err := f.pool.Exec(ctx, cartQuery, cartID, ownerID); err != nil {
+		t.Fatalf("seed cart: %v", err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT id FROM carts WHERE user_id = $1`, ownerID).Scan(&cartID); err != nil {
+		t.Fatalf("read the seeded cart: %v", err)
+	}
+	const lineQuery = `
+		INSERT INTO cart_items (cart_id, variant_id, quantity, unit_price_amount, currency)
+		VALUES ($1, $2, 1, 100, 'VND')`
+	if _, err := f.pool.Exec(ctx, lineQuery, cartID, variantID); err != nil {
+		t.Fatalf("seed cart line: %v", err)
+	}
+}
+
+// cartLineCount counts every cart line holding the variant across all carts.
+func (f *hideGuardFixture) cartLineCount(t *testing.T, variantID uuid.UUID) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM cart_items WHERE variant_id = $1`, variantID).Scan(&count); err != nil {
+		t.Fatalf("count the cart lines: %v", err)
+	}
+	return count
+}
+
+// waitForHideAudit waits until the hide action has a persisted audit row, so
+// the assertion cannot race the asynchronous writer.
+func (f *hideGuardFixture) waitForHideAudit(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var count int
+		if err := f.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM audit_logs WHERE action = $1`, constant.AuditCategoryHidden).Scan(&count); err != nil {
+			t.Fatalf("count the hide audit rows: %v", err)
+		}
+		if count == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected 1 %s row, got %d", constant.AuditCategoryHidden, count)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// hideAuditMetadata reads the hide event's metadata after it is persisted.
+func (f *hideGuardFixture) hideAuditMetadata(t *testing.T) map[string]any {
+	t.Helper()
+	f.waitForHideAudit(t)
+	var raw []byte
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT metadata FROM audit_logs WHERE action = $1`, constant.AuditCategoryHidden).Scan(&raw); err != nil {
+		t.Fatalf("read the hide audit metadata: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("decode the hide audit metadata %q: %v", raw, err)
+	}
+	return metadata
+}
+
+// hideAuditCount counts the persisted hide audit rows right now. A refusal
+// records nothing, so after a short settle delay this must be zero.
+func (f *hideGuardFixture) hideAuditCount(t *testing.T) int {
+	t.Helper()
+	time.Sleep(500 * time.Millisecond)
+	var count int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_logs WHERE action = $1`, constant.AuditCategoryHidden).Scan(&count); err != nil {
+		t.Fatalf("count the hide audit rows: %v", err)
+	}
+	return count
+}
+
+// createHideGuardCategory creates a category through the administrator route.
+func (f *hideGuardFixture) createHideGuardCategory(t *testing.T, name, slug string) uuid.UUID {
+	t.Helper()
+	rec := f.call(http.MethodPost, adminCategoriesPath,
+		fmt.Sprintf(`{"name":%q,"slug":%q,"position":1}`, name, slug))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	return decodeAdminCategory(t, rec).ID
+}
+
+// Spec US1, FR-001/FR-004/FR-007 against real PostgreSQL: a category with a
+// PENDING order holding one of its variants refuses the hide with the blocking
+// order named and nothing changes; resolving the order lets the hide succeed
+// and removes the cart lines in the same transaction.
+func TestCategoryHideGuardJourneyAgainstPostgres(t *testing.T) {
+	f := newHideGuardFixture(t)
+
+	categoryID := f.createHideGuardCategory(t, "Tranh guard", "tranh-guard")
+	productID := f.seedHideGuardProduct(t, categoryID, "guard-prod")
+	variantID := f.seedHideGuardVariant(t, productID, "GUARD-SKU-1")
+
+	buyerID := seedCategoryAccount(t, f.pool, "hideguard-buyer@example.com", access.RoleCustomer)
+	blockingID := f.seedHideGuardOrder(t, buyerID, "PENDING", productID, variantID)
+	f.seedHideGuardCartLine(t, buyerID, variantID)
+
+	before := f.call(http.MethodGet, adminCategoriesPath+"/"+categoryID.String(), "")
+	if before.Code != http.StatusOK {
+		t.Fatalf("read before hide: expected 200, got %d (%s)", before.Code, before.Body.String())
+	}
+
+	// Attempt the hide: refusal names the blocking order.
+	rec := f.call(http.MethodPatch, adminCategoriesPath+"/"+categoryID.String(), `{"isVisible":false}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("blocked hide: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeAdminError(t, rec)
+	if body.Error.Code != constant.CodeCategoryHasPendingOrders {
+		t.Fatalf("expected %s, got %s", constant.CodeCategoryHasPendingOrders, body.Error.Code)
+	}
+	named := false
+	for _, detail := range body.Error.Details {
+		if detail.Field == "orderId" && detail.Issue == blockingID.String() {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("the refusal must name the blocking order %s, got %+v", blockingID, body.Error.Details)
+	}
+
+	// Nothing changes: the category is byte-for-byte the same, the cart line is
+	// intact, and no hide is audited.
+	after := f.call(http.MethodGet, adminCategoriesPath+"/"+categoryID.String(), "")
+	if after.Code != http.StatusOK {
+		t.Fatalf("read after refused hide: expected 200, got %d (%s)", after.Code, after.Body.String())
+	}
+	if after.Body.String() != before.Body.String() {
+		t.Fatalf("a refused hide must leave the category unchanged:\nbefore %s\nafter  %s",
+			before.Body.String(), after.Body.String())
+	}
+	if got := f.cartLineCount(t, variantID); got != 1 {
+		t.Fatalf("a refused hide must leave carts untouched, got %d lines", got)
+	}
+	if got := f.hideAuditCount(t); got != 0 {
+		t.Fatalf("a refused hide must record nothing, got %d hide rows", got)
+	}
+
+	// Resolve the order out of the pending states: the hide now succeeds.
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE orders SET status = 'PAID' WHERE id = $1`, blockingID); err != nil {
+		t.Fatalf("resolve the blocking order: %v", err)
+	}
+	hide := f.call(http.MethodPatch, adminCategoriesPath+"/"+categoryID.String(), `{"isVisible":false}`)
+	if hide.Code != http.StatusOK {
+		t.Fatalf("clean hide: expected 200, got %d (%s)", hide.Code, hide.Body.String())
+	}
+	if decodeAdminCategory(t, hide).IsVisible {
+		t.Fatal("the category must be hidden")
+	}
+	if got := f.cartLineCount(t, variantID); got != 0 {
+		t.Fatalf("a successful hide must remove the hidden variant from every cart, got %d lines", got)
+	}
+	metadata := f.hideAuditMetadata(t)
+	if got, ok := metadata["removedCartLines"]; !ok || got != float64(1) {
+		t.Fatalf("the hide event must carry the removed cart-line count, got %v", metadata)
+	}
+	if f.variants.callCount() == 0 || f.orders.callCount() == 0 || f.carts.callCount() == 0 {
+		t.Fatalf("the guard and the cleanup must run, got variant=%d order=%d cart=%d calls",
+			f.variants.callCount(), f.orders.callCount(), f.carts.callCount())
+	}
+}
+
+// Spec SC-004, FR-008 against real PostgreSQL: hiding a category holding
+// hundreds of variants completes as bounded bulk statements — one resolution,
+// one check and one cleanup — with cart lines of other categories untouched.
+func TestCategoryHideGuardStaysBoundedForHundredsOfVariantsAgainstPostgres(t *testing.T) {
+	f := newHideGuardFixture(t)
+
+	categoryID := f.createHideGuardCategory(t, "Tranh bulk", "tranh-bulk")
+	productID := f.seedHideGuardProduct(t, categoryID, "bulk-prod")
+
+	const variantCount = 200
+	variantIDs := make([]uuid.UUID, 0, variantCount)
+	for i := 0; i < variantCount; i++ {
+		variantIDs = append(variantIDs, f.seedHideGuardVariant(t, productID, fmt.Sprintf("BULK-SKU-%04d", i)))
+	}
+
+	// Spread cart lines across three buyers, plus one line of another category
+	// that the cleanup must leave alone.
+	buyers := []uuid.UUID{
+		seedCategoryAccount(t, f.pool, "hideguard-bulk-1@example.com", access.RoleCustomer),
+		seedCategoryAccount(t, f.pool, "hideguard-bulk-2@example.com", access.RoleCustomer),
+		seedCategoryAccount(t, f.pool, "hideguard-bulk-3@example.com", access.RoleCustomer),
+	}
+	for i, variantID := range variantIDs[:60] {
+		f.seedHideGuardCartLine(t, buyers[i%len(buyers)], variantID)
+	}
+	otherCategoryID := f.createHideGuardCategory(t, "Tranh other", "tranh-other")
+	otherProductID := f.seedHideGuardProduct(t, otherCategoryID, "other-prod")
+	otherVariantID := f.seedHideGuardVariant(t, otherProductID, "OTHER-SKU-1")
+	f.seedHideGuardCartLine(t, buyers[0], otherVariantID)
+
+	hide := f.call(http.MethodPatch, adminCategoriesPath+"/"+categoryID.String(), `{"isVisible":false}`)
+	if hide.Code != http.StatusOK {
+		t.Fatalf("bulk hide: expected 200, got %d (%s)", hide.Code, hide.Body.String())
+	}
+
+	// Bounded: exactly one resolution, one check and one cleanup for all two
+	// hundred variants — no per-variant round trips.
+	if got := f.variants.callCount(); got != 1 {
+		t.Fatalf("the variant resolution must be one bulk read, got %d calls", got)
+	}
+	if got := f.orders.callCount(); got != 1 {
+		t.Fatalf("the pending-order check must be one bulk read, got %d calls", got)
+	}
+	if got := f.carts.callCount(); got != 1 {
+		t.Fatalf("the cart cleanup must be one bulk delete, got %d calls", got)
+	}
+
+	var remaining int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM cart_items WHERE variant_id = ANY($1)`, variantIDs).Scan(&remaining); err != nil {
+		t.Fatalf("count the remaining bulk lines: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("a successful hide must remove every hidden line, got %d remaining", remaining)
+	}
+	if got := f.cartLineCount(t, otherVariantID); got != 1 {
+		t.Fatalf("the cleanup must leave other categories' lines alone, got %d", got)
 	}
 }
 

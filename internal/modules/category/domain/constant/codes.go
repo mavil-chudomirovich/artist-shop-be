@@ -26,4 +26,9 @@ const (
 	// layer rather than from a check (FR-036); the answer tells the operator
 	// what stands in the way (FR-037).
 	CodeCategoryInUse = "CATEGORY_IN_USE"
+	// CodeCategoryHasPendingOrders reports that hiding the category was refused
+	// because at least one PENDING or PAYMENT_PENDING order holds one of its
+	// variants. The refusal names the blocking orders so an operator can act on
+	// them (specs/016-hide-guard).
+	CodeCategoryHasPendingOrders = "CATEGORY_HAS_PENDING_ORDERS"
 )

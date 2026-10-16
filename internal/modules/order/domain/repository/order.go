@@ -98,4 +98,13 @@ type OrderRepository interface {
 	// transfer changes only the owner; the state, the lines and the totals are
 	// untouched (FR-024, research D12). It joins the caller's transaction.
 	UpdateOwner(ctx context.Context, id, ownerID uuid.UUID, now time.Time) error
+
+	// FindPendingOrdersByVariants returns the identifiers of the PENDING or
+	// PAYMENT_PENDING orders that hold at least one of the given variants, in a
+	// stable order, so a hide guard can refuse while one is pending
+	// (specs/016-hide-guard research D1, data-model.md). Pending is exactly
+	// these two states — enforced by the status filter in the single bulk
+	// query, not by caller discipline — and an empty input answers an empty
+	// slice without touching the database. It joins the caller's transaction.
+	FindPendingOrdersByVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error)
 }

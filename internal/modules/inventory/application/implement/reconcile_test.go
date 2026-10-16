@@ -155,8 +155,34 @@ func TestExpiryReconciliationLeavesANonCrossingSweepAlone(t *testing.T) {
 	}
 }
 
+// specs/016-hide-guard US2, research D5: a stock-out signal the product's hide
+// guard blocks is a recorded no-op that answers nil product-side, so the stock
+// write it travels with still commits. From the reconciler's side the signal
+// is attempted once and tolerated: the crossing commits and nothing fails
+// because of a display rule.
+func TestBlockedStockOutSignalNeverFailsTheStockWrite(t *testing.T) {
+	repo := &fakeRepository{physical: 2}
+	availability := &fakeAvailability{}
+	svc := newReconcileService(repo, availability)
+
+	err := svc.reconcileAvailability(adminContext(), uuid.New(), fixedNow, func() error {
+		repo.physical = 0
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("a blocked signal must never fail the stock write, got %v", err)
+	}
+	if repo.physical != 0 {
+		t.Fatalf("the stock change must still commit, got physical=%d", repo.physical)
+	}
+	if availability.outOfStock != 1 || availability.onSale != 0 {
+		t.Fatalf("the crossing must still be signalled once, got MarkVariantOutOfStock=%d MarkVariantOnSale=%d",
+			availability.outOfStock, availability.onSale)
+	}
+}
+
 // The availability port is optional at construction: a use case wire that has not
-// been handed the product adapter (a unit test, a read-only build) must still run.
+// been handed the product adapter (a unit test, a read-only build) still runs.
 // A nil port tolerates the crossing instead of panicking, exactly as the audit
 // port tolerates a nil auditor.
 func TestReconciliationToleratesAnUnwiredAvailabilityPort(t *testing.T) {

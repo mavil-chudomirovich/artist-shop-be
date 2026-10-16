@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,10 +20,14 @@ import (
 
 	authconstant "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	authtoken "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/token"
+	carthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/hideguard"
+	cartpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/infrastructure/implement/postgres"
 	categorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/postgres"
 	categoryvisibility "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/category/infrastructure/implement/visibility"
 	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
+	orderhideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/hideguard"
+	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	productimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/implement"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
@@ -473,6 +479,447 @@ func TestVariantMaintenanceLifecycleAgainstPostgres(t *testing.T) {
 	}
 	if denials[0].outcome != string(audit.OutcomeFailure) {
 		t.Fatalf("a denied request must be recorded as FAILURE, got %q", denials[0].outcome)
+	}
+}
+
+// --- Hide-guard journey (specs/016-hide-guard US2, T014) ---
+//
+// This test drives the guarded variant hide against real PostgreSQL: real
+// migrations, the real repositories, the real order/cart hide-guard adapters
+// and the real audit writer. Raw SQL seeds across module boundaries on
+// purpose — orders and carts belong to other modules — to prove the guard and
+// the cleanup end to end.
+
+// countingVariantOrderGuard wraps the real order hide-guard adapter and counts
+// its calls, so the test proves the pending-order check stays one bulk read.
+type countingVariantOrderGuard struct {
+	inner *orderhideguard.Adapter
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingVariantOrderGuard) PendingOrdersForVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.inner.PendingOrdersForVariants(ctx, variantIDs)
+}
+
+func (c *countingVariantOrderGuard) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// countingVariantCartCleanup wraps the real cart hide-guard adapter and counts
+// its calls, so the test proves the cleanup stays one bulk delete.
+type countingVariantCartCleanup struct {
+	inner *carthideguard.Adapter
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *countingVariantCartCleanup) RemoveVariantsFromAllCarts(ctx context.Context, variantIDs []uuid.UUID) (int64, error) {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	return c.inner.RemoveVariantsFromAllCarts(ctx, variantIDs)
+}
+
+func (c *countingVariantCartCleanup) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+// variantHideGuardFixture is the module wired with the real hide-guard
+// adapters against real infrastructure, with call-counting wrappers around
+// each adapter for the boundedness assertions.
+type variantHideGuardFixture struct {
+	pool       *pgxpool.Pool
+	categories *categorypostgres.CategoryRepository
+	handler    http.Handler
+	adminTok   string
+	orders     *countingVariantOrderGuard
+	carts      *countingVariantCartCleanup
+}
+
+func newVariantHideGuardFixture(t *testing.T) *variantHideGuardFixture {
+	t.Helper()
+	dsn := testsupport.PostgresDSN(t)
+	ctx := context.Background()
+
+	runner, err := migrate.New(dsn, 30*time.Second)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer runner.Close()
+	if err := runner.Up(ctx); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	db := &database.DB{Pool: pool}
+
+	writer := audit.NewWriter(audit.NewRepository(pool), testLogger, 128, 1, 1)
+	writer.Start(ctx)
+	t.Cleanup(func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		writer.Stop(stopCtx)
+	})
+
+	categoryRepo := categorypostgres.NewCategoryRepository(pool)
+	guardOrders := &countingVariantOrderGuard{inner: orderhideguard.New(orderpostgres.NewOrderRepository(pool))}
+	cleanCarts := &countingVariantCartCleanup{inner: carthideguard.New(cartpostgres.NewCartRepository(pool))}
+	service := productimplement.New(productimplement.Service{
+		Products:     productpostgres.NewProductRepository(pool),
+		Variants:     productpostgres.NewVariantRepository(pool),
+		Visibility:   categoryvisibility.New(categoryRepo),
+		Availability: inventoryavailability.New(inventorypostgres.NewInventoryRepository(pool), variantMaintenanceClock{}),
+		Audit:        productauditor.New(writer),
+		Media:        &variantMediaStub{},
+		Tx:           db,
+		Orders:       guardOrders,
+		Carts:        cleanCarts,
+		Mapper:       mapper.New(),
+	})
+	handler := New(service, appinterface.Config{PictureMaxBytes: 4096}, testLogger)
+
+	adminID := seedVariantMaintenanceAccount(t, pool, "variant-hideguard-admin@example.test", access.RoleAdmin)
+
+	hooks := variantMaintenanceAuthHooks(writer)
+	root := chi.NewRouter()
+	root.Mount("/api/v1/products", handler.Router(middleware.AuthHooks{}))
+	root.Mount(productAdminPath, handler.AdminRouter(hooks))
+
+	adminTok, _, err := authtoken.NewAccessIssuer(variantMaintenanceSecret, variantMaintenanceTokenTTL).Issue(adminID, access.RoleAdmin)
+	if err != nil {
+		t.Fatalf("issue the administrator token: %v", err)
+	}
+
+	return &variantHideGuardFixture{
+		pool:       pool,
+		categories: categoryRepo,
+		handler:    root,
+		adminTok:   adminTok,
+		orders:     guardOrders,
+		carts:      cleanCarts,
+	}
+}
+
+func (f *variantHideGuardFixture) call(method, path, body string) *httptest.ResponseRecorder {
+	return performJSON(f.handler, method, path, body, f.adminTok)
+}
+
+// createGuardProduct creates a product with one COMING_SOON variant through the
+// administrator route and returns both identifiers.
+func (f *variantHideGuardFixture) createGuardProduct(t *testing.T, name, code, sku string, categoryID uuid.UUID) (string, string) {
+	t.Helper()
+	rec := f.call(http.MethodPost, productAdminPath, variantProductBody(name, code, sku, categoryID))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	created := decodeVariantAdminDetail(t, rec)
+	if len(created.Data.Variants) != 1 {
+		t.Fatalf("the created product must carry its variant: %+v", created.Data)
+	}
+	return created.Data.ID, created.Data.Variants[0].ID
+}
+
+// moveGuardVariantState requests one variant sell-state transition through the
+// administrator route.
+func (f *variantHideGuardFixture) moveGuardVariantState(t *testing.T, productID, variantID, to string) *httptest.ResponseRecorder {
+	t.Helper()
+	return f.call(http.MethodPost, productAdminPath+"/"+productID+"/variants/"+variantID+"/state",
+		`{"to":`+strconv.Quote(to)+`}`)
+}
+
+// guardVariantState reads the variant's current sell state from the
+// administrator detail.
+func (f *variantHideGuardFixture) guardVariantState(t *testing.T, productID, variantID string) string {
+	t.Helper()
+	rec := f.call(http.MethodGet, productAdminPath+"/"+productID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read the product: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	for _, variant := range decodeVariantAdminDetail(t, rec).Data.Variants {
+		if variant.ID == variantID {
+			return variant.SellState
+		}
+	}
+	t.Fatalf("variant %s is not on the product %s", variantID, productID)
+	return ""
+}
+
+// seedGuardOrder inserts an order in the given status holding the variant, the
+// way checkout would. Only the status and the variant reference matter to the
+// guard.
+func (f *variantHideGuardFixture) seedGuardOrder(t *testing.T, ownerID uuid.UUID, status string, productID, variantID uuid.UUID) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	const orderQuery = `
+		INSERT INTO orders
+			(id, user_id, status, total_amount, currency,
+			 recipient_name, recipient_phone,
+			 province_code, province_name, ward_code, ward_name, street_address,
+			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
+		VALUES ($1, $2, $3, 100, 'VND', 'Buyer', '0123456789',
+			'P', 'Province', 'W', 'Ward', 'Street',
+			NULL, 1, NULL, now(), now())`
+	if _, err := f.pool.Exec(context.Background(), orderQuery, id, ownerID, status); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	const lineQuery = `
+		INSERT INTO order_items
+			(order_id, product_id, variant_id, name, product_code, variant_name, sku,
+			 unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, 'Product', 'guard-prod', 'Variant', $4, 100, 'VND', 1, 1, now())`
+	if _, err := f.pool.Exec(context.Background(), lineQuery, id, productID, variantID, "SKU-"+id.String()[:8]); err != nil {
+		t.Fatalf("seed order line: %v", err)
+	}
+	return id
+}
+
+// seedGuardCartLine inserts a cart holding the variant for the owner, creating
+// the cart lazily the way the cart module would.
+func (f *variantHideGuardFixture) seedGuardCartLine(t *testing.T, ownerID, variantID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	cartID := uuid.New()
+	const cartQuery = `INSERT INTO carts (id, user_id) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`
+	if _, err := f.pool.Exec(ctx, cartQuery, cartID, ownerID); err != nil {
+		t.Fatalf("seed cart: %v", err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT id FROM carts WHERE user_id = $1`, ownerID).Scan(&cartID); err != nil {
+		t.Fatalf("read the seeded cart: %v", err)
+	}
+	const lineQuery = `
+		INSERT INTO cart_items (cart_id, variant_id, quantity, unit_price_amount, currency)
+		VALUES ($1, $2, 1, 100, 'VND')`
+	if _, err := f.pool.Exec(ctx, lineQuery, cartID, variantID); err != nil {
+		t.Fatalf("seed cart line: %v", err)
+	}
+}
+
+// guardCartLineCount counts every cart line holding the variant across all carts.
+func (f *variantHideGuardFixture) guardCartLineCount(t *testing.T, variantID uuid.UUID) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM cart_items WHERE variant_id = $1`, variantID).Scan(&count); err != nil {
+		t.Fatalf("count the cart lines: %v", err)
+	}
+	return count
+}
+
+// waitForGuardVariantAudit waits until the variant carries at least min
+// persisted PRODUCT_VARIANT_UPDATED rows, so an assertion cannot race the
+// asynchronous writer.
+func (f *variantHideGuardFixture) waitForGuardVariantAudit(t *testing.T, variantID string, min int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var count int
+		if err := f.pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM audit_logs WHERE action = $1 AND target_id = $2`,
+			productconstant.AuditProductVariantUpdated, variantID).Scan(&count); err != nil {
+			t.Fatalf("count the variant audit rows: %v", err)
+		}
+		if count >= min {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected at least %d audit rows for variant %s, got %d", min, variantID, count)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// guardVariantAuditCount counts the persisted PRODUCT_VARIANT_UPDATED rows of
+// the variant right now.
+func (f *variantHideGuardFixture) guardVariantAuditCount(t *testing.T, variantID string) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_logs WHERE action = $1 AND target_id = $2`,
+		productconstant.AuditProductVariantUpdated, variantID).Scan(&count); err != nil {
+		t.Fatalf("count the variant audit rows: %v", err)
+	}
+	return count
+}
+
+// guardHideMetadata waits for the hide event carrying the removed cart-line
+// count and returns its metadata.
+func (f *variantHideGuardFixture) guardHideMetadata(t *testing.T, variantID string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var raw []byte
+		err := f.pool.QueryRow(context.Background(),
+			`SELECT metadata FROM audit_logs WHERE action = $1 AND target_id = $2 ORDER BY occurred_at DESC LIMIT 1`,
+			productconstant.AuditProductVariantUpdated, variantID).Scan(&raw)
+		if err == nil {
+			var metadata map[string]any
+			if err := json.Unmarshal(raw, &metadata); err != nil {
+				t.Fatalf("decode the hide audit metadata %q: %v", raw, err)
+			}
+			if _, ok := metadata["removedCartLines"]; ok {
+				return metadata
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected a hide audit row carrying removedCartLines for variant %s", variantID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// Spec US2, FR-005/FR-007 against real PostgreSQL: a variant in a PENDING
+// order refuses the move away from on-sale with the blocking order named and
+// nothing changes; resolving the order lets the hide succeed and removes the
+// cart lines; moving back on-sale and moving between non-on-sale states are
+// never guarded.
+func TestVariantHideGuardJourneyAgainstPostgres(t *testing.T) {
+	f := newVariantHideGuardFixture(t)
+	category := seedSKUCategory(t, f.categories, "tranh-guard-hide", true)
+	buyer := seedVariantMaintenanceAccount(t, f.pool, "guard-buyer@example.test", access.RoleCustomer)
+
+	productID, variantID := f.createGuardProduct(t, "Bộ guard", "guard-prod", "GUARD-SKU-1", category.ID)
+	if rec := f.moveGuardVariantState(t, productID, variantID, "ACTIVE"); rec.Code != http.StatusOK {
+		t.Fatalf("activate: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	productUUID, err := uuid.Parse(productID)
+	if err != nil {
+		t.Fatalf("parse the product identifier: %v", err)
+	}
+	variantUUID, err := uuid.Parse(variantID)
+	if err != nil {
+		t.Fatalf("parse the variant identifier: %v", err)
+	}
+	blockingID := f.seedGuardOrder(t, buyer, "PENDING", productUUID, variantUUID)
+	f.seedGuardCartLine(t, buyer, variantUUID)
+
+	// The activation above already emits one variant event; wait for it so a
+	// later "records nothing" assertion cannot race the asynchronous writer.
+	f.waitForGuardVariantAudit(t, variantID, 1)
+	audited := f.guardVariantAuditCount(t, variantID)
+
+	before := f.call(http.MethodGet, productAdminPath+"/"+productID, "")
+	if before.Code != http.StatusOK {
+		t.Fatalf("read before hide: expected 200, got %d (%s)", before.Code, before.Body.String())
+	}
+
+	// Attempt the hide: refusal names the blocking order.
+	rec := f.moveGuardVariantState(t, productID, variantID, "OUT_OF_STOCK")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("blocked hide: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details []struct {
+				Field string `json:"field"`
+				Issue string `json:"issue"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the error envelope %q: %v", rec.Body.String(), err)
+	}
+	if body.Error.Code != productconstant.CodeVariantHasPendingOrders {
+		t.Fatalf("expected %s, got %s", productconstant.CodeVariantHasPendingOrders, body.Error.Code)
+	}
+	named := false
+	for _, detail := range body.Error.Details {
+		if detail.Field == "orderId" && detail.Issue == blockingID.String() {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("the refusal must name the blocking order %s, got %+v", blockingID, body.Error.Details)
+	}
+
+	// Nothing changes: the variant keeps its on-sale state, the cart line is
+	// intact, and no hide is audited.
+	after := f.call(http.MethodGet, productAdminPath+"/"+productID, "")
+	if after.Code != http.StatusOK {
+		t.Fatalf("read after refused hide: expected 200, got %d (%s)", after.Code, after.Body.String())
+	}
+	if after.Body.String() != before.Body.String() {
+		t.Fatalf("a refused hide must leave the variant unchanged:\nbefore %s\nafter  %s",
+			before.Body.String(), after.Body.String())
+	}
+	if got := f.guardCartLineCount(t, variantUUID); got != 1 {
+		t.Fatalf("a refused hide must leave carts untouched, got %d lines", got)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if got := f.guardVariantAuditCount(t, variantID); got != audited {
+		t.Fatalf("a refused hide must record nothing, got %d rows want %d", got, audited)
+	}
+
+	// Resolve the order out of the pending states: the hide now succeeds.
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE orders SET status = 'PAID' WHERE id = $1`, blockingID); err != nil {
+		t.Fatalf("resolve the blocking order: %v", err)
+	}
+	hide := f.moveGuardVariantState(t, productID, variantID, "OUT_OF_STOCK")
+	if hide.Code != http.StatusOK {
+		t.Fatalf("clean hide: expected 200, got %d (%s)", hide.Code, hide.Body.String())
+	}
+	if got := f.guardVariantState(t, productID, variantID); got != string(productconstant.SellStateOutOfStock) {
+		t.Fatalf("the variant must be out of stock, got %q", got)
+	}
+	if got := f.guardCartLineCount(t, variantUUID); got != 0 {
+		t.Fatalf("a successful hide must remove the hidden variant from every cart, got %d lines", got)
+	}
+	metadata := f.guardHideMetadata(t, variantID)
+	if got, ok := metadata["removedCartLines"]; !ok || got != float64(1) {
+		t.Fatalf("the hide event must carry the removed cart-line count, got %v", metadata)
+	}
+
+	// Moving back on-sale is never blocked, even with a PENDING order covering
+	// the variant.
+	f.seedGuardOrder(t, buyer, "PENDING", productUUID, variantUUID)
+	if rec := f.moveGuardVariantState(t, productID, variantID, "ACTIVE"); rec.Code != http.StatusOK {
+		t.Fatalf("a move back on-sale must never be refused, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := f.guardVariantState(t, productID, variantID); got != string(productconstant.SellStateActive) {
+		t.Fatalf("the variant must be on sale again, got %q", got)
+	}
+
+	// A non-on-sale to non-on-sale move passes unguarded, even with a PENDING
+	// order covering the variant.
+	secondProductID, secondVariantID := f.createGuardProduct(t, "Bộ guard hai", "guard-prod-2", "GUARD-SKU-2", category.ID)
+	secondProductUUID, err := uuid.Parse(secondProductID)
+	if err != nil {
+		t.Fatalf("parse the second product identifier: %v", err)
+	}
+	secondVariantUUID, err := uuid.Parse(secondVariantID)
+	if err != nil {
+		t.Fatalf("parse the second variant identifier: %v", err)
+	}
+	f.seedGuardOrder(t, buyer, "PAYMENT_PENDING", secondProductUUID, secondVariantUUID)
+	if rec := f.moveGuardVariantState(t, secondProductID, secondVariantID, "DISCONTINUED"); rec.Code != http.StatusOK {
+		t.Fatalf("a non-on-sale move must pass unguarded, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := f.guardVariantState(t, secondProductID, secondVariantID); got != string(productconstant.SellStateDiscontinued) {
+		t.Fatalf("the variant must be discontinued, got %q", got)
+	}
+
+	// Bounded: exactly two pending-order checks and one cart cleanup for the
+	// whole journey — no per-variant round trips.
+	if got := f.orders.callCount(); got != 2 {
+		t.Fatalf("the pending-order check must run once per guarded move, got %d calls", got)
+	}
+	if got := f.carts.callCount(); got != 1 {
+		t.Fatalf("the cart cleanup must run once per successful hide, got %d calls", got)
 	}
 }
 

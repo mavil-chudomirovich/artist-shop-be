@@ -502,6 +502,51 @@ func (r *OrderRepository) UpdateOwner(ctx context.Context, id, ownerID uuid.UUID
 	return nil
 }
 
+// FindPendingOrdersByVariants returns the identifiers of the PENDING or
+// PAYMENT_PENDING orders that hold at least one of the given variants, so a
+// hide guard can refuse while one is pending (specs/016-hide-guard research
+// D1, data-model.md).
+//
+// It is one bounded statement however many variants are passed: the order lines
+// are joined to their orders and filtered to the two pending states, so hiding
+// a category of hundreds of variants stays bounded (spec SC-004). An empty
+// input answers an empty slice without touching the database. It joins the
+// caller's transaction.
+func (r *OrderRepository) FindPendingOrdersByVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error) {
+	if len(variantIDs) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	const query = `
+		SELECT DISTINCT oi.order_id
+		FROM order_items oi
+		JOIN orders o ON o.id = oi.order_id
+		WHERE oi.variant_id = ANY($1)
+		  AND o.status IN ($2, $3)
+		ORDER BY oi.order_id`
+	rows, err := r.querier(ctx).Query(ctx, query,
+		variantIDs,
+		string(constant.StatusPending),
+		string(constant.StatusPaymentPending),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find pending orders by variants: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan pending order id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // loadLines reads one order's lines in position order and attaches them, so a
 // detail read never depends on a product still existing (research D3).
 func (r *OrderRepository) loadLines(ctx context.Context, order *model.Order) error {

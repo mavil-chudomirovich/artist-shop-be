@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -285,6 +286,233 @@ func TestVariantAvailabilitySignals(t *testing.T) {
 	if err := svc.MarkVariantOutOfStock(ctx, uuid.New()); !errors.Is(err, domainerr.ErrVariantNotFound) {
 		t.Fatalf("expected ErrVariantNotFound, got %v", err)
 	}
+}
+
+// --- Product visibility-flag hide guard (specs/016-hide-guard US3, T018) ---
+//
+// Turning a product's own flag off checks ALL of the product's variants against
+// PENDING and PAYMENT_PENDING orders inside the use case's transaction; a
+// refusal names the blocking orders and leaves everything untouched, while a
+// successful hide removes every variant from every cart in the same transaction
+// and carries the removed line count in its audit event metadata. Turning the
+// flag back on, or an edit that does not touch the flag, never runs the guard.
+
+// seedTwoVariantProduct stores a visible product with two variants, the unit
+// the flag-guard tests below share.
+func seedTwoVariantProduct(t *testing.T, repo *memoryProducts, category uuid.UUID) (*model.Product, model.Variant, model.Variant) {
+	t.Helper()
+	product := repo.seedWithVariants(t, model.ProductDraft{
+		Name: "Card set", Code: "card-set", Price: price(150000), CategoryID: category, Position: 1,
+		Variants: []model.VariantDraft{
+			{Name: "Small", SKU: "CARD-2-S", Position: 0},
+			{Name: "Large", SKU: "CARD-2-L", Position: 1},
+		},
+	}, nil, time.Now().UTC().Add(-time.Hour))
+	variants := repo.variantsFor(product.ID)
+	if len(variants) != 2 {
+		t.Fatalf("expected two seeded variants, got %d", len(variants))
+	}
+	return product, variants[0], variants[1]
+}
+
+// hideProductEvent returns the product hide audit event carrying the
+// cart-cleanup count, failing when none was recorded. A combined patch also
+// records a plain content-edit event under the same action, so the lookup
+// selects the one carrying the removed line count.
+func hideProductEvent(t *testing.T, recorder *recordingAuditor, productID uuid.UUID) recordedEvent {
+	t.Helper()
+	for _, event := range recorder.snapshot() {
+		if event.action != constant.AuditProductUpdated || event.targetID != productID.String() {
+			continue
+		}
+		if _, ok := event.metadata["removedCartLines"]; ok {
+			return event
+		}
+	}
+	t.Fatalf("the hide must emit %s carrying the removed cart-line count, got %v",
+		constant.AuditProductUpdated, recorder.actions())
+	return recordedEvent{}
+}
+
+// FR-006, SC-001 (specs/016-hide-guard US3): turning the flag off while a
+// PENDING order holds one of the product's two variants is refused with the
+// blocking order named, and the product is byte-for-byte unchanged — including
+// a content change the same patch carries — while carts are untouched.
+func TestGuardedProductFlagOffRefusedWhilePending(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, v1, v2 := seedTwoVariantProduct(t, repo, category)
+
+	blocking := uuid.New()
+	orders := &fakeVariantOrderGuard{orders: []guardOrder{
+		{id: blocking, status: "PENDING", variants: []uuid.UUID{v1.ID}},
+		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{v2.ID}},
+	}}
+	carts := &fakeVariantCartCleanup{}
+	tx := &fakeGuardUnitOfWork{}
+	svc := guardedVariantService(repo, recorder, orders, carts, tx)
+	ctx := adminContext(actor)
+
+	before, err := repo.FindByID(context.Background(), product.ID)
+	if err != nil {
+		t.Fatalf("read the seeded product: %v", err)
+	}
+
+	hidden := false
+	name := "Tranh mới"
+	out, err := svc.UpdateProduct(ctx, dto.UpdateProductInput{ID: product.ID, Name: &name, IsVisible: &hidden})
+	if !errors.Is(err, domainerr.ErrProductHasPendingOrders) {
+		t.Fatalf("expected ErrProductHasPendingOrders, got %v", err)
+	}
+	if !reflect.DeepEqual(out, dto.AdminProductDetailOutput{}) {
+		t.Fatalf("a refused hide must not answer a product, got %+v", out)
+	}
+	var pending *domainerr.ProductPendingOrdersError
+	if !errors.As(err, &pending) {
+		t.Fatal("the refusal must carry the blocking order identifiers")
+	}
+	if len(pending.OrderIDs) != 1 || pending.OrderIDs[0] != blocking {
+		t.Fatalf("the refusal must name exactly the blocking order, got %v", pending.OrderIDs)
+	}
+
+	after, err := repo.FindByID(context.Background(), product.ID)
+	if err != nil {
+		t.Fatalf("read the product after the refused hide: %v", err)
+	}
+	if !reflect.DeepEqual(*before, *after) {
+		t.Fatalf("a refused hide must leave the product byte-for-byte unchanged: %+v -> %+v", before, after)
+	}
+	if carts.calls != 0 {
+		t.Fatalf("a refused hide must never touch carts, got %d cleanup calls", carts.calls)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused hide must record nothing, got %v", recorder.actions())
+	}
+	requireGuardCheckedOnce(t, orders)
+	if tx.callCount() != 1 {
+		t.Fatalf("the refused hide must run inside one transaction, got %d", tx.callCount())
+	}
+}
+
+// FR-006, FR-007 (specs/016-hide-guard US3): orders in PAID, SHIPPED,
+// COMPLETED or CANCELLED never block; the flag turns off, both variants leave
+// every cart in the same transaction, and the hide emits its audit action
+// carrying the removed line count.
+func TestGuardedProductFlagOffSucceedsWithOnlySettledOrdersAndCleansCarts(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, v1, v2 := seedTwoVariantProduct(t, repo, category)
+
+	orders := &fakeVariantOrderGuard{orders: []guardOrder{
+		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{v1.ID}},
+		{id: uuid.New(), status: "SHIPPED", variants: []uuid.UUID{v2.ID}},
+		{id: uuid.New(), status: "COMPLETED", variants: []uuid.UUID{v1.ID, v2.ID}},
+		{id: uuid.New(), status: "CANCELLED", variants: []uuid.UUID{v1.ID}},
+	}}
+	carts := &fakeVariantCartCleanup{remove: 4}
+	tx := &fakeGuardUnitOfWork{}
+	svc := guardedVariantService(repo, recorder, orders, carts, tx)
+	ctx := adminContext(actor)
+
+	hidden := false
+	out, err := svc.UpdateProduct(ctx, dto.UpdateProductInput{ID: product.ID, IsVisible: &hidden})
+	if err != nil {
+		t.Fatalf("a hide covered only by settled orders must succeed, got %v", err)
+	}
+	if out.IsVisible {
+		t.Fatal("the product must be hidden")
+	}
+	if out.Name != "Card set" || out.Code != "card-set" {
+		t.Fatalf("hide must not destroy a member: %+v", out)
+	}
+
+	stored, err := repo.FindByID(context.Background(), product.ID)
+	if err != nil {
+		t.Fatalf("read the hidden product: %v", err)
+	}
+	if stored.Product.IsVisible {
+		t.Fatal("the stored row must be hidden")
+	}
+
+	requireGuardCheckedOnce(t, orders)
+	if carts.calls != 1 {
+		t.Fatalf("the cart cleanup must run exactly once, got %d calls", carts.calls)
+	}
+	for _, ran := range carts.inTx {
+		if !ran {
+			t.Fatal("the cart cleanup must run inside the transaction")
+		}
+	}
+	if len(carts.inputs) != 1 {
+		t.Fatalf("the cleanup must run once, got %v", carts.inputs)
+	}
+	cleaned := make(map[uuid.UUID]bool, len(carts.inputs[0]))
+	for _, id := range carts.inputs[0] {
+		cleaned[id] = true
+	}
+	if len(cleaned) != 2 || !cleaned[v1.ID] || !cleaned[v2.ID] {
+		t.Fatalf("the cleanup must remove exactly all of the product's variants, got %v", carts.inputs[0])
+	}
+	if tx.callCount() != 1 {
+		t.Fatalf("the hide and the cleanup must share one transaction, got %d", tx.callCount())
+	}
+
+	requireAudited(t, recorder, constant.AuditProductUpdated, actor, "product", product.ID)
+	event := hideProductEvent(t, recorder, product.ID)
+	if got, ok := event.metadata["removedCartLines"]; !ok || got != int64(4) {
+		t.Fatalf("the hide event must carry the removed cart-line count, got %v", event.metadata)
+	}
+}
+
+// Spec edge case (specs/016-hide-guard US3): turning the flag back on, or an
+// edit that does not touch the flag, is never blocked and never runs the
+// guard — even while a PENDING order covers the product.
+func TestProductFlagOnAndContentEditsSkipTheGuard(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, v1, _ := seedTwoVariantProduct(t, repo, category)
+
+	blocking := uuid.New()
+	orders := &fakeVariantOrderGuard{orders: []guardOrder{
+		{id: blocking, status: "PENDING", variants: []uuid.UUID{v1.ID}},
+	}}
+	carts := &fakeVariantCartCleanup{}
+	tx := &fakeGuardUnitOfWork{}
+	svc := guardedVariantService(repo, recorder, orders, carts, tx)
+	ctx := adminContext(actor)
+
+	// A content-only edit succeeds without the guard.
+	name := "Tranh mới"
+	out, err := svc.UpdateProduct(ctx, dto.UpdateProductInput{ID: product.ID, Name: &name})
+	if err != nil {
+		t.Fatalf("a content edit must never be guarded, got %v", err)
+	}
+	if out.Name != name || !out.IsVisible {
+		t.Fatalf("the edit must apply without touching visibility: %+v", out)
+	}
+	requireNoGuardCalls(t, orders, carts)
+	requireAudited(t, recorder, constant.AuditProductUpdated, actor, "product", product.ID)
+
+	// Turning the flag back on succeeds without the guard. The product is hidden
+	// first straight through the repository, because a guarded hide would be
+	// refused while the pending order covers it.
+	view, err := repo.FindByID(context.Background(), product.ID)
+	if err != nil {
+		t.Fatalf("read the product: %v", err)
+	}
+	hidden := view.Product
+	hidden.Hide(time.Now().UTC())
+	if err := repo.Update(context.Background(), &hidden); err != nil {
+		t.Fatalf("hide the product directly: %v", err)
+	}
+
+	shown := true
+	out, err = svc.UpdateProduct(ctx, dto.UpdateProductInput{ID: product.ID, IsVisible: &shown})
+	if err != nil {
+		t.Fatalf("showing again must never be guarded, got %v", err)
+	}
+	if !out.IsVisible {
+		t.Fatal("the product must be visible again")
+	}
+	requireNoGuardCalls(t, orders, carts)
+	requireAudited(t, recorder, constant.AuditProductUpdated, actor, "product", product.ID)
 }
 
 // FR-016: adding a variant image stores the reference and auditing it; removing the

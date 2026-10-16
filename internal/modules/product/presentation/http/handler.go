@@ -265,6 +265,7 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		Price:       toPrice(req.DefaultPrice),
 		CategoryID:  req.CategoryID,
 		Position:    req.Position,
+		IsVisible:   req.IsVisible,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -954,6 +955,7 @@ func toAdminProductResponse(product appdto.AdminProductOutput) httpdto.AdminProd
 		DefaultPrice: toPriceResponse(product.Price),
 		CategoryID:   product.CategoryID,
 		Position:     product.Position,
+		IsVisible:    product.IsVisible,
 		VariantCount: product.VariantCount,
 		ImageURL:     product.ImageURL,
 		CreatedAt:    product.CreatedAt,

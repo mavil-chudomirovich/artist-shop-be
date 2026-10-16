@@ -249,6 +249,68 @@ func TestVariantFactsReadEffectivePriceAndOnSale(t *testing.T) {
 	}
 }
 
+// specs/016-hide-guard FR-006 edge case: the facts of an ACTIVE variant whose
+// product flag is off, or whose category is hidden, are absent from the read —
+// exactly like a removed variant — while an ACTIVE variant of a visible product
+// in a visible category is still reported on sale.
+func TestVariantFactsHidesInvisibleProductsAndCategories(t *testing.T) {
+	f := newProductFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	visibleCat := f.requireCategory(t, "category-facts-visible")
+	hiddenCat := f.requireCategory(t, "category-facts-hidden")
+	if _, err := f.pool.Exec(ctx, `UPDATE categories SET is_visible = false WHERE id = $1`, hiddenCat); err != nil {
+		t.Fatalf("hide the category: %v", err)
+	}
+
+	visibleProduct := buildProduct(t, visibleCat, "facts-visible")
+	if err := f.repo.Create(ctx, visibleProduct); err != nil {
+		t.Fatalf("Create visible product: %v", err)
+	}
+	hiddenFlagProduct := buildProduct(t, visibleCat, "facts-flag-off")
+	hiddenFlagProduct.Hide(now)
+	if err := f.repo.Create(ctx, hiddenFlagProduct); err != nil {
+		t.Fatalf("Create flag-off product: %v", err)
+	}
+	hiddenCatProduct := buildProduct(t, hiddenCat, "facts-hidden-cat")
+	if err := f.repo.Create(ctx, hiddenCatProduct); err != nil {
+		t.Fatalf("Create hidden-category product: %v", err)
+	}
+
+	visibleVariant := buildVariant(t, visibleProduct.ID, "Visible", "sku-facts-visible-active", nil, 0)
+	if err := visibleVariant.Launch(now); err != nil {
+		t.Fatalf("Launch visible: %v", err)
+	}
+	flagOffVariant := buildVariant(t, hiddenFlagProduct.ID, "Flag off", "sku-facts-flagoff-active", nil, 0)
+	if err := flagOffVariant.Launch(now); err != nil {
+		t.Fatalf("Launch flag-off: %v", err)
+	}
+	hiddenCatVariant := buildVariant(t, hiddenCatProduct.ID, "Hidden cat", "sku-facts-hiddencat-active", nil, 0)
+	if err := hiddenCatVariant.Launch(now); err != nil {
+		t.Fatalf("Launch hidden-category: %v", err)
+	}
+	for _, variant := range []*model.Variant{visibleVariant, flagOffVariant, hiddenCatVariant} {
+		if err := f.variants.Create(ctx, variant); err != nil {
+			t.Fatalf("Create(%q): %v", variant.SKU, err)
+		}
+	}
+
+	facts, err := f.variants.FindFactsByIDs(ctx, []uuid.UUID{visibleVariant.ID, flagOffVariant.ID, hiddenCatVariant.ID, uuid.New()})
+	if err != nil {
+		t.Fatalf("FindFactsByIDs: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("only the visible ACTIVE variant must be reported, got %d facts", len(facts))
+	}
+	if facts[0].VariantID != visibleVariant.ID {
+		t.Fatalf("the reported fact must be the visible variant, got %s", facts[0].VariantID)
+	}
+	if !facts[0].OnSale {
+		t.Fatalf("the visible ACTIVE variant must report OnSale")
+	}
+}
+
 // FR-002, FR-010: ListByProduct orders by position, then created_at, then id, and
 // CountByProduct follows the same product filter.
 func TestVariantListOrderingAndCount(t *testing.T) {

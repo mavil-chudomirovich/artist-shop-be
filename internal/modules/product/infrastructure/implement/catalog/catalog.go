@@ -33,10 +33,12 @@ func New(variants domainrepo.VariantRepository) *Adapter {
 // exactly as the contract declares, so the cart can report a removed variant as no
 // longer available rather than as an error (research D6).
 //
-// OnSale is the repository projection's judgement that the variant is ACTIVE,
-// rather than a re-reading of the sell state here, so the meaning of "may be sold"
-// keeps one owner (research D6). Price is the variant's effective price, its own
-// amount or the product's default, in the product's currency (FR-017).
+// OnSale is the repository projection's judgement that the variant is ACTIVE
+// while its product flag is on and its category is visible — a hidden variant is
+// absent from the read, exactly like a removed one — rather than a re-reading of
+// the sell state here, so the meaning of "may be sold" keeps one owner (research
+// D6, specs/016-hide-guard FR-006). Price is the variant's effective price, its
+// own amount or the product's default, in the product's currency (FR-017).
 func (a *Adapter) Variants(ctx context.Context, variantIDs []uuid.UUID) ([]contracts.VariantSummary, error) {
 	facts, err := a.Repo.FindFactsByIDs(ctx, variantIDs)
 	if err != nil {

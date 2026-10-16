@@ -78,6 +78,11 @@ type Product struct {
 	// Position is the operator's place in the order. Any whole number, including
 	// zero and negative; it is a preference, not a sequence.
 	Position int
+	// IsVisible reports whether a customer can see the product. It is the only
+	// product-level display state and moves only through Hide and Show; the
+	// guarded flag edit owns the transition while a pending order may block it
+	// (specs/016-hide-guard).
+	IsVisible bool
 	// CreatedAt is when the product was created. Set once.
 	CreatedAt time.Time
 	// UpdatedAt is when the product was last written.
@@ -164,6 +169,7 @@ func NewProduct(draft ProductDraft, now time.Time) (*Product, error) {
 		Price:       draft.Price,
 		CategoryID:  draft.CategoryID,
 		Position:    draft.Position,
+		IsVisible:   true,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}, nil
@@ -222,4 +228,34 @@ func (p *Product) Apply(edit ProductEdit, now time.Time) error {
 	p.Position = position
 	p.UpdatedAt = now
 	return nil
+}
+
+// Hide takes the product off display. It reports whether anything changed.
+//
+// Hiding an already hidden product is a no-op, not an error: the outcome the
+// caller asked for already holds, and updated_at must not move for a write that
+// does not happen. Nothing is destroyed — the row and every other member stay
+// exactly as they were. Whether the hide is allowed while a pending order holds
+// one of the product's variants is decided by the guarded flag edit, not here
+// (specs/016-hide-guard).
+func (p *Product) Hide(now time.Time) bool {
+	if !p.IsVisible {
+		return false
+	}
+	p.IsVisible = false
+	p.UpdatedAt = now
+	return true
+}
+
+// Show puts the product back on display. It reports whether anything changed.
+//
+// Showing an already visible product is a no-op, not an error, for the same
+// reason Hide's repeat is. A move back on display is never guarded.
+func (p *Product) Show(now time.Time) bool {
+	if p.IsVisible {
+		return false
+	}
+	p.IsVisible = true
+	p.UpdatedAt = now
+	return true
 }

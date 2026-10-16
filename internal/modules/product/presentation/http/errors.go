@@ -41,6 +41,39 @@ func imageTooLarge() *httpx.AppError {
 	)
 }
 
+// withProductPendingOrders attaches the blocking order identifiers the product
+// flag hide guard refused with, one detail per order. It mirrors
+// withPendingOrders for the variant guard: the detail field is the contract's
+// member name for an order identifier, so an administrator client can map each
+// detail straight onto the order it names. An untyped sentinel — one that
+// carries no identifiers — answers without details rather than failing.
+func withProductPendingOrders(err *httpx.AppError, cause error) *httpx.AppError {
+	var pending *domainerr.ProductPendingOrdersError
+	if !errors.As(cause, &pending) {
+		return err
+	}
+	for _, id := range pending.OrderIDs {
+		err.Details = append(err.Details, httpx.Detail{Field: fieldOrderID, Issue: id.String()})
+	}
+	return err
+}
+
+// withPendingOrders attaches the blocking order identifiers the variant hide
+// guard refused with, one detail per order. The detail field is the contract's
+// member name for an order identifier, so an administrator client can map each
+// detail straight onto the order it names. An untyped sentinel — one that
+// carries no identifiers — answers without details rather than failing.
+func withPendingOrders(err *httpx.AppError, cause error) *httpx.AppError {
+	var pending *domainerr.VariantPendingOrdersError
+	if !errors.As(cause, &pending) {
+		return err
+	}
+	for _, id := range pending.OrderIDs {
+		err.Details = append(err.Details, httpx.Detail{Field: fieldOrderID, Issue: id.String()})
+	}
+	return err
+}
+
 // mapError translates the module's sentinel errors into the codes and statuses of
 // specs/015-product-sku-model/contracts/error-codes.md.
 //
@@ -50,7 +83,8 @@ func imageTooLarge() *httpx.AppError {
 // the client acts on that input. A value invalid on its own stays on the shared
 // VALIDATION_ERROR and names the field the domain reports. The public surface
 // produces only the not-found: an unknown code, a product with no on-sale variant,
-// a removed product and a product in a hidden category are all the same answer
+// a product whose own flag is off, a removed product and a product in a hidden
+// category are all the same answer
 // (FR-008).
 func mapError(err error) *httpx.AppError {
 	var invalid *domainerr.ProductFieldError
@@ -73,6 +107,30 @@ func mapError(err error) *httpx.AppError {
 	case errors.Is(err, domainerr.ErrVariantLastRemoval):
 		return coded(constant.CodeVariantLastRemoval, http.StatusConflict,
 			"A product must keep at least one variant")
+	case errors.Is(err, domainerr.ErrProductHasPendingOrders):
+		// Turning the product's visibility flag off is refused because at least
+		// one PENDING or PAYMENT_PENDING order holds one of its variants. Like
+		// the variant move above it is a conflict: the request is well formed
+		// and the current data forbids it. The refusal names the blocking
+		// orders — one detail per order — so the administrator can act on them;
+		// the hide actions sit behind the ADMIN guard, so no customer
+		// information leaks (specs/016-hide-guard research D7).
+		return withProductPendingOrders(
+			coded(constant.CodeProductHasPendingOrders, http.StatusConflict, "Product has pending orders and cannot be hidden"),
+			err,
+		)
+	case errors.Is(err, domainerr.ErrVariantHasPendingOrders):
+		// Moving the variant away from on-sale is refused because at least one
+		// PENDING or PAYMENT_PENDING order holds it. Like the removal above it
+		// is a conflict: the request is well formed and the current data
+		// forbids it. The refusal names the blocking orders — one detail per
+		// order — so the administrator can act on them; the hide actions sit
+		// behind the ADMIN guard, so no customer information leaks
+		// (specs/016-hide-guard research D7).
+		return withPendingOrders(
+			coded(constant.CodeVariantHasPendingOrders, http.StatusConflict, "Variant has pending orders and cannot be hidden"),
+			err,
+		)
 	case errors.As(err, &transition):
 		// The refusal names the state the variant is in, which is what makes an
 		// invalid transition distinguishable from a typo (FR-015).
@@ -108,4 +166,5 @@ const (
 	fieldVariantID = "variantId"
 	fieldImageID   = "imageId"
 	fieldImage     = "image"
+	fieldOrderID   = "orderId"
 )

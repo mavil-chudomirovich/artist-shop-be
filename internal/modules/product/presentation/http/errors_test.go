@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
@@ -49,6 +51,42 @@ func TestMapErrorMapsTheVariantAndCodeCollisions(t *testing.T) {
 				t.Fatalf("expected the field %q to be named, got %+v", tc.wantField, appErr.Details)
 			}
 		})
+	}
+}
+
+// A variant hide refused by pending orders is a conflict that names the
+// blocking orders, one detail per order, so the administrator can act on them
+// (specs/016-hide-guard US2, research D7).
+func TestMapErrorNamesBlockingOrdersInAVariantHideRefusal(t *testing.T) {
+	blocking := uuid.New()
+	appErr := mapError(domainerr.VariantHasPendingOrders([]uuid.UUID{blocking}))
+
+	if appErr.Status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", appErr.Status)
+	}
+	if string(appErr.Code) != constant.CodeVariantHasPendingOrders {
+		t.Fatalf("expected %s, got %s", constant.CodeVariantHasPendingOrders, appErr.Code)
+	}
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != "orderId" || appErr.Details[0].Issue != blocking.String() {
+		t.Fatalf("expected one orderId detail naming %s, got %+v", blocking, appErr.Details)
+	}
+}
+
+// A product flag hide refused by pending orders is a conflict that names the
+// blocking orders, one detail per order, so the administrator can act on them
+// (specs/016-hide-guard US3, research D7).
+func TestMapErrorNamesBlockingOrdersInAProductHideRefusal(t *testing.T) {
+	blocking := uuid.New()
+	appErr := mapError(domainerr.ProductHasPendingOrders([]uuid.UUID{blocking}))
+
+	if appErr.Status != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", appErr.Status)
+	}
+	if string(appErr.Code) != constant.CodeProductHasPendingOrders {
+		t.Fatalf("expected %s, got %s", constant.CodeProductHasPendingOrders, appErr.Code)
+	}
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != "orderId" || appErr.Details[0].Issue != blocking.String() {
+		t.Fatalf("expected one orderId detail naming %s, got %+v", blocking, appErr.Details)
 	}
 }
 

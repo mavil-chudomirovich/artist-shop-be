@@ -9,6 +9,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 )
@@ -125,26 +126,151 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 // are managed through their own operations, so they are absent here. Re-sending
 // the product's own code succeeds because the storage unique index
 // excludes the row being updated (FR-011).
+//
+// The display state is never assigned directly: it moves only through Hide or
+// Show, and only when the request asks for the other state. Turning the flag
+// off while the product is visible runs through the pending-orders guard in
+// updateProductGuarded: all of the product's variants are checked against
+// PENDING and PAYMENT_PENDING orders, and — only when none covers them — the
+// flag turns off with every cart line holding those variants removed in the
+// same transaction (specs/016-hide-guard FR-006, FR-007, research D3, D4).
+// Turning the flag back on, or an edit that does not touch the flag, never
+// runs the guard and never restores removed cart lines.
 func (s *Service) UpdateProduct(ctx context.Context, in dto.UpdateProductInput) (dto.AdminProductDetailOutput, error) {
 	stored, err := s.Products.FindByID(ctx, in.ID)
 	if err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
-	product := stored.Product
-	if err := product.Apply(model.ProductEdit{
-		Name:        in.Name,
-		Code:        in.Code,
-		Description: in.Description,
-		Price:       in.Price,
-		CategoryID:  in.CategoryID,
-		Position:    in.Position,
-	}, now()); err != nil {
-		return dto.AdminProductDetailOutput{}, err
+
+	if in.IsVisible != nil && !*in.IsVisible && stored.Product.IsVisible && s.Tx != nil {
+		return s.updateProductGuarded(ctx, in)
 	}
+
+	product := stored.Product
+	contentChanged := in.Name != nil || in.Code != nil || in.Description != nil ||
+		in.Price != nil || in.CategoryID != nil || in.Position != nil
+	if contentChanged {
+		if err := product.Apply(model.ProductEdit{
+			Name:        in.Name,
+			Code:        in.Code,
+			Description: in.Description,
+			Price:       in.Price,
+			CategoryID:  in.CategoryID,
+			Position:    in.Position,
+		}, now()); err != nil {
+			return dto.AdminProductDetailOutput{}, err
+		}
+	}
+
+	displayChanged := false
+	if in.IsVisible != nil {
+		if *in.IsVisible {
+			displayChanged = product.Show(now())
+		} else {
+			displayChanged = product.Hide(now())
+		}
+	}
+
+	if !contentChanged && !displayChanged {
+		// Nothing changed: there is no write to make and no transition to
+		// trace, so the current product is returned as it stands. This is
+		// what makes a repeated hide or show a no-op rather than an error.
+		return s.adminDetail(ctx, in.ID)
+	}
+
 	if err := s.Products.Update(ctx, &product); err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
-	s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"code": product.Code})
+	if contentChanged {
+		s.recordProduct(ctx, constant.AuditProductUpdated, product.ID, map[string]any{"code": product.Code})
+	}
+	if displayChanged {
+		s.recordProductHidden(ctx, product.ID, product.Code, 0)
+	}
+	return s.adminDetail(ctx, in.ID)
+}
+
+// updateProductGuarded turns a visible product's flag off behind the
+// pending-orders guard. The caller has already established that the request
+// asks to hide and the product is currently visible; everything below — the
+// re-read, the content edit, the pending-order check over ALL of the product's
+// variants, the hide and the cart cleanup — runs inside one transaction.
+//
+// A blocking order refuses the whole patch with the order identifiers: neither
+// the hide nor any content change the same patch carries is persisted, and no
+// cart line is touched (spec SC-001). Showing again is never guarded and never
+// restores removed cart lines.
+func (s *Service) updateProductGuarded(ctx context.Context, in dto.UpdateProductInput) (dto.AdminProductDetailOutput, error) {
+	contentChanged := in.Name != nil || in.Code != nil || in.Description != nil ||
+		in.Price != nil || in.CategoryID != nil || in.Position != nil
+
+	var audited model.Product
+	var removed int64
+	var wroteContent, hid bool
+
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		view, err := s.Products.FindByID(txCtx, in.ID)
+		if err != nil {
+			return err
+		}
+		product := view.Product
+		if contentChanged {
+			if err := product.Apply(model.ProductEdit{
+				Name:        in.Name,
+				Code:        in.Code,
+				Description: in.Description,
+				Price:       in.Price,
+				CategoryID:  in.CategoryID,
+				Position:    in.Position,
+			}, now()); err != nil {
+				return err
+			}
+		}
+		if !product.Hide(now()) {
+			// A racing hide already took the product off display: there is
+			// nothing left to guard. A content change the patch carries is
+			// still persisted; a patch that asks for nothing else answers the
+			// current product without writing or auditing anything.
+			if contentChanged {
+				if err := s.Products.Update(txCtx, &product); err != nil {
+					return err
+				}
+				wroteContent = true
+				audited = product
+			}
+			return nil
+		}
+
+		variantIDs := variantIDs(view.Variants)
+		blocking, err := s.guardPendingOrders(txCtx, variantIDs)
+		if err != nil {
+			return err
+		}
+		if len(blocking) > 0 {
+			return domainerr.ProductHasPendingOrders(blocking)
+		}
+
+		if err := s.Products.Update(txCtx, &product); err != nil {
+			return err
+		}
+		removed, err = s.guardCleanCarts(txCtx, variantIDs)
+		if err != nil {
+			return err
+		}
+		hid = true
+		wroteContent = contentChanged
+		audited = product
+		return nil
+	}); err != nil {
+		return dto.AdminProductDetailOutput{}, err
+	}
+
+	if wroteContent {
+		s.recordProduct(ctx, constant.AuditProductUpdated, audited.ID, map[string]any{"code": audited.Code})
+	}
+	if hid {
+		s.recordProductHidden(ctx, audited.ID, audited.Code, removed)
+	}
 	return s.adminDetail(ctx, in.ID)
 }
 
@@ -195,6 +321,15 @@ func variantIDs(variants []model.Variant) []uuid.UUID {
 // construction of the service cannot panic on a write it never serves.
 func (s *Service) recordProduct(ctx context.Context, action string, targetID uuid.UUID, metadata map[string]any) {
 	s.record(ctx, targetTypeProduct, action, targetID, metadata)
+}
+
+// recordProductHidden emits the hide event with the cart-cleanup count as
+// metadata, so the trail records how many cart lines the hide removed without
+// a new audit action (specs/016-hide-guard research D8). Emission never fails
+// the business operation: it runs after the transaction committed.
+func (s *Service) recordProductHidden(ctx context.Context, productID uuid.UUID, code string, removedCartLines int64) {
+	s.recordProduct(ctx, constant.AuditProductUpdated, productID,
+		map[string]any{"code": code, "removedCartLines": removedCartLines})
 }
 
 // recordVariant emits one administrative audit event for a variant write, naming

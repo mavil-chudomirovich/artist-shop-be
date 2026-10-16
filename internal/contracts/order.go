@@ -53,6 +53,22 @@ type OrderPayment interface {
 	MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReference string, expectedVersion int64) error
 }
 
+// OrderHideGuard exposes the pending-order lookup the hide guards need, so a
+// category, product or variant can be refused while a pending order holds it
+// without ever reading the order's tables (Constitution I, specs/016-hide-guard
+// research D1).
+//
+// The provider module (order, 07) supplies an adapter at the composition root.
+// The lookup is one bounded bulk read however many variants are passed, so
+// hiding a category of hundreds of variants stays bounded (spec SC-004).
+type OrderHideGuard interface {
+	// PendingOrdersForVariants returns the identifiers of the PENDING or
+	// PAYMENT_PENDING orders that hold at least one of the given variants, in
+	// a stable order. Variants held only by orders in any other state are
+	// absent, and an empty input answers an empty slice, never an error.
+	PendingOrdersForVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error)
+}
+
 // OrderPaymentTarget carries only what a payment needs, in contract-local types:
 // the package imports no module, exactly as contracts.VariantSummary carries
 // OnSale rather than module 04's state type (docs/system-design/contract-purity.md).
