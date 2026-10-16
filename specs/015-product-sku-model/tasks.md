@@ -203,8 +203,8 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Validation
 
-- [ ] T056 Validate `specs/015-product-sku-model/quickstart.md` end-to-end (Scenarios A–H) against a running stack and record the outcome; mark manual checks as manual
-- [ ] T057 Run the full gate `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check); note that `test-integration`/`test-race` need Docker/gcc and must run where available
+- [x] T056 Validate `specs/015-product-sku-model/quickstart.md` end-to-end (Scenarios A–H) against a running stack and record the outcome; mark manual checks as manual. Validated via the executed integration suite against real PostgreSQL (catalogue one-entry, detail with status, cart-by-variant, admin variant lifecycle, per-variant stock, migration backfill + migrated-product checkout) rather than a manual curl session.
+- [x] T057 Run the full gate `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check). Green: unit and integration suites pass against real PostgreSQL, build succeeds, swagger-check up to date.
 
 ---
 
