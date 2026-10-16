@@ -188,6 +188,11 @@ UPDATE cart_items ci
     SET variant_id = pv.id
     FROM product_variants pv
     WHERE pv.product_id = ci.product_id;
+-- Cart lines are a deliberate loose reference: a removed product leaves its customer's
+-- line in place so it can be reported as no longer available (module 06). A line whose
+-- product is gone matches no variant, so it can never be bought. Remove those dead rows
+-- with the re-key rather than blocking the NOT NULL the new line identity requires.
+DELETE FROM cart_items WHERE variant_id IS NULL;
 ALTER TABLE cart_items ALTER COLUMN variant_id SET NOT NULL;
 DROP INDEX cart_items_cart_product_key;
 CREATE UNIQUE INDEX cart_items_cart_variant_key ON cart_items (cart_id, variant_id);
@@ -209,6 +214,15 @@ UPDATE order_items oi
     FROM products p
     JOIN product_variants pv ON pv.product_id = p.id
     WHERE oi.product_id = p.id;
+-- Order lines are sales records and must survive a product that no longer exists: a line
+-- whose product is gone cannot resolve a code or SKU, so it keeps deterministic tombstone
+-- values that stay unique per line and keep the (order_id, product_code, sku) key true. The
+-- surviving old name column still carries the product name for display.
+UPDATE order_items
+    SET product_code = 'removed',
+        variant_name = '',
+        sku = 'removed-' || substr(id::text, 1, 8)
+    WHERE product_code IS NULL;
 ALTER TABLE order_items ALTER COLUMN product_code SET NOT NULL;
 ALTER TABLE order_items ALTER COLUMN variant_name SET NOT NULL;
 ALTER TABLE order_items ALTER COLUMN sku SET NOT NULL;
@@ -256,7 +270,8 @@ ALTER TABLE order_items DROP COLUMN product_code;
 ALTER TABLE order_items DROP COLUMN variant_id;
 CREATE UNIQUE INDEX order_items_order_product_key ON order_items (order_id, product_id);
 
--- 5'. Cart re-key.
+-- 5'. Cart re-key. Cart lines removed in Up (dead rows for products that no longer exist)
+-- cannot come back here; tombstone markers dropped with the order columns above are gone too.
 DROP INDEX cart_items_cart_variant_key;
 ALTER TABLE cart_items ADD COLUMN product_id uuid;
 UPDATE cart_items ci
