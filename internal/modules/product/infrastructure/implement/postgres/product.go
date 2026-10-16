@@ -328,13 +328,13 @@ const catalogueCTE = `
 				WHERE v.product_id = p.id AND v.sell_state = 'ACTIVE') AS price_amount,
 			p.currency AS currency,
 		COALESCE(
-			(SELECT v.image_secure_url FROM product_variants v
-				WHERE v.product_id = p.id
-				ORDER BY v.position, v.created_at, v.id
-				LIMIT 1),
 			(SELECT i.secure_url FROM product_images i
-				WHERE i.product_id = p.id AND i.is_primary
-				ORDER BY i.position, i.id
+				WHERE i.product_id = p.id
+				ORDER BY (CASE WHEN i.is_primary THEN 0 ELSE 1 END), i.position, i.id
+				LIMIT 1),
+			(SELECT v.image_secure_url FROM product_variants v
+				WHERE v.product_id = p.id AND v.image_secure_url IS NOT NULL AND v.image_secure_url != ''
+				ORDER BY v.position, v.created_at, v.id
 				LIMIT 1),
 			'') AS image_url,
 			p.category_id AS category_id,
