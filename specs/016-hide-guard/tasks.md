@@ -120,7 +120,7 @@ description: "Task list for Hide Guard with Pending Orders"
 
 - [x] T022 [P] Document the three new 409 codes and their order-ID detail in `docs/api-reference.md` with one entry per affected admin endpoint — `PATCH /api/v1/admin/categories/{categoryId}` (UpdateCategory), `POST /api/v1/admin/products/{id}/variants/{variantId}/state` (ChangeVariantState), `PATCH /api/v1/admin/products/{id}` (product flag edit) — stating when each refusal fires (Constitution VIII: error catalogue stays current)
 - [x] T023 **Không đổi bề mặt client**: this feature adds no route, changes no existing route path or method, and changes no client-facing DTO or event payload — no new/changed/removed endpoint rows and no `frontend-guide.md` changes are required. (The new 409 codes on existing admin endpoints are documented in `docs/api-reference.md` by T022.)
-- [ ] T024 Run the full gate `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check)
+- [x] T024 Run the full gate `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check) — green on the committed tree including the card-image order fix
 
 ### Swagger annotations *(bắt buộc nếu feature có endpoint)*
 

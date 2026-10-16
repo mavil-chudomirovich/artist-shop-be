@@ -252,8 +252,24 @@ Task: T016 contracts/cart.go — CartLine with variant + snapshots
 
 1. Complete Phase 1 and the large Phase 2 (the repo compiles on the variant model)
 2. Complete US1 (public catalogue + detail + cart-by-variant) and US2 (admin product + variants)
-3. Validate Scenarios A–E of `quickstart.md`
+3. Validate Scenarios A—E of `quickstart.md`
 4. US3/US4 harden independence and the migration; Phase 7 closes docs/swagger/guide/gate
+
+---
+
+## Phase 8: Product gallery ceiling 10 → 20
+
+**Purpose**: Raise the per-product gallery limit so up to 20 pictures can be uploaded per product.
+Backend keeps refuse-on-overflow semantics (the 21st upload answers 409
+`PRODUCT_IMAGE_LIMIT_REACHED`); dropping extras past 20 is the client's job
+(upload at most the first 20).
+
+- [ ] T058 Raise `MaxProductPictures` from 10 to 20 in `internal/modules/product/domain/model/picture.go` and update the in-code comments that name the old bound ("eleventh" → "twenty-first") in `internal/modules/product/domain/model/picture.go`, `internal/modules/product/application/implement/pictures.go`, `internal/modules/product/domain/repository/product.go` and `internal/modules/product/infrastructure/implement/postgres/product.go`
+- [ ] T059 Pin the new bound in tests: rename `TestPictureCeilingRefusesTheEleventh` to the twenty-first in `internal/modules/product/domain/model/picture_test.go` and `TestTheEleventhIsRefusedBeforeTheMediaStoreIsCalled` in `internal/modules/product/application/implement/pictures_test.go`, and assert the boundary explicitly (19 accepted, 20 refused before the media store is called, no orphaned asset, concurrent uploads at the ceiling admit at most 20)
+- [ ] T060 [P] Update the documented bound: `docs/api-reference.md` (`PRODUCT_IMAGE_LIMIT_REACHED` row and the `POST /api/v1/admin/products/{id}/images` row), `docs/modules/04-product.md`, `specs/006-product-catalog/spec.md` (the "tối đa 10 ảnh" rule and the eleventh-picture edge case), and add a note to `specs/015-product-sku-model/frontend-guide.md` that clients must cap gallery uploads at the first 20 pictures
+- [ ] T061 Run `make lint` + `make test` (and `make swagger-check` to confirm no drift — no annotation changes expected)
+
+**Checkpoint**: A product accepts 20 gallery pictures; the 21st is refused naming the limit, with no provider call and no orphan
 
 ### Notes
 
