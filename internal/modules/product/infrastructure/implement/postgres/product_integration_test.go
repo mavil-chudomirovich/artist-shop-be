@@ -426,12 +426,15 @@ func TestStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T) {
 		requireConstraint(t, err, sqlStateUnique, idxNormalizedSlug)
 	})
 
-	t.Run("duplicate code ignoring case and whitespace", func(t *testing.T) {
+	t.Run("duplicate code ignoring case", func(t *testing.T) {
 		if _, err := f.rawInsertProduct(ctx, validRaw(categoryID, "code-one")); err != nil {
 			t.Fatalf("seed the first row: %v", err)
 		}
 		p := validRaw(categoryID, "code-two")
-		p.Code = "  CODE-ONE  "
+		// A trimmed code differing only in case folds onto the seeded one
+		// (`code-code-one`). The shape check requires the stored code be trimmed,
+		// so no surrounding whitespace is present for it to reject first.
+		p.Code = "CODE-CODE-ONE"
 		_, err := f.rawInsertProduct(ctx, p)
 		requireConstraint(t, err, sqlStateUnique, idxCode)
 	})
