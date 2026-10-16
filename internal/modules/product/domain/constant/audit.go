@@ -50,4 +50,13 @@ const (
 	// AuditProductVariantDetached is recorded when a product is detached from its
 	// variant group and becomes an ordinary product again.
 	AuditProductVariantDetached = "PRODUCT_VARIANT_DETACHED"
+	// AuditProductVariantAdded is recorded when an administrator adds a variant
+	// to a product.
+	AuditProductVariantAdded = "PRODUCT_VARIANT_ADDED"
+	// AuditProductVariantUpdated is recorded when an administrator edits a
+	// variant's editable fields, including its sell state.
+	AuditProductVariantUpdated = "PRODUCT_VARIANT_UPDATED"
+	// AuditProductVariantRemoved is recorded when a variant is removed from its
+	// product. Removal is a hard delete; the audit entry is what survives it.
+	AuditProductVariantRemoved = "PRODUCT_VARIANT_REMOVED"
 )

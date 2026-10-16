@@ -39,8 +39,8 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 **Purpose**: the domain constants, codes and sentinels the whole feature maps to
 
-- [ ] T001 [P] Add the variant audit actions and sell-state code constants in `internal/modules/product/domain/constant/audit.go` and `internal/modules/product/domain/constant/codes.go` (`PRODUCT_VARIANT_ADDED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_REMOVED`; `PRODUCT_CODE_TAKEN`, `VARIANT_SKU_TAKEN`, `VARIANT_NOT_FOUND`, `VARIANT_LAST_REMOVAL`, `VARIANT_STATE_TRANSITION_INVALID`); **remove** feature 014's group code constants (`VARIANT_GROUP_*`, `PRODUCT_ALREADY_IN_VARIANT_GROUP`)
-- [ ] T002 [P] Update `internal/modules/product/domain/error/errors.go`: add the variant sentinels (`ErrProductCodeTaken`, `ErrVariantSKUTaken`, `ErrVariantNotFound`, `ErrVariantLastRemoval`, `ErrVariantStateTransitionInvalid`); **remove** 014's group sentinels
+- [x] T001 [P] Add the variant audit actions and the new code constants in `internal/modules/product/domain/constant/audit.go` and `internal/modules/product/domain/constant/codes.go` (`PRODUCT_VARIANT_ADDED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_REMOVED`; `PRODUCT_CODE_TAKEN`, `VARIANT_SKU_TAKEN`, `VARIANT_NOT_FOUND`, `VARIANT_LAST_REMOVAL`, `VARIANT_STATE_TRANSITION_INVALID`). 014's group code constants are left in place here and removed with 014's code in T026 (so the build never breaks)
+- [x] T002 [P] Add the variant sentinels in `internal/modules/product/domain/error/errors.go` (`ErrProductCodeTaken`, `ErrVariantSKUTaken`, `ErrVariantNotFound`, `ErrVariantLastRemoval`, `ErrVariantStateTransitionInvalid`). 014's group sentinels are left in place here and removed with 014's code in T026
 
 ---
 
@@ -93,7 +93,7 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Remove feature 014 and wire up
 
-- [ ] T026 Remove feature 014's grouping code and routes: delete the variant-group model/port/adapter/DTOs/handlers, the `/product-groups` and `/admin/product-groups*` routes, and their tests; keep `product_images`; and remove the product-level sell-state endpoint `POST /admin/products/{id}/state` (the product has no sell state; the variant state endpoint replaces it). `00013_product_variants.sql` is kept as a committed historical migration and its guard test stays; `00014` drops 014's objects with `DROP ... IF EXISTS` (so a DB that ran `00013` and one that did not both reach the new model)
+- [ ] T026 Remove feature 014's grouping code and routes: delete the variant-group model/port/adapter/DTOs/handlers, the `/product-groups` and `/admin/product-groups*` routes, and their tests; **and remove 014's now-unused group code constants (T001) and sentinels (T002)**; keep `product_images`; and remove the product-level sell-state endpoint `POST /admin/products/{id}/state` (the product has no sell state; the variant state endpoint replaces it). `00013_product_variants.sql` is kept as a committed historical migration and its guard test stays; `00014` drops 014's objects with `DROP ... IF EXISTS` (so a DB that ran `00013` and one that did not both reach the new model)
 - [ ] T027 Wire the whole composition root `cmd/api/main.go` to the variant model (variant repository, changed catalog/availability/inventory/cart/order adapters)
 - [ ] T028 [P] Update every affected test fake/stub across `product`, `inventory`, `cart`, `order` so the repository builds and the existing suites compile against the new contracts
 

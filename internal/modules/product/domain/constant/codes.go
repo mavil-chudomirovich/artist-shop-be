@@ -50,4 +50,24 @@ const (
 	// option of a group, so attaching it to another is refused — a product
 	// belongs to at most one group (FR-021).
 	CodeProductAlreadyInVariantGroup = "PRODUCT_ALREADY_IN_VARIANT_GROUP"
+	// CodeProductCodeTaken reports that another product already uses the product
+	// code, compared after trimming surrounding whitespace and ignoring letter
+	// case (FR-011).
+	CodeProductCodeTaken = "PRODUCT_CODE_TAKEN"
+	// CodeVariantSKUTaken reports that another variant already uses the SKU,
+	// compared after trimming surrounding whitespace and ignoring letter case
+	// (FR-011).
+	CodeVariantSKUTaken = "VARIANT_SKU_TAKEN"
+	// CodeVariantNotFound covers an unknown variant identifier for a product. A
+	// variant that exists but is not buyable is not this code: on a catalogue
+	// read it is simply not returned, and on a cart add it is the cart's
+	// not-purchasable refusal.
+	CodeVariantNotFound = "VARIANT_NOT_FOUND"
+	// CodeVariantLastRemoval reports that removing the variant is refused because
+	// it is the product's last one; a product must keep at least one variant
+	// (FR-012).
+	CodeVariantLastRemoval = "VARIANT_LAST_REMOVAL"
+	// CodeVariantStateTransitionInvalid reports a sell-state change the variant's
+	// current state does not allow. The message names the current state (FR-015).
+	CodeVariantStateTransitionInvalid = "VARIANT_STATE_TRANSITION_INVALID"
 )

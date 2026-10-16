@@ -75,6 +75,28 @@ var (
 	// belongs to a variant group is refused: a product is an option of at most
 	// one group (FR-021).
 	ErrProductAlreadyGrouped = errors.New("product already in a variant group")
+	// ErrProductCodeTaken is returned when another product already uses the code,
+	// compared after trimming surrounding whitespace and ignoring letter case
+	// (FR-011). It is a catalogue-wide invariant, so the storage layer enforces
+	// it and the adapter reports it here.
+	ErrProductCodeTaken = errors.New("product code taken")
+	// ErrVariantSKUTaken is returned when another variant already uses the SKU,
+	// compared after trimming surrounding whitespace and ignoring letter case
+	// (FR-011). It is a catalogue-wide invariant, so the storage layer enforces
+	// it and the adapter reports it here.
+	ErrVariantSKUTaken = errors.New("variant sku taken")
+	// ErrVariantNotFound is returned for an unknown variant identifier for a
+	// product. A variant that exists but is not buyable is not this error: a
+	// catalogue read simply omits it and a cart add uses the cart's
+	// not-purchasable refusal.
+	ErrVariantNotFound = errors.New("variant not found")
+	// ErrVariantLastRemoval is returned when removing a product's last variant is
+	// refused; a product must keep at least one variant (FR-012).
+	ErrVariantLastRemoval = errors.New("variant last removal")
+	// ErrVariantStateTransitionInvalid is the sentinel behind every refused
+	// variant sell-state move; the message names the state the move started from
+	// (FR-015).
+	ErrVariantStateTransitionInvalid = errors.New("variant state transition invalid")
 )
 
 // StateTransitionError carries the state a refused sell-state change started from,
