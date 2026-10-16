@@ -12,27 +12,27 @@ import (
 // reaches a handler without one (research D7, FR-010).
 
 func TestTheUS1CartPathsResolve(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 
 	if rec := performJSON(router, http.MethodGet, cartPath, "", "customer-token"); rec.Code != http.StatusOK {
 		t.Fatalf("GET /cart: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":1}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":1}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /cart/items: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":2}`, "customer-token")
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(), `{"quantity":2}`, "customer-token")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH /cart/items/{productId}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("PATCH /cart/items/{variantId}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	rec = performJSON(router, http.MethodDelete, cartPath+"/items/"+product.String(), "", "customer-token")
+	rec = performJSON(router, http.MethodDelete, cartPath+"/items/"+variant.String(), "", "customer-token")
 	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE /cart/items/{productId}: expected 204, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("DELETE /cart/items/{variantId}: expected 204, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -41,9 +41,9 @@ func TestTheUS1CartPathsResolve(t *testing.T) {
 // group and not on the individual routes only.
 func TestTheCartGroupRequiresASession(t *testing.T) {
 	router, _, _, _ := newCartRouter(t, cartHooks(nil))
-	product := uuid.New()
+	variant := uuid.New()
 
-	for _, route := range cartRoutes(product) {
+	for _, route := range cartRoutes(variant) {
 		rec := performJSON(router, route.method, route.path, route.body, "")
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s: expected 401 without a token, got %d (%s)", route.method, route.path, rec.Code, rec.Body.String())

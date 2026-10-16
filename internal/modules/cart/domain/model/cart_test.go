@@ -43,9 +43,9 @@ func TestLineTotalIsQuantityTimesCapturedPrice(t *testing.T) {
 // integer round-trip is what proves it did not.
 func TestSubtotalSumsLineTotalsExactly(t *testing.T) {
 	cart := Cart{Lines: []CartLine{
-		{ProductID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 199999, Currency: "VND"}},
-		{ProductID: uuid.New(), Quantity: 7, UnitPrice: Price{Amount: 1234567, Currency: "VND"}},
-		{ProductID: uuid.New(), Quantity: 1, UnitPrice: Price{Amount: 1, Currency: "VND"}},
+		{VariantID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 199999, Currency: "VND"}},
+		{VariantID: uuid.New(), Quantity: 7, UnitPrice: Price{Amount: 1234567, Currency: "VND"}},
+		{VariantID: uuid.New(), Quantity: 1, UnitPrice: Price{Amount: 1, Currency: "VND"}},
 	}}
 
 	subtotal, ok := cart.Subtotal()
@@ -111,19 +111,19 @@ func TestNewCartLineRejectsANonPositiveQuantity(t *testing.T) {
 // FR-012, research D10: a line is buyable only when the product is on sale and at
 // least the line's quantity is available.
 func TestBuyableRequiresOnSaleAndEnoughAvailable(t *testing.T) {
-	line := CartLine{ProductID: uuid.New(), Quantity: 3, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
+	line := CartLine{VariantID: uuid.New(), Quantity: 3, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
 
 	cases := []struct {
 		name  string
-		facts ProductFacts
+		facts VariantFacts
 		want  bool
 	}{
-		{"on sale and exactly enough", ProductFacts{OnSale: true, Available: 3}, true},
-		{"on sale and more than enough", ProductFacts{OnSale: true, Available: 10}, true},
-		{"on sale but short", ProductFacts{OnSale: true, Available: 2}, false},
-		{"on sale but zero available", ProductFacts{OnSale: true, Available: 0}, false},
-		{"off sale but plenty available", ProductFacts{OnSale: false, Available: 100}, false},
-		{"gone and no availability", ProductFacts{OnSale: false, Available: 0}, false},
+		{"on sale and exactly enough", VariantFacts{OnSale: true, Available: 3}, true},
+		{"on sale and more than enough", VariantFacts{OnSale: true, Available: 10}, true},
+		{"on sale but short", VariantFacts{OnSale: true, Available: 2}, false},
+		{"on sale but zero available", VariantFacts{OnSale: true, Available: 0}, false},
+		{"off sale but plenty available", VariantFacts{OnSale: false, Available: 100}, false},
+		{"gone and no availability", VariantFacts{OnSale: false, Available: 0}, false},
 	}
 
 	for _, tc := range cases {
@@ -139,20 +139,20 @@ func TestBuyableRequiresOnSaleAndEnoughAvailable(t *testing.T) {
 // sale but short reports the currently available quantity, including zero, so the
 // customer can reduce the line to a buyable amount.
 func TestShortLineReportsTheAvailableQuantity(t *testing.T) {
-	line := CartLine{ProductID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
+	line := CartLine{VariantID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
 
-	available, reported := line.ReportedAvailability(ProductFacts{OnSale: true, Available: 1})
+	available, reported := line.ReportedAvailability(VariantFacts{OnSale: true, Available: 1})
 	if !reported || available != 1 {
 		t.Fatalf("a short line must report available=1, got available=%d reported=%v", available, reported)
 	}
 
-	available, reported = line.ReportedAvailability(ProductFacts{OnSale: true, Available: 0})
+	available, reported = line.ReportedAvailability(VariantFacts{OnSale: true, Available: 0})
 	if !reported || available != 0 {
 		t.Fatalf("a zero-available line must report available=0, got available=%d reported=%v", available, reported)
 	}
 
 	// A line that is fully available reports nothing: there is no limit to show.
-	if _, reported := line.ReportedAvailability(ProductFacts{OnSale: true, Available: 5}); reported {
+	if _, reported := line.ReportedAvailability(VariantFacts{OnSale: true, Available: 5}); reported {
 		t.Fatal("a fully available line must not report an available quantity")
 	}
 }
@@ -160,9 +160,9 @@ func TestShortLineReportsTheAvailableQuantity(t *testing.T) {
 // FR-012, research D10: an off-sale or removed product reports no quantity — there
 // is no number to give, only the truth that the line cannot be bought.
 func TestOffSaleOrGoneLineReportsNoQuantity(t *testing.T) {
-	line := CartLine{ProductID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
+	line := CartLine{VariantID: uuid.New(), Quantity: 2, UnitPrice: Price{Amount: 1000, Currency: "VND"}}
 
-	for _, facts := range []ProductFacts{
+	for _, facts := range []VariantFacts{
 		{OnSale: false, Available: 100}, // off sale, plenty in stock
 		{OnSale: false, Available: 0},   // removed
 	} {

@@ -27,14 +27,14 @@ type fakeAvailability struct {
 	onSale     int
 }
 
-// MarkOutOfStock records one out-of-stock signal.
-func (f *fakeAvailability) MarkOutOfStock(context.Context, uuid.UUID) error {
+// MarkVariantOutOfStock records one out-of-stock signal.
+func (f *fakeAvailability) MarkVariantOutOfStock(context.Context, uuid.UUID) error {
 	f.outOfStock++
 	return nil
 }
 
-// MarkOnSale records one on-sale signal.
-func (f *fakeAvailability) MarkOnSale(context.Context, uuid.UUID) error {
+// MarkVariantOnSale records one on-sale signal.
+func (f *fakeAvailability) MarkVariantOnSale(context.Context, uuid.UUID) error {
 	f.onSale++
 	return nil
 }
@@ -83,7 +83,7 @@ func TestReconciliationSignalsOnlyOnAZeroCrossing(t *testing.T) {
 				t.Fatalf("reconcileAvailability: %v", err)
 			}
 			if availability.outOfStock != tc.wantOutOfStock || availability.onSale != tc.wantOnSale {
-				t.Fatalf("signals: got MarkOutOfStock=%d MarkOnSale=%d, want %d/%d",
+				t.Fatalf("signals: got MarkVariantOutOfStock=%d MarkVariantOnSale=%d, want %d/%d",
 					availability.outOfStock, availability.onSale, tc.wantOutOfStock, tc.wantOnSale)
 			}
 		})
@@ -106,7 +106,7 @@ func TestReconciliationMeasuresAvailabilityNotThePhysicalCount(t *testing.T) {
 		t.Fatalf("reconcileAvailability: %v", err)
 	}
 	if availability.outOfStock != 1 || availability.onSale != 0 {
-		t.Fatalf("the crossing is availability, not the physical count, got MarkOutOfStock=%d MarkOnSale=%d",
+		t.Fatalf("the crossing is availability, not the physical count, got MarkVariantOutOfStock=%d MarkVariantOnSale=%d",
 			availability.outOfStock, availability.onSale)
 	}
 }

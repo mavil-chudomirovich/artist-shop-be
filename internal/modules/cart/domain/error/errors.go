@@ -44,18 +44,18 @@ var (
 	ErrCartAlreadyExists = errors.New("cart already exists")
 )
 
-// NotPurchasableError carries the product that cannot be bought, so the response
+// NotPurchasableError carries the variant that cannot be bought, so the response
 // can name it without the caller re-reading the catalogue. It is the single typed
 // carrier for ErrProductNotPurchasable, so the module keeps one sentinel to map
 // and one type to test.
 type NotPurchasableError struct {
-	// ProductID is the product that is not on sale.
-	ProductID uuid.UUID
+	// VariantID is the variant that is not on sale.
+	VariantID uuid.UUID
 }
 
 // Error implements the error interface.
 func (e *NotPurchasableError) Error() string {
-	return ErrProductNotPurchasable.Error() + ": " + e.ProductID.String()
+	return ErrProductNotPurchasable.Error() + ": " + e.VariantID.String()
 }
 
 // Is makes errors.Is(err, ErrProductNotPurchasable) match this error.
@@ -66,9 +66,9 @@ func (e *NotPurchasableError) Is(target error) bool {
 // Unwrap exposes the sentinel to errors.Is and errors.As.
 func (e *NotPurchasableError) Unwrap() error { return ErrProductNotPurchasable }
 
-// ProductNotPurchasable builds the typed refusal for one product.
-func ProductNotPurchasable(productID uuid.UUID) error {
-	return &NotPurchasableError{ProductID: productID}
+// ProductNotPurchasable builds the typed refusal for one variant.
+func ProductNotPurchasable(variantID uuid.UUID) error {
+	return &NotPurchasableError{VariantID: variantID}
 }
 
 // QuantityExceedsAvailableError carries what the refusal is about, so the
@@ -76,8 +76,8 @@ func ProductNotPurchasable(productID uuid.UUID) error {
 // typed carrier for ErrQuantityExceedsAvailable, so the module keeps one sentinel
 // to map and one type to test.
 type QuantityExceedsAvailableError struct {
-	// ProductID is the product the line is for.
-	ProductID uuid.UUID
+	// VariantID is the variant the line is for.
+	VariantID uuid.UUID
 	// Available is what could have been taken when the shelf said no.
 	Available int64
 	// Requested is the quantity the operation asked for.
@@ -88,7 +88,7 @@ type QuantityExceedsAvailableError struct {
 // FR-007 requires the customer to be told.
 func (e *QuantityExceedsAvailableError) Error() string {
 	return fmt.Sprintf("%s: %s requested %d, available %d",
-		ErrQuantityExceedsAvailable, e.ProductID, e.Requested, e.Available)
+		ErrQuantityExceedsAvailable, e.VariantID, e.Requested, e.Available)
 }
 
 // Is makes errors.Is(err, ErrQuantityExceedsAvailable) match this error.
@@ -100,8 +100,8 @@ func (e *QuantityExceedsAvailableError) Is(target error) bool {
 func (e *QuantityExceedsAvailableError) Unwrap() error { return ErrQuantityExceedsAvailable }
 
 // QuantityExceedsAvailable builds the typed refusal for one operation.
-func QuantityExceedsAvailable(productID uuid.UUID, available, requested int64) error {
-	return &QuantityExceedsAvailableError{ProductID: productID, Available: available, Requested: requested}
+func QuantityExceedsAvailable(variantID uuid.UUID, available, requested int64) error {
+	return &QuantityExceedsAvailableError{VariantID: variantID, Available: available, Requested: requested}
 }
 
 // InvalidValueError reports which member of a request is not acceptable. It is one

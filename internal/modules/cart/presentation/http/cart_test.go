@@ -88,7 +88,7 @@ func (r *httpRepo) Lock(context.Context, uuid.UUID) error { return nil }
 
 func (r *httpRepo) UpsertLine(_ context.Context, cartID uuid.UUID, line model.CartLine, _ time.Time) error {
 	for i := range r.lines[cartID] {
-		if r.lines[cartID][i].ProductID == line.ProductID {
+		if r.lines[cartID][i].VariantID == line.VariantID {
 			r.lines[cartID][i].Quantity += line.Quantity
 			return nil
 		}
@@ -97,9 +97,9 @@ func (r *httpRepo) UpsertLine(_ context.Context, cartID uuid.UUID, line model.Ca
 	return nil
 }
 
-func (r *httpRepo) SetQuantity(_ context.Context, cartID, productID uuid.UUID, quantity int64, _ time.Time) error {
+func (r *httpRepo) SetQuantity(_ context.Context, cartID, variantID uuid.UUID, quantity int64, _ time.Time) error {
 	for i := range r.lines[cartID] {
-		if r.lines[cartID][i].ProductID == productID {
+		if r.lines[cartID][i].VariantID == variantID {
 			r.lines[cartID][i].Quantity = quantity
 			return nil
 		}
@@ -107,10 +107,10 @@ func (r *httpRepo) SetQuantity(_ context.Context, cartID, productID uuid.UUID, q
 	return domainerr.ErrProductNotFound
 }
 
-func (r *httpRepo) DeleteLine(_ context.Context, cartID, productID uuid.UUID) error {
+func (r *httpRepo) DeleteLine(_ context.Context, cartID, variantID uuid.UUID) error {
 	lines := r.lines[cartID]
 	for i := range lines {
-		if lines[i].ProductID == productID {
+		if lines[i].VariantID == variantID {
 			r.lines[cartID] = append(lines[:i], lines[i+1:]...)
 			return nil
 		}
@@ -129,31 +129,31 @@ func (r *httpRepo) ClearLines(_ context.Context, cartID uuid.UUID) error {
 	return nil
 }
 
-// httpCatalog answers the ProductCatalog contract from a fixed set.
-type httpCatalog struct {
-	products map[uuid.UUID]contracts.ProductSummary
+// httpVariants answers the ProductVariants contract from a fixed set.
+type httpVariants struct {
+	variants map[uuid.UUID]contracts.VariantSummary
 }
 
-func (f *httpCatalog) Products(_ context.Context, productIDs []uuid.UUID) ([]contracts.ProductSummary, error) {
-	out := make([]contracts.ProductSummary, 0, len(productIDs))
-	for _, id := range productIDs {
-		if product, ok := f.products[id]; ok {
-			out = append(out, product)
+func (f *httpVariants) Variants(_ context.Context, variantIDs []uuid.UUID) ([]contracts.VariantSummary, error) {
+	out := make([]contracts.VariantSummary, 0, len(variantIDs))
+	for _, id := range variantIDs {
+		if variant, ok := f.variants[id]; ok {
+			out = append(out, variant)
 		}
 	}
 	return out, nil
 }
 
 // httpAvailability answers the availability port from a mutable map, so a test
-// can set a product's shelf and later lower it to exercise a short line.
+// can set a variant's shelf and later lower it to exercise a short line.
 type httpAvailability struct {
 	available map[uuid.UUID]int64
 }
 
-func (f *httpAvailability) AvailableQuantity(_ context.Context, productIDs []uuid.UUID) ([]contracts.Availability, error) {
-	out := make([]contracts.Availability, 0, len(productIDs))
-	for _, id := range productIDs {
-		out = append(out, contracts.Availability{ProductID: id, Available: f.available[id]})
+func (f *httpAvailability) AvailableQuantity(_ context.Context, variantIDs []uuid.UUID) ([]contracts.Availability, error) {
+	out := make([]contracts.Availability, 0, len(variantIDs))
+	for _, id := range variantIDs {
+		out = append(out, contracts.Availability{VariantID: id, Available: f.available[id]})
 	}
 	return out, nil
 }
@@ -191,20 +191,20 @@ func cartHooks(denied *bool) middleware.AuthHooks {
 	}
 }
 
-// defaultHTTPAvailable is the shelf the fixture gives a seeded product unless a
+// defaultHTTPAvailable is the shelf the fixture gives a seeded variant unless a
 // test lowers it, so a test that is not about availability is not refused by it.
 const defaultHTTPAvailable int64 = 1000
 
 // newCartRouter builds the real use cases over the in-memory repository and mounts
 // the group the way the composition root mounts it.
-func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *httpRepo, *httpCatalog, *httpAvailability) {
+func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *httpRepo, *httpVariants, *httpAvailability) {
 	t.Helper()
 	repo := newHTTPRepo()
-	catalog := &httpCatalog{products: map[uuid.UUID]contracts.ProductSummary{}}
+	variants := &httpVariants{variants: map[uuid.UUID]contracts.VariantSummary{}}
 	availability := &httpAvailability{available: map[uuid.UUID]int64{}}
 	svc := cartimplement.New(cartimplement.Service{
 		Carts:        repo,
-		Products:     catalog,
+		Variants:     variants,
 		Availability: availability,
 		Tx:           httpTx{},
 		Clock:        httpClock{},
@@ -213,38 +213,45 @@ func newCartRouter(t *testing.T, hooks middleware.AuthHooks) (http.Handler, *htt
 	handler := New(svc, testLogger)
 	root := chi.NewRouter()
 	root.Mount(cartPath, handler.Router(hooks))
-	return root, repo, catalog, availability
+	return root, repo, variants, availability
 }
 
-// seedHTTPProduct puts one on-sale product in the fake catalogue with the
+// seedHTTPVariant puts one on-sale variant in the fake catalogue with the
 // fixture's default availability.
-func seedHTTPProduct(catalog *httpCatalog, availability *httpAvailability, amount int64) uuid.UUID {
-	return seedHTTPProductState(catalog, availability, amount, true)
+func seedHTTPVariant(variants *httpVariants, availability *httpAvailability, amount int64) uuid.UUID {
+	return seedHTTPVariantState(variants, availability, amount, true)
 }
 
-// seedHTTPProductState puts one product in the fake catalogue with the fixture's
+// seedHTTPVariantState puts one variant in the fake catalogue with the fixture's
 // default availability, on sale or not.
-func seedHTTPProductState(catalog *httpCatalog, availability *httpAvailability, amount int64, onSale bool) uuid.UUID {
+func seedHTTPVariantState(variants *httpVariants, availability *httpAvailability, amount int64, onSale bool) uuid.UUID {
 	id := uuid.New()
-	catalog.products[id] = contracts.ProductSummary{
-		ID: id, Name: "Tranh", Slug: "tranh", OnSale: onSale,
-		Price: contracts.ProductPrice{Amount: amount, Currency: "VND"},
+	suffix := id.String()[:8]
+	variants.variants[id] = contracts.VariantSummary{
+		VariantID:   id,
+		ProductID:   uuid.New(),
+		ProductName: "Tranh",
+		ProductCode: "P-" + suffix,
+		VariantName: "Khổ lớn",
+		SKU:         "SKU-" + suffix,
+		OnSale:      onSale,
+		Price:       contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	availability.available[id] = defaultHTTPAvailable
 	return id
 }
 
-// seedHTTPAvailable lowers a seeded product's shelf for the fixture.
-func seedHTTPAvailable(availability *httpAvailability, productID uuid.UUID, quantity int64) {
-	availability.available[productID] = quantity
+// seedHTTPAvailable lowers a seeded variant's shelf for the fixture.
+func seedHTTPAvailable(availability *httpAvailability, variantID uuid.UUID, quantity int64) {
+	availability.available[variantID] = quantity
 }
 
-// markHTTPProductOffSale takes a seeded product off sale without touching its name
-// or price.
-func markHTTPProductOffSale(catalog *httpCatalog, productID uuid.UUID) {
-	summary := catalog.products[productID]
+// markHTTPVariantOffSale takes a seeded variant off sale without touching its
+// name or price.
+func markHTTPVariantOffSale(variants *httpVariants, variantID uuid.UUID) {
+	summary := variants.variants[variantID]
 	summary.OnSale = false
-	catalog.products[productID] = summary
+	variants.variants[variantID] = summary
 }
 
 // performJSON sends a request with an optional JSON body and bearer token.
@@ -274,8 +281,9 @@ type cartBody struct {
 	Data struct {
 		Lines []struct {
 			ProductID         uuid.UUID `json:"productId"`
-			Name              *string   `json:"name"`
-			Slug              *string   `json:"slug"`
+			ProductName       *string   `json:"productName"`
+			VariantID         uuid.UUID `json:"variantId"`
+			VariantName       *string   `json:"variantName"`
 			Quantity          int64     `json:"quantity"`
 			UnitPrice         moneyBody `json:"unitPrice"`
 			LineTotal         moneyBody `json:"lineTotal"`
@@ -318,7 +326,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) errorBody {
 }
 
 // cartRoutes lists the four routes the /cart group owns (research D7).
-func cartRoutes(productID uuid.UUID) []struct {
+func cartRoutes(variantID uuid.UUID) []struct {
 	method string
 	path   string
 	body   string
@@ -329,9 +337,9 @@ func cartRoutes(productID uuid.UUID) []struct {
 		body   string
 	}{
 		{http.MethodGet, cartPath, ""},
-		{http.MethodPost, cartPath + "/items", `{"productId":"` + productID.String() + `","quantity":1}`},
-		{http.MethodPatch, cartPath + "/items/" + productID.String(), `{"quantity":1}`},
-		{http.MethodDelete, cartPath + "/items/" + productID.String(), ""},
+		{http.MethodPost, cartPath + "/items", `{"variantId":"` + variantID.String() + `","quantity":1}`},
+		{http.MethodPatch, cartPath + "/items/" + variantID.String(), `{"quantity":1}`},
+		{http.MethodDelete, cartPath + "/items/" + variantID.String(), ""},
 	}
 }
 
@@ -359,14 +367,14 @@ func TestGetEmptyCartAnswersEmptyWithNullSubtotal(t *testing.T) {
 	}
 }
 
-// quickstart scenario 2: adding a product answers the updated cart with the line
+// quickstart scenario 2: adding a variant answers the updated cart with the line
 // and the subtotal.
 func TestAddAnswersTheUpdatedCart(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 120000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 120000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":2}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /cart/items: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -375,8 +383,11 @@ func TestAddAnswersTheUpdatedCart(t *testing.T) {
 		t.Fatalf("expected one line, got %+v", body.Data.Lines)
 	}
 	line := body.Data.Lines[0]
-	if line.ProductID != product || line.Quantity != 2 {
+	if line.VariantID != variant || line.Quantity != 2 {
 		t.Fatalf("unexpected line: %+v", line)
+	}
+	if line.ProductName == nil || *line.ProductName != "Tranh" || line.VariantName == nil || *line.VariantName != "Khổ lớn" {
+		t.Fatalf("the line must carry the product and variant names, got %+v", line)
 	}
 	if line.UnitPrice.Amount != 120000 || line.LineTotal.Amount != 240000 {
 		t.Fatalf("unexpected money: unit=%+v total=%+v", line.UnitPrice, line.LineTotal)
@@ -389,16 +400,16 @@ func TestAddAnswersTheUpdatedCart(t *testing.T) {
 // quickstart scenario 4: changing a line's quantity answers the updated cart and
 // removing it answers 204 with the line gone.
 func TestChangeAndRemoveBehaveAsTheContractDeclares(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":2}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":5}`, "customer-token")
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(), `{"quantity":5}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -406,7 +417,7 @@ func TestChangeAndRemoveBehaveAsTheContractDeclares(t *testing.T) {
 		t.Fatalf("the line must show quantity 5, got %+v", body.Data.Lines)
 	}
 
-	rec = performJSON(router, http.MethodDelete, cartPath+"/items/"+product.String(), "", "customer-token")
+	rec = performJSON(router, http.MethodDelete, cartPath+"/items/"+variant.String(), "", "customer-token")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: expected 204, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -417,9 +428,9 @@ func TestChangeAndRemoveBehaveAsTheContractDeclares(t *testing.T) {
 	}
 }
 
-// contracts/openapi.yaml: a product identifier that is not a UUID is 400
-// VALIDATION_ERROR naming `productId`, in the body and in the path alike.
-func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
+// contracts/openapi.yaml: a variant identifier that is not a UUID is 400
+// VALIDATION_ERROR naming `variantId`, in the body and in the path alike.
+func TestMalformedVariantIdentifierIs400NamingTheField(t *testing.T) {
 	router, _, _, _ := newCartRouter(t, cartHooks(nil))
 
 	cases := []struct {
@@ -428,7 +439,7 @@ func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{"body", http.MethodPost, cartPath + "/items", `{"productId":"not-a-uuid","quantity":1}`},
+		{"body", http.MethodPost, cartPath + "/items", `{"variantId":"not-a-uuid","quantity":1}`},
 		{"path patch", http.MethodPatch, cartPath + "/items/not-a-uuid", `{"quantity":1}`},
 		{"path delete", http.MethodDelete, cartPath + "/items/not-a-uuid", ""},
 	}
@@ -442,8 +453,8 @@ func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
 			if body.Error.Code != "VALIDATION_ERROR" {
 				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
 			}
-			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
-				t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "variantId" {
+				t.Fatalf("expected the detail to name variantId, got %+v", body.Error.Details)
 			}
 		})
 	}
@@ -452,18 +463,18 @@ func TestMalformedProductIdentifierIs400NamingTheField(t *testing.T) {
 // contracts/openapi.yaml: a fractional quantity is a field error, not a decode
 // failure. The request DTO decodes `quantity` as a json.Number, as module 05 does.
 func TestFractionalQuantityIs400NamingQuantity(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":1.5}`, "customer-token"); rec.Code != http.StatusBadRequest {
+		`{"variantId":"`+variant.String()+`","quantity":1.5}`, "customer-token"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST fractional: expected 400, got %d (%s)", rec.Code, rec.Body.String())
 	} else if body := decodeError(t, rec); body.Error.Code != "VALIDATION_ERROR" ||
 		len(body.Error.Details) != 1 || body.Error.Details[0].Field != "quantity" {
 		t.Fatalf("POST fractional: expected VALIDATION_ERROR naming quantity, got %+v", body.Error)
 	}
 
-	if rec := performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(),
+	if rec := performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(),
 		`{"quantity":1.5}`, "customer-token"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH fractional: expected 400, got %d (%s)", rec.Code, rec.Body.String())
 	} else if body := decodeError(t, rec); body.Error.Code != "VALIDATION_ERROR" ||
@@ -472,12 +483,12 @@ func TestFractionalQuantityIs400NamingQuantity(t *testing.T) {
 	}
 }
 
-// A product absent from the catalogue is the shared PRODUCT_NOT_FOUND (404).
-func TestAddUnknownProductIs404(t *testing.T) {
+// A variant absent from the catalogue is the shared PRODUCT_NOT_FOUND (404).
+func TestAddUnknownVariantIs404(t *testing.T) {
 	router, _, _, _ := newCartRouter(t, cartHooks(nil))
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+uuid.New().String()+`","quantity":1}`, "customer-token")
+		`{"variantId":"`+uuid.New().String()+`","quantity":1}`, "customer-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -486,14 +497,14 @@ func TestAddUnknownProductIs404(t *testing.T) {
 	}
 }
 
-// US2, FR-005, error-codes.md: adding a product that is not on sale is 409
-// CART_PRODUCT_NOT_PURCHASABLE and its detail names `productId`.
-func TestAddOffSaleProductIs409NamingProduct(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProductState(catalog, availability, 100000, false)
+// US2, FR-005, error-codes.md: adding a variant that is not on sale is 409
+// CART_PRODUCT_NOT_PURCHASABLE and its detail names `variantId`.
+func TestAddOffSaleVariantIs409NamingVariant(t *testing.T) {
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariantState(variants, availability, 100000, false)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":1}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":1}`, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -501,8 +512,8 @@ func TestAddOffSaleProductIs409NamingProduct(t *testing.T) {
 	if body.Error.Code != "CART_PRODUCT_NOT_PURCHASABLE" {
 		t.Fatalf("expected CART_PRODUCT_NOT_PURCHASABLE, got %s", body.Error.Code)
 	}
-	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
-		t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "variantId" {
+		t.Fatalf("expected the detail to name variantId, got %+v", body.Error.Details)
 	}
 }
 
@@ -510,12 +521,12 @@ func TestAddOffSaleProductIs409NamingProduct(t *testing.T) {
 // CART_QUANTITY_EXCEEDS_AVAILABLE and its detail names `quantity` with the
 // available amount in the issue.
 func TestAddOverAvailableIs409NamingQuantity(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
-	seedHTTPAvailable(availability, product, 3)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
+	seedHTTPAvailable(availability, variant, 3)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":5}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":5}`, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -532,26 +543,26 @@ func TestAddOverAvailableIs409NamingQuantity(t *testing.T) {
 
 	// The whole available amount is reachable.
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":3}`, "customer-token"); rec.Code != http.StatusOK {
+		`{"variantId":"`+variant.String()+`","quantity":3}`, "customer-token"); rec.Code != http.StatusOK {
 		t.Fatalf("adding exactly the available amount: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
-// US2, FR-005: a PATCH onto a line whose product has gone off sale is the same
-// 409 CART_PRODUCT_NOT_PURCHASABLE, naming productId, and the previous quantity is
+// US2, FR-005: a PATCH onto a line whose variant has gone off sale is the same
+// 409 CART_PRODUCT_NOT_PURCHASABLE, naming variantId, and the previous quantity is
 // kept.
-func TestPatchOffSaleIs409NamingProduct(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+func TestPatchOffSaleIs409NamingVariant(t *testing.T) {
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":2}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":2}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	markHTTPProductOffSale(catalog, product)
+	markHTTPVariantOffSale(variants, variant)
 
-	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":5}`, "customer-token")
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(), `{"quantity":5}`, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -559,8 +570,8 @@ func TestPatchOffSaleIs409NamingProduct(t *testing.T) {
 	if body.Error.Code != "CART_PRODUCT_NOT_PURCHASABLE" {
 		t.Fatalf("expected CART_PRODUCT_NOT_PURCHASABLE, got %s", body.Error.Code)
 	}
-	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
-		t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
+	if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "variantId" {
+		t.Fatalf("expected the detail to name variantId, got %+v", body.Error.Details)
 	}
 
 	// The previous quantity is untouched.
@@ -574,17 +585,17 @@ func TestPatchOffSaleIs409NamingProduct(t *testing.T) {
 // CART_QUANTITY_EXCEEDS_AVAILABLE, naming quantity, and the previous quantity is
 // kept; reducing to the available amount succeeds and reads buyable again.
 func TestPatchOverAvailableIs409NamingQuantity(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":1}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":1}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	seedHTTPAvailable(availability, product, 2)
+	seedHTTPAvailable(availability, variant, 2)
 
-	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":5}`, "customer-token")
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(), `{"quantity":5}`, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -596,7 +607,7 @@ func TestPatchOverAvailableIs409NamingQuantity(t *testing.T) {
 		t.Fatalf("expected the detail to name quantity, got %+v", body.Error.Details)
 	}
 
-	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+product.String(), `{"quantity":2}`, "customer-token")
+	rec = performJSON(router, http.MethodPatch, cartPath+"/items/"+variant.String(), `{"quantity":2}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reducing to the available amount: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -609,12 +620,12 @@ func TestPatchOverAvailableIs409NamingQuantity(t *testing.T) {
 // US2, FR-012, research D10: the view always carries `buyable`, and carries
 // `availableQuantity` only when the line is on sale but short of its quantity.
 func TestViewCarriesBuyableAndAvailableQuantityOnlyWhenShort(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
-	seedHTTPAvailable(availability, product, 3)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
+	seedHTTPAvailable(availability, variant, 3)
 
 	rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+product.String()+`","quantity":3}`, "customer-token")
+		`{"variantId":"`+variant.String()+`","quantity":3}`, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -633,7 +644,7 @@ func TestViewCarriesBuyableAndAvailableQuantityOnlyWhenShort(t *testing.T) {
 	}
 
 	// Damage the shelf so the line is now short.
-	seedHTTPAvailable(availability, product, 1)
+	seedHTTPAvailable(availability, variant, 1)
 	rec = performJSON(router, http.MethodGet, cartPath, "", "customer-token")
 	body = decodeCart(t, rec)
 	if len(body.Data.Lines) != 1 {
@@ -656,9 +667,9 @@ func TestViewCarriesBuyableAndAvailableQuantityOnlyWhenShort(t *testing.T) {
 // guard is on the group, so the read and each write alike answer UNAUTHENTICATED.
 func TestEveryCartRouteRefusesWithoutASession(t *testing.T) {
 	router, _, _, _ := newCartRouter(t, cartHooks(nil))
-	product := uuid.New()
+	variant := uuid.New()
 
-	for _, route := range cartRoutes(product) {
+	for _, route := range cartRoutes(variant) {
 		rec := performJSON(router, route.method, route.path, route.body, "")
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s: expected 401, got %d (%s)", route.method, route.path, rec.Code, rec.Body.String())
@@ -673,13 +684,13 @@ func TestEveryCartRouteRefusesWithoutASession(t *testing.T) {
 // a cart and neither sees the other's lines. The single repository is shared, so
 // the separation is the owner taken from the session, not a second store.
 func TestTwoCustomersEachGetTheirOwnCart(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	firstProduct := seedHTTPProduct(catalog, availability, 100000)
-	secondProduct := seedHTTPProduct(catalog, availability, 200000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	firstVariant := seedHTTPVariant(variants, availability, 100000)
+	secondVariant := seedHTTPVariant(variants, availability, 200000)
 
-	// The first customer adds one product.
+	// The first customer adds one variant.
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+firstProduct.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
+		`{"variantId":"`+firstVariant.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
 		t.Fatalf("first customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
@@ -693,38 +704,38 @@ func TestTwoCustomersEachGetTheirOwnCart(t *testing.T) {
 		t.Fatalf("the second customer must start with an empty cart, got %+v", body.Data)
 	}
 
-	// The second customer adds a different product.
+	// The second customer adds a different variant.
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+secondProduct.String()+`","quantity":2}`, "customer2-token"); rec.Code != http.StatusOK {
+		`{"variantId":"`+secondVariant.String()+`","quantity":2}`, "customer2-token"); rec.Code != http.StatusOK {
 		t.Fatalf("second customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
 	// Each read now shows only its own line.
 	first := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer-token"))
-	if len(first.Data.Lines) != 1 || first.Data.Lines[0].ProductID != firstProduct {
+	if len(first.Data.Lines) != 1 || first.Data.Lines[0].VariantID != firstVariant {
 		t.Fatalf("the first customer must see only their line, got %+v", first.Data.Lines)
 	}
 	second := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer2-token"))
-	if len(second.Data.Lines) != 1 || second.Data.Lines[0].ProductID != secondProduct {
+	if len(second.Data.Lines) != 1 || second.Data.Lines[0].VariantID != secondVariant {
 		t.Fatalf("the second customer must see only their line, got %+v", second.Data.Lines)
 	}
 }
 
-// US3, FR-010, quickstart scenarios 8c and 8d: changing or removing a product
+// US3, FR-010, quickstart scenarios 8c and 8d: changing or removing a variant
 // that only another customer holds answers 404 PRODUCT_NOT_FOUND, so the route
 // never confirms what is in another customer's cart. The second customer holds a
 // cart of their own, so the 404 is the missing line and not a missing cart.
 func TestChangingOrRemovingAnotherCustomersLineIs404(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	heldByFirst := seedHTTPProduct(catalog, availability, 100000)
-	heldBySecond := seedHTTPProduct(catalog, availability, 200000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	heldByFirst := seedHTTPVariant(variants, availability, 100000)
+	heldBySecond := seedHTTPVariant(variants, availability, 200000)
 
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+heldByFirst.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
+		`{"variantId":"`+heldByFirst.String()+`","quantity":1}`, "customer-token"); rec.Code != http.StatusOK {
 		t.Fatalf("first customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	if rec := performJSON(router, http.MethodPost, cartPath+"/items",
-		`{"productId":"`+heldBySecond.String()+`","quantity":1}`, "customer2-token"); rec.Code != http.StatusOK {
+		`{"variantId":"`+heldBySecond.String()+`","quantity":1}`, "customer2-token"); rec.Code != http.StatusOK {
 		t.Fatalf("second customer add: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
@@ -746,7 +757,7 @@ func TestChangingOrRemovingAnotherCustomersLineIs404(t *testing.T) {
 
 	// The first customer's line is untouched by the second customer's attempts.
 	first := decodeCart(t, performJSON(router, http.MethodGet, cartPath, "", "customer-token"))
-	if len(first.Data.Lines) != 1 || first.Data.Lines[0].ProductID != heldByFirst || first.Data.Lines[0].Quantity != 1 {
+	if len(first.Data.Lines) != 1 || first.Data.Lines[0].VariantID != heldByFirst || first.Data.Lines[0].Quantity != 1 {
 		t.Fatalf("the first customer's line must be untouched, got %+v", first.Data.Lines)
 	}
 }
@@ -755,8 +766,8 @@ func TestChangingOrRemovingAnotherCustomersLineIs404(t *testing.T) {
 // unknown member, so a body carrying an owner is MALFORMED_REQUEST rather than an
 // accepted caller-chosen identity.
 func TestABodyThatNamesAnOwnerIs400MalformedRequest(t *testing.T) {
-	router, _, catalog, availability := newCartRouter(t, cartHooks(nil))
-	product := seedHTTPProduct(catalog, availability, 100000)
+	router, _, variants, availability := newCartRouter(t, cartHooks(nil))
+	variant := seedHTTPVariant(variants, availability, 100000)
 	other := uuid.New().String()
 
 	cases := []struct {
@@ -766,10 +777,10 @@ func TestABodyThatNamesAnOwnerIs400MalformedRequest(t *testing.T) {
 		body   string
 	}{
 		{"add names userId", http.MethodPost, cartPath + "/items",
-			`{"productId":"` + product.String() + `","quantity":1,"userId":"` + other + `"}`},
+			`{"variantId":"` + variant.String() + `","quantity":1,"userId":"` + other + `"}`},
 		{"add names ownerId", http.MethodPost, cartPath + "/items",
-			`{"productId":"` + product.String() + `","quantity":1,"ownerId":"` + other + `"}`},
-		{"change names userId", http.MethodPatch, cartPath + "/items/" + product.String(),
+			`{"variantId":"` + variant.String() + `","quantity":1,"ownerId":"` + other + `"}`},
+		{"change names userId", http.MethodPatch, cartPath + "/items/" + variant.String(),
 			`{"quantity":1,"userId":"` + other + `"}`},
 	}
 	for _, tc := range cases {

@@ -94,7 +94,7 @@ func newSaleService(repo *saleRepository, clock *movableClock, audit *fakeAudito
 func reserve(t *testing.T, svc *Service, productID uuid.UUID) uuid.UUID {
 	t.Helper()
 	orderID := uuid.New()
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 	return orderID
@@ -111,7 +111,7 @@ func TestApplySaleConsumesTheHoldAndLeavesAvailabilityUnchanged(t *testing.T) {
 	ctx := context.Background()
 	orderID := reserve(t, svc, productID)
 
-	before, err := svc.Stock(ctx, dto.StockRefInput{ProductID: productID})
+	before, err := svc.Stock(ctx, dto.StockRefInput{VariantID: productID})
 	if err != nil {
 		t.Fatalf("Stock before: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestApplySaleConsumesTheHoldAndLeavesAvailabilityUnchanged(t *testing.T) {
 		t.Fatalf("unexpected stock before the sale: %+v", before)
 	}
 
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-1"}); err != nil {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-1"}); err != nil {
 		t.Fatalf("ApplySale: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestApplySaleConsumesTheHoldAndLeavesAvailabilityUnchanged(t *testing.T) {
 		t.Fatalf("a system-caused sale has no human actor, got %v", movement.ActorID)
 	}
 
-	after, err := svc.Stock(ctx, dto.StockRefInput{ProductID: productID})
+	after, err := svc.Stock(ctx, dto.StockRefInput{VariantID: productID})
 	if err != nil {
 		t.Fatalf("Stock after: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestReplayingAnAppliedSaleChangesNothing(t *testing.T) {
 	productID := uuid.New()
 	ctx := context.Background()
 	orderID := reserve(t, svc, productID)
-	in := dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-1"}
+	in := dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-1"}
 
 	if err := svc.ApplySale(ctx, in); err != nil {
 		t.Fatalf("first ApplySale: %v", err)
@@ -204,7 +204,7 @@ func TestADuplicateRefusedByTheSourceReferenceIndexIsAccepted(t *testing.T) {
 	}
 	repo.movements = append(repo.movements, *winner)
 
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: reference}); err != nil {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: reference}); err != nil {
 		t.Fatalf("a duplicate refused by the storage index must be accepted as success, got %v", err)
 	}
 	if repo.physical != 5 {
@@ -236,7 +236,7 @@ func TestASaleThatWouldGoBelowZeroIsRefused(t *testing.T) {
 	repo.holds = []model.Hold{*hold}
 	repo.physical = 1
 
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-short"}); !errors.Is(err, domainerr.ErrInsufficientStock) {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-short"}); !errors.Is(err, domainerr.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock, got %v", err)
 	}
 	if repo.physical != 1 || len(repo.movements) != 0 {
@@ -263,7 +263,7 @@ func TestASaleAgainstAnInactiveHoldIsNotConsumed(t *testing.T) {
 
 	clock.advance(constant.HoldTTL + time.Minute)
 
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-late"}); err != nil {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-late"}); err != nil {
 		t.Fatalf("an expired hold is not an error, got %v", err)
 	}
 	if repo.physical != 5 || len(repo.movements) != 0 {
@@ -286,7 +286,7 @@ func TestTheSaleAuditNamesTheSourceReferenceWithNoHumanActor(t *testing.T) {
 	ctx := context.Background()
 	orderID := reserve(t, svc, productID)
 
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-9"}); err != nil {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-9"}); err != nil {
 		t.Fatalf("ApplySale: %v", err)
 	}
 
@@ -319,11 +319,11 @@ func TestAManualMovementCarriesNoReferenceWhileASaleCarriesOne(t *testing.T) {
 	productID := uuid.New()
 	ctx := context.Background()
 
-	if _, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: productID, Quantity: 1}); err != nil {
+	if _, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: productID, Quantity: 1}); err != nil {
 		t.Fatalf("Restock: %v", err)
 	}
 	orderID := reserve(t, svc, productID)
-	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, ProductID: productID, SourceReference: "evt-7"}); err != nil {
+	if err := svc.ApplySale(ctx, dto.SaleInput{OrderID: orderID, VariantID: productID, SourceReference: "evt-7"}); err != nil {
 		t.Fatalf("ApplySale: %v", err)
 	}
 

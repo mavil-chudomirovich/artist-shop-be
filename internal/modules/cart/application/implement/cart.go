@@ -37,10 +37,10 @@ type Service struct {
 	// Carts persists and reads the cart and its lines. It never opens a
 	// transaction; the application owns every boundary (Constitution I).
 	Carts appinterface.CartRepository
-	// Products answers a product's name, slug, on-sale state and price. It is
-	// supplied by module 04's adapter at the composition root, so the cart never
-	// reads module 04's table (research D1).
-	Products appinterface.ProductCatalog
+	// Variants answers a variant's product, name, on-sale state and effective
+	// price. It is supplied by module 04's adapter at the composition root, so the
+	// cart never reads module 04's table (research D6).
+	Variants appinterface.ProductVariants
 	// Availability answers what is currently available. It is supplied by module
 	// 05's adapter at the composition root. It backs both the refusal an add or a
 	// change makes when the quantity exceeds the shelf (FR-007) and the per-line
@@ -78,7 +78,7 @@ func (s *Service) actor(ctx context.Context) (appinterface.Actor, error) {
 	return actor, nil
 }
 
-// Get returns the caller's cart, re-checking each line's live product facts. A
+// Get returns the caller's cart, re-checking each line's live variant facts. A
 // customer with no cart answers an empty cart whose subtotal is absent, and a read
 // never creates a row (FR-004, research D8).
 func (s *Service) Get(ctx context.Context, _ dto.GetCartInput) (dto.CartView, error) {
@@ -96,12 +96,13 @@ func (s *Service) Get(ctx context.Context, _ dto.GetCartInput) (dto.CartView, er
 	return s.readCart(ctx, cart.ID)
 }
 
-// Add adds a product with a positive whole quantity, creating the cart on the
+// Add adds a variant with a positive whole quantity, creating the cart on the
 // first add and raising an existing line rather than adding a second one
-// (FR-001, FR-002). The price is captured from the catalogue at add time (FR-008)
-// and a product absent from the result is the shared not-found (FR-005).
+// (FR-001, FR-002). The price is captured from the variant's effective price at
+// add time (FR-018) and a variant absent from the catalogue is the shared
+// not-found (FR-005).
 //
-// The product must be on sale and the quantity the add would produce — the line's
+// The variant must be on sale and the quantity the add would produce — the line's
 // existing quantity plus the requested one — must not exceed what is available,
 // or the add is refused and nothing is written (FR-005, FR-007). That judgement
 // runs inside the transaction that locks the cart's row, so a concurrent add
@@ -131,18 +132,18 @@ func (s *Service) Add(ctx context.Context, in dto.AddItemInput) (dto.CartView, e
 		if err := s.Carts.Lock(txCtx, cart.ID); err != nil {
 			return err
 		}
-		summary, err := s.purchasableProduct(txCtx, in.ProductID)
+		summary, err := s.purchasableVariant(txCtx, in.VariantID)
 		if err != nil {
 			return err
 		}
-		held, err := s.heldQuantity(txCtx, cart.ID, in.ProductID)
+		held, err := s.heldQuantity(txCtx, cart.ID, in.VariantID)
 		if err != nil {
 			return err
 		}
-		if err := s.ensureAvailable(txCtx, in.ProductID, held+in.Quantity); err != nil {
+		if err := s.ensureAvailable(txCtx, in.VariantID, held+in.Quantity); err != nil {
 			return err
 		}
-		line, err := model.NewCartLine(in.ProductID, in.Quantity, model.Price{
+		line, err := model.NewCartLine(in.VariantID, in.Quantity, model.Price{
 			Amount:   summary.Price.Amount,
 			Currency: summary.Price.Currency,
 		})
@@ -156,7 +157,7 @@ func (s *Service) Add(ctx context.Context, in dto.AddItemInput) (dto.CartView, e
 	return s.readCart(ctx, cart.ID)
 }
 
-// ChangeQuantity sets the line's quantity. The product must still be on sale and
+// ChangeQuantity sets the line's quantity. The variant must still be on sale and
 // the new quantity must not exceed what is available, or the change is refused
 // and the previous quantity is kept (FR-005, FR-007). A line this cart does not
 // hold answers the shared not-found (FR-003, error-codes.md). It runs inside the
@@ -180,13 +181,13 @@ func (s *Service) ChangeQuantity(ctx context.Context, in dto.ChangeQuantityInput
 		if err := s.Carts.Lock(txCtx, cart.ID); err != nil {
 			return err
 		}
-		if _, err := s.purchasableProduct(txCtx, in.ProductID); err != nil {
+		if _, err := s.purchasableVariant(txCtx, in.VariantID); err != nil {
 			return err
 		}
-		if err := s.ensureAvailable(txCtx, in.ProductID, in.Quantity); err != nil {
+		if err := s.ensureAvailable(txCtx, in.VariantID, in.Quantity); err != nil {
 			return err
 		}
-		return s.Carts.SetQuantity(txCtx, cart.ID, in.ProductID, in.Quantity, now)
+		return s.Carts.SetQuantity(txCtx, cart.ID, in.VariantID, in.Quantity, now)
 	}); err != nil {
 		return dto.CartView{}, err
 	}
@@ -210,7 +211,7 @@ func (s *Service) Remove(ctx context.Context, in dto.RemoveItemInput) error {
 		if err := s.Carts.Lock(txCtx, cart.ID); err != nil {
 			return err
 		}
-		return s.Carts.DeleteLine(txCtx, cart.ID, in.ProductID)
+		return s.Carts.DeleteLine(txCtx, cart.ID, in.VariantID)
 	})
 }
 
@@ -255,46 +256,46 @@ func (s *Service) ensureCart(ctx context.Context, userID uuid.UUID) (*model.Cart
 	return created, nil
 }
 
-// product reads one product's facts through the bulk catalogue. A product the
-// result does not carry is not found (research D1).
-func (s *Service) product(ctx context.Context, productID uuid.UUID) (contracts.ProductSummary, error) {
-	summaries, err := s.Products.Products(ctx, []uuid.UUID{productID})
+// variant reads one variant's facts through the bulk contract. A variant the
+// result does not carry is not found (research D6).
+func (s *Service) variant(ctx context.Context, variantID uuid.UUID) (contracts.VariantSummary, error) {
+	summaries, err := s.Variants.Variants(ctx, []uuid.UUID{variantID})
 	if err != nil {
-		return contracts.ProductSummary{}, err
+		return contracts.VariantSummary{}, err
 	}
 	for _, summary := range summaries {
-		if summary.ID == productID {
+		if summary.VariantID == variantID {
 			return summary, nil
 		}
 	}
-	return contracts.ProductSummary{}, domainerr.ErrProductNotFound
+	return contracts.VariantSummary{}, domainerr.ErrProductNotFound
 }
 
-// purchasableProduct reads one product's facts and refuses it when it is not on
-// sale, so an add or a change cannot touch a product the shop does not offer for
-// sale (FR-005). A product absent from the catalogue is the shared not-found.
-func (s *Service) purchasableProduct(ctx context.Context, productID uuid.UUID) (contracts.ProductSummary, error) {
-	summary, err := s.product(ctx, productID)
+// purchasableVariant reads one variant's facts and refuses it when it is not on
+// sale, so an add or a change cannot touch a variant the shop does not offer for
+// sale (FR-005). A variant absent from the result is the shared not-found.
+func (s *Service) purchasableVariant(ctx context.Context, variantID uuid.UUID) (contracts.VariantSummary, error) {
+	summary, err := s.variant(ctx, variantID)
 	if err != nil {
-		return contracts.ProductSummary{}, err
+		return contracts.VariantSummary{}, err
 	}
 	if !summary.OnSale {
-		return contracts.ProductSummary{}, domainerr.ProductNotPurchasable(productID)
+		return contracts.VariantSummary{}, domainerr.ProductNotPurchasable(variantID)
 	}
 	return summary, nil
 }
 
-// available reads one product's currently available quantity through the bulk
-// contract. The contract answers one entry per requested identifier, so a product
+// available reads one variant's currently available quantity through the bulk
+// contract. The contract answers one entry per requested identifier, so a variant
 // it does not carry cannot happen; a missing entry is read as zero, the same as a
-// product with no stock row (research D2).
-func (s *Service) available(ctx context.Context, productID uuid.UUID) (int64, error) {
-	items, err := s.Availability.AvailableQuantity(ctx, []uuid.UUID{productID})
+// variant with no stock row (research D2).
+func (s *Service) available(ctx context.Context, variantID uuid.UUID) (int64, error) {
+	items, err := s.Availability.AvailableQuantity(ctx, []uuid.UUID{variantID})
 	if err != nil {
 		return 0, err
 	}
 	for _, item := range items {
-		if item.ProductID == productID {
+		if item.VariantID == variantID {
 			return item.Available, nil
 		}
 	}
@@ -305,27 +306,27 @@ func (s *Service) available(ctx context.Context, productID uuid.UUID) (int64, er
 // the field the customer must change and the amount they can take (FR-007,
 // error-codes.md). `resulting` is the quantity the operation would leave on the
 // line, not necessarily the amount in the request.
-func (s *Service) ensureAvailable(ctx context.Context, productID uuid.UUID, resulting int64) error {
-	available, err := s.available(ctx, productID)
+func (s *Service) ensureAvailable(ctx context.Context, variantID uuid.UUID, resulting int64) error {
+	available, err := s.available(ctx, variantID)
 	if err != nil {
 		return err
 	}
 	if resulting > available {
-		return domainerr.QuantityExceedsAvailable(productID, available, resulting)
+		return domainerr.QuantityExceedsAvailable(variantID, available, resulting)
 	}
 	return nil
 }
 
-// heldQuantity reads how many units of one product the cart already holds, so an
+// heldQuantity reads how many units of one variant the cart already holds, so an
 // add can judge the quantity it would produce rather than the amount alone
-// (FR-007). A product the cart does not hold answers zero.
-func (s *Service) heldQuantity(ctx context.Context, cartID, productID uuid.UUID) (int64, error) {
+// (FR-007). A variant the cart does not hold answers zero.
+func (s *Service) heldQuantity(ctx context.Context, cartID, variantID uuid.UUID) (int64, error) {
 	lines, err := s.Carts.Lines(ctx, cartID)
 	if err != nil {
 		return 0, err
 	}
 	for _, line := range lines {
-		if line.ProductID == productID {
+		if line.VariantID == variantID {
 			return line.Quantity, nil
 		}
 	}
@@ -341,52 +342,54 @@ func (s *Service) readCart(ctx context.Context, cartID uuid.UUID) (dto.CartView,
 	return s.view(ctx, lines)
 }
 
-// view builds the cart view from its lines, reading the live name and slug of
-// every product in one bulk call and what is available for all of them in a
-// second, so the read costs a fixed two cross-module calls however many lines it
-// holds (research D5). It shows the product identifier, the current name and slug,
-// the quantity, the captured price, the line total and the exact subtotal
-// (FR-004, FR-009), plus each line's buyable decision and — when the line is on
-// sale but short — the currently available quantity (FR-012, research D10). A
-// product that is gone has no name and no availability to report.
+// view builds the cart view from its lines, reading the live facts of every
+// variant in one bulk call and what is available for all of them in a second, so
+// the read costs a fixed two cross-module calls however many lines it holds
+// (research D6). It shows the variant identifier, the product name and the variant
+// name, the quantity, the captured price, the line total and the exact subtotal
+// (FR-004, FR-009, FR-018), plus each line's buyable decision and — when the line
+// is on sale but short — the currently available quantity (FR-012, research D10).
+// A variant that is gone has no name and no availability to report.
 func (s *Service) view(ctx context.Context, lines []model.CartLine) (dto.CartView, error) {
 	if len(lines) == 0 {
 		return s.emptyView(), nil
 	}
 
-	productIDs := make([]uuid.UUID, 0, len(lines))
+	variantIDs := make([]uuid.UUID, 0, len(lines))
 	for _, line := range lines {
-		productIDs = append(productIDs, line.ProductID)
+		variantIDs = append(variantIDs, line.VariantID)
 	}
-	summaries, err := s.Products.Products(ctx, productIDs)
+	summaries, err := s.Variants.Variants(ctx, variantIDs)
 	if err != nil {
 		return dto.CartView{}, err
 	}
-	byID := make(map[uuid.UUID]contracts.ProductSummary, len(summaries))
+	byID := make(map[uuid.UUID]contracts.VariantSummary, len(summaries))
 	for _, summary := range summaries {
-		byID[summary.ID] = summary
+		byID[summary.VariantID] = summary
 	}
 
-	availabilities, err := s.Availability.AvailableQuantity(ctx, productIDs)
+	availabilities, err := s.Availability.AvailableQuantity(ctx, variantIDs)
 	if err != nil {
 		return dto.CartView{}, err
 	}
 	availableByID := make(map[uuid.UUID]int64, len(availabilities))
 	for _, item := range availabilities {
-		availableByID[item.ProductID] = item.Available
+		availableByID[item.VariantID] = item.Available
 	}
 
 	views := make([]dto.LineView, 0, len(lines))
 	for _, line := range lines {
-		var name, slug *string
-		facts := model.ProductFacts{}
-		if summary, ok := byID[line.ProductID]; ok {
-			nameText, slugText := summary.Name, summary.Slug
-			name, slug = &nameText, &slugText
+		var productID uuid.UUID
+		var productName, variantName *string
+		facts := model.VariantFacts{}
+		if summary, ok := byID[line.VariantID]; ok {
+			productID = summary.ProductID
+			productText, variantText := summary.ProductName, summary.VariantName
+			productName, variantName = &productText, &variantText
 			facts.OnSale = summary.OnSale
 		}
-		facts.Available = availableByID[line.ProductID]
-		views = append(views, s.Mapper.Line(line, facts, name, slug))
+		facts.Available = availableByID[line.VariantID]
+		views = append(views, s.Mapper.Line(line, facts, productID, productName, variantName))
 	}
 
 	cart := model.Cart{Lines: lines}

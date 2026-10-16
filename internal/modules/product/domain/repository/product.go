@@ -1,13 +1,3 @@
-// Package repository declares the product module's repository port. The concrete
-// implementation (infrastructure/implement/postgres) embeds the generic
-// share/repository.Base and satisfies this interface.
-//
-// A repository MUST NOT open a transaction: the application layer owns the
-// boundary through the UnitOfWork port. The picture operations are the reason
-// this module needs one at all — the ten-picture ceiling is counted while the
-// caller holds the product's row lock (research D6) — but the lock is a statement
-// the adapter runs inside the caller's transaction, never a transaction of its
-// own.
 package repository
 
 import (
@@ -19,99 +9,76 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 )
 
-// ProductView is one product together with its pictures, in display order. It is
-// the shape both detail reads answer with: the public read carries the product
-// and its pictures, and the administrator read adds the same product's members by
-// a separate call, so a customer-facing view can never carry a set's contents by
-// accident (research D18).
+// ProductView is one product together with its pictures and its variants, in
+// display order. It is the shape both detail reads answer with: the public read
+// carries the product, its gallery and its visible variants, and the administrator
+// read carries the same product with every variant (FR-003, FR-010).
 type ProductView struct {
 	// Product is the product the row carries.
 	Product model.Product
-	// Pictures holds the product's pictures in display order. A product with no
-	// picture carries a nil slice, which is a valid product (research D7).
+	// Pictures holds the product's gallery in display order. A product with no
+	// picture carries a nil slice, which is a valid product.
 	Pictures []model.Picture
+	// Variants holds the product's variants in display order. The public read
+	// carries only the on-sale and out-of-stock ones (FR-005); the administrator
+	// read carries every one (FR-010). The first variant is the default variant.
+	Variants []model.Variant
+	// Summary is the card figure the product detail shows: the lowest on-sale
+	// variant price and the default variant's image (FR-002, FR-003).
+	Summary ProductSummary
 }
 
-// ProductListItem is one row of a product list: the product plus what a list
-// shows about its pictures without a follow-up query.
-//
-// Both list paths project the same columns so there is one scan shape. The public
-// list uses only ImageURL; the administrator list uses ImageURL and
-// PictureCount. The mapper — the single place a model becomes a DTO — is what
-// keeps an administrator value out of a customer response (FR-008).
+// ProductSummary is the card figure of a catalogue entry or product detail: the
+// lowest effective price among the product's on-sale variants and its card image,
+// which is the default variant's image falling back to the product's primary
+// gallery picture (FR-002, FR-003).
+type ProductSummary struct {
+	// Price is the lowest effective price among the product's on-sale variants, in
+	// the product's currency. A product with no on-sale variant has no catalogue
+	// presence, so the caller reads this only for a visible product.
+	Price model.Price
+	// ImageURL is the default variant's image link, else the product's primary
+	// gallery picture, else "" when neither exists (FR-002).
+	ImageURL string
+}
+
+// ProductListItem is one row of the administrator product list: the product plus
+// what a list shows about its pictures and variants without a follow-up query.
 type ProductListItem struct {
 	// Product is the product the row carries.
 	Product model.Product
-	// PictureCount is how many pictures the product has. It is read by the
-	// administrator list (FR-011) and ignored by the public list.
+	// PictureCount is how many pictures the product has.
 	PictureCount int
-	// ImageURL is the main picture's link, or "" when the product has none. A
-	// list entry carries a picture so the list is usable without a follow-up
-	// request (FR-004).
+	// VariantCount is how many variants the product has.
+	VariantCount int
+	// ImageURL is the main picture's link, or "" when the product has none. A list
+	// entry carries a picture so the list is usable without a follow-up request.
 	ImageURL string
 }
 
-// SetMember is one product inside a combo set, as the administrator detail read
-// projects it: the identifier, the name and the slug are all a set listing needs
-// (FR-039, research D18).
-type SetMember struct {
-	// ID is the member product's stable identifier.
-	ID uuid.UUID
-	// Name is the member product's name.
-	Name string
-	// Slug is the member product's public link segment.
-	Slug string
-}
-
-// CatalogueEntryType discriminates one row of the merged public catalogue list: a
-// standalone product or a variant group. Its serialised values are the `type`
-// field of PublicCatalogueEntry in
-// specs/014-product-variants/contracts/openapi.yaml (research D12).
-type CatalogueEntryType string
-
-const (
-	// CatalogueEntryProduct is a standalone product: a product with
-	// variant_group_id null (FR-026).
-	CatalogueEntryProduct CatalogueEntryType = "product"
-	// CatalogueEntryVariantGroup is a variant group.
-	CatalogueEntryVariantGroup CatalogueEntryType = "variant-group"
-)
-
-// CatalogueItem is one row of the merged public catalogue list: either a
-// standalone product or a variant group, discriminated by Type (FR-001, research
-// D4).
+// CatalogueEntry is one entry of the public catalogue: exactly one per product, with
+// the product's variants collapsed into it (FR-001).
 //
-// The response shape exposes Type, ID, Name, Slug, Price, ImageURL and IsPreorder;
-// Description, CategoryID, Position and CreatedAt are the internal projection the
-// ordering, the pagination window and the total need and are not all exposed
-// (data-model.md — Public list).
-type CatalogueItem struct {
-	// Type says whether this row is a standalone product or a variant group.
-	Type CatalogueEntryType
-	// ID is the entry's stable identifier (the product's or the group's).
+// Price is the lowest effective price among the product's on-sale variants, so an
+// out-of-stock variant's cheaper price never headlines a product (FR-002). ImageURL
+// is the default variant's image falling back to the product's primary gallery
+// picture (FR-002). The entry no longer carries a type discriminator: there is one
+// kind of entry again (research D9).
+type CatalogueEntry struct {
+	// ID is the product's stable identifier.
 	ID uuid.UUID
-	// Name is the entry's name.
+	// Name is the product's name.
 	Name string
-	// Slug is the entry's public link segment.
+	// Slug is the product's public link segment.
 	Slug string
-	// Description is the entry's description, an internal projection not exposed
-	// on the list.
-	Description string
-	// Price is the standalone product's price, or a group's price — the lowest
-	// price among its visible options (FR-005).
+	// Price is the lowest on-sale variant price (FR-002).
 	Price model.Price
-	// ImageURL is the entry's main picture's link, or "" when it has none.
+	// ImageURL is the card image link, or "" when none exists (FR-002).
 	ImageURL string
-	// IsPreorder reports whether a standalone product is an announced pre-order.
-	// It is always false for a group, which carries no sell state (FR-005).
-	IsPreorder bool
-	// CategoryID is the entry's category, an internal projection (FR-023).
-	CategoryID uuid.UUID
-	// Position is the entry's ordering preference, an internal projection
-	// (FR-009).
+	// Position is the ordering preference, an internal projection (FR-001).
 	Position int
-	// CreatedAt is when the entry was created, an internal projection used to
-	// break an ordering tie (FR-009).
+	// CreatedAt is when the product was created, an internal projection used to
+	// break an ordering tie (FR-001).
 	CreatedAt time.Time
 }
 
@@ -120,15 +87,15 @@ type CatalogueItem struct {
 // The visibility predicate travels with the query — the caller passes the set
 // module 03 says a customer may see — because it has to run in SQL, not in Go:
 // dropping hidden rows after the page is fetched would return a short page and a
-// total that counts rows the caller never received (FR-006, research D1).
+// total that counts rows the caller never received (FR-004).
 type VisibleListQuery struct {
 	// VisibleCategoryIDs is the set of categories a customer may see, as
-	// internal/contracts.CategoryQuery reports it. An empty set answers an
-	// empty page, never an error (FR-007).
+	// internal/contracts.CategoryQuery reports it. An empty set answers an empty
+	// page, never an error.
 	VisibleCategoryIDs []uuid.UUID
-	// CategoryID narrows the page to one category. It is nil when the caller
-	// asked for the whole catalogue; the caller resolves the request's `category`
-	// filter to this identifier.
+	// CategoryID narrows the page to one category. It is nil when the caller asked
+	// for the whole catalogue; the caller resolves the request's `category` filter
+	// to this identifier.
 	CategoryID *uuid.UUID
 	// Page is 1-based.
 	Page int
@@ -136,180 +103,123 @@ type VisibleListQuery struct {
 	PageSize int
 }
 
-// ProductRepository persists products, their pictures and their set membership.
+// ProductRepository persists products and their pictures, and serves the
+// variant-aware product reads.
 //
 // It does not embed share/repository.Repository[model.Product, uuid.UUID]: the
-// generic FindAll cannot express the public visibility predicate, the generic
-// Update cannot classify a slug collision or a missing category into the
-// sentinels the use cases answer with, and the picture and membership operations
-// are not entity CRUD at all. Every method is stated explicitly, and the adapter
-// embeds share/repository.Base only for the write plumbing, with an explicit
-// Columns projection.
+// generic FindAll cannot express the public visibility predicate, the generic Update
+// cannot classify a slug/code collision or a missing category into the sentinels the
+// use cases answer with, and the picture and catalogue operations are not entity
+// CRUD at all. Every method is stated explicitly, and the adapter embeds
+// share/repository.Base only for the write plumbing, with an explicit Columns
+// projection.
 type ProductRepository interface {
 	// Create inserts a new product.
 	//
 	// A slug another product already holds is reported as
-	// domainerr.ErrProductSlugTaken, so the use case can answer
-	// PRODUCT_SLUG_TAKEN (FR-028). A category identifier no row carries is
-	// reported as domainerr.ErrProductInvalid naming model.FieldCategoryID, so
-	// the operator is told which field to fix rather than shown a server failure
-	// (FR-033). Any other storage failure is reported as itself.
+	// domainerr.ErrProductSlugTaken, and a code another product already holds as
+	// domainerr.ErrProductCodeTaken, so the use case can answer
+	// PRODUCT_SLUG_TAKEN / PRODUCT_CODE_TAKEN (FR-011). A category identifier no row
+	// carries is reported as domainerr.ErrProductInvalid naming model.FieldCategoryID.
+	// Any other storage failure is reported as itself.
 	Create(ctx context.Context, product *model.Product) error
 
 	// Update writes the editable columns of the product named by its identifier,
 	// recomputing the folding key from the slug it is about to store.
 	//
 	// A collision with a *different* product is reported as
-	// domainerr.ErrProductSlugTaken; writing the slug a product already holds
-	// succeeds, because the unique index excludes the row being updated, so a
-	// product is never a duplicate of itself (FR-028). A category identifier no
-	// row carries is reported as domainerr.ErrProductInvalid naming
-	// model.FieldCategoryID (FR-033). The identifier is never written, so no code
-	// path can rewrite it after creation (FR-015). An unknown identifier is
-	// reported as domainerr.ErrProductNotFound.
+	// domainerr.ErrProductSlugTaken or domainerr.ErrProductCodeTaken; writing the
+	// value the product already holds succeeds, because the unique index excludes
+	// the row being updated, so a product is never a duplicate of itself (FR-011). A
+	// category identifier no row carries is reported as domainerr.ErrProductInvalid
+	// naming model.FieldCategoryID. The identifier is never written. An unknown
+	// identifier is reported as domainerr.ErrProductNotFound.
 	Update(ctx context.Context, product *model.Product) error
 
-	// Delete removes the row. Removal is a hard delete (research D13); the audit
-	// entry is what survives it, and the product's pictures and membership rows
-	// are removed with it through the cascading foreign keys. An unknown
-	// identifier is reported as domainerr.ErrProductNotFound.
+	// Delete removes the row. Removal is a hard delete; the audit entry is what
+	// survives it, and the product's pictures and variants are removed with it
+	// through the cascading foreign keys (FR-012). An unknown identifier is reported
+	// as domainerr.ErrProductNotFound.
 	Delete(ctx context.Context, id uuid.UUID) error
 
-	// ListVisible returns a page of the products a customer may see, plus the
-	// total number of them.
+	// ListCatalogue returns one page of the public catalogue — exactly one entry per
+	// product — plus the total number of entries.
 	//
-	// The whole predicate — (sell_state = 'ACTIVE' OR is_preorder) AND
-	// category_id = ANY($n) — runs in this query, so pagination and the total
-	// stay correct (FR-002, FR-006, research D1). The order is position, then
-	// created_at, then id, ascending and identical across identical requests
-	// (FR-009).
-	ListVisible(ctx context.Context, query VisibleListQuery) ([]ProductListItem, int64, error)
+	// The whole predicate runs in this single statement: a product is visible when
+	// its category is in query.VisibleCategoryIDs and at least one of its variants
+	// is on sale (FR-004). The entry's price is the lowest effective price among the
+	// product's on-sale variants and its image is the default variant's image falling
+	// back to the product's primary gallery picture (FR-001, FR-002). The order is
+	// position, then created_at, then id (FR-001), and a COUNT(*) over the same rows
+	// gives the total, so pagination and the total stay correct.
+	ListCatalogue(ctx context.Context, query VisibleListQuery) ([]CatalogueEntry, int64, error)
 
-	// FindVisibleBySlug returns one product a customer may see, with its pictures,
-	// addressing it by the slug a customer-facing link is built from.
+	// FindVisibleBySlug returns one product a customer may see, with its pictures and
+	// its visible variants, addressing it by the slug a customer-facing link is built
+	// from (FR-003).
 	//
-	// The same visibility predicate as ListVisible runs here, so a product that is
-	// not on sale and not a pre-order, retired, in a hidden category, removed or
-	// unknown is reported the same way, as domainerr.ErrProductNotFound, and the
-	// response never confirms that a hidden product exists (FR-003, research D1).
+	// The same visibility predicate as ListCatalogue runs here, so a product that is
+	// hidden (no on-sale variant), retired, in a hidden category, removed or unknown
+	// is reported the same way, as domainerr.ErrProductNotFound, and the response
+	// never confirms that a hidden product exists (FR-008). The variants carried are
+	// the on-sale and out-of-stock ones only (FR-005), ordered by position.
 	FindVisibleBySlug(ctx context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*ProductView, error)
 
 	// ListAll returns a page of every product, including the ones withheld from
-	// customers, plus the total number of them, in the same FR-009 order. It
-	// serves the administrator list (FR-011).
+	// customers, plus the total number of them, in the same order (position, then
+	// created_at, then id). It serves the administrator list (FR-010).
 	ListAll(ctx context.Context, page, pageSize int) ([]ProductListItem, int64, error)
 
-	// FindByID returns one product with its pictures for the administrator
-	// surface, including one withheld from customers. An unknown identifier is
-	// reported as domainerr.ErrProductNotFound (FR-011).
+	// FindByID returns one product with its pictures and every variant, for the
+	// administrator surface, including a product withheld from customers (FR-010).
+	// An unknown identifier is reported as domainerr.ErrProductNotFound.
 	FindByID(ctx context.Context, id uuid.UUID) (*ProductView, error)
 
 	// Exists reports whether a product carries the identifier, without reading the
-	// row or its pictures. It answers the cross-module lookup the inventory module
-	// asks (specs/007-inventory-tracking research D4, D12): a read or a decrease
+	// row. It answers the cross-module lookup a consumer asks: a read or a decrease
 	// writes no product row, so the foreign key cannot answer it, and the product
 	// module is the only place that can. It joins the caller's transaction.
 	Exists(ctx context.Context, id uuid.UUID) (bool, error)
 
-	// FindByIDs returns every requested product that exists, without pictures,
-	// in one read. It is the read behind the cross-module ProductCatalog contract
-	// (specs/008-cart research D1): a consumer needs the current name, slug,
-	// on-sale state and price of a whole set of products at once, and a
-	// per-product read would make its cost grow with the set. An identifier no
-	// product carries is absent from the result rather than an error, so the
-	// caller can tell a removed product from an available one. It joins the
-	// caller's transaction and never opens one itself.
+	// FindByIDs returns every requested product that exists, without pictures or
+	// variants, in one read. An identifier no product carries is absent from the
+	// result rather than an error. It joins the caller's transaction and never opens
+	// one itself.
 	FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.Product, error)
 
-	// LockProduct takes the product's row lock inside the caller's transaction,
-	// so the picture count that follows cannot be read by two concurrent uploads
-	// as the same value (research D6). An unknown identifier is reported as
-	// domainerr.ErrProductNotFound.
-	//
-	// It joins the transaction the application put in the context and never opens
-	// one itself; a caller that invokes it outside a transaction is not protected
-	// from the race.
+	// LockProduct takes the product's row lock inside the caller's transaction, so
+	// the picture count that follows cannot be read by two concurrent uploads as the
+	// same value. An unknown identifier is reported as domainerr.ErrProductNotFound.
 	LockProduct(ctx context.Context, id uuid.UUID) error
 
-	// CountPictures reports how many pictures the product has. The caller checks
-	// the ten-picture ceiling with it before calling the media provider, so a
-	// refused eleventh upload leaves no orphaned asset behind (FR-020).
+	// CountPictures reports how many pictures the product has. The caller checks the
+	// ten-picture ceiling with it before calling the media provider, so a refused
+	// eleventh upload leaves no orphaned asset behind.
 	CountPictures(ctx context.Context, productID uuid.UUID) (int, error)
 
-	// ListPictures returns the product's pictures in display order. An empty list
-	// is valid: a product with no picture is still a product (research D7).
+	// ListPictures returns the product's pictures in display order. An empty list is
+	// valid: a product with no picture is still a product.
 	ListPictures(ctx context.Context, productID uuid.UUID) ([]model.Picture, error)
 
 	// FindPicture returns one picture that belongs to the product, including the
-	// stored reference the use case needs to release the asset. A picture that
-	// does not belong to the product, or a product that does not exist, answers
-	// domainerr.ErrProductNotFound, so the two are indistinguishable (FR-016).
+	// stored reference the use case needs to release the asset. A picture that does
+	// not belong to the product, or a product that does not exist, answers
+	// domainerr.ErrProductNotFound, so the two are indistinguishable.
 	FindPicture(ctx context.Context, productID, pictureID uuid.UUID) (*model.Picture, error)
 
 	// AddPicture inserts a picture. An unknown product is reported as
 	// domainerr.ErrProductNotFound.
 	AddPicture(ctx context.Context, picture *model.Picture) error
 
-	// DeletePicture removes one picture that belongs to the product. A picture
-	// that does not belong to the product, or a product that does not exist,
-	// answers domainerr.ErrProductNotFound.
+	// DeletePicture removes one picture that belongs to the product. A picture that
+	// does not belong to the product, or a product that does not exist, answers
+	// domainerr.ErrProductNotFound.
 	DeletePicture(ctx context.Context, productID, pictureID uuid.UUID) error
 
-	// SetPrimaryPicture makes one picture the product's main one, clearing any
-	// other in the same statement so the partial unique index is never violated.
-	// It is idempotent: naming the picture that is already primary is a no-op,
-	// not an error (research D7). A picture that does not belong to the product,
-	// or a product that does not exist, answers domainerr.ErrProductNotFound.
+	// SetPrimaryPicture makes one picture the product's main one, clearing any other
+	// in the same statement so the partial unique index is never violated. It is
+	// idempotent: naming the picture that is already primary is a no-op, not an
+	// error. A picture that does not belong to the product, or a product that does
+	// not exist, answers domainerr.ErrProductNotFound.
 	SetPrimaryPicture(ctx context.Context, productID, pictureID uuid.UUID) error
-
-	// ReplaceSetMembers replaces the whole member list of a set, in the order
-	// given. It is called inside the same transaction as the product write, so a
-	// set is never stored without its members (FR-039). A member identifier no
-	// product carries is reported as domainerr.ErrProductInvalid naming
-	// model.FieldMemberProductIDs.
-	ReplaceSetMembers(ctx context.Context, setProductID uuid.UUID, memberIDs []uuid.UUID) error
-
-	// ListSetMembers returns the products inside a set, in the order they are
-	// listed. It serves the administrator detail only: the public shape does not
-	// enumerate a set's contents (FR-039, research D18).
-	ListSetMembers(ctx context.Context, setProductID uuid.UUID) ([]SetMember, error)
-
-	// ListCatalogue returns one page of the merged public catalogue — standalone
-	// products and variant groups in one ordered result — plus the total number
-	// of entries across both kinds.
-	//
-	// The whole predicate runs in this single statement (a CTE/UNION ALL, research
-	// D4), not in Go: a group is visible when its category is in
-	// query.VisibleCategoryIDs and at least one of its options is visible, and its
-	// price is the lowest price among those visible options with the group's own
-	// main picture as its image (FR-001, FR-005, FR-006); a standalone product is
-	// a product with variant_group_id null under the existing visibility
-	// predicate (FR-026, FR-027). A product that belongs to a group is represented
-	// by that group and is excluded from the standalone side, so a group appears
-	// once and never once per option (FR-001). The order is position, then
-	// created_at, then id across both kinds (FR-009), and a COUNT(*) over the same
-	// CTE gives the total, so pagination and the total stay correct (research D4).
-	ListCatalogue(ctx context.Context, query VisibleListQuery) ([]CatalogueItem, int64, error)
-
-	// ListGroupOptions returns a group's visible options in display order, for the
-	// public group read.
-	//
-	// The visibility predicate — the option's category is in visibleCategoryIDs
-	// and it is on sale or an announced non-retired pre-order — runs here, so an
-	// option a customer may not see is absent rather than dropped in Go (FR-002,
-	// FR-027). Each option is projected with its own label, price, currency,
-	// preorder flag, link and primary picture; nothing is inherited from the group
-	// or its siblings (FR-016, FR-018).
-	ListGroupOptions(ctx context.Context, groupID uuid.UUID, visibleCategoryIDs []uuid.UUID) ([]GroupOptionItem, error)
-
-	// ListOptionsByGroupIDs returns the options of several groups in one read,
-	// keyed by group identifier, for the detail selector: a product read that
-	// finds it has a group renders every sibling option without a query per
-	// option, keeping the detail read bounded (FR-007, research D4).
-	//
-	// Only visible options are returned, under the same predicate ListGroupOptions
-	// applies. A group identifier with no visible option is absent from the map
-	// rather than an error. The order within each group is position, then
-	// created_at, then id.
-	ListOptionsByGroupIDs(ctx context.Context, groupIDs []uuid.UUID, visibleCategoryIDs []uuid.UUID) (map[uuid.UUID][]GroupOptionItem, error)
 }

@@ -50,7 +50,7 @@ func TestReserveMapsToTheInventoryUseCase(t *testing.T) {
 		t.Fatalf("expected one reserve call, got %d", len(svc.reserved))
 	}
 	got := svc.reserved[0]
-	if got.OrderID != order || got.ProductID != product || got.Quantity != 3 {
+	if got.OrderID != order || got.VariantID != product || got.Quantity != 3 {
 		t.Fatalf("reserve = %+v, want order %s product %s quantity 3", got, order, product)
 	}
 }
@@ -67,7 +67,7 @@ func TestReleaseMapsToTheInventoryUseCase(t *testing.T) {
 		t.Fatalf("expected one release call, got %d", len(svc.released))
 	}
 	got := svc.released[0]
-	if got.OrderID != order || got.ProductID != product {
+	if got.OrderID != order || got.VariantID != product {
 		t.Fatalf("release = %+v, want order %s product %s", got, order, product)
 	}
 }
@@ -85,7 +85,7 @@ func TestApplySaleMapsToTheInventoryUseCase(t *testing.T) {
 		t.Fatalf("expected one sale call, got %d", len(svc.sold))
 	}
 	got := svc.sold[0]
-	if got.OrderID != order || got.ProductID != product || got.SourceReference != "evt-1:line-1" {
+	if got.OrderID != order || got.VariantID != product || got.SourceReference != "evt-1:line-1" {
 		t.Fatalf("sale = %+v, want order %s product %s reference evt-1:line-1", got, order, product)
 	}
 }

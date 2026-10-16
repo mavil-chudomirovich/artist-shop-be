@@ -1,8 +1,8 @@
 package implement
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"sort"
 	"sync"
 	"testing"
@@ -10,212 +10,842 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 )
 
-// This file holds the shared in-memory VariantGroupRepository fake the group and
-// catalogue use-case tests build on. It mirrors the adapter's observable
-// behaviour where a use case depends on it — a slug collision, a missing
-// category, a group that still has options, the option visibility predicate —
-// because a fake that is more permissive than the adapter would let a use case
-// pass a test the real storage would refuse (research D3, D7).
-//
-// It embeds the port so a method no test needs is inherited rather than
-// stubbed; the compile-time assertion below is what proves the fake still
-// satisfies the whole interface.
+// This file holds the shared in-memory fakes the product use-case tests build on.
+// The products fake and the variants fake share one backing state, so a view read
+// through the product port sees the variants written through the variant port,
+// exactly as the two adapters share one database. Each mirrors its adapter's
+// observable behaviour where a use case depends on it — a slug/code/SKU collision,
+// a missing category, the catalogue visibility predicate and the card summary —
+// because a fake more permissive than the adapter would let a use case pass a test
+// the real storage would refuse.
 
-// memoryVariantGroups is an in-memory VariantGroupRepository. It is safe for the
-// sequential use the use-case tests make of it; access is guarded so a future
-// parallel test does not race.
-type memoryVariantGroups struct {
-	domainrepo.VariantGroupRepository
+// repoCall is one repository operation and whether it ran inside the caller's
+// transaction. Picture tests assert that the ceiling check and the insert share the
+// transaction.
+type repoCall struct {
+	op   string
+	inTx bool
+}
 
-	mu     sync.Mutex
-	groups map[uuid.UUID]model.VariantGroup
-	images map[uuid.UUID][]model.VariantGroupImage
-	// options is what the option reads answer from. The fake does not own
-	// products, so a test seeds the options it expects with seedOptions; that
-	// keeps the fake independent of the product repository's state.
-	options map[uuid.UUID][]domainrepo.GroupOptionItem
-	// categories, when non-nil, is the set of category identifiers this fake
+// memoryState is the shared backing store of the two fakes.
+type memoryState struct {
+	mu       sync.Mutex
+	products map[uuid.UUID]model.Product
+	variants map[uuid.UUID]model.Variant
+	pictures map[uuid.UUID][]model.Picture
+
+	// categories, when non-nil, is the set of category identifiers this store
 	// knows. A create or update naming one outside it is refused the way the
-	// adapter classifies the foreign-key violation (FR-023). A nil map accepts
-	// any category, so a test that does not care about the category need not seed
-	// one.
+	// adapter classifies the foreign-key violation. A nil map accepts any
+	// category, which keeps tests independent of a fixture.
 	categories map[uuid.UUID]bool
+
+	// calls records the operations in order, with whether each ran inside the
+	// caller's transaction.
+	calls []repoCall
 }
 
-var _ domainrepo.VariantGroupRepository = (*memoryVariantGroups)(nil)
-
-// newMemoryVariantGroups returns an empty fake.
-func newMemoryVariantGroups() *memoryVariantGroups {
-	return &memoryVariantGroups{
-		groups:  make(map[uuid.UUID]model.VariantGroup),
-		images:  make(map[uuid.UUID][]model.VariantGroupImage),
-		options: make(map[uuid.UUID][]domainrepo.GroupOptionItem),
+func newState() *memoryState {
+	return &memoryState{
+		products: make(map[uuid.UUID]model.Product),
+		variants: make(map[uuid.UUID]model.Variant),
+		pictures: make(map[uuid.UUID][]model.Picture),
 	}
 }
 
-// seedGroup stores one group as the tests built it, without going through the
-// create path, so a test can arrange a state a real create could reach.
-func (m *memoryVariantGroups) seedGroup(group model.VariantGroup) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.groups[group.ID] = group
+// record appends one operation and whether it ran inside a transaction. The caller
+// holds the lock.
+func (s *memoryState) record(ctx context.Context, op string) {
+	s.calls = append(s.calls, repoCall{op: op, inTx: inTx(ctx)})
 }
 
-// seedImage stores one picture under a group without going through the ceiling
-// check, so a test can reach a full gallery.
-func (m *memoryVariantGroups) seedImage(image model.VariantGroupImage) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.images[image.GroupID] = append(m.images[image.GroupID], image)
-}
-
-// seedOptions stores the options a group read should answer with, in the order
-// given.
-func (m *memoryVariantGroups) seedOptions(groupID uuid.UUID, options ...domainrepo.GroupOptionItem) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.options[groupID] = append([]domainrepo.GroupOptionItem(nil), options...)
-}
-
-// Create mirrors the adapter: a slug collision and a missing category are the
-// two refusals a use case depends on (FR-019, FR-023).
-func (m *memoryVariantGroups) Create(_ context.Context, group *model.VariantGroup) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for id, existing := range m.groups {
-		if id != group.ID && existing.Slug == group.Slug {
-			return domainerr.ErrVariantGroupSlugTaken
+func (s *memoryState) ops(name string) []repoCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]repoCall, 0, len(s.calls))
+	for _, call := range s.calls {
+		if call.op == name {
+			out = append(out, call)
 		}
 	}
-	if m.categories != nil && !m.categories[group.CategoryID] {
-		return domainerr.InvalidProductField(model.FieldCategoryID, "does not exist")
-	}
-	m.groups[group.ID] = *group
-	return nil
+	return out
 }
 
-// Update mirrors the adapter: writing the slug a group already holds succeeds,
-// a collision with another group is refused, and an unknown identifier is
-// not-found.
-func (m *memoryVariantGroups) Update(_ context.Context, group *model.VariantGroup) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.groups[group.ID]; !ok {
-		return domainerr.ErrVariantGroupNotFound
-	}
-	for id, existing := range m.groups {
-		if id != group.ID && existing.Slug == group.Slug {
-			return domainerr.ErrVariantGroupSlugTaken
+// listVariantsLocked returns the product's variants in display order. The caller
+// holds the lock.
+func (s *memoryState) listVariantsLocked(productID uuid.UUID) []model.Variant {
+	out := make([]model.Variant, 0)
+	for _, variant := range s.variants {
+		if variant.ProductID == productID {
+			out = append(out, variant)
 		}
 	}
-	if m.categories != nil && !m.categories[group.CategoryID] {
-		return domainerr.InvalidProductField(model.FieldCategoryID, "does not exist")
-	}
-	m.groups[group.ID] = *group
-	return nil
+	sortVariants(out)
+	return out
 }
 
-// Delete mirrors the restricting foreign key: a group with options is refused
-// (FR-025), a group without them is removed with its pictures, and an unknown
-// identifier is not-found.
-func (m *memoryVariantGroups) Delete(_ context.Context, id uuid.UUID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.groups[id]; !ok {
-		return domainerr.ErrVariantGroupNotFound
-	}
-	if len(m.options[id]) > 0 {
-		return domainerr.ErrVariantGroupHasOptions
-	}
-	delete(m.groups, id)
-	delete(m.images, id)
-	return nil
+// memoryProducts is an in-memory ProductRepository over the shared state.
+type memoryProducts struct {
+	domainrepo.ProductRepository
+	state *memoryState
 }
 
-// FindByID returns the group with its pictures and every option, including the
-// ones a customer cannot see (FR-013).
-func (m *memoryVariantGroups) FindByID(_ context.Context, id uuid.UUID) (*domainrepo.VariantGroupView, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	group, ok := m.groups[id]
+var _ domainrepo.ProductRepository = (*memoryProducts)(nil)
+
+func newMemoryProducts() *memoryProducts { return &memoryProducts{state: newState()} }
+
+// variants returns the variants fake sharing this state.
+func (m *memoryProducts) variants() *memoryVariants { return &memoryVariants{state: m.state} }
+
+// seedWithVariants builds a product with the given variants through the domain
+// constructors and stores them, so a test arranges a state a real create could
+// reach.
+func (m *memoryProducts) seedWithVariants(t *testing.T, draft model.ProductDraft, variants []model.VariantDraft, createdAt time.Time) *model.Product {
+	t.Helper()
+	product, err := model.NewProduct(draft, createdAt)
+	if err != nil {
+		t.Fatalf("NewProduct(%q): %v", draft.Name, err)
+	}
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.products[product.ID] = *product
+	for _, vd := range append(append([]model.VariantDraft(nil), draft.Variants...), variants...) {
+		variant, err := model.NewVariant(product.ID, vd, createdAt)
+		if err != nil {
+			t.Fatalf("NewVariant(%q): %v", vd.Name, err)
+		}
+		m.state.variants[variant.ID] = *variant
+	}
+	return product
+}
+
+// launch moves a seeded variant to ACTIVE through the domain transition.
+func (m *memoryProducts) launch(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	m.transition(t, id, (*model.Variant).Launch)
+}
+
+// sellOut moves a seeded variant to OUT_OF_STOCK through the domain transition.
+func (m *memoryProducts) sellOut(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	m.transition(t, id, (*model.Variant).SellOut)
+}
+
+// retire moves a seeded variant to DISCONTINUED through the domain transition.
+func (m *memoryProducts) retire(t *testing.T, id uuid.UUID) {
+	t.Helper()
+	m.transition(t, id, (*model.Variant).Retire)
+}
+
+// transition applies one variant transition to a seeded variant.
+func (m *memoryProducts) transition(t *testing.T, id uuid.UUID, transition func(*model.Variant, time.Time) error) {
+	t.Helper()
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	variant, ok := m.state.variants[id]
 	if !ok {
-		return nil, domainerr.ErrVariantGroupNotFound
+		t.Fatalf("variant %s is not seeded", id)
 	}
-	return &domainrepo.VariantGroupView{
-		Group:   group,
-		Images:  cloneGroupImages(m.images[id]),
-		Options: cloneGroupOptions(m.options[id]),
-	}, nil
+	if err := transition(&variant, time.Now().UTC()); err != nil {
+		t.Fatalf("transition %s: %v", id, err)
+	}
+	m.state.variants[id] = variant
 }
 
-// FindVisibleGroupBySlug mirrors the adapter's visibility predicate: the group's
-// category must be visible and at least one of its options must itself be visible
-// (FR-006, FR-008). It answers only the visible options, exactly as the adapter's
-// EXISTS predicate and its option read do, so a group whose every option is
-// withheld is indistinguishable from an unknown slug.
-func (m *memoryVariantGroups) FindVisibleGroupBySlug(_ context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.VariantGroupView, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	visible := make(map[uuid.UUID]bool, len(visibleCategoryIDs))
-	for _, id := range visibleCategoryIDs {
-		visible[id] = true
+// variantsFor returns a product's seeded variants in display order.
+func (m *memoryProducts) variantsFor(productID uuid.UUID) []model.Variant {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	return m.state.listVariantsLocked(productID)
+}
+
+// variantBySKU returns a product's seeded variant with the given SKU.
+func (m *memoryProducts) variantBySKU(t *testing.T, productID uuid.UUID, sku string) model.Variant {
+	t.Helper()
+	for _, variant := range m.variantsFor(productID) {
+		if variant.SKU == sku {
+			return variant
+		}
 	}
-	for id, group := range m.groups {
-		if group.Slug != slug {
+	t.Fatalf("no seeded variant with SKU %q", sku)
+	return model.Variant{}
+}
+
+// addSeedPicture stores one picture under a product without going through the use
+// case, so a test can reach the ceiling.
+func (m *memoryProducts) addSeedPicture(productID uuid.UUID, position int, primary bool) model.Picture {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	picture := model.Picture{
+		ID:        uuid.New(),
+		ProductID: productID,
+		PublicID:  "demo/seed",
+		URL:       "https://cdn.example.test/seed.jpg",
+		Width:     800,
+		Height:    600,
+		Position:  position,
+		IsPrimary: primary,
+		CreatedAt: time.Now().UTC(),
+	}
+	m.state.pictures[productID] = append(m.state.pictures[productID], picture)
+	return picture
+}
+
+// categoryAllowed reports whether the store knows the category. A nil set accepts
+// every identifier.
+func (m *memoryProducts) categoryAllowed(id uuid.UUID) bool {
+	if m.state.categories == nil {
+		return true
+	}
+	return m.state.categories[id]
+}
+
+func (m *memoryProducts) Create(ctx context.Context, product *model.Product) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "createProduct")
+	if !m.categoryAllowed(product.CategoryID) {
+		return invalidCategory()
+	}
+	if m.slugTakenLocked(product) {
+		return errSlugTaken()
+	}
+	if m.codeTakenLocked(product) {
+		return errCodeTaken()
+	}
+	m.state.products[product.ID] = *product
+	return nil
+}
+
+func (m *memoryProducts) Update(ctx context.Context, product *model.Product) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "updateProduct")
+	if _, ok := m.state.products[product.ID]; !ok {
+		return errProductNotFound()
+	}
+	if !m.categoryAllowed(product.CategoryID) {
+		return invalidCategory()
+	}
+	if m.slugTakenLocked(product) {
+		return errSlugTaken()
+	}
+	if m.codeTakenLocked(product) {
+		return errCodeTaken()
+	}
+	m.state.products[product.ID] = *product
+	return nil
+}
+
+func (m *memoryProducts) Delete(_ context.Context, id uuid.UUID) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	if _, ok := m.state.products[id]; !ok {
+		return errProductNotFound()
+	}
+	delete(m.state.products, id)
+	delete(m.state.pictures, id)
+	for variantID, variant := range m.state.variants {
+		if variant.ProductID == id {
+			delete(m.state.variants, variantID)
+		}
+	}
+	return nil
+}
+
+func (m *memoryProducts) slugTakenLocked(product *model.Product) bool {
+	key := model.FoldKey(product.Slug)
+	for _, existing := range m.state.products {
+		if existing.ID != product.ID && model.FoldKey(existing.Slug) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *memoryProducts) codeTakenLocked(product *model.Product) bool {
+	key := model.FoldKey(product.Code)
+	for _, existing := range m.state.products {
+		if existing.ID != product.ID && model.FoldKey(existing.Code) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *memoryProducts) ListCatalogue(_ context.Context, query domainrepo.VisibleListQuery) ([]domainrepo.CatalogueEntry, int64, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	visible := uuidSet(query.VisibleCategoryIDs)
+
+	all := make([]domainrepo.CatalogueEntry, 0, len(m.state.products))
+	for _, product := range m.state.products {
+		if !visible[product.CategoryID] {
 			continue
 		}
-		if !visible[group.CategoryID] {
-			return nil, domainerr.ErrVariantGroupNotFound
+		if query.CategoryID != nil && product.CategoryID != *query.CategoryID {
+			continue
 		}
-		visibles := make([]domainrepo.GroupOptionItem, 0, len(m.options[id]))
-		for _, option := range m.options[id] {
-			if optionVisible(option) {
-				visibles = append(visibles, option)
-			}
+		variants := m.state.listVariantsLocked(product.ID)
+		summary := summarizeProduct(product, m.state.pictures[product.ID], variants)
+		if summary.Price.Amount == 0 {
+			// No on-sale variant: the product has no catalogue presence.
+			continue
 		}
-		if len(visibles) == 0 {
-			return nil, domainerr.ErrVariantGroupNotFound
-		}
-		return &domainrepo.VariantGroupView{
-			Group:   group,
-			Images:  cloneGroupImages(m.images[id]),
-			Options: visibles,
-		}, nil
-	}
-	return nil, domainerr.ErrVariantGroupNotFound
-}
-
-// ListAll returns a page of every group in the FR-009 order, plus the total.
-func (m *memoryVariantGroups) ListAll(_ context.Context, page, pageSize int) ([]domainrepo.VariantGroupListItem, int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	all := make([]domainrepo.VariantGroupListItem, 0, len(m.groups))
-	for id, group := range m.groups {
-		item := domainrepo.VariantGroupListItem{Group: group, ImageCount: len(m.images[id])}
-		for _, image := range m.images[id] {
-			if image.IsPrimary {
-				item.ImageURL = image.URL
-			}
-		}
-		all = append(all, item)
+		all = append(all, domainrepo.CatalogueEntry{
+			ID:        product.ID,
+			Name:      product.Name,
+			Slug:      product.Slug,
+			Price:     summary.Price,
+			ImageURL:  summary.ImageURL,
+			Position:  product.Position,
+			CreatedAt: product.CreatedAt,
+		})
 	}
 	sort.Slice(all, func(i, j int) bool {
-		if all[i].Group.Position != all[j].Group.Position {
-			return all[i].Group.Position < all[j].Group.Position
+		if all[i].Position != all[j].Position {
+			return all[i].Position < all[j].Position
 		}
-		if !all[i].Group.CreatedAt.Equal(all[j].Group.CreatedAt) {
-			return all[i].Group.CreatedAt.Before(all[j].Group.CreatedAt)
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
 		}
-		return all[i].Group.ID.String() < all[j].Group.ID.String()
+		return all[i].ID.String() < all[j].ID.String()
 	})
+	total := int64(len(all))
+	start, end := window(len(all), query.Page, query.PageSize)
+	return all[start:end], total, nil
+}
+
+func (m *memoryProducts) FindVisibleBySlug(_ context.Context, slug string, visibleCategoryIDs []uuid.UUID) (*domainrepo.ProductView, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	visible := uuidSet(visibleCategoryIDs)
+	for _, product := range m.state.products {
+		if product.Slug != slug {
+			continue
+		}
+		if !visible[product.CategoryID] || !m.hasOnSaleVariantLocked(product.ID) {
+			return nil, errProductNotFound()
+		}
+		return m.viewLocked(product, true), nil
+	}
+	return nil, errProductNotFound()
+}
+
+func (m *memoryProducts) ListAll(_ context.Context, page, pageSize int) ([]domainrepo.ProductListItem, int64, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	all := make([]model.Product, 0, len(m.state.products))
+	for _, product := range m.state.products {
+		all = append(all, product)
+	}
+	sortProducts(all)
 
 	total := int64(len(all))
+	start, end := window(len(all), page, pageSize)
+	if start >= len(all) {
+		return []domainrepo.ProductListItem{}, total, nil
+	}
+	out := make([]domainrepo.ProductListItem, 0, end-start)
+	for _, product := range all[start:end] {
+		item := domainrepo.ProductListItem{
+			Product:      product,
+			PictureCount: len(m.state.pictures[product.ID]),
+			VariantCount: len(m.state.listVariantsLocked(product.ID)),
+		}
+		if primary, ok := model.PrimaryPicture(m.state.pictures[product.ID]); ok {
+			item.ImageURL = primary.URL
+		}
+		out = append(out, item)
+	}
+	return out, total, nil
+}
+
+func (m *memoryProducts) FindByID(_ context.Context, id uuid.UUID) (*domainrepo.ProductView, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	product, ok := m.state.products[id]
+	if !ok {
+		return nil, errProductNotFound()
+	}
+	return m.viewLocked(product, false), nil
+}
+
+// viewLocked assembles a detail view. The caller holds the lock.
+func (m *memoryProducts) viewLocked(product model.Product, visibleOnly bool) *domainrepo.ProductView {
+	variants := m.state.listVariantsLocked(product.ID)
+	return &domainrepo.ProductView{
+		Product:  product,
+		Pictures: m.state.pictures[product.ID],
+		Variants: visibleVariants(variants, visibleOnly),
+		Summary:  summarizeProduct(product, m.state.pictures[product.ID], variants),
+	}
+}
+
+func (m *memoryProducts) hasOnSaleVariantLocked(productID uuid.UUID) bool {
+	for _, variant := range m.state.variants {
+		if variant.ProductID == productID && variant.Buyable() {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *memoryProducts) LockProduct(ctx context.Context, id uuid.UUID) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "lock")
+	if _, ok := m.state.products[id]; !ok {
+		return errProductNotFound()
+	}
+	return nil
+}
+
+func (m *memoryProducts) CountPictures(ctx context.Context, productID uuid.UUID) (int, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "count")
+	return len(m.state.pictures[productID]), nil
+}
+
+func (m *memoryProducts) ListPictures(_ context.Context, productID uuid.UUID) ([]model.Picture, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	return orderedPictures(m.state.pictures[productID]), nil
+}
+
+func (m *memoryProducts) FindPicture(_ context.Context, productID, pictureID uuid.UUID) (*model.Picture, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	for i := range m.state.pictures[productID] {
+		if m.state.pictures[productID][i].ID == pictureID {
+			picture := m.state.pictures[productID][i]
+			return &picture, nil
+		}
+	}
+	return nil, errProductNotFound()
+}
+
+func (m *memoryProducts) AddPicture(ctx context.Context, picture *model.Picture) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "insert")
+	if _, ok := m.state.products[picture.ProductID]; !ok {
+		return errProductNotFound()
+	}
+	m.state.pictures[picture.ProductID] = append(m.state.pictures[picture.ProductID], *picture)
+	return nil
+}
+
+func (m *memoryProducts) DeletePicture(_ context.Context, productID, pictureID uuid.UUID) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	pictures := m.state.pictures[productID]
+	for i := range pictures {
+		if pictures[i].ID == pictureID {
+			m.state.pictures[productID] = append(pictures[:i:i], pictures[i+1:]...)
+			return nil
+		}
+	}
+	return errProductNotFound()
+}
+
+func (m *memoryProducts) SetPrimaryPicture(_ context.Context, productID, pictureID uuid.UUID) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	pictures := m.state.pictures[productID]
+	found := false
+	for i := range pictures {
+		if pictures[i].ID == pictureID {
+			found = true
+		}
+	}
+	if !found {
+		return errProductNotFound()
+	}
+	for i := range pictures {
+		pictures[i].IsPrimary = pictures[i].ID == pictureID
+	}
+	m.state.pictures[productID] = pictures
+	return nil
+}
+
+// memoryVariants is an in-memory VariantRepository over the shared state.
+type memoryVariants struct {
+	domainrepo.VariantRepository
+	state *memoryState
+}
+
+var _ domainrepo.VariantRepository = (*memoryVariants)(nil)
+
+func (m *memoryVariants) Create(ctx context.Context, variant *model.Variant) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "createVariant")
+	if _, ok := m.state.products[variant.ProductID]; !ok {
+		return errVariantNotFound()
+	}
+	if m.skuTakenLocked(variant) {
+		return errSKUTaken()
+	}
+	m.state.variants[variant.ID] = *variant
+	return nil
+}
+
+func (m *memoryVariants) Update(ctx context.Context, variant *model.Variant) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	m.state.record(ctx, "updateVariant")
+	if _, ok := m.state.variants[variant.ID]; !ok {
+		return errVariantNotFound()
+	}
+	if m.skuTakenLocked(variant) {
+		return errSKUTaken()
+	}
+	m.state.variants[variant.ID] = *variant
+	return nil
+}
+
+func (m *memoryVariants) Delete(_ context.Context, id uuid.UUID) error {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	if _, ok := m.state.variants[id]; !ok {
+		return errVariantNotFound()
+	}
+	delete(m.state.variants, id)
+	return nil
+}
+
+func (m *memoryVariants) FindByID(_ context.Context, id uuid.UUID) (*model.Variant, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	variant, ok := m.state.variants[id]
+	if !ok {
+		return nil, errVariantNotFound()
+	}
+	return &variant, nil
+}
+
+func (m *memoryVariants) ListByProduct(_ context.Context, productID uuid.UUID) ([]model.Variant, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	return m.state.listVariantsLocked(productID), nil
+}
+
+func (m *memoryVariants) CountByProduct(_ context.Context, productID uuid.UUID) (int, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	return len(m.state.listVariantsLocked(productID)), nil
+}
+
+func (m *memoryVariants) FindFactsByIDs(_ context.Context, ids []uuid.UUID) ([]domainrepo.VariantFacts, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	out := make([]domainrepo.VariantFacts, 0, len(ids))
+	for _, id := range ids {
+		variant, ok := m.state.variants[id]
+		if !ok {
+			continue
+		}
+		product, ok := m.state.products[variant.ProductID]
+		if !ok {
+			continue
+		}
+		out = append(out, domainrepo.VariantFacts{
+			VariantID:   variant.ID,
+			ProductID:   product.ID,
+			ProductName: product.Name,
+			ProductCode: product.Code,
+			ProductSlug: product.Slug,
+			VariantName: variant.Name,
+			SKU:         variant.SKU,
+			OnSale:      variant.Buyable(),
+			Price:       variant.EffectivePrice(product.Price),
+		})
+	}
+	return out, nil
+}
+
+func (m *memoryVariants) skuTakenLocked(variant *model.Variant) bool {
+	key := model.FoldKey(variant.SKU)
+	for _, existing := range m.state.variants {
+		if existing.ID != variant.ID && model.FoldKey(existing.SKU) == key {
+			return true
+		}
+	}
+	return false
+}
+
+// --- availability fake ---
+
+// fakeAvailability answers the inventory read contract from a fixed map. It
+// records how often it was asked, so a test can prove the detail read costs one
+// bulk call.
+type fakeAvailability struct {
+	mu        sync.Mutex
+	available map[uuid.UUID]int64
+	calls     int
+}
+
+func newFakeAvailability() *fakeAvailability {
+	return &fakeAvailability{available: make(map[uuid.UUID]int64)}
+}
+
+func (f *fakeAvailability) AvailableQuantity(_ context.Context, variantIDs []uuid.UUID) ([]contracts.Availability, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	out := make([]contracts.Availability, 0, len(variantIDs))
+	for _, id := range variantIDs {
+		out = append(out, contracts.Availability{VariantID: id, Available: f.available[id]})
+	}
+	return out, nil
+}
+
+// --- visibility fake ---
+
+// fakeVisibility is the cross-module category query the use case consumes. It
+// records how often the visible set was asked for, so a test can prove it is
+// fetched once per request rather than per product.
+type fakeVisibility struct {
+	visible      []uuid.UUID
+	slugs        map[string]uuid.UUID
+	visibleCalls int
+	slugCalls    int
+}
+
+func (f *fakeVisibility) VisibleCategoryIDs(context.Context) ([]uuid.UUID, error) {
+	f.visibleCalls++
+	return f.visible, nil
+}
+
+func (f *fakeVisibility) CategoryIDBySlug(_ context.Context, slug string) (uuid.UUID, bool, error) {
+	f.slugCalls++
+	id, ok := f.slugs[slug]
+	return id, ok, nil
+}
+
+// --- unit of work, media and auditor fakes ---
+
+// fauxUnitOfWork is an in-memory UnitOfWork. It marks the context so the
+// repository and the media fake can record whether a call ran inside the
+// transaction.
+type fauxUnitOfWork struct {
+	mu     sync.Mutex
+	calls  int
+	active int
+}
+
+func (u *fauxUnitOfWork) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	u.mu.Lock()
+	u.calls++
+	u.active++
+	u.mu.Unlock()
+	err := fn(context.WithValue(ctx, txKey{}, true))
+	u.mu.Lock()
+	u.active--
+	u.mu.Unlock()
+	return err
+}
+
+// fakeMedia answers the MediaStore port without a provider. It records whether
+// each upload ran inside a transaction, which is what proves the provider call
+// stays outside it.
+type fakeMedia struct {
+	mu         sync.Mutex
+	uploads    int
+	removed    int
+	uploadInTx []bool
+	reference  appinterface.MediaReference
+	err        error
+}
+
+func newFakeMedia() *fakeMedia {
+	return &fakeMedia{reference: appinterface.MediaReference{
+		PublicID: "artist-shop/products/one",
+		URL:      "https://cdn.example.test/products/one.jpg",
+		Width:    1600,
+		Height:   1200,
+	}}
+}
+
+func (m *fakeMedia) Upload(ctx context.Context, _ []byte, _ int) (appinterface.MediaReference, error) {
+	m.mu.Lock()
+	m.uploads++
+	m.uploadInTx = append(m.uploadInTx, inTx(ctx))
+	reference, err := m.reference, m.err
+	m.mu.Unlock()
+	if err != nil {
+		return appinterface.MediaReference{}, err
+	}
+	return reference, nil
+}
+
+func (m *fakeMedia) Remove(context.Context, appinterface.MediaReference) error {
+	m.mu.Lock()
+	m.removed++
+	err := m.err
+	m.mu.Unlock()
+	return err
+}
+
+var _ appinterface.MediaStore = (*fakeMedia)(nil)
+
+// txKey marks a context that is inside the fake transaction, so a repository or
+// media call can record whether it ran there.
+type txKey struct{}
+
+func inTx(ctx context.Context) bool {
+	value, _ := ctx.Value(txKey{}).(bool)
+	return value
+}
+
+// recordedEvent is one call the use cases made to the auditor.
+type recordedEvent struct {
+	action     string
+	outcome    string
+	actorID    *uuid.UUID
+	actorRole  string
+	targetType string
+	targetID   string
+	metadata   map[string]any
+}
+
+// recordingAuditor captures the events the use cases emit.
+type recordingAuditor struct {
+	mu     sync.Mutex
+	events []recordedEvent
+}
+
+func (a *recordingAuditor) Record(_ context.Context, action, outcome string, actorID *uuid.UUID,
+	actorRole, targetType, targetID string, metadata map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.events = append(a.events, recordedEvent{
+		action:     action,
+		outcome:    outcome,
+		actorID:    actorID,
+		actorRole:  actorRole,
+		targetType: targetType,
+		targetID:   targetID,
+		metadata:   metadata,
+	})
+}
+
+var _ appinterface.Auditor = (*recordingAuditor)(nil)
+
+func (a *recordingAuditor) snapshot() []recordedEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]recordedEvent, len(a.events))
+	copy(out, a.events)
+	return out
+}
+
+func (a *recordingAuditor) actions() []string {
+	events := a.snapshot()
+	out := make([]string, 0, len(events))
+	for _, event := range events {
+		out = append(out, event.action)
+	}
+	return out
+}
+
+// --- shared helpers ---
+
+// summarizeProduct derives the card figure: the lowest effective price among the
+// product's on-sale variants and the default variant's image, falling back to the
+// product's primary gallery picture.
+func summarizeProduct(product model.Product, pictures []model.Picture, variants []model.Variant) domainrepo.ProductSummary {
+	var summary domainrepo.ProductSummary
+	var lowest *int64
+	for i := range variants {
+		if !variants[i].Buyable() {
+			continue
+		}
+		amount := variants[i].EffectivePrice(product.Price).Amount
+		if lowest == nil || amount < *lowest {
+			value := amount
+			lowest = &value
+		}
+	}
+	if lowest != nil {
+		summary.Price = model.Price{Amount: *lowest, Currency: product.Price.Currency}
+	}
+	if len(variants) > 0 && variants[0].Image != nil {
+		summary.ImageURL = variants[0].Image.URL
+	}
+	if summary.ImageURL == "" {
+		if picture, ok := model.PrimaryPicture(pictures); ok {
+			summary.ImageURL = picture.URL
+		}
+	}
+	return summary
+}
+
+// visibleVariants filters a product's variants for the public read.
+func visibleVariants(variants []model.Variant, visibleOnly bool) []model.Variant {
+	if !visibleOnly {
+		return variants
+	}
+	out := make([]model.Variant, 0, len(variants))
+	for _, variant := range variants {
+		if variant.VisibleToCustomers() {
+			out = append(out, variant)
+		}
+	}
+	return out
+}
+
+func sortProducts(products []model.Product) {
+	sort.Slice(products, func(i, j int) bool {
+		if products[i].Position != products[j].Position {
+			return products[i].Position < products[j].Position
+		}
+		if !products[i].CreatedAt.Equal(products[j].CreatedAt) {
+			return products[i].CreatedAt.Before(products[j].CreatedAt)
+		}
+		return products[i].ID.String() < products[j].ID.String()
+	})
+}
+
+func sortVariants(variants []model.Variant) {
+	sort.Slice(variants, func(i, j int) bool {
+		if variants[i].Position != variants[j].Position {
+			return variants[i].Position < variants[j].Position
+		}
+		if !variants[i].CreatedAt.Equal(variants[j].CreatedAt) {
+			return variants[i].CreatedAt.Before(variants[j].CreatedAt)
+		}
+		return variants[i].ID.String() < variants[j].ID.String()
+	})
+}
+
+func orderedPictures(pictures []model.Picture) []model.Picture {
+	if len(pictures) == 0 {
+		return nil
+	}
+	return model.OrderPictures(pictures)
+}
+
+func uuidSet(ids []uuid.UUID) map[uuid.UUID]bool {
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
+func window(total, page, pageSize int) (int, int) {
 	if page < 1 {
 		page = 1
 	}
@@ -223,259 +853,90 @@ func (m *memoryVariantGroups) ListAll(_ context.Context, page, pageSize int) ([]
 		pageSize = 1
 	}
 	start := (page - 1) * pageSize
-	if start >= len(all) {
-		return []domainrepo.VariantGroupListItem{}, total, nil
+	if start > total {
+		start = total
 	}
 	end := start + pageSize
-	if end > len(all) {
-		end = len(all)
+	if end > total {
+		end = total
 	}
-	return all[start:end], total, nil
+	return start, end
 }
 
-// ListImages returns the group's pictures in the order they were seeded.
-func (m *memoryVariantGroups) ListImages(_ context.Context, groupID uuid.UUID) ([]model.VariantGroupImage, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return cloneGroupImages(m.images[groupID]), nil
+// pngBytes is a payload the domain sniffer recognises as a PNG.
+func pngBytes() []byte {
+	return append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x2A}, 16)...)
 }
 
-// FindImage returns one picture scoped to its group, or not-found.
-func (m *memoryVariantGroups) FindImage(_ context.Context, groupID, imageID uuid.UUID) (*model.VariantGroupImage, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, image := range m.images[groupID] {
-		if image.ID == imageID {
-			found := image
-			return &found, nil
-		}
-	}
-	return nil, domainerr.ErrVariantGroupNotFound
+func adminActor() appinterface.Actor {
+	return appinterface.Actor{ID: uuid.New(), Role: access.RoleAdmin}
 }
 
-// AddImage appends a picture; a group that does not exist is not-found.
-func (m *memoryVariantGroups) AddImage(_ context.Context, image *model.VariantGroupImage) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.groups[image.GroupID]; !ok {
-		return domainerr.ErrVariantGroupNotFound
-	}
-	m.images[image.GroupID] = append(m.images[image.GroupID], *image)
-	return nil
-}
-
-// DeleteImage removes one picture scoped to its group, or answers not-found.
-func (m *memoryVariantGroups) DeleteImage(_ context.Context, groupID, imageID uuid.UUID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	images := m.images[groupID]
-	out := make([]model.VariantGroupImage, 0, len(images))
-	removed := false
-	for _, image := range images {
-		if image.ID == imageID {
-			removed = true
+// requireAudited asserts one event of the given action was recorded, carrying the
+// acting administrator as the actor and the named target.
+func requireAudited(t *testing.T, recorder *recordingAuditor, action string, actor appinterface.Actor, targetType string, targetID uuid.UUID) {
+	t.Helper()
+	for _, event := range recorder.snapshot() {
+		if event.action != action {
 			continue
 		}
-		out = append(out, image)
-	}
-	if !removed {
-		return domainerr.ErrVariantGroupNotFound
-	}
-	m.images[groupID] = out
-	return nil
-}
-
-// SetPrimaryImage promotes one picture and clears the flag on the rest, so at
-// most one main picture survives (FR-018).
-func (m *memoryVariantGroups) SetPrimaryImage(_ context.Context, groupID, imageID uuid.UUID) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	images := m.images[groupID]
-	found := false
-	for _, image := range images {
-		if image.ID == imageID {
-			found = true
+		if event.outcome != "SUCCESS" {
+			t.Fatalf("%s: expected outcome SUCCESS, got %q", action, event.outcome)
 		}
-	}
-	if !found {
-		return domainerr.ErrVariantGroupNotFound
-	}
-	for i := range images {
-		images[i].IsPrimary = images[i].ID == imageID
-	}
-	return nil
-}
-
-// CountImages reports how many pictures the group has.
-func (m *memoryVariantGroups) CountImages(_ context.Context, groupID uuid.UUID) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.images[groupID]), nil
-}
-
-// ListOptions returns the group's options in the seeded order. The public
-// variant applies the option's own state predicate, mirroring the adapter's
-// visible read (FR-002, FR-027).
-func (m *memoryVariantGroups) ListOptions(_ context.Context, groupID uuid.UUID, includeHidden bool) ([]domainrepo.GroupOptionItem, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	options := m.options[groupID]
-	if includeHidden {
-		return cloneGroupOptions(options), nil
-	}
-	out := make([]domainrepo.GroupOptionItem, 0, len(options))
-	for _, option := range options {
-		if !optionVisible(option) {
-			continue
+		if event.actorID == nil || *event.actorID != actor.ID {
+			t.Fatalf("%s: expected actor %s, got %v", action, actor.ID, event.actorID)
 		}
-		out = append(out, option)
+		if event.actorRole != string(actor.Role) {
+			t.Fatalf("%s: expected actor role %q, got %q", action, actor.Role, event.actorRole)
+		}
+		if event.targetType != targetType {
+			t.Fatalf("%s: expected target type %q, got %q", action, targetType, event.targetType)
+		}
+		if event.targetID != targetID.String() {
+			t.Fatalf("%s: expected target %s, got %q", action, targetID, event.targetID)
+		}
+		return
 	}
-	return out, nil
+	t.Fatalf("%s: no audit event recorded, got %v", action, recorder.actions())
 }
 
-// optionVisible mirrors the adapter's product visibility predicate: on sale, or
-// an announced non-retired pre-order (FR-002, FR-027).
-func optionVisible(option domainrepo.GroupOptionItem) bool {
-	if option.SellState == constant.SellStateDiscontinued {
-		return false
-	}
-	return option.SellState == constant.SellStateActive || option.IsPreorder
-}
-
-// cloneGroupImages copies a picture slice so a caller cannot mutate the fake's
-// state through the returned slice.
-func cloneGroupImages(images []model.VariantGroupImage) []model.VariantGroupImage {
-	if len(images) == 0 {
-		return nil
-	}
-	return append([]model.VariantGroupImage(nil), images...)
-}
-
-// cloneGroupOptions copies an option slice for the same reason.
-func cloneGroupOptions(options []domainrepo.GroupOptionItem) []domainrepo.GroupOptionItem {
-	if len(options) == 0 {
-		return nil
-	}
-	return append([]domainrepo.GroupOptionItem(nil), options...)
-}
-
-// TestMemoryVariantGroupsFakeServesTheGroupUseCases proves the shared fake does
-// what a use-case test will ask of it: seeding, the slug and category refusals,
-// the restricting delete, the visibility predicate and the ordered option read.
-// It is the guard that keeps the fake from drifting from the adapter's
-// observable contract.
-func TestMemoryVariantGroupsFakeServesTheGroupUseCases(t *testing.T) {
-	ctx := context.Background()
-	repo := newMemoryVariantGroups()
-	now := time.Now().UTC()
-
-	category := uuid.New()
-	repo.categories = map[uuid.UUID]bool{category: true}
-	group, err := model.NewVariantGroup(model.VariantGroupDraft{
-		Name:       "Card Genshin",
-		Slug:       "card-genshin",
-		CategoryID: category,
-		OptionName: "Card",
-	}, now)
-	if err != nil {
-		t.Fatalf("NewVariantGroup: %v", err)
-	}
-	if err := repo.Create(ctx, group); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-
-	// A second group with the same slug is refused the way the adapter reports it.
-	duplicate, err := model.NewVariantGroup(model.VariantGroupDraft{
-		Name:       "Another",
-		Slug:       "card-genshin",
-		CategoryID: category,
-		OptionName: "Card",
-	}, now)
-	if err != nil {
-		t.Fatalf("NewVariantGroup: %v", err)
-	}
-	if err := repo.Create(ctx, duplicate); !errors.Is(err, domainerr.ErrVariantGroupSlugTaken) {
-		t.Fatalf("expected ErrVariantGroupSlugTaken, got %v", err)
-	}
-
-	// A category this fake does not know is refused naming the field.
-	orphan, err := model.NewVariantGroup(model.VariantGroupDraft{
-		Name:       "Orphan",
-		Slug:       "orphan",
-		CategoryID: uuid.New(),
-		OptionName: "Card",
-	}, now)
-	if err != nil {
-		t.Fatalf("NewVariantGroup: %v", err)
-	}
-	if err := repo.Create(ctx, orphan); !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-
-	// A second, valid group, seeded without going through the create path, so the
-	// list has two entries and the delete-with-options refusal is not confused
-	// with an empty catalogue.
-	otherCategory := uuid.New()
-	repo.categories[otherCategory] = true
-	repo.seedGroup(model.VariantGroup{
-		ID: uuid.New(), Name: "Other", Slug: "other-group",
-		CategoryID: otherCategory, OptionName: "Card", CreatedAt: now, UpdatedAt: now,
+// serviceFor wires a Service over the given fakes.
+func serviceFor(products *memoryProducts, availability *fakeAvailability, visibility appinterface.CategoryQuery, audit appinterface.Auditor, media appinterface.MediaStore, tx appinterface.UnitOfWork) *Service {
+	return New(Service{
+		Products:     products,
+		Variants:     products.variants(),
+		Visibility:   visibility,
+		Availability: availability,
+		Audit:        audit,
+		Media:        media,
+		Tx:           tx,
+		Mapper:       mapper.New(),
 	})
+}
 
-	// Seed an image and two options: one visible, one retired.
-	repo.seedImage(model.VariantGroupImage{
-		ID: uuid.New(), GroupID: group.ID, PublicID: "demo/a", URL: "https://example.test/a.jpg",
-		Width: 10, Height: 10, IsPrimary: true, CreatedAt: now,
-	})
-	repo.seedOptions(group.ID,
-		domainrepo.GroupOptionItem{
-			ID: uuid.New(), Slug: "flins", Label: "Flins",
-			Price: model.Price{Amount: 1000, Currency: "VND"}, SellState: constant.SellStateActive,
-		},
-		domainrepo.GroupOptionItem{
-			ID: uuid.New(), Slug: "dottore", Label: "Dottore",
-			Price: model.Price{Amount: 2000, Currency: "VND"}, SellState: constant.SellStateDiscontinued,
-		},
-	)
+// publicService wires the public reads over the two fakes.
+func publicService(products *memoryProducts, visibility appinterface.CategoryQuery) *Service {
+	return serviceFor(products, newFakeAvailability(), visibility, nil, nil, nil)
+}
 
-	view, err := repo.FindByID(ctx, group.ID)
-	if err != nil {
-		t.Fatalf("FindByID: %v", err)
-	}
-	if len(view.Images) != 1 || len(view.Options) != 2 {
-		t.Fatalf("expected one image and both options including the hidden one, got %d and %d",
-			len(view.Images), len(view.Options))
-	}
+// maintenanceService wires the administrator use cases over the fakes and a
+// recording auditor.
+func maintenanceService(products *memoryProducts, audit appinterface.Auditor) *Service {
+	return serviceFor(products, newFakeAvailability(), nil, audit, nil, &fauxUnitOfWork{})
+}
 
-	// The public read carries only the visible option.
-	if _, err := repo.FindVisibleGroupBySlug(ctx, "orphan", []uuid.UUID{category}); !errors.Is(err, domainerr.ErrVariantGroupNotFound) {
-		t.Fatalf("expected not-found for an unknown slug, got %v", err)
-	}
-	visible, err := repo.FindVisibleGroupBySlug(ctx, "card-genshin", []uuid.UUID{category})
-	if err != nil {
-		t.Fatalf("FindVisibleGroupBySlug: %v", err)
-	}
-	public, err := repo.ListOptions(ctx, group.ID, false)
-	if err != nil {
-		t.Fatalf("ListOptions public: %v", err)
-	}
-	if len(public) != 1 || visible.Group.ID != group.ID {
-		t.Fatalf("expected one visible option, got %d", len(public))
-	}
-	if _, err := repo.FindVisibleGroupBySlug(ctx, "card-genshin", nil); !errors.Is(err, domainerr.ErrVariantGroupNotFound) {
-		t.Fatalf("an empty visible set must answer not-found, got %v", err)
-	}
+func adminContext(actor appinterface.Actor) context.Context {
+	return appinterface.WithActor(context.Background(), actor)
+}
 
-	// A group with options cannot be removed.
-	if err := repo.Delete(ctx, group.ID); !errors.Is(err, domainerr.ErrVariantGroupHasOptions) {
-		t.Fatalf("expected ErrVariantGroupHasOptions, got %v", err)
-	}
+// The fakes return the module's real sentinels, so a use case classifies a refusal
+// exactly as it would against the adapters.
+func errProductNotFound() error { return domainerr.ErrProductNotFound }
+func errVariantNotFound() error { return domainerr.ErrVariantNotFound }
+func errSlugTaken() error       { return domainerr.ErrProductSlugTaken }
+func errCodeTaken() error       { return domainerr.ErrProductCodeTaken }
+func errSKUTaken() error        { return domainerr.ErrVariantSKUTaken }
 
-	list, total, err := repo.ListAll(ctx, 1, 20)
-	if err != nil {
-		t.Fatalf("ListAll: %v", err)
-	}
-	if total != 2 || len(list) != 2 {
-		t.Fatalf("expected both groups, got %d of %d", len(list), total)
-	}
+func invalidCategory() error {
+	return domainerr.InvalidProductField(model.FieldCategoryID, "does not exist")
 }

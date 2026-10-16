@@ -70,8 +70,8 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 			return err
 		}
 		for _, line := range order.Lines {
-			reference := lineSourceReference(sourceReference, line.ProductID)
-			if err := s.Reservations.ApplySale(txCtx, order.ID, line.ProductID, reference); err != nil {
+			reference := lineSourceReference(sourceReference, line.VariantID)
+			if err := s.Reservations.ApplySale(txCtx, order.ID, line.VariantID, reference); err != nil {
 				return err
 			}
 		}
@@ -109,7 +109,7 @@ func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 			return err
 		}
 		for _, line := range order.Lines {
-			if err := s.Reservations.Release(txCtx, order.ID, line.ProductID); err != nil {
+			if err := s.Reservations.Release(txCtx, order.ID, line.VariantID); err != nil {
 				return err
 			}
 		}
@@ -164,12 +164,12 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 		// Hold every line in this same transaction; a line that cannot be held
 		// rolls the whole hold back, so the order stays PENDING (FR-005, FR-024).
 		for _, line := range order.Lines {
-			if err := s.Reservations.Reserve(txCtx, order.ID, line.ProductID, line.Quantity); err != nil {
+			if err := s.Reservations.Reserve(txCtx, order.ID, line.VariantID, line.Quantity); err != nil {
 				var available int64
-				if fresh, readErr := s.available(txCtx, line.ProductID); readErr == nil {
+				if fresh, readErr := s.available(txCtx, line.VariantID); readErr == nil {
 					available = fresh
 				}
-				return domainerr.QuantityExceedsAvailable(line.ProductID, available, line.Quantity)
+				return domainerr.QuantityExceedsAvailable(line.VariantID, available, line.Quantity)
 			}
 		}
 		now := s.now()
@@ -265,9 +265,9 @@ func (s *Service) ExpireOrders(ctx context.Context) error {
 }
 
 // lineSourceReference derives the per-line source reference module 05 records
-// for one line's sale: the payment event's identity combined with the product
+// for one line's sale: the payment event's identity combined with the variant
 // identifier, so every line of one order carries a distinct reference and the
 // globally-unique source_reference cannot collide (FR-014, research D5).
-func lineSourceReference(sourceReference string, productID uuid.UUID) string {
-	return fmt.Sprintf("%s:%s", sourceReference, productID)
+func lineSourceReference(sourceReference string, variantID uuid.UUID) string {
+	return fmt.Sprintf("%s:%s", sourceReference, variantID)
 }

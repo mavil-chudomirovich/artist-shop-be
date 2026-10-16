@@ -4,6 +4,8 @@
 package mapper
 
 import (
+	"github.com/google/uuid"
+
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/cart/domain/model"
 )
@@ -31,19 +33,21 @@ func (m *Mapper) Subtotal(price model.Price, present bool) *dto.MoneyView {
 	return &money
 }
 
-// Line maps one cart line plus the live product facts into a DTO line. The
+// Line maps one cart line plus the live variant facts into a DTO line. The
 // buyable decision and the optional available quantity come from the entity's own
 // rules, so the shape a client is shown is the same rule the use case enforces
-// (FR-012, research D10).
-func (m *Mapper) Line(line model.CartLine, facts model.ProductFacts, name, slug *string) dto.LineView {
+// (FR-012, research D10). The product and variant names are nil when the variant
+// is gone.
+func (m *Mapper) Line(line model.CartLine, facts model.VariantFacts, productID uuid.UUID, productName, variantName *string) dto.LineView {
 	view := dto.LineView{
-		ProductID: line.ProductID,
-		Name:      name,
-		Slug:      slug,
-		Quantity:  line.Quantity,
-		UnitPrice: m.Money(line.UnitPrice),
-		LineTotal: m.Money(line.LineTotal()),
-		Buyable:   line.Buyable(facts),
+		ProductID:   productID,
+		ProductName: productName,
+		VariantID:   line.VariantID,
+		VariantName: variantName,
+		Quantity:    line.Quantity,
+		UnitPrice:   m.Money(line.UnitPrice),
+		LineTotal:   m.Money(line.LineTotal()),
+		Buyable:     line.Buyable(facts),
 	}
 	if available, reported := line.ReportedAvailability(facts); reported {
 		view.AvailableQuantity = &available

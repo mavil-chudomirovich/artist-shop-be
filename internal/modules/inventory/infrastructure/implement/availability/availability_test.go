@@ -43,8 +43,8 @@ func TestAvailableQuantityDerivesPhysicalMinusHeldInRequestOrder(t *testing.T) {
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 
 	repo := &fakeRepository{readings: []domainrepo.AvailabilityReading{
-		{ProductID: stocked, Level: 10, Held: 0},
-		{ProductID: held, Level: 5, Held: 2},
+		{VariantID: stocked, Level: 10, Held: 0},
+		{VariantID: held, Level: 5, Held: 2},
 	}}
 	adapter := New(repo, fakeClock{at: now})
 
@@ -56,13 +56,13 @@ func TestAvailableQuantityDerivesPhysicalMinusHeldInRequestOrder(t *testing.T) {
 		t.Fatalf("expected 3 entries (one per requested id), got %d", len(got))
 	}
 
-	if got[0].ProductID != stocked || got[0].Available != 10 {
+	if got[0].VariantID != stocked || got[0].Available != 10 {
 		t.Errorf("first = %+v, want %s available 10", got[0], stocked)
 	}
-	if got[1].ProductID != held || got[1].Available != 3 {
+	if got[1].VariantID != held || got[1].Available != 3 {
 		t.Errorf("second = %+v, want %s available 3 (5 physical minus 2 held)", got[1], held)
 	}
-	if got[2].ProductID != missing || got[2].Available != 0 {
+	if got[2].VariantID != missing || got[2].Available != 0 {
 		t.Errorf("third = %+v, want %s available 0 (no stock row)", got[2], missing)
 	}
 	if !repo.gotNow.Equal(now) {
@@ -75,7 +75,7 @@ func TestAvailableQuantityDerivesPhysicalMinusHeldInRequestOrder(t *testing.T) {
 func TestAvailableQuantityRefusesHeldAbovePhysical(t *testing.T) {
 	id := uuid.New()
 	repo := &fakeRepository{readings: []domainrepo.AvailabilityReading{
-		{ProductID: id, Level: 1, Held: 2},
+		{VariantID: id, Level: 1, Held: 2},
 	}}
 
 	if _, err := New(repo, nil).AvailableQuantity(context.Background(), []uuid.UUID{id}); err == nil {

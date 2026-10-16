@@ -22,11 +22,11 @@ import (
 // adapter honest about what it depends on and lets a test supply a fake that
 // records the calls (research D4).
 type Service interface {
-	// Reserve holds a quantity of a product for one order while it is being paid.
+	// Reserve holds a quantity of a variant for one order while it is being paid.
 	Reserve(ctx context.Context, in dto.ReserveInput) error
-	// Release returns an order's active hold on a product to availability.
+	// Release returns an order's active hold on a variant to availability.
 	Release(ctx context.Context, in dto.ReleaseInput) error
-	// ApplySale consumes an order's hold on a product, at most once.
+	// ApplySale consumes an order's hold on a variant, at most once.
 	ApplySale(ctx context.Context, in dto.SaleInput) error
 }
 
@@ -46,34 +46,34 @@ func New(inventory Service) *Adapter {
 	return &Adapter{Inventory: inventory}
 }
 
-// Reserve holds the ordered quantity of a product for one order. A reserve of the
-// same order and product is a no-op in module 05, so a retried checkout never
+// Reserve holds the ordered quantity of a variant for one order. A reserve of the
+// same order and variant is a no-op in module 05, so a retried checkout never
 // holds twice (FR-013, FR-017, research D4).
-func (a *Adapter) Reserve(ctx context.Context, orderID, productID uuid.UUID, quantity int64) error {
+func (a *Adapter) Reserve(ctx context.Context, orderID, variantID uuid.UUID, quantity int64) error {
 	return a.Inventory.Reserve(ctx, dto.ReserveInput{
 		OrderID:   orderID,
-		ProductID: productID,
+		VariantID: variantID,
 		Quantity:  quantity,
 	})
 }
 
-// Release returns an order's active hold on a product to availability. A hold a
+// Release returns an order's active hold on a variant to availability. A hold a
 // concurrent operation already resolved is a no-op, so a release is applied at
 // most once (FR-015, research D4).
-func (a *Adapter) Release(ctx context.Context, orderID, productID uuid.UUID) error {
+func (a *Adapter) Release(ctx context.Context, orderID, variantID uuid.UUID) error {
 	return a.Inventory.Release(ctx, dto.ReleaseInput{
 		OrderID:   orderID,
-		ProductID: productID,
+		VariantID: variantID,
 	})
 }
 
-// ApplySale turns an order's hold on a product into a sale, keyed by the payment
+// ApplySale turns an order's hold on a variant into a sale, keyed by the payment
 // event's per-line source reference so a replay changes stock at most once
 // (FR-014, research D5).
-func (a *Adapter) ApplySale(ctx context.Context, orderID, productID uuid.UUID, sourceReference string) error {
+func (a *Adapter) ApplySale(ctx context.Context, orderID, variantID uuid.UUID, sourceReference string) error {
 	return a.Inventory.ApplySale(ctx, dto.SaleInput{
 		OrderID:         orderID,
-		ProductID:       productID,
+		VariantID:       variantID,
 		SourceReference: sourceReference,
 	})
 }

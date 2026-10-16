@@ -35,6 +35,9 @@ var slugPattern = regexp.MustCompile(SlugPattern)
 const (
 	// MaxNameRunes is the ceiling on a product name.
 	MaxNameRunes = 120
+	// MaxCodeRunes is the ceiling on an operator-facing product code (FR-011).
+	// It mirrors the storage check products_code_length_ck.
+	MaxCodeRunes = 140
 	// MaxSlugRunes is the ceiling on a product slug.
 	MaxSlugRunes = 140
 	// MaxDescriptionRunes is the ceiling on a product description.
@@ -85,6 +88,19 @@ func ValidateName(name string) error {
 	}
 	if utf8.RuneCountInString(name) > MaxNameRunes {
 		return domainerr.InvalidProductField(FieldName, limitIssue(MaxNameRunes))
+	}
+	return nil
+}
+
+// ValidateCode refuses a blank product code or one over its character bound, naming
+// the member (FR-011). A code has no shape rule beyond being present and bounded:
+// its uniqueness is the storage layer's job.
+func ValidateCode(code string) error {
+	if code == "" {
+		return domainerr.InvalidProductField(FieldCode, requiredIssue)
+	}
+	if utf8.RuneCountInString(code) > MaxCodeRunes {
+		return domainerr.InvalidProductField(FieldCode, limitIssue(MaxCodeRunes))
 	}
 	return nil
 }

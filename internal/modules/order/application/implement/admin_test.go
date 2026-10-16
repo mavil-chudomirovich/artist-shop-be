@@ -196,7 +196,7 @@ func TestGetByIDAdminReturnsAnyOrderInFull(t *testing.T) {
 	if view.ID != order.ID || view.UserID != owner {
 		t.Fatalf("the order must be returned with its owner, got %+v", view)
 	}
-	if len(view.Lines) != 1 || view.Lines[0].ProductID != product || view.Lines[0].Quantity != 2 {
+	if len(view.Lines) != 1 || view.Lines[0].VariantID != product || view.Lines[0].Quantity != 2 {
 		t.Fatalf("the order must be returned in full, got %+v", view.Lines)
 	}
 

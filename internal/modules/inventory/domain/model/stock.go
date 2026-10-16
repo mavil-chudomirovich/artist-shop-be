@@ -21,28 +21,28 @@ const (
 	FieldHeld = "held"
 )
 
-// Stock is the physical count of one product together with, at the moment it is
+// Stock is the physical count of one variant together with, at the moment it is
 // asked, the quantity its active holds have set aside. Availability is derived
 // from the two and is never stored, so it cannot drift from the rows it comes
 // from (FR-013, research D1).
 type Stock struct {
-	// ProductID identifies the product the count belongs to.
-	ProductID uuid.UUID
+	// VariantID identifies the variant the count belongs to.
+	VariantID uuid.UUID
 	// Quantity is the physical units on the shelf. A whole number, never
 	// negative.
 	Quantity int64
-	// Held is the quantity the product's active holds have set aside. It never
+	// Held is the quantity the variant's active holds have set aside. It never
 	// exceeds Quantity.
 	Held int64
-	// UpdatedAt is when the level was last written. It is zero for a product that
+	// UpdatedAt is when the level was last written. It is zero for a variant that
 	// has never been stocked.
 	UpdatedAt time.Time
 }
 
 // NewStock builds a stock from a physical count and a held quantity, refusing any
 // pair that would make availability negative (FR-009, FR-018).
-func NewStock(productID uuid.UUID, quantity, held int64, updatedAt time.Time) (Stock, error) {
-	stock := Stock{ProductID: productID, Quantity: quantity, Held: held, UpdatedAt: updatedAt}
+func NewStock(variantID uuid.UUID, quantity, held int64, updatedAt time.Time) (Stock, error) {
+	stock := Stock{VariantID: variantID, Quantity: quantity, Held: held, UpdatedAt: updatedAt}
 	if _, err := stock.Available(); err != nil {
 		return Stock{}, err
 	}

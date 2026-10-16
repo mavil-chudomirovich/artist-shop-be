@@ -8,7 +8,7 @@ package constant
 // A code is part of the module's public contract: renaming one breaks every
 // client that already handles it.
 const (
-	// CodeInsufficientStock reports that a change would take the product's
+	// CodeInsufficientStock reports that a change would take the variant's
 	// physical quantity below zero, or below the quantity currently held for
 	// orders being paid (FR-009). It is a conflict and not a validation failure:
 	// the value is well formed and the current state of the shelf is what makes it

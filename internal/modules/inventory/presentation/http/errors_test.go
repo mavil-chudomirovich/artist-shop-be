@@ -15,7 +15,7 @@ import (
 // This file covers the mapping of every code the inventory module can answer
 // with (specs/007-inventory-tracking/contracts/error-codes.md): the module's
 // insufficient-stock conflict, the invalid-value and malformed-identifier
-// validations, the reused PRODUCT_NOT_FOUND, and the shared codes that pass
+// validations, the reused VARIANT_NOT_FOUND, and the shared codes that pass
 // through unchanged.
 
 func TestMapErrorCoversEveryModuleCode(t *testing.T) {
@@ -29,8 +29,8 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 	}{
 		{
 			name:   "a missing product is the reused not-found",
-			err:    domainerr.ErrProductNotFound,
-			code:   "PRODUCT_NOT_FOUND",
+			err:    domainerr.ErrVariantNotFound,
+			code:   "VARIANT_NOT_FOUND",
 			status: http.StatusNotFound,
 		},
 		{
@@ -102,16 +102,16 @@ func TestInsufficientStockMapsTo409(t *testing.T) {
 // The shared codes the transport produces pass through unchanged: a
 // malformed-identifier detail keeps VALIDATION_ERROR and names the field.
 func TestSharedCodesPassThroughUnchanged(t *testing.T) {
-	appErr := mapError(httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: fieldProductID, Issue: "must be a UUID"}))
+	appErr := mapError(httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: fieldVariantID, Issue: "must be a UUID"}))
 	if string(appErr.Code) != string(httpx.CodeValidation) || appErr.Status != http.StatusBadRequest {
 		t.Fatalf("expected VALIDATION_ERROR/400, got %s/%d", appErr.Code, appErr.Status)
 	}
 
-	field := fieldError(fieldProductID, "must be a UUID")
+	field := fieldError(fieldVariantID, "must be a UUID")
 	if string(field.Code) != string(httpx.CodeValidation) || field.Status != http.StatusBadRequest {
 		t.Fatalf("fieldError must answer VALIDATION_ERROR/400, got %s/%d", field.Code, field.Status)
 	}
-	if len(field.Details) != 1 || field.Details[0].Field != fieldProductID {
+	if len(field.Details) != 1 || field.Details[0].Field != fieldVariantID {
 		t.Fatalf("fieldError must name the field, got %+v", field.Details)
 	}
 
@@ -130,8 +130,8 @@ func TestCodedCarriesTheDocumentedStatus(t *testing.T) {
 }
 
 func TestMapErrorFindsWrappedSentinels(t *testing.T) {
-	wrapped := errors.Join(errors.New("context"), domainerr.ErrProductNotFound)
-	if appErr := mapError(wrapped); string(appErr.Code) != "PRODUCT_NOT_FOUND" {
+	wrapped := errors.Join(errors.New("context"), domainerr.ErrVariantNotFound)
+	if appErr := mapError(wrapped); string(appErr.Code) != "VARIANT_NOT_FOUND" {
 		t.Fatalf("expected the sentinel to be found through a wrapper, got %s", appErr.Code)
 	}
 }

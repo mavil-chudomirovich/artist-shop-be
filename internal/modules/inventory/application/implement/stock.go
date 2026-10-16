@@ -15,26 +15,26 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 )
 
-// targetTypeProduct is the audit target type of the inventory events. The target
-// of a stock change is the product, so the audit index on
+// targetTypeVariant is the audit target type of the inventory events. The target
+// of a stock change is the variant, so the audit index on
 // (target_type, target_id, occurred_at) can reconstruct what happened to one
-// product without scanning the operator's other events (FR-006, Constitution VI).
-const targetTypeProduct = "product"
+// variant without scanning the operator's other events (FR-006, Constitution VI).
+const targetTypeVariant = "variant"
 
 // Service implements the inventory module's manual stock use cases and the
-// single-product read (US1). The hold, event and history use cases are added by
+// single-variant read (US1). The hold, event and history use cases are added by
 // the later stories; until they exist this type satisfies the narrower surface
 // presentation consumes, not yet the whole InventoryService.
 type Service struct {
 	// Inventory persists and reads the level, the ledger and the holds. It never
 	// opens a transaction; the application owns every boundary (Constitution I).
 	Inventory appinterface.InventoryRepository
-	// Lookup answers whether a product exists, so a read or a decrease can answer
+	// Lookup answers whether a variant exists, so a read or a decrease can answer
 	// not-found instead of fabricating a zero, which the foreign key cannot do
 	// because it only fires on a write (FR-007, research D4, D12).
 	Lookup appinterface.ProductLookup
 	// Availability is the signal the use cases send the product module when a
-	// change makes a product's availability cross zero (FR-024, FR-026). It is
+	// change makes a variant's availability cross zero (FR-024, FR-026). It is
 	// supplied by module 04's adapter at the composition root. A nil port is
 	// tolerated by the reconciliation, so a unit test or read-only construction
 	// still runs and only the signal is skipped.
@@ -46,7 +46,7 @@ type Service struct {
 	// Clock reads the current instant. It stamps the level and the ledger rows,
 	// so a test can observe exactly when a change happened (research D15).
 	Clock appinterface.Clock
-	// Audit records every manual operation, naming the operator, the product and
+	// Audit records every manual operation, naming the operator, the variant and
 	// the change (FR-006, Constitution VI). A nil auditor is tolerated by the
 	// read path so a read-only construction cannot panic.
 	Audit appinterface.Auditor
@@ -67,55 +67,55 @@ func (s *Service) now() time.Time {
 	return s.Clock.Now()
 }
 
-// requireProduct resolves the product through the cross-module contract. It is
+// requireVariant resolves the variant through the cross-module contract. It is
 // asked on every path, because a read and a conditional decrease write no row and
 // so never reach the storage foreign key, which is the one path that can answer
 // existence on its own (FR-007, research D12).
-func (s *Service) requireProduct(ctx context.Context, productID uuid.UUID) error {
-	exists, err := s.Lookup.ProductExists(ctx, productID)
+func (s *Service) requireVariant(ctx context.Context, variantID uuid.UUID) error {
+	exists, err := s.Lookup.VariantExists(ctx, variantID)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		return domainerr.ErrProductNotFound
+		return domainerr.ErrVariantNotFound
 	}
 	return nil
 }
 
-// Stock reads one product's physical, held and available quantities. An unknown
-// product answers not-found; one that exists but has never been stocked answers
+// Stock reads one variant's physical, held and available quantities. An unknown
+// variant answers not-found; one that exists but has never been stocked answers
 // zero, because a missing level row is understood as zero (FR-007, research D12).
 //
 // It opens no transaction: the read is a single consistent observation, and the
 // availability rule lives in the domain (research D1).
 func (s *Service) Stock(ctx context.Context, in dto.StockRefInput) (dto.StockOutput, error) {
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return dto.StockOutput{}, err
 	}
-	return s.readStock(ctx, in.ProductID)
+	return s.readStock(ctx, in.VariantID)
 }
 
 // readStock reads the physical quantity, the active-hold sum and derives
 // availability. It is the one place both the read method and the writes build
 // their answer, so every response carries the same three quantities (FR-007).
-func (s *Service) readStock(ctx context.Context, productID uuid.UUID) (dto.StockOutput, error) {
+func (s *Service) readStock(ctx context.Context, variantID uuid.UUID) (dto.StockOutput, error) {
 	now := s.now()
-	physical, err := s.Inventory.Level(ctx, productID)
+	physical, err := s.Inventory.Level(ctx, variantID)
 	if err != nil {
 		return dto.StockOutput{}, err
 	}
-	held, err := s.Inventory.ActiveHeld(ctx, productID, now)
+	held, err := s.Inventory.ActiveHeld(ctx, variantID, now)
 	if err != nil {
 		return dto.StockOutput{}, err
 	}
-	stock, err := model.NewStock(productID, physical, held, now)
+	stock, err := model.NewStock(variantID, physical, held, now)
 	if err != nil {
 		return dto.StockOutput{}, err
 	}
 	return s.Mapper.Stock(stock)
 }
 
-// Restock increases a product's physical stock by a positive quantity and writes
+// Restock increases a variant's physical stock by a positive quantity and writes
 // one RESTOCK movement inside a single transaction (FR-001, FR-004, FR-011).
 //
 // The acting administrator is taken from the context the session filled, never
@@ -126,31 +126,31 @@ func (s *Service) Restock(ctx context.Context, in dto.RestockInput) (dto.StockOu
 	if in.Quantity <= 0 {
 		return dto.StockOutput{}, domainerr.InvalidValue(model.FieldQuantity, "must be a positive whole number")
 	}
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return dto.StockOutput{}, err
 	}
 
 	now := s.now()
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
-			resulting, err := s.Inventory.Increase(txCtx, in.ProductID, in.Quantity, now)
+		return s.reconcileAvailability(txCtx, in.VariantID, now, func() error {
+			resulting, err := s.Inventory.Increase(txCtx, in.VariantID, in.Quantity, now)
 			if err != nil {
 				return err
 			}
-			return s.writeMovement(txCtx, in.ProductID, constant.MovementRestock, in.Quantity, resulting, in.Note, now)
+			return s.writeMovement(txCtx, in.VariantID, constant.MovementRestock, in.Quantity, resulting, in.Note, now)
 		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
 
-	s.record(ctx, constant.AuditInventoryRestocked, in.ProductID, map[string]any{
+	s.record(ctx, constant.AuditInventoryRestocked, in.VariantID, map[string]any{
 		"kind":  string(constant.MovementRestock),
 		"delta": in.Quantity,
 	})
-	return s.readStock(ctx, in.ProductID)
+	return s.readStock(ctx, in.VariantID)
 }
 
-// Damage decreases a product's physical stock and writes one DAMAGE movement
+// Damage decreases a variant's physical stock and writes one DAMAGE movement
 // inside a single transaction (FR-002, FR-004, FR-011).
 //
 // The non-negative rule is not checked here: the repository's conditional update
@@ -164,37 +164,37 @@ func (s *Service) Damage(ctx context.Context, in dto.DamageInput) (dto.StockOutp
 	if in.Quantity <= 0 {
 		return dto.StockOutput{}, domainerr.InvalidValue(model.FieldQuantity, "must be a positive whole number")
 	}
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return dto.StockOutput{}, err
 	}
 
 	now := s.now()
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		if err := s.Inventory.LockLevel(txCtx, in.ProductID); err != nil {
+		if err := s.Inventory.LockLevel(txCtx, in.VariantID); err != nil {
 			return err
 		}
-		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
-			if err := s.refuseBelowHeld(txCtx, in.ProductID, in.Quantity, now); err != nil {
+		return s.reconcileAvailability(txCtx, in.VariantID, now, func() error {
+			if err := s.refuseBelowHeld(txCtx, in.VariantID, in.Quantity, now); err != nil {
 				return err
 			}
-			resulting, err := s.Inventory.Decrease(txCtx, in.ProductID, in.Quantity, now)
+			resulting, err := s.Inventory.Decrease(txCtx, in.VariantID, in.Quantity, now)
 			if err != nil {
 				return err
 			}
-			return s.writeMovement(txCtx, in.ProductID, constant.MovementDamage, -in.Quantity, resulting, in.Note, now)
+			return s.writeMovement(txCtx, in.VariantID, constant.MovementDamage, -in.Quantity, resulting, in.Note, now)
 		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
 
-	s.record(ctx, constant.AuditInventoryDamaged, in.ProductID, map[string]any{
+	s.record(ctx, constant.AuditInventoryDamaged, in.VariantID, map[string]any{
 		"kind":  string(constant.MovementDamage),
 		"delta": -in.Quantity,
 	})
-	return s.readStock(ctx, in.ProductID)
+	return s.readStock(ctx, in.VariantID)
 }
 
-// Adjust corrects a product's physical stock to a recounted value, recording only
+// Adjust corrects a variant's physical stock to a recounted value, recording only
 // the signed difference (FR-003, research D9).
 //
 // The current count is read under the level's row lock, so two concurrent
@@ -209,18 +209,18 @@ func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.Stock
 	if in.Quantity < 0 {
 		return dto.StockOutput{}, domainerr.InvalidValue(model.FieldQuantity, "must not be negative")
 	}
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return dto.StockOutput{}, err
 	}
 
 	now := s.now()
 	var delta int64
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		if err := s.Inventory.LockLevel(txCtx, in.ProductID); err != nil {
+		if err := s.Inventory.LockLevel(txCtx, in.VariantID); err != nil {
 			return err
 		}
-		return s.reconcileAvailability(txCtx, in.ProductID, now, func() error {
-			current, err := s.Inventory.Level(txCtx, in.ProductID)
+		return s.reconcileAvailability(txCtx, in.VariantID, now, func() error {
+			current, err := s.Inventory.Level(txCtx, in.VariantID)
 			if err != nil {
 				return err
 			}
@@ -232,47 +232,47 @@ func (s *Service) Adjust(ctx context.Context, in dto.AdjustmentInput) (dto.Stock
 				return nil
 			}
 			if delta > 0 {
-				_, err = s.Inventory.Increase(txCtx, in.ProductID, delta, now)
+				_, err = s.Inventory.Increase(txCtx, in.VariantID, delta, now)
 			} else {
-				if err = s.refuseBelowHeld(txCtx, in.ProductID, -delta, now); err != nil {
+				if err = s.refuseBelowHeld(txCtx, in.VariantID, -delta, now); err != nil {
 					return err
 				}
-				_, err = s.Inventory.Decrease(txCtx, in.ProductID, -delta, now)
+				_, err = s.Inventory.Decrease(txCtx, in.VariantID, -delta, now)
 			}
 			if err != nil {
 				return err
 			}
-			return s.writeMovement(txCtx, in.ProductID, constant.MovementAdjustment, delta, in.Quantity, in.Note, now)
+			return s.writeMovement(txCtx, in.VariantID, constant.MovementAdjustment, delta, in.Quantity, in.Note, now)
 		})
 	}); err != nil {
 		return dto.StockOutput{}, err
 	}
 
-	s.record(ctx, constant.AuditInventoryAdjusted, in.ProductID, map[string]any{
+	s.record(ctx, constant.AuditInventoryAdjusted, in.VariantID, map[string]any{
 		"kind":  string(constant.MovementAdjustment),
 		"delta": delta,
 	})
-	return s.readStock(ctx, in.ProductID)
+	return s.readStock(ctx, in.VariantID)
 }
 
 // refuseBelowHeld refuses a physical decrease that would leave the shelf below
-// the quantity the product's active holds have promised (FR-009).
+// the quantity the variant's active holds have promised (FR-009).
 //
-// It is deliberately narrow: it only intervenes when the product actually has an
+// It is deliberately narrow: it only intervenes when the variant actually has an
 // active hold, so the non-negative rule stays the conditional update's decision
 // (T034) and no application-level read-then-write check is reintroduced for it.
 // The cross-table relationship has no single-table constraint, so it is made
 // atomic by the level row lock the caller already holds; the caller reads the
 // levels and the holds inside the same transaction.
-func (s *Service) refuseBelowHeld(ctx context.Context, productID uuid.UUID, amount int64, now time.Time) error {
-	held, err := s.Inventory.ActiveHeld(ctx, productID, now)
+func (s *Service) refuseBelowHeld(ctx context.Context, variantID uuid.UUID, amount int64, now time.Time) error {
+	held, err := s.Inventory.ActiveHeld(ctx, variantID, now)
 	if err != nil {
 		return err
 	}
 	if held == 0 {
 		return nil
 	}
-	physical, err := s.Inventory.Level(ctx, productID)
+	physical, err := s.Inventory.Level(ctx, variantID)
 	if err != nil {
 		return err
 	}
@@ -290,8 +290,8 @@ func (s *Service) refuseBelowHeld(ctx context.Context, productID uuid.UUID, amou
 // transaction. The actor is the acting administrator taken from the context; a
 // manual movement carries no source reference, so it stays distinguishable from a
 // sale an outside event caused (research D13).
-func (s *Service) writeMovement(ctx context.Context, productID uuid.UUID, kind constant.MovementKind, delta, resulting int64, note *string, now time.Time) error {
-	movement, err := model.NewMovement(productID, kind, delta, resulting, actorID(ctx), nil, note, now)
+func (s *Service) writeMovement(ctx context.Context, variantID uuid.UUID, kind constant.MovementKind, delta, resulting int64, note *string, now time.Time) error {
+	movement, err := model.NewMovement(variantID, kind, delta, resulting, actorID(ctx), nil, note, now)
 	if err != nil {
 		return err
 	}
@@ -299,17 +299,17 @@ func (s *Service) writeMovement(ctx context.Context, productID uuid.UUID, kind c
 }
 
 // record emits one audit event for a manual operation. It names the acting
-// administrator and the product, and never the note, because the free-text note
+// administrator and the variant, and never the note, because the free-text note
 // is operator data the audit entry has no need to copy (FR-006, Constitution VI).
 //
 // Emission never fails the business operation: the shared writer queues and
 // reports a dropped event through the logger.
-func (s *Service) record(ctx context.Context, action string, productID uuid.UUID, metadata map[string]any) {
+func (s *Service) record(ctx context.Context, action string, variantID uuid.UUID, metadata map[string]any) {
 	if s.Audit == nil {
 		return
 	}
 	s.Audit.Record(ctx, action, string(audit.OutcomeSuccess),
-		actorID(ctx), actorRole(ctx), targetTypeProduct, productID.String(), metadata)
+		actorID(ctx), actorRole(ctx), targetTypeVariant, variantID.String(), metadata)
 }
 
 // actorID returns the acting account of the request, or nil when the call is not

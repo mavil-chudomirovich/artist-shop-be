@@ -18,8 +18,10 @@ import (
 // presentation can put one straight into the response detail without a second
 // vocabulary that could drift away from the contract.
 const (
-	// FieldProductID is the request member carrying a product identifier.
-	FieldProductID = "productId"
+	// FieldVariantID is the request member carrying a variant identifier. Under
+	// the SKU model the variant is the unit of sale, so a line is identified by
+	// its variant id (FR-018, research D7).
+	FieldVariantID = "variantId"
 	// FieldQuantity is the request member carrying a line quantity.
 	FieldQuantity = "quantity"
 )
@@ -38,19 +40,20 @@ type Price struct {
 	Currency string
 }
 
-// CartLine is one product the customer intends to buy: its quantity and the unit
-// price captured when it was added (FR-008, research D4).
+// CartLine is one variant the customer intends to buy: its quantity and the unit
+// price captured when it was added (FR-018, research D7).
 //
 // The captured price is a record of what the customer was shown, not a promise:
 // the checkout re-checks it, so this line never silently charges a price the
 // customer did not see.
 type CartLine struct {
-	// ProductID identifies the product the line is for. A cart holds at most one
-	// line per product (FR-002).
-	ProductID uuid.UUID
+	// VariantID identifies the variant the line is for. A cart holds at most one
+	// line per variant, and two variants of one product are two lines (FR-006,
+	// research D7).
+	VariantID uuid.UUID
 	// Quantity is how many the customer chose. A whole number, at least 1.
 	Quantity int64
-	// UnitPrice is the price captured when the product was added.
+	// UnitPrice is the price captured when the variant was added.
 	UnitPrice Price
 }
 
@@ -59,11 +62,11 @@ type CartLine struct {
 // of one. The captured price is taken as given: it comes from the product module,
 // whose own rule and the cart_items money checks already guarantee it is positive
 // money, so the cart does not re-decide a fact it does not own.
-func NewCartLine(productID uuid.UUID, quantity int64, unitPrice Price) (CartLine, error) {
+func NewCartLine(variantID uuid.UUID, quantity int64, unitPrice Price) (CartLine, error) {
 	if err := ValidateQuantity(quantity); err != nil {
 		return CartLine{}, err
 	}
-	return CartLine{ProductID: productID, Quantity: quantity, UnitPrice: unitPrice}, nil
+	return CartLine{VariantID: variantID, Quantity: quantity, UnitPrice: unitPrice}, nil
 }
 
 // ValidateQuantity enforces FR-006: a line quantity is a positive whole number.
@@ -84,30 +87,30 @@ func (l CartLine) LineTotal() Price {
 	return Price{Amount: l.Quantity * l.UnitPrice.Amount, Currency: l.UnitPrice.Currency}
 }
 
-// ProductFacts are the live facts a read re-checks a line against: whether the
-// product may be sold and how many units are available right now. They are read
+// VariantFacts are the live facts a read re-checks a line against: whether the
+// variant may be sold and how many units are available right now. They are read
 // across the module boundary, never stored on the line, so the cart reflects
 // today's reality rather than the moment the line was added (FR-012, research D5).
-type ProductFacts struct {
-	// OnSale reports whether the product may currently be sold.
+type VariantFacts struct {
+	// OnSale reports whether the variant may currently be sold.
 	OnSale bool
 	// Available is the quantity a customer can take right now.
 	Available int64
 }
 
-// Buyable reports whether the line can be bought as it stands: the product is on
+// Buyable reports whether the line can be bought as it stands: the variant is on
 // sale and at least the line's quantity is available (FR-012, research D10).
-func (l CartLine) Buyable(facts ProductFacts) bool {
+func (l CartLine) Buyable(facts VariantFacts) bool {
 	return facts.OnSale && facts.Available >= l.Quantity
 }
 
 // ReportedAvailability returns the currently available quantity and whether it is
 // reported for this line. It is reported only when the line cannot be bought
-// because it is short — the product is on sale but holds fewer units than the line
+// because it is short — the variant is on sale but holds fewer units than the line
 // asks for, including zero — so the customer can reduce the line to a buyable
-// amount. An off-sale or removed product reports no quantity: there is no number
+// amount. An off-sale or removed variant reports no quantity: there is no number
 // to give, only the truth that it cannot be bought (FR-012, research D10).
-func (l CartLine) ReportedAvailability(facts ProductFacts) (int64, bool) {
+func (l CartLine) ReportedAvailability(facts VariantFacts) (int64, bool) {
 	if !facts.OnSale || facts.Available >= l.Quantity {
 		return 0, false
 	}
@@ -122,8 +125,8 @@ type Cart struct {
 	ID uuid.UUID
 	// UserID is the one account the cart belongs to.
 	UserID uuid.UUID
-	// Lines are the products the customer intends to buy, at most one per
-	// product.
+	// Lines are the variants the customer intends to buy, at most one per
+	// variant.
 	Lines []CartLine
 }
 

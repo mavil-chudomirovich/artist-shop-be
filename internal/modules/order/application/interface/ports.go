@@ -24,10 +24,12 @@ type OrderRepository = repository.OrderRepository
 // module 06 at the composition root (research D1).
 type CartCheckout = contracts.CartCheckout
 
-// ProductCatalog is the cross-module contract the order consumes for a line's
-// current name, on-sale state and price. It is declared in internal/contracts and
-// provided by module 04 at the composition root (research D2).
-type ProductCatalog = contracts.ProductCatalog
+// ProductVariants is the cross-module contract the order consumes for a line's
+// variant facts: the product name and code, the variant name and SKU, whether the
+// variant may be sold, and its current effective price. It is declared in
+// internal/contracts and provided by module 04 at the composition root (research
+// D6).
+type ProductVariants = contracts.ProductVariants
 
 // InventoryAvailability is the cross-module contract the order consumes for what
 // is currently available. It is declared in internal/contracts and provided by

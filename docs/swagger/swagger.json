@@ -368,26 +368,26 @@
                 }
             }
         },
-        "/admin/inventory/{productId}": {
+        "/admin/inventory/{variantId}": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the physical quantity, the quantity currently held for orders being paid, and what remains available. A product that does not exist answers not-found; one that exists but has never been stocked answers zero.",
+                "description": "Returns the physical quantity, the quantity currently held for orders being paid, and what remains available. A variant that does not exist answers not-found; one that exists but has never been stocked answers zero.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Inventory"
                 ],
-                "summary": "Read a product's stock (ADMIN)",
+                "summary": "Read a variant's stock (ADMIN)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     }
@@ -438,14 +438,14 @@
                 }
             }
         },
-        "/admin/inventory/{productId}/adjustment": {
+        "/admin/inventory/{variantId}/adjustment": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the product's physical quantity to a recounted value and records only the difference. Correcting to the stored value changes nothing and writes no ledger entry; zero is a valid counted value.",
+                "description": "Sets the variant's physical quantity to a recounted value and records only the difference. Correcting to the stored value changes nothing and writes no ledger entry; zero is a valid counted value.",
                 "consumes": [
                     "application/json"
                 ],
@@ -459,8 +459,8 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     },
@@ -526,14 +526,14 @@
                 }
             }
         },
-        "/admin/inventory/{productId}/damage": {
+        "/admin/inventory/{variantId}/damage": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Decreases the product's physical quantity by a positive amount. A decrease over the shelf, or below what is held, is refused and changes nothing.",
+                "description": "Decreases the variant's physical quantity by a positive amount. A decrease over the shelf, or below what is held, is refused and changes nothing.",
                 "consumes": [
                     "application/json"
                 ],
@@ -547,8 +547,8 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     },
@@ -614,26 +614,26 @@
                 }
             }
         },
-        "/admin/inventory/{productId}/movements": {
+        "/admin/inventory/{variantId}/movements": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a page of a product's physical stock changes, oldest first, with the signed amount and the resulting quantity. Pagination is reported in meta.",
+                "description": "Returns a page of a variant's physical stock changes, oldest first, with the signed amount and the resulting quantity. Pagination is reported in meta.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Inventory"
                 ],
-                "summary": "Read a product's movement history (ADMIN)",
+                "summary": "Read a variant's movement history (ADMIN)",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     },
@@ -699,14 +699,14 @@
                 }
             }
         },
-        "/admin/inventory/{productId}/restock": {
+        "/admin/inventory/{variantId}/restock": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Increases the product's physical quantity by a positive amount and records one ledger entry naming the administrator. The acting administrator comes from the session, never the body.",
+                "description": "Increases the variant's physical quantity by a positive amount and records one ledger entry naming the administrator. The acting administrator comes from the session, never the body.",
                 "consumes": [
                     "application/json"
                 ],
@@ -720,8 +720,8 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     },
@@ -1501,603 +1501,6 @@
                 }
             }
         },
-        "/admin/product-groups": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns a page of every variant group, including the ones not visible to customers, with the category, the position and the picture summary a customer never sees.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "List every variant group (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "Page number (default 1)",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Page size (default 20)",
-                        "name": "pageSize",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse"
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Creates a variant group. A slug another group holds is a conflict; a category that does not exist is refused naming the field. The acting administrator comes from the session, never the body.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Create a variant group (ADMIN)",
-                "parameters": [
-                    {
-                        "description": "Variant-group payload",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/product-groups/{id}": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Returns one variant group, including one not visible to customers, with its own pictures and every option, visible or not.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Read one variant group by identifier (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Removes a variant group. Refused with VARIANT_GROUP_HAS_OPTIONS while the group still has options; the options are never removed with it.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Remove a variant group (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            },
-            "patch": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Applies a partial edit. An omitted member keeps its value; the pictures are edited through their own endpoints. A slug another group holds is a conflict.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Update a variant group (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Variant-group update",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/product-groups/{id}/images": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Stores a picture for the variant group through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.",
-                "consumes": [
-                    "multipart/form-data"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Upload a group picture (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "file",
-                        "description": "Group image (JPEG, PNG or WebP)",
-                        "name": "image",
-                        "in": "formData",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "201": {
-                        "description": "Created",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "413": {
-                        "description": "Request Entity Too Large",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/product-groups/{id}/images/{imageId}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Detaches one picture from the variant group and releases its stored asset. Removing the main picture promotes the next one by position.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Remove a group picture (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Picture identifier",
-                        "name": "imageId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/product-groups/{id}/images/{imageId}/primary": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Makes one picture the variant group's main one, clearing any other in the same operation.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "VariantGroup"
-                ],
-                "summary": "Set the main group picture (ADMIN)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant-group identifier",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Picture identifier",
-                        "name": "imageId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
         "/admin/products": {
             "get": {
                 "security": [
@@ -2105,7 +1508,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a page of every product, including the ones withheld from customers, with the sell state, the position, the category and the picture summary a customer never sees.",
+                "description": "Returns a page of every product, including the ones withheld from customers, with the code, the default price, the position, the variant count and the picture summary a customer never sees.",
                 "produces": [
                     "application/json"
                 ],
@@ -2175,7 +1578,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates a product in COMING_SOON. The acting administrator comes from the session, never the body.",
+                "description": "Creates a product together with at least one variant. The acting administrator comes from the session, never the body.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2185,7 +1588,7 @@
                 "tags": [
                     "Product"
                 ],
-                "summary": "Create a product (ADMIN)",
+                "summary": "Create a product with at least one variant (ADMIN)",
                 "parameters": [
                     {
                         "description": "Product payload",
@@ -2250,7 +1653,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns one product, including one not visible to customers, with its pictures and, for a set, its members.",
+                "description": "Returns one product, including one not visible to customers, with its gallery and every variant.",
                 "produces": [
                     "application/json"
                 ],
@@ -2318,7 +1721,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes a product. Removal is a hard delete; the audit entry is what survives it.",
+                "description": "Removes a product and its variants. Removal is a hard delete; the audit entry is what survives it.",
                 "produces": [
                     "application/json"
                 ],
@@ -2371,7 +1774,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Applies a partial edit. An omitted member keeps its value; the sell state is never changed here (it has its own transition endpoint).",
+                "description": "Applies a partial edit. An omitted member keeps its value; variants are edited through their own routes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2459,7 +1862,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Stores a picture for the product through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.",
+                "description": "Stores a picture for the product's gallery through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -2557,7 +1960,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Detaches one picture from the product and releases its stored asset. Removing the main picture promotes the next one by position.",
+                "description": "Detaches one picture from the product's gallery and releases its stored asset. Removing the main picture promotes the next one by position.",
                 "produces": [
                     "application/json"
                 ],
@@ -2689,14 +2092,14 @@
                 }
             }
         },
-        "/admin/products/{id}/state": {
+        "/admin/products/{id}/variants": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Requests a sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. The acting administrator comes from the session, never the body.",
+                "description": "Adds a variant. A new variant starts in COMING_SOON. A duplicate SKU is a conflict.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2706,7 +2109,7 @@
                 "tags": [
                     "Product"
                 ],
-                "summary": "Move a product through its selling life (ADMIN)",
+                "summary": "Add a variant to a product (ADMIN)",
                 "parameters": [
                     {
                         "type": "string",
@@ -2716,12 +2119,427 @@
                         "required": true
                     },
                     {
+                        "description": "Variant payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/products/{id}/variants/{variantId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes a variant. Refused with VARIANT_LAST_REMOVAL when it is the product's last variant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "Remove a variant (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variant identifier",
+                        "name": "variantId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Applies a partial variant edit. An omitted member keeps its value; an explicit null price clears the variant's own amount back to the product's default.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "Update a variant (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variant identifier",
+                        "name": "variantId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Variant update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/products/{id}/variants/{variantId}/image": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stores a picture for the variant through the media provider. Uploading again replaces the variant's single image. The content is validated by signature, not by name or declared media type.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "Upload the variant image (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variant identifier",
+                        "name": "variantId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Variant image (JPEG, PNG or WebP)",
+                        "name": "image",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Clears the variant's image and releases its stored asset.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "Remove the variant image (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variant identifier",
+                        "name": "variantId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/products/{id}/variants/{variantId}/state": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Requests a variant sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. The acting administrator comes from the session, never the body.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Product"
+                ],
+                "summary": "Move a variant through its selling life (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product identifier",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Variant identifier",
+                        "name": "variantId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
                         "description": "Target sell state",
                         "name": "request",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest"
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeVariantStateRequest"
                         }
                     }
                 ],
@@ -3540,7 +3358,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns every line with its product, quantity, the price captured when it was added and the line total, plus the cart subtotal. An empty cart answers an empty list with a null subtotal.",
+                "description": "Returns every line with its product and variant, quantity, the price captured when it was added and the line total, plus the cart subtotal. An empty cart answers an empty list with a null subtotal.",
                 "produces": [
                     "application/json"
                 ],
@@ -3595,7 +3413,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Adds a product with a positive whole quantity. Adding a product already in the cart raises its quantity; the captured price is the product's current price. An unknown product answers not-found.",
+                "description": "Adds a variant with a positive whole quantity. Adding a variant already in the cart raises its quantity; the captured price is the variant's current effective price. An unknown variant answers not-found.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3605,10 +3423,10 @@
                 "tags": [
                     "Cart"
                 ],
-                "summary": "Add a product to the cart",
+                "summary": "Add a variant to the cart",
                 "parameters": [
                     {
-                        "description": "Product and quantity to add",
+                        "description": "Variant and quantity to add",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -3675,14 +3493,14 @@
                 }
             }
         },
-        "/cart/items/{productId}": {
+        "/cart/items/{variantId}": {
             "delete": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes the line for that product. An identifier that is not a line of this cart answers not-found.",
+                "description": "Removes the line for that variant. An identifier that is not a line of this cart answers not-found.",
                 "produces": [
                     "application/json"
                 ],
@@ -3693,8 +3511,8 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     }
@@ -3741,7 +3559,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Sets the quantity of the line for that product. A product that is not a line of this cart answers not-found.",
+                "description": "Sets the quantity of the line for that variant. A variant that is not a line of this cart answers not-found.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3755,8 +3573,8 @@
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Product identifier",
-                        "name": "productId",
+                        "description": "Variant identifier",
+                        "name": "variantId",
                         "in": "path",
                         "required": true
                     },
@@ -4657,63 +4475,16 @@
                 }
             }
         },
-        "/product-groups/{slug}": {
-            "get": {
-                "description": "Returns a visible variant group's shared name, description, choice-dimension name and its own picture gallery, together with its visible options (each with label, price, picture and preorder flag). A group hidden by its category, with no visible option, removed or unknown answers the same not-found. No session is required.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Product"
-                ],
-                "summary": "Read a variant group by slug",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Variant group slug",
-                        "name": "slug",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
-                        }
-                    }
-                }
-            }
-        },
         "/products": {
             "get": {
-                "description": "Returns a page of the visible catalogue — standalone products and variant groups — ordered by the operator's position. A group is visible only while at least one of its options is; its price is the lowest among its visible options. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.",
+                "description": "Returns a page of the visible catalogue — one entry per product, ordered by the operator's position. A product appears only when at least one of its variants is on sale; the card price is the lowest on-sale variant price and the image is the default variant's image. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Product"
                 ],
-                "summary": "List the catalogue a customer can see (products and variant groups)",
+                "summary": "List the catalogue a customer can see",
                 "parameters": [
                     {
                         "type": "integer",
@@ -4748,7 +4519,7 @@
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse"
+                                                "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse"
                                             }
                                         }
                                     }
@@ -4767,14 +4538,14 @@
         },
         "/products/{slug}": {
             "get": {
-                "description": "Returns one visible product with its description and every picture, plus the variantGroup selector when the product is an option. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.",
+                "description": "Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown slug answers the same not-found. No session is required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Product"
                 ],
-                "summary": "Read one product by slug",
+                "summary": "Read one product by slug (with its variants)",
                 "parameters": [
                     {
                         "type": "string",
@@ -5585,13 +5356,13 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest": {
             "type": "object",
             "properties": {
-                "productId": {
-                    "description": "ProductID is the product to add.",
-                    "type": "string"
-                },
                 "quantity": {
                     "description": "Quantity is the positive whole number of units to add.",
                     "type": "integer"
+                },
+                "variantId": {
+                    "description": "VariantID is the variant to add (a product without a variant is refused).",
+                    "type": "string"
                 }
             }
         },
@@ -5614,21 +5385,17 @@
                         }
                     ]
                 },
-                "name": {
-                    "description": "Name is the product's current name, or null when the product is gone.",
+                "productId": {
+                    "description": "ProductID is the product the variant belongs to.",
                     "type": "string"
                 },
-                "productId": {
-                    "description": "ProductID is the product the line is for.",
+                "productName": {
+                    "description": "ProductName is the product's current name, or null when the variant is\ngone.",
                     "type": "string"
                 },
                 "quantity": {
                     "description": "Quantity is the whole number the customer chose.",
                     "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the product's current link segment, or null when the product is\ngone.",
-                    "type": "string"
                 },
                 "unitPrice": {
                     "description": "UnitPrice is the captured price.",
@@ -5637,6 +5404,14 @@
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse"
                         }
                     ]
+                },
+                "variantId": {
+                    "description": "VariantID is the variant the line is for.",
+                    "type": "string"
+                },
+                "variantName": {
+                    "description": "VariantName is the variant's current display name, or null when the variant\nis gone.",
+                    "type": "string"
                 }
             }
         },
@@ -5826,16 +5601,16 @@
                     "description": "Note is the optional note a manual change carries, or null.",
                     "type": "string"
                 },
-                "productId": {
-                    "description": "ProductID is the product whose quantity changed.",
-                    "type": "string"
-                },
                 "resultingQuantity": {
                     "description": "ResultingQuantity is the physical quantity after the change.",
                     "type": "integer"
                 },
                 "sourceReference": {
                     "description": "SourceReference is the outside event's identity, or null for a manual\nchange.",
+                    "type": "string"
+                },
+                "variantId": {
+                    "description": "VariantID is the variant whose quantity changed.",
                     "type": "string"
                 }
             }
@@ -5963,13 +5738,13 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest": {
             "type": "object",
             "properties": {
-                "productId": {
-                    "description": "ProductID is the product the line is for.",
-                    "type": "string"
-                },
                 "quantity": {
                     "description": "Quantity is how many, at least 1.",
                     "type": "integer"
+                },
+                "variantId": {
+                    "description": "VariantID is the variant the line is for.",
+                    "type": "string"
                 }
             }
         },
@@ -6044,21 +5819,21 @@
                         }
                     ]
                 },
-                "name": {
-                    "description": "Name is the product's name at checkout.",
-                    "type": "string"
+                "position": {
+                    "description": "Position is the order the line is listed in.",
+                    "type": "integer"
                 },
                 "productId": {
                     "description": "ProductID is the product recorded on the line.",
                     "type": "string"
                 },
+                "productName": {
+                    "description": "ProductName is the product's name at checkout.",
+                    "type": "string"
+                },
                 "quantity": {
                     "description": "Quantity is the whole number bought.",
                     "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the product's link segment at checkout.",
-                    "type": "string"
                 },
                 "unitPrice": {
                     "description": "UnitPrice is the snapshot unit price.",
@@ -6067,6 +5842,14 @@
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.MoneyResponse"
                         }
                     ]
+                },
+                "variantId": {
+                    "description": "VariantID is the variant recorded on the line.",
+                    "type": "string"
+                },
+                "variantName": {
+                    "description": "VariantName is the variant's display name at checkout.",
+                    "type": "string"
                 }
             }
         },
@@ -6279,83 +6062,6 @@
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse": {
-            "type": "object",
-            "properties": {
-                "height": {
-                    "type": "integer"
-                },
-                "id": {
-                    "description": "ID identifies the picture.",
-                    "type": "string"
-                },
-                "isPrimary": {
-                    "description": "IsPrimary reports whether this is the group's main picture.",
-                    "type": "boolean"
-                },
-                "position": {
-                    "description": "Position is the display order.",
-                    "type": "integer"
-                },
-                "publicId": {
-                    "description": "PublicID is the provider's opaque identifier.",
-                    "type": "string"
-                },
-                "url": {
-                    "description": "URL is the displayable link.",
-                    "type": "string"
-                },
-                "width": {
-                    "description": "Width and Height are the stored pixel dimensions.",
-                    "type": "integer"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "description": "ID is the option product's stable identifier.",
-                    "type": "string"
-                },
-                "imageUrl": {
-                    "description": "ImageURL is the option's main picture's link, or null when it has none.",
-                    "type": "string"
-                },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the option is an announced pre-order.",
-                    "type": "boolean"
-                },
-                "label": {
-                    "description": "Label is the option's value in the group's single choice dimension.",
-                    "type": "string"
-                },
-                "name": {
-                    "description": "Name is the option product's name.",
-                    "type": "string"
-                },
-                "position": {
-                    "description": "Position is the option product's ordering preference (research D5).",
-                    "type": "integer"
-                },
-                "price": {
-                    "description": "Price is the option's own price and currency.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
-                        }
-                    ]
-                },
-                "sellState": {
-                    "description": "SellState is the option product's selling-life state (FR-017).",
-                    "type": "string"
-                },
-                "slug": {
-                    "description": "Slug is the option product's public link segment.",
-                    "type": "string"
-                }
-            }
-        },
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse": {
             "type": "object",
             "properties": {
@@ -6395,9 +6101,21 @@
                     "description": "CategoryID is the one category the product belongs to.",
                     "type": "string"
                 },
+                "code": {
+                    "description": "Code is the operator-facing product code (FR-011).",
+                    "type": "string"
+                },
                 "createdAt": {
                     "description": "CreatedAt and UpdatedAt are the stored timestamps.",
                     "type": "string"
+                },
+                "defaultPrice": {
+                    "description": "DefaultPrice is the product's default price with its currency.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
+                        }
+                    ]
                 },
                 "description": {
                     "description": "Description is the text shown to customers; an empty string is valid.",
@@ -6406,10 +6124,6 @@
                 "id": {
                     "description": "ID is the product's stable identifier.",
                     "type": "string"
-                },
-                "imageCount": {
-                    "description": "ImageCount is how many pictures the product has.",
-                    "type": "integer"
                 },
                 "imageUrl": {
                     "description": "ImageURL is the main picture's link, or null when the product has none.",
@@ -6422,21 +6136,6 @@
                         "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse"
                     }
                 },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the product is announced as a pre-order.",
-                    "type": "boolean"
-                },
-                "isSet": {
-                    "description": "IsSet reports whether the product is a combo set (FR-039).",
-                    "type": "boolean"
-                },
-                "members": {
-                    "description": "Members holds the products inside a set, in order. It is omitted for a\nproduct that is not a set.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse"
-                    }
-                },
                 "name": {
                     "description": "Name is the name the operator wrote.",
                     "type": "string"
@@ -6445,28 +6144,23 @@
                     "description": "Position is the operator's ordering preference.",
                     "type": "integer"
                 },
-                "preorderExpectedAt": {
-                    "description": "PreorderExpectedAt is the optional expected availability date, or null. It\nis written in the contract's date-only form (format: date).",
-                    "type": "string"
-                },
-                "price": {
-                    "description": "Price is the integer amount with its currency.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
-                        }
-                    ]
-                },
-                "sellState": {
-                    "description": "SellState is where the product is in its selling life (FR-022).",
-                    "type": "string"
-                },
                 "slug": {
                     "description": "Slug is the link segment the operator wrote.",
                     "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
+                },
+                "variantCount": {
+                    "description": "VariantCount is how many variants the product carries.",
+                    "type": "integer"
+                },
+                "variants": {
+                    "description": "Variants holds every variant in display order. It is always an array, never\nnull.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantResponse"
+                    }
                 }
             }
         },
@@ -6477,9 +6171,21 @@
                     "description": "CategoryID is the one category the product belongs to.",
                     "type": "string"
                 },
+                "code": {
+                    "description": "Code is the operator-facing product code (FR-011).",
+                    "type": "string"
+                },
                 "createdAt": {
                     "description": "CreatedAt and UpdatedAt are the stored timestamps.",
                     "type": "string"
+                },
+                "defaultPrice": {
+                    "description": "DefaultPrice is the product's default price with its currency.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
+                        }
+                    ]
                 },
                 "description": {
                     "description": "Description is the text shown to customers; an empty string is valid.",
@@ -6489,21 +6195,9 @@
                     "description": "ID is the product's stable identifier.",
                     "type": "string"
                 },
-                "imageCount": {
-                    "description": "ImageCount is how many pictures the product has.",
-                    "type": "integer"
-                },
                 "imageUrl": {
                     "description": "ImageURL is the main picture's link, or null when the product has none.",
                     "type": "string"
-                },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the product is announced as a pre-order.",
-                    "type": "boolean"
-                },
-                "isSet": {
-                    "description": "IsSet reports whether the product is a combo set (FR-039).",
-                    "type": "boolean"
                 },
                 "name": {
                     "description": "Name is the name the operator wrote.",
@@ -6513,142 +6207,74 @@
                     "description": "Position is the operator's ordering preference.",
                     "type": "integer"
                 },
-                "preorderExpectedAt": {
-                    "description": "PreorderExpectedAt is the optional expected availability date, or null. It\nis written in the contract's date-only form (format: date).",
+                "slug": {
+                    "description": "Slug is the link segment the operator wrote.",
                     "type": "string"
                 },
-                "price": {
-                    "description": "Price is the integer amount with its currency.",
+                "updatedAt": {
+                    "type": "string"
+                },
+                "variantCount": {
+                    "description": "VariantCount is how many variants the product carries.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantPriceResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the variant's own price in the currency's minor unit.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantResponse": {
+            "type": "object",
+            "properties": {
+                "effectivePrice": {
+                    "description": "EffectivePrice is the price actually charged.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
                         }
                     ]
                 },
+                "id": {
+                    "description": "ID is the variant's stable identifier.",
+                    "type": "string"
+                },
+                "imageUrl": {
+                    "description": "ImageURL is the variant's image link, or null when it has none.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is the variant's display name.",
+                    "type": "string"
+                },
+                "position": {
+                    "description": "Position is the display order; the smallest is the default variant.",
+                    "type": "integer"
+                },
+                "price": {
+                    "description": "Price is the variant's own amount, or null when it falls back to the\nproduct's default (FR-017).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantPriceResponse"
+                        }
+                    ]
+                },
                 "sellState": {
-                    "description": "SellState is where the product is in its selling life (FR-022).",
+                    "description": "SellState is where the variant is in its selling life.",
                     "type": "string"
                 },
-                "slug": {
-                    "description": "Slug is the link segment the operator wrote.",
-                    "type": "string"
-                },
-                "updatedAt": {
+                "sku": {
+                    "description": "SKU is the operator-written stock-keeping unit (FR-011).",
                     "type": "string"
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse": {
-            "type": "object",
-            "properties": {
-                "categoryId": {
-                    "description": "CategoryID is the one category the group belongs to.",
-                    "type": "string"
-                },
-                "createdAt": {
-                    "description": "CreatedAt and UpdatedAt are the stored timestamps.",
-                    "type": "string"
-                },
-                "description": {
-                    "description": "Description is the text shown to customers; an empty string is valid.",
-                    "type": "string"
-                },
-                "id": {
-                    "description": "ID is the group's stable identifier.",
-                    "type": "string"
-                },
-                "imageCount": {
-                    "description": "ImageCount is how many pictures the group has.",
-                    "type": "integer"
-                },
-                "imageUrl": {
-                    "description": "ImageURL is the group's main picture's link, or null when it has none.",
-                    "type": "string"
-                },
-                "images": {
-                    "description": "Images holds every picture in display order. It is always an array, never\nnull.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse"
-                    }
-                },
-                "name": {
-                    "description": "Name is the name the operator wrote.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the single choice-dimension name, for example \"Card\".",
-                    "type": "string"
-                },
-                "options": {
-                    "description": "Options holds every option, visible or not. It is always an array, never\nnull.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse"
-                    }
-                },
-                "position": {
-                    "description": "Position is the operator's ordering preference.",
-                    "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the link segment the operator wrote.",
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse": {
-            "type": "object",
-            "properties": {
-                "categoryId": {
-                    "description": "CategoryID is the one category the group belongs to.",
-                    "type": "string"
-                },
-                "createdAt": {
-                    "description": "CreatedAt and UpdatedAt are the stored timestamps.",
-                    "type": "string"
-                },
-                "description": {
-                    "description": "Description is the text shown to customers; an empty string is valid.",
-                    "type": "string"
-                },
-                "id": {
-                    "description": "ID is the group's stable identifier.",
-                    "type": "string"
-                },
-                "imageCount": {
-                    "description": "ImageCount is how many pictures the group has.",
-                    "type": "integer"
-                },
-                "imageUrl": {
-                    "description": "ImageURL is the group's main picture's link, or null when it has none.",
-                    "type": "string"
-                },
-                "name": {
-                    "description": "Name is the name the operator wrote.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the single choice-dimension name, for example \"Card\".",
-                    "type": "string"
-                },
-                "position": {
-                    "description": "Position is the operator's ordering preference.",
-                    "type": "integer"
-                },
-                "slug": {
-                    "description": "Slug is the link segment the operator wrote.",
-                    "type": "string"
-                },
-                "updatedAt": {
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeVariantStateRequest": {
             "type": "object",
             "properties": {
                 "to": {
@@ -6664,24 +6290,21 @@
                     "description": "CategoryID is the one category the product belongs to.",
                     "type": "string"
                 },
+                "code": {
+                    "description": "Code is the unique operator-facing product code (FR-011).",
+                    "type": "string"
+                },
+                "defaultPrice": {
+                    "description": "DefaultPrice is the product's default price with its currency.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest"
+                        }
+                    ]
+                },
                 "description": {
                     "description": "Description is the text shown to customers; an omitted or empty value is\nstored empty.",
                     "type": "string"
-                },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the product is announced as a pre-order\n(FR-040, research D9). A created product is COMING_SOON, so the label may\nalways be set here; the domain refuses it only once the product is on sale.",
-                    "type": "boolean"
-                },
-                "isSet": {
-                    "description": "IsSet reports whether the product is a combo set (FR-039, research D10).",
-                    "type": "boolean"
-                },
-                "memberProductIds": {
-                    "description": "MemberProductIDs are the products inside the set, in the order they are\nlisted. They are recorded only when IsSet is true (research D10).",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "name": {
                     "description": "Name is the product name.",
@@ -6691,58 +6314,58 @@
                     "description": "Position is the ordering preference.",
                     "type": "integer"
                 },
-                "preorderExpectedAt": {
-                    "description": "PreorderExpectedAt is the optional expected-availability date, in the\ncontract's date-only form. It is meaningful only together with IsPreorder.",
-                    "type": "string"
-                },
-                "price": {
-                    "description": "Price is the price with its currency.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest"
-                        }
-                    ]
-                },
                 "slug": {
                     "description": "Slug is the public link segment.",
                     "type": "string"
                 },
-                "variantGroupId": {
-                    "description": "VariantGroupID attaches the new product to a group as an option; an omitted\nor null value creates an ordinary product (FR-010). It requires\nVariantLabel.",
-                    "type": "string"
-                },
-                "variantLabel": {
-                    "description": "VariantLabel is the option's short choice label; required when\nVariantGroupID is present (FR-021).",
-                    "type": "string"
+                "variants": {
+                    "description": "Variants is the variants the product is created with; it must hold at least\none (FR-012).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest"
+                    }
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest": {
             "type": "object",
             "properties": {
-                "categoryId": {
-                    "description": "CategoryID is the one category the group belongs to (FR-023).",
-                    "type": "string"
-                },
-                "description": {
-                    "description": "Description is the text shown to customers; an omitted or empty value is\nstored empty.",
-                    "type": "string"
-                },
                 "name": {
-                    "description": "Name is the group name.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the single choice-dimension name (FR-009).",
+                    "description": "Name is the variant's display name.",
                     "type": "string"
                 },
                 "position": {
                     "description": "Position is the ordering preference.",
                     "type": "integer"
                 },
-                "slug": {
-                    "description": "Slug is the public link segment.",
+                "price": {
+                    "description": "Price is the variant's own price; null or omitted uses the product's\ndefault (FR-017).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest"
+                        }
+                    ]
+                },
+                "sku": {
+                    "description": "SKU is the variant's globally unique stock-keeping unit (FR-011).",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.OptionalVariantPrice": {
+            "type": "object",
+            "properties": {
+                "set": {
+                    "description": "Set reports whether the JSON key was present at all.",
+                    "type": "boolean"
+                },
+                "value": {
+                    "description": "Value is the parsed price, or nil when the key was present and null.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest"
+                        }
+                    ]
                 }
             }
         },
@@ -6768,43 +6391,6 @@
                 },
                 "currency": {
                     "description": "Currency is the currency code: exactly three uppercase letters.",
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "description": "ID is the entry's stable public identifier.",
-                    "type": "string"
-                },
-                "imageUrl": {
-                    "description": "ImageURL is the entry's main picture's link, or null when it has none.",
-                    "type": "string"
-                },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether a standalone product is announced but not yet\navailable; it is always false for a group, which carries no sell state.",
-                    "type": "boolean"
-                },
-                "name": {
-                    "description": "Name is the name the operator wrote.",
-                    "type": "string"
-                },
-                "price": {
-                    "description": "Price is the integer amount with its currency.",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
-                        }
-                    ]
-                },
-                "slug": {
-                    "description": "Slug is the segment a customer-facing link is built from.",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "Type is \"product\" or \"variant-group\".",
                     "type": "string"
                 }
             }
@@ -6841,26 +6427,22 @@
                     "type": "string"
                 },
                 "imageUrl": {
-                    "description": "ImageURL is the main picture's link, or null when the product has none.",
+                    "description": "ImageURL is the card image's link, or null when the product has none.",
                     "type": "string"
                 },
                 "images": {
-                    "description": "Images holds every picture in display order. It is always an array, never\nnull, so a product with no picture answers `[]`.",
+                    "description": "Images holds every gallery picture in display order. It is always an array,\nnever null.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse"
                     }
-                },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the product is announced but not yet available.\nSuch a product is visible and not buyable (FR-002, FR-040).",
-                    "type": "boolean"
                 },
                 "name": {
                     "description": "Name is the name the operator wrote.",
                     "type": "string"
                 },
                 "price": {
-                    "description": "Price is the integer amount with its currency.",
+                    "description": "Price is the lowest on-sale variant price with its currency.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
@@ -6871,111 +6453,32 @@
                     "description": "Slug is the segment a customer-facing link is built from.",
                     "type": "string"
                 },
-                "variantGroup": {
-                    "description": "VariantGroup is the selector present when the product is an option of a\nvariant group, and omitted for a standalone product (FR-007).",
-                    "allOf": [
-                        {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse"
-                        }
-                    ]
+                "variants": {
+                    "description": "Variants holds the visible variants in display order. It is always an\narray, never null.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantResponse"
+                    }
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse": {
             "type": "object",
             "properties": {
                 "id": {
-                    "description": "ID is the group's stable identifier.",
-                    "type": "string"
-                },
-                "images": {
-                    "description": "Images holds the group's own pictures in display order; always an array.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse"
-                    }
-                },
-                "name": {
-                    "description": "Name is the group's shared name.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the single choice-dimension name.",
-                    "type": "string"
-                },
-                "options": {
-                    "description": "Options holds the group's visible options in display order; always an\narray.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse"
-                    }
-                },
-                "slug": {
-                    "description": "Slug is the group's public link segment.",
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "description": "Description may be empty.",
-                    "type": "string"
-                },
-                "id": {
-                    "description": "ID is the group's stable identifier.",
-                    "type": "string"
-                },
-                "images": {
-                    "description": "Images holds the group's own pictures in display order. It is always an\narray, never null.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse"
-                    }
-                },
-                "name": {
-                    "description": "Name is the group's shared name.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the single choice-dimension name, for example \"Card\".",
-                    "type": "string"
-                },
-                "options": {
-                    "description": "Options holds the visible options in display order. It is always an array,\nnever null.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse"
-                    }
-                },
-                "slug": {
-                    "description": "Slug is the group's public link segment.",
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse": {
-            "type": "object",
-            "properties": {
-                "id": {
-                    "description": "ID is the option product's stable identifier.",
+                    "description": "ID is the product's stable public identifier.",
                     "type": "string"
                 },
                 "imageUrl": {
-                    "description": "ImageURL is the option's main picture's link, or null when it has none.",
+                    "description": "ImageURL is the card image's link, or null when the product has none.",
                     "type": "string"
                 },
-                "isPreorder": {
-                    "description": "IsPreorder reports whether the option is an announced pre-order.",
-                    "type": "boolean"
-                },
-                "label": {
-                    "description": "Label is the option's value in the group's single choice dimension.",
+                "name": {
+                    "description": "Name is the name the operator wrote.",
                     "type": "string"
                 },
                 "price": {
-                    "description": "Price is the option's own price and currency (FR-016).",
+                    "description": "Price is the lowest on-sale variant price with its currency.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
@@ -6983,24 +6486,40 @@
                     ]
                 },
                 "slug": {
-                    "description": "Slug is the option product's public link segment (FR-007).",
+                    "description": "Slug is the segment a customer-facing link is built from.",
                     "type": "string"
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantResponse": {
             "type": "object",
             "properties": {
                 "id": {
-                    "description": "ID is the member product's identifier.",
+                    "description": "ID is the variant's stable identifier, the value a customer sends to add\nthe variant to the cart.",
                     "type": "string"
+                },
+                "imageUrl": {
+                    "description": "ImageURL is the variant's image link, or null when it has none.",
+                    "type": "string"
+                },
+                "inStock": {
+                    "description": "InStock reports whether the variant currently has stock a customer can take.",
+                    "type": "boolean"
                 },
                 "name": {
-                    "description": "Name is the member product's name.",
+                    "description": "Name is the variant's display name.",
                     "type": "string"
                 },
-                "slug": {
-                    "description": "Slug is the member product's public link segment.",
+                "price": {
+                    "description": "Price is the variant's effective price.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse"
+                        }
+                    ]
+                },
+                "sellState": {
+                    "description": "SellState is where the variant is in its selling life.",
                     "type": "string"
                 }
             }
@@ -7012,76 +6531,24 @@
                     "description": "CategoryID is the new category; nil keeps the current value.",
                     "type": "string"
                 },
-                "description": {
-                    "description": "Description is the new description; nil keeps the current value, an empty\nstring clears it.",
+                "code": {
+                    "description": "Code is the new product code; nil keeps the current value.",
                     "type": "string"
                 },
-                "isPreorder": {
-                    "description": "IsPreorder is the new pre-order label; nil keeps the current value. Setting\nit false also clears PreorderExpectedAt (FR-040). The domain refuses\nsetting it true while the product is on sale, naming isPreorder.",
-                    "type": "boolean"
-                },
-                "isSet": {
-                    "description": "IsSet is the new combo-set flag; nil keeps the current value.",
-                    "type": "boolean"
-                },
-                "memberProductIds": {
-                    "description": "MemberProductIDs replaces the whole member list when non-nil. It is\nrecorded only when the product is a set (research D10); sending an empty\nlist clears the set's members.",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "name": {
-                    "description": "Name is the new name; nil keeps the current value.",
-                    "type": "string"
-                },
-                "position": {
-                    "description": "Position is the new position; nil keeps the current value.",
-                    "type": "integer"
-                },
-                "preorderExpectedAt": {
-                    "description": "PreorderExpectedAt is the new expected-availability date, in the\ncontract's date-only form; nil keeps the current value.",
-                    "type": "string"
-                },
-                "price": {
-                    "description": "Price is the new price; nil keeps the current value.",
+                "defaultPrice": {
+                    "description": "DefaultPrice is the new default price; nil keeps the current value.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest"
                         }
                     ]
                 },
-                "slug": {
-                    "description": "Slug is the new slug; nil keeps the current value.",
-                    "type": "string"
-                },
-                "variantGroupId": {
-                    "description": "VariantGroupID attaches or detaches the product's option role; the JSON key\nbeing absent keeps the current attachment (research D13).",
-                    "type": "string"
-                },
-                "variantLabel": {
-                    "description": "VariantLabel sets or clears the option label; the JSON key being absent\nkeeps the current label (research D13).",
-                    "type": "string"
-                }
-            }
-        },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest": {
-            "type": "object",
-            "properties": {
-                "categoryId": {
-                    "description": "CategoryID is the new category; nil keeps the current value.",
-                    "type": "string"
-                },
                 "description": {
                     "description": "Description is the new description; nil keeps the current value, an empty\nstring clears it.",
                     "type": "string"
                 },
                 "name": {
                     "description": "Name is the new name; nil keeps the current value.",
-                    "type": "string"
-                },
-                "optionName": {
-                    "description": "OptionName is the new choice-dimension name; nil keeps the current value.",
                     "type": "string"
                 },
                 "position": {
@@ -7091,6 +6558,40 @@
                 "slug": {
                     "description": "Slug is the new slug; nil keeps the current value.",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "description": "Name is the new name; nil keeps the current value.",
+                    "type": "string"
+                },
+                "position": {
+                    "description": "Position is the new position; nil keeps the current value.",
+                    "type": "integer"
+                },
+                "price": {
+                    "description": "Price is the new own price; the JSON key being absent keeps the current\namount (FR-017).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.OptionalVariantPrice"
+                        }
+                    ]
+                },
+                "sku": {
+                    "description": "SKU is the new SKU; nil keeps the current value.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the variant's own price in the currency's minor unit.",
+                    "type": "integer"
                 }
             }
         },

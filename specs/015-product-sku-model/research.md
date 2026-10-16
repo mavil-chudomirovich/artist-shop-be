@@ -123,9 +123,9 @@ without a variant would be un-sellable under the new model); a composite key `(p
 ## D8 — Order line snapshots the product code and SKU
 
 **Decision**: `order_items` carries `variant_id` (a loose, informational reference, as `product_id` is
-today) and snapshots `product_name`, `product_code`, `variant_name`, `sku`, `unit_price_amount`,
-`currency`, `quantity`, `position`. The natural key is `(order_id, product_code, sku)` — each
-(product code, SKU) pair is one order line (spec FR-020).
+today) and snapshots the product name (reusing the existing `name` column), `product_code`,
+`variant_name`, `sku`, `unit_price_amount`, `currency`, `quantity`, `position`. The natural key is
+`(order_id, product_code, sku)` — each (product code, SKU) pair is one order line (spec FR-020).
 
 **Rationale**: an order is a record of a sale and must survive the product and its variants (the
 existing decision for `order_items`); the spec wants the code and SKU kept.
@@ -181,8 +181,9 @@ adapters, so no module imports another. Recorded in the plan's Complexity Tracki
    the old `product_id` columns.
 5. Repoint `cart_items`: add `variant_id` (backfilled from the default variant) and make it the line
    key.
-6. Extend `order_items`: add `variant_id` (nullable), `product_name`, `product_code`, `variant_name`,
-   `sku`; backfill from the default variant; move the natural key to `(order_id, product_code, sku)`.
+6. Extend `order_items`: add `variant_id` (nullable), `product_code`, `variant_name`, `sku` (the product
+   name reuses the existing `name`); backfill from the default variant; move the natural key to
+   `(order_id, product_code, sku)`.
 7. **Drop** feature 014's objects (`product_set_items`, `product_variant_groups`,
    `product_variant_group_images`, `products.variant_group_id`/`variant_label`) and the product flags
    (`sell_state`, `is_preorder`, `preorder_expected_at`, `is_set`).

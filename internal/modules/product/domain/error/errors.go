@@ -1,8 +1,7 @@
 // Package domainerr defines the product module's business sentinel errors.
 //
-// Codes in specs/006-product-catalog/contracts/error-codes.md and
-// specs/014-product-variants/contracts/error-codes.md map to these errors in
-// presentation/http; the domain never knows an HTTP status.
+// Codes in specs/015-product-sku-model/contracts/error-codes.md map to these
+// errors in presentation/http; the domain never knows an HTTP status.
 package domainerr
 
 import (
@@ -15,22 +14,18 @@ import (
 // Business sentinel errors returned by the product module.
 var (
 	// ErrProductNotFound is returned for an unknown product, a product withheld
-	// from customers (not on sale and not a pre-order, retired, or in a hidden
-	// category) and a removed one. All share one error so the public response
-	// never confirms that a hidden product exists (FR-003). The administrator
-	// surface uses it for the unknown and removed cases.
+	// from customers (no on-sale variant, retired, or in a hidden category) and a
+	// removed one. All share one error so the public response never confirms that
+	// a hidden product exists (FR-008). The administrator surface uses it for the
+	// unknown and removed cases.
 	ErrProductNotFound = errors.New("product not found")
 	// ErrProductSlugTaken is returned when another product already uses the slug,
-	// compared after trimming surrounding whitespace and ignoring letter case
-	// (FR-028). It is a catalogue-wide invariant, so the storage layer enforces it
-	// and the adapter reports it here.
+	// compared after trimming surrounding whitespace and ignoring letter case. It
+	// is a catalogue-wide invariant, so the storage layer enforces it and the
+	// adapter reports it here.
 	ErrProductSlugTaken = errors.New("product slug taken")
-	// ErrProductStateTransitionInvalid is the sentinel behind every refused
-	// sell-state move. It is paired with StateTransitionError, which carries the
-	// state the move started from (FR-024).
-	ErrProductStateTransitionInvalid = errors.New("product state transition invalid")
 	// ErrProductImageLimitReached is returned when adding a picture would exceed
-	// the ten-picture ceiling (FR-020).
+	// the ten-picture ceiling.
 	ErrProductImageLimitReached = errors.New("product image limit reached")
 	// ErrProductImageTypeUnsupported is returned when an uploaded payload begins
 	// with no supported image signature (FR-019).
@@ -40,7 +35,7 @@ var (
 	ErrProductImageTooLarge = errors.New("product image too large")
 	// ErrProductMediaUnavailable is returned when the media provider refused or
 	// could not be reached, or the adapter has no credentials. It is the module's
-	// only retryable error (FR-018).
+	// only retryable error.
 	ErrProductMediaUnavailable = errors.New("product media unavailable")
 	// ErrProductInvalid is returned when a value fails its own rule: a blank
 	// required member, a value over its bound, a slug that is not URL-safe, a
@@ -49,32 +44,9 @@ var (
 	//
 	// It carries no new client-facing code: presentation maps it to the shared
 	// VALIDATION_ERROR, the same code request-shape problems already use. What it
-	// carries is the offending member, because FR-024, FR-028, FR-030 and FR-032
-	// require the response to name the field a client has to fix.
+	// carries is the offending member, because the response must name the field a
+	// client has to fix.
 	ErrProductInvalid = errors.New("invalid product")
-	// ErrVariantGroupNotFound is returned for an unknown variant-group
-	// identifier or slug, a group withheld from customers (its category is
-	// hidden, none of its options is visible, or it was removed) and a removed
-	// one. All share one error so the public response never confirms that a
-	// hidden group exists (FR-008). The administrator surface uses it for the
-	// unknown and removed cases.
-	ErrVariantGroupNotFound = errors.New("variant group not found")
-	// ErrVariantGroupSlugTaken is returned when another variant group already
-	// uses the slug, compared after trimming surrounding whitespace and ignoring
-	// letter case (FR-019). It is a group-wide invariant, so the storage layer
-	// enforces it and the adapter reports it here.
-	ErrVariantGroupSlugTaken = errors.New("variant group slug taken")
-	// ErrVariantGroupHasOptions is returned when removing a group that still has
-	// options is refused; the operator detaches them first (FR-025).
-	ErrVariantGroupHasOptions = errors.New("variant group has options")
-	// ErrVariantLabelTaken is returned when another option of the same group
-	// already uses the label, compared after trimming surrounding whitespace
-	// (FR-021). The storage layer enforces it and the adapter reports it here.
-	ErrVariantLabelTaken = errors.New("variant label taken")
-	// ErrProductAlreadyGrouped is returned when attaching a product that already
-	// belongs to a variant group is refused: a product is an option of at most
-	// one group (FR-021).
-	ErrProductAlreadyGrouped = errors.New("product already in a variant group")
 	// ErrProductCodeTaken is returned when another product already uses the code,
 	// compared after trimming surrounding whitespace and ignoring letter case
 	// (FR-011). It is a catalogue-wide invariant, so the storage layer enforces
@@ -85,10 +57,10 @@ var (
 	// (FR-011). It is a catalogue-wide invariant, so the storage layer enforces
 	// it and the adapter reports it here.
 	ErrVariantSKUTaken = errors.New("variant sku taken")
-	// ErrVariantNotFound is returned for an unknown variant identifier for a
-	// product. A variant that exists but is not buyable is not this error: a
-	// catalogue read simply omits it and a cart add uses the cart's
-	// not-purchasable refusal.
+	// ErrVariantNotFound is returned for an unknown variant identifier, or one
+	// that does not belong to the addressed product. A variant that exists but is
+	// not buyable is not this error: a catalogue read simply omits it and a cart
+	// add uses the cart's not-purchasable refusal.
 	ErrVariantNotFound = errors.New("variant not found")
 	// ErrVariantLastRemoval is returned when removing a product's last variant is
 	// refused; a product must keep at least one variant (FR-012).
@@ -99,40 +71,43 @@ var (
 	ErrVariantStateTransitionInvalid = errors.New("variant state transition invalid")
 )
 
-// StateTransitionError carries the state a refused sell-state change started from,
-// so the response can name it without the caller re-reading the product (FR-024).
-// It is the single typed carrier for ErrProductStateTransitionInvalid, so the
-// module keeps one sentinel to map and one type to test.
-type StateTransitionError struct {
-	// Current is the state the product was in when the move was attempted.
+// VariantStateTransitionError carries the state a refused variant sell-state change
+// started from, so the response can name it without the caller re-reading the
+// variant (FR-015). It is the single typed carrier for
+// ErrVariantStateTransitionInvalid, so the module keeps one sentinel to map and one
+// type to test.
+type VariantStateTransitionError struct {
+	// Current is the state the variant was in when the move was attempted.
 	Current constant.SellState
 	// Requested is the target state the caller asked for.
 	Requested constant.SellState
 }
 
 // Error implements the error interface. The current state is named because
-// FR-024 requires the operator to be told which state made the move invalid.
-func (e *StateTransitionError) Error() string {
+// FR-015 requires the operator to be told which state made the move invalid.
+func (e *VariantStateTransitionError) Error() string {
 	return fmt.Sprintf("%s: cannot move from %q to %q",
-		ErrProductStateTransitionInvalid, e.Current, e.Requested)
+		ErrVariantStateTransitionInvalid, e.Current, e.Requested)
 }
 
-// Is makes errors.Is(err, ErrProductStateTransitionInvalid) match this error.
-func (e *StateTransitionError) Is(target error) bool {
-	return target == ErrProductStateTransitionInvalid
+// Is makes errors.Is(err, ErrVariantStateTransitionInvalid) match this error.
+func (e *VariantStateTransitionError) Is(target error) bool {
+	return target == ErrVariantStateTransitionInvalid
 }
 
 // Unwrap exposes the sentinel to errors.Is and errors.As.
-func (e *StateTransitionError) Unwrap() error { return ErrProductStateTransitionInvalid }
+func (e *VariantStateTransitionError) Unwrap() error { return ErrVariantStateTransitionInvalid }
 
-// InvalidStateTransition builds the typed refusal for one attempted move.
-func InvalidStateTransition(current, requested constant.SellState) error {
-	return &StateTransitionError{Current: current, Requested: requested}
+// InvalidVariantStateTransition builds the typed refusal for one attempted variant
+// move.
+func InvalidVariantStateTransition(current, requested constant.SellState) error {
+	return &VariantStateTransitionError{Current: current, Requested: requested}
 }
 
-// ProductFieldError reports which member of a product is not acceptable. It is one
-// typed carrier for ErrProductInvalid rather than a family of per-member
-// sentinels, so the module keeps a single error to map and a single one to test.
+// ProductFieldError reports which member of a product or variant is not
+// acceptable. It is one typed carrier for ErrProductInvalid rather than a family of
+// per-member sentinels, so the module keeps a single error to map and a single one
+// to test.
 //
 // Field holds the contract's member name, which is what presentation puts into the
 // response detail; Issue is a short, non-sensitive explanation.

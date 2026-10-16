@@ -31,12 +31,12 @@ type OrderRefInput struct {
 	OrderID uuid.UUID
 }
 
-// EditLineInput is one line of an edit: the product and how many of it the order
-// should hold. The whole line set is replaced, so a product the edit omits is
+// EditLineInput is one line of an edit: the variant and how many of it the order
+// should hold. The whole line set is replaced, so a variant the edit omits is
 // removed from the order (FR-015, research D6).
 type EditLineInput struct {
-	// ProductID is the product the line is for.
-	ProductID uuid.UUID
+	// VariantID is the variant the line is for.
+	VariantID uuid.UUID
 	// Quantity is how many, at least 1.
 	Quantity int64
 }
@@ -106,19 +106,26 @@ type OrderAddressView struct {
 }
 
 // OrderLineView is one order line as a use case answers it: a snapshot of the
-// product at checkout, with its own line total (FR-002).
+// product and the variant at checkout, with its own line total (FR-002). The
+// customer sees the product name and the variant name; the stored product code and
+// SKU are never mapped into it (contracts/openapi.yaml, OrderLine).
 type OrderLineView struct {
 	// ProductID is the product recorded on the line, not a live reference.
 	ProductID uuid.UUID
-	// Name and Slug are the product's values as they were at checkout.
-	Name string
-	Slug string
+	// ProductName is the product's name as it was at checkout.
+	ProductName string
+	// VariantID is the variant recorded on the line, not a live reference.
+	VariantID uuid.UUID
+	// VariantName is the variant's display name as it was at checkout.
+	VariantName string
 	// Quantity is the whole number bought.
 	Quantity int64
 	// UnitPrice is the snapshot unit price.
 	UnitPrice MoneyView
 	// LineTotal is quantity times the snapshot unit price.
 	LineTotal MoneyView
+	// Position is the order the line is listed in.
+	Position int
 }
 
 // OrderSummaryView is one row of a customer's or the operator's order list

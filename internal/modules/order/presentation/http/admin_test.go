@@ -374,7 +374,7 @@ func TestAdminConfirmMapsItsRefusals(t *testing.T) {
 			name:  "a line that cannot be held",
 			err:   domainerr.QuantityExceedsAvailable(uuid.New(), 1, 2),
 			code:  constant.CodeQuantityExceedsAvailable,
-			field: "productId",
+			field: "variantId",
 		},
 	}
 

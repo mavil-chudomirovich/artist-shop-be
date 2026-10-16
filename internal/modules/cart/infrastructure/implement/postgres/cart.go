@@ -39,10 +39,10 @@ const uniqueViolationCode = "23505"
 // cartItemColumns is the explicit projection of a line row, matching the scan
 // arity of scanCartLine. It declares the shape rather than following the physical
 // table, so a later ALTER TABLE cannot break a scan. The line's own id and its
-// timestamps are not read: the cart addresses a line by its product, and the order
+// timestamps are not read: the cart addresses a line by its variant, and the order
 // is applied in SQL (research D7).
 var cartItemColumns = []string{
-	"product_id",
+	"variant_id",
 	"quantity",
 	"unit_price_amount",
 	"currency",
@@ -70,9 +70,9 @@ func NewCartRepository(pool *pgxpool.Pool) *CartRepository {
 		Table:    table,
 		IDColumn: "id",
 		Columns:  cartItemColumns,
-		// A line is addressed within its cart by product_id; IDValue is only
+		// A line is addressed within its cart by variant_id; IDValue is only
 		// here because Base requires it, and no generic method is ever called.
-		IDValue: func(line *model.CartLine) any { return line.ProductID },
+		IDValue: func(line *model.CartLine) any { return line.VariantID },
 		Scan:    scanCartLine,
 	}
 	return r
@@ -135,8 +135,8 @@ func (r *CartRepository) Lock(ctx context.Context, cartID uuid.UUID) error {
 }
 
 // UpsertLine adds a line, or raises the quantity of the line already held for the
-// product rather than creating a second line (FR-002). The upsert is on the
-// (cart_id, product_id) unique index, so two concurrent adds converge on one line
+// variant rather than creating a second line (FR-002). The upsert is on the
+// (cart_id, variant_id) unique index, so two concurrent adds converge on one line
 // whose quantity is the sum: the quantity is added even when another writer won
 // the insert (research D3, D9).
 //
@@ -146,15 +146,15 @@ func (r *CartRepository) Lock(ctx context.Context, cartID uuid.UUID) error {
 func (r *CartRepository) UpsertLine(ctx context.Context, cartID uuid.UUID, line model.CartLine, now time.Time) error {
 	const query = `
 		INSERT INTO cart_items
-			(id, cart_id, product_id, quantity, unit_price_amount, currency, created_at, updated_at)
+			(id, cart_id, variant_id, quantity, unit_price_amount, currency, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		ON CONFLICT (cart_id, product_id) DO UPDATE
+		ON CONFLICT (cart_id, variant_id) DO UPDATE
 		SET quantity   = cart_items.quantity + EXCLUDED.quantity,
 		    updated_at = EXCLUDED.updated_at`
 	if _, err := r.querier(ctx).Exec(ctx, query,
 		uuid.New(),
 		cartID,
-		line.ProductID,
+		line.VariantID,
 		line.Quantity,
 		line.UnitPrice.Amount,
 		line.UnitPrice.Currency,
@@ -166,11 +166,11 @@ func (r *CartRepository) UpsertLine(ctx context.Context, cartID uuid.UUID, line 
 }
 
 // SetQuantity sets a line's quantity to exactly the requested value. An update
-// that matches no row means this cart does not hold the product, which is reported
+// that matches no row means this cart does not hold the variant, which is reported
 // as not-found (error-codes.md).
-func (r *CartRepository) SetQuantity(ctx context.Context, cartID, productID uuid.UUID, quantity int64, now time.Time) error {
-	const query = `UPDATE cart_items SET quantity = $3, updated_at = $4 WHERE cart_id = $1 AND product_id = $2`
-	tag, err := r.querier(ctx).Exec(ctx, query, cartID, productID, quantity, now)
+func (r *CartRepository) SetQuantity(ctx context.Context, cartID, variantID uuid.UUID, quantity int64, now time.Time) error {
+	const query = `UPDATE cart_items SET quantity = $3, updated_at = $4 WHERE cart_id = $1 AND variant_id = $2`
+	tag, err := r.querier(ctx).Exec(ctx, query, cartID, variantID, quantity, now)
 	if err != nil {
 		return fmt.Errorf("set cart line quantity: %w", err)
 	}
@@ -182,11 +182,11 @@ func (r *CartRepository) SetQuantity(ctx context.Context, cartID, productID uuid
 
 // DeleteLine removes one line. A line this cart does not hold is reported as
 // not-found, so an identifier that is not a line answers the same not-found an
-// unknown product answers and the route never confirms another cart's contents
+// unknown variant answers and the route never confirms another cart's contents
 // (error-codes.md).
-func (r *CartRepository) DeleteLine(ctx context.Context, cartID, productID uuid.UUID) error {
-	const query = `DELETE FROM cart_items WHERE cart_id = $1 AND product_id = $2`
-	tag, err := r.querier(ctx).Exec(ctx, query, cartID, productID)
+func (r *CartRepository) DeleteLine(ctx context.Context, cartID, variantID uuid.UUID) error {
+	const query = `DELETE FROM cart_items WHERE cart_id = $1 AND variant_id = $2`
+	tag, err := r.querier(ctx).Exec(ctx, query, cartID, variantID)
 	if err != nil {
 		return fmt.Errorf("delete cart line: %w", err)
 	}
@@ -245,7 +245,7 @@ func projection(columns []string) string {
 func scanCartLine(row baserepo.Row) (*model.CartLine, error) {
 	var line model.CartLine
 	if err := row.Scan(
-		&line.ProductID,
+		&line.VariantID,
 		&line.Quantity,
 		&line.UnitPrice.Amount,
 		&line.UnitPrice.Currency,

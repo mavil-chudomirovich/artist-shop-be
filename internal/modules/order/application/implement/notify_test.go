@@ -95,7 +95,7 @@ func TestCheckoutNotifiesTheArtistButNotTheCustomer(t *testing.T) {
 	seedAddress(f, user)
 	f.customers.customer.Email = customerEmail
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	notifier := &fakeNotifier{}
 	// The checkout fixture already owns a customer lookup carrying the seeded
 	// address; only the notifier and the artist address are added here.
@@ -262,7 +262,7 @@ func TestEditStayingPendingReNotifiesTheArtistOnly(t *testing.T) {
 
 	if _, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: product, Quantity: 2}},
+		Lines:   []appdto.EditLineInput{{VariantID: product, Quantity: 2}},
 	}); err != nil {
 		t.Fatalf("EditMine: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestEditReturningToPendingNotifiesBothSides(t *testing.T) {
 
 	if _, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: product, Quantity: 3}},
+		Lines:   []appdto.EditLineInput{{VariantID: product, Quantity: 3}},
 	}); err != nil {
 		t.Fatalf("EditMine: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestAFailingNotifierDoesNotFailTheOrderOperation(t *testing.T) {
 	seedAddress(f, user)
 	f.customers.customer.Email = customerEmail
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	f.svc.Notifier = &fakeNotifier{err: errors.New("smtp unavailable")}
 	f.svc.ArtistEmail = artistEmail
 

@@ -309,7 +309,7 @@ func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
 
 	lines := make([]appdto.EditLineInput, 0, len(req.Lines))
 	for _, line := range req.Lines {
-		productID, appErr := parseUUID(line.ProductID, fieldProductID)
+		variantID, appErr := parseUUID(line.VariantID, fieldVariantID)
 		if appErr != nil {
 			httpx.WriteError(w, r, appErr, h.logger)
 			return
@@ -318,7 +318,7 @@ func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, fieldError(fieldQuantity, "must be at least 1"), h.logger)
 			return
 		}
-		lines = append(lines, appdto.EditLineInput{ProductID: productID, Quantity: line.Quantity})
+		lines = append(lines, appdto.EditLineInput{VariantID: variantID, Quantity: line.Quantity})
 	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
@@ -780,12 +780,14 @@ func toOrderResponse(view appdto.OrderView) httpdto.OrderResponse {
 	lines := make([]httpdto.OrderLineResponse, 0, len(view.Lines))
 	for _, line := range view.Lines {
 		lines = append(lines, httpdto.OrderLineResponse{
-			ProductID: line.ProductID,
-			Name:      line.Name,
-			Slug:      line.Slug,
-			Quantity:  line.Quantity,
-			UnitPrice: toMoneyResponse(line.UnitPrice),
-			LineTotal: toMoneyResponse(line.LineTotal),
+			ProductID:   line.ProductID,
+			ProductName: line.ProductName,
+			VariantID:   line.VariantID,
+			VariantName: line.VariantName,
+			Quantity:    line.Quantity,
+			UnitPrice:   toMoneyResponse(line.UnitPrice),
+			LineTotal:   toMoneyResponse(line.LineTotal),
+			Position:    line.Position,
 		})
 	}
 	return httpdto.OrderResponse{

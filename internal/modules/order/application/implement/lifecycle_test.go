@@ -198,13 +198,13 @@ func paymentPendingOrder(owner uuid.UUID, lines ...model.OrderLine) *model.Order
 }
 
 // line builds one snapshot line for a lifecycle test.
-func line(productID uuid.UUID, amount, quantity int64) model.OrderLine {
+func line(variantID uuid.UUID, amount, quantity int64) model.OrderLine {
 	return model.OrderLine{
-		ProductID: productID,
-		Name:      "Tranh",
-		Slug:      "tranh",
-		UnitPrice: model.Price{Amount: amount, Currency: "VND"},
-		Quantity:  quantity,
+		VariantID:   variantID,
+		ProductName: "Tranh",
+		Slug:        "tranh",
+		UnitPrice:   model.Price{Amount: amount, Currency: "VND"},
+		Quantity:    quantity,
 	}
 }
 
@@ -237,8 +237,8 @@ func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 		if sale.orderID != order.ID {
 			t.Errorf("sale names order %s, want %s", sale.orderID, order.ID)
 		}
-		if !strings.Contains(sale.reference, event) || !strings.HasSuffix(sale.reference, sale.productID.String()) {
-			t.Errorf("source reference %q must combine the event %q and the product %s", sale.reference, event, sale.productID)
+		if !strings.Contains(sale.reference, event) || !strings.HasSuffix(sale.reference, sale.variantID.String()) {
+			t.Errorf("source reference %q must combine the event %q and the variant %s", sale.reference, event, sale.variantID)
 		}
 		references[sale.reference] = true
 	}
@@ -503,7 +503,7 @@ func TestConfirmHoldsEveryLineAndOpensThePaymentWindow(t *testing.T) {
 		if call.orderID != order.ID {
 			t.Errorf("a hold names order %s, want %s", call.orderID, order.ID)
 		}
-		held[call.productID] = call.quantity
+		held[call.variantID] = call.quantity
 	}
 	if held[first] != 2 || held[second] != 1 {
 		t.Fatalf("every line must be held for its quantity, got %+v", held)
@@ -604,8 +604,8 @@ func TestConfirmRefusesAndHoldsNothingWhenAnyLineCannotBeHeld(t *testing.T) {
 	if !errors.Is(err, domainerr.ErrQuantityExceedsAvailable) {
 		t.Fatalf("the refusal must map to ORDER_QUANTITY_EXCEEDS_AVAILABLE, got %v", err)
 	}
-	if refusal.ProductID != short {
-		t.Fatalf("the refusal must name the short line %s, got %s", short, refusal.ProductID)
+	if refusal.VariantID != short {
+		t.Fatalf("the refusal must name the short line %s, got %s", short, refusal.VariantID)
 	}
 
 	// The order is exactly as it was: still awaiting the artist, unversioned and

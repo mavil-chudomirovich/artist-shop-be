@@ -16,20 +16,23 @@ type MoneyResponse struct {
 }
 
 // CartLineResponse is one cart line as a client reads it (contracts/openapi.yaml,
-// CartLine). The unit price is the one captured when the product was added; the
-// name and slug are the product's current values and are null when the product is
-// gone (FR-004). Buyable reports whether the line can be bought as it stands, and
-// it is always carried; AvailableQuantity is carried only when the line is on
-// sale but short of its quantity, so a client knows how far to reduce it (FR-012,
-// research D10).
+// CartLine). The unit price is the one captured when the variant was added; the
+// product name and the variant name are the current values and are null when the
+// variant is gone (FR-004). Buyable reports whether the line can be bought as it
+// stands, and it is always carried; AvailableQuantity is carried only when the
+// line is on sale but short of its quantity, so a client knows how far to reduce
+// it (FR-012, research D10). The SKU is never exposed to a customer.
 type CartLineResponse struct {
-	// ProductID is the product the line is for.
+	// ProductID is the product the variant belongs to.
 	ProductID uuid.UUID `json:"productId"`
-	// Name is the product's current name, or null when the product is gone.
-	Name *string `json:"name"`
-	// Slug is the product's current link segment, or null when the product is
+	// ProductName is the product's current name, or null when the variant is
 	// gone.
-	Slug *string `json:"slug"`
+	ProductName *string `json:"productName"`
+	// VariantID is the variant the line is for.
+	VariantID uuid.UUID `json:"variantId"`
+	// VariantName is the variant's current display name, or null when the variant
+	// is gone.
+	VariantName *string `json:"variantName"`
 	// Quantity is the whole number the customer chose.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the captured price.
@@ -54,13 +57,13 @@ type CartResponse struct {
 }
 
 // AddItemRequest is the add body (contracts/openapi.yaml, AddItemRequest).
-// ProductID is a string so a malformed identifier can be reported as
-// VALIDATION_ERROR naming `productId` rather than lost to a generic decode
+// VariantID is a string so a malformed identifier can be reported as
+// VALIDATION_ERROR naming `variantId` rather than lost to a generic decode
 // failure. Quantity is a json.Number so a fractional value is a field error, as
 // module 05 does.
 type AddItemRequest struct {
-	// ProductID is the product to add.
-	ProductID string `json:"productId"`
+	// VariantID is the variant to add (a product without a variant is refused).
+	VariantID string `json:"variantId"`
 	// Quantity is the positive whole number of units to add.
 	Quantity json.Number `json:"quantity" swaggertype:"integer"`
 }

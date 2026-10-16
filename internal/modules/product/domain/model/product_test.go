@@ -8,31 +8,35 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 )
 
 // testNow is a fixed instant so timestamps can be asserted exactly.
 var testNow = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 
-// ptr returns a pointer to v, for building ProductEdit members.
+// ptr returns a pointer to v, for building ProductEdit and VariantEdit members.
 func ptr[T any](v T) *T { return &v }
 
-// validDraft is a draft that every rule accepts.
+// validDraft is a draft that every rule accepts: a product always carries at least
+// one variant (FR-012).
 func validDraft() ProductDraft {
 	return ProductDraft{
 		Name:        "Tranh sơn dầu",
+		Code:        "TS-001",
 		Slug:        "tranh-son-dau",
 		Description: "Tranh vẽ tay trên vải.",
 		Price:       Price{Amount: 1999, Currency: "VND"},
 		CategoryID:  uuid.New(),
 		Position:    3,
+		Variants: []VariantDraft{
+			{Name: "Bản tiêu chuẩn", SKU: "TS-001-STD", Position: 0},
+		},
 	}
 }
 
-// A newly created product is in COMING_SOON, carries a fresh identifier and is
-// trimmed (FR-021, research D8).
-func TestNewProductStartsInComingSoon(t *testing.T) {
+// A newly created product carries a fresh identifier, the operator-written code and
+// the trimmed values; it has no sell state of its own (FR-011, research D2).
+func TestNewProductCarriesTheCodeAndNoSellState(t *testing.T) {
 	product, err := NewProduct(validDraft(), testNow)
 	if err != nil {
 		t.Fatalf("NewProduct: unexpected error %v", err)
@@ -41,11 +45,11 @@ func TestNewProductStartsInComingSoon(t *testing.T) {
 	if product.ID == uuid.Nil {
 		t.Errorf("a created product must receive an identifier")
 	}
-	if product.SellState != constant.SellStateComingSoon {
-		t.Errorf("SellState = %q, want %q", product.SellState, constant.SellStateComingSoon)
-	}
 	if product.Name != "Tranh sơn dầu" {
 		t.Errorf("Name = %q", product.Name)
+	}
+	if product.Code != "TS-001" {
+		t.Errorf("Code = %q, want TS-001", product.Code)
 	}
 	if product.Slug != "tranh-son-dau" {
 		t.Errorf("Slug = %q", product.Slug)
@@ -67,10 +71,11 @@ func TestNewProductStartsInComingSoon(t *testing.T) {
 	}
 }
 
-// The stored value is the trimmed one (FR-030).
+// The stored values are the trimmed ones (FR-003, FR-011).
 func TestNewProductTrimsSurroundingWhitespace(t *testing.T) {
 	draft := validDraft()
 	draft.Name = "  Tranh sơn dầu  "
+	draft.Code = "  TS-001  "
 	draft.Slug = "  tranh-son-dau  "
 	draft.Description = "  mô tả  "
 
@@ -78,15 +83,18 @@ func TestNewProductTrimsSurroundingWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProduct: unexpected error %v", err)
 	}
-	if product.Name != "Tranh sơn dầu" || product.Slug != "tranh-son-dau" || product.Description != "mô tả" {
-		t.Errorf("values were not trimmed: %q / %q / %q", product.Name, product.Slug, product.Description)
+	if product.Name != "Tranh sơn dầu" || product.Code != "TS-001" ||
+		product.Slug != "tranh-son-dau" || product.Description != "mô tả" {
+		t.Errorf("values were not trimmed: %q / %q / %q / %q",
+			product.Name, product.Code, product.Slug, product.Description)
 	}
 }
 
-// A rejected draft yields no product at all and names the member (FR-028,
-// FR-029, FR-030, FR-032).
+// A rejected draft yields no product at all and names the member (FR-009, FR-011,
+// FR-024).
 func TestNewProductRejectsInvalidValuesAndNamesTheField(t *testing.T) {
 	overLongName := strings.Repeat("ệ", MaxNameRunes+1)
+	overLongCode := strings.Repeat("a", MaxCodeRunes+1)
 	overLongSlug := strings.Repeat("a", MaxSlugRunes+1)
 	overLongDescription := strings.Repeat("ệ", MaxDescriptionRunes+1)
 
@@ -95,15 +103,17 @@ func TestNewProductRejectsInvalidValuesAndNamesTheField(t *testing.T) {
 		field string
 		draft ProductDraft
 	}{
-		{"blank name", FieldName, ProductDraft{Name: "  ", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}}},
-		{"blank slug", FieldSlug, ProductDraft{Name: "a", Slug: "  ", Price: Price{Amount: 1, Currency: "VND"}}},
-		{"accented slug", FieldSlug, ProductDraft{Name: "a", Slug: "tranh-sơn", Price: Price{Amount: 1, Currency: "VND"}}},
-		{"over-long name", FieldName, ProductDraft{Name: overLongName, Slug: "a", Price: Price{Amount: 1, Currency: "VND"}}},
-		{"over-long slug", FieldSlug, ProductDraft{Name: "a", Slug: overLongSlug, Price: Price{Amount: 1, Currency: "VND"}}},
-		{"over-long description", FieldDescription, ProductDraft{Name: "a", Slug: "b", Description: overLongDescription, Price: Price{Amount: 1, Currency: "VND"}}},
-		{"zero price", FieldPrice, ProductDraft{Name: "a", Slug: "c", Price: Price{Amount: 0, Currency: "VND"}}},
-		{"negative price", FieldPrice, ProductDraft{Name: "a", Slug: "d", Price: Price{Amount: -5, Currency: "VND"}}},
-		{"bad currency", FieldCurrency, ProductDraft{Name: "a", Slug: "e", Price: Price{Amount: 1, Currency: "vnd"}}},
+		{"blank name", FieldName, ProductDraft{Name: "  ", Code: "a", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"blank code", FieldCode, ProductDraft{Name: "a", Code: "  ", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"blank slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: "  ", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"accented slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: "tranh-sơn", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long name", FieldName, ProductDraft{Name: overLongName, Code: "a", Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long code", FieldCode, ProductDraft{Name: "a", Code: overLongCode, Slug: "a", Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long slug", FieldSlug, ProductDraft{Name: "a", Code: "a", Slug: overLongSlug, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"over-long description", FieldDescription, ProductDraft{Name: "a", Code: "a", Slug: "b", Description: overLongDescription, Price: Price{Amount: 1, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"zero price", FieldPrice, ProductDraft{Name: "a", Code: "a", Slug: "c", Price: Price{Amount: 0, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"negative price", FieldPrice, ProductDraft{Name: "a", Code: "a", Slug: "d", Price: Price{Amount: -5, Currency: "VND"}, Variants: validDraft().Variants}},
+		{"bad currency", FieldCurrency, ProductDraft{Name: "a", Code: "a", Slug: "e", Price: Price{Amount: 1, Currency: "vnd"}, Variants: validDraft().Variants}},
 	}
 
 	for _, tc := range cases {
@@ -120,6 +130,22 @@ func TestNewProductRejectsInvalidValuesAndNamesTheField(t *testing.T) {
 	}
 }
 
+// FR-012: a product is created with at least one variant, so a draft with none is
+// refused naming the variants member (research D14).
+func TestNewProductRefusesAnEmptyVariantList(t *testing.T) {
+	draft := validDraft()
+	draft.Variants = nil
+
+	product, err := NewProduct(draft, testNow)
+	if product != nil {
+		t.Errorf("a product with no variant must not be created, got %+v", product)
+	}
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	assertField(t, err, FieldVariants)
+}
+
 // An empty description is a valid description (spec edge case).
 func TestNewProductAcceptsAnEmptyDescription(t *testing.T) {
 	draft := validDraft()
@@ -134,243 +160,8 @@ func TestNewProductAcceptsAnEmptyDescription(t *testing.T) {
 	}
 }
 
-// FR-021: COMING_SOON → ACTIVE.
-func TestLaunchMovesComingSoonToActive(t *testing.T) {
-	product := mustProduct(t)
-	later := testNow.Add(time.Minute)
-
-	if err := product.Launch(later); err != nil {
-		t.Fatalf("Launch: unexpected error %v", err)
-	}
-	if product.SellState != constant.SellStateActive {
-		t.Errorf("SellState = %q, want %q", product.SellState, constant.SellStateActive)
-	}
-	if !product.UpdatedAt.Equal(later) {
-		t.Errorf("UpdatedAt = %v, want %v", product.UpdatedAt, later)
-	}
-}
-
-// Launch refuses any state but COMING_SOON and names the current one (FR-024).
-func TestLaunchRefusesWhenNotComingSoon(t *testing.T) {
-	product := mustProduct(t)
-	if err := product.Launch(testNow); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	err := product.Launch(testNow.Add(time.Minute))
-	if !errors.Is(err, domainerr.ErrProductStateTransitionInvalid) {
-		t.Fatalf("expected ErrProductStateTransitionInvalid, got %v", err)
-	}
-	assertCurrentState(t, err, constant.SellStateActive)
-	if product.SellState != constant.SellStateActive {
-		t.Errorf("a refused transition must leave the product untouched, got %q", product.SellState)
-	}
-}
-
-// FR-021: ACTIVE → OUT_OF_STOCK.
-func TestSellOutMovesActiveToOutOfStock(t *testing.T) {
-	product := mustProduct(t)
-	if err := product.Launch(testNow); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	if err := product.SellOut(testNow.Add(time.Minute)); err != nil {
-		t.Fatalf("SellOut: unexpected error %v", err)
-	}
-	if product.SellState != constant.SellStateOutOfStock {
-		t.Errorf("SellState = %q, want %q", product.SellState, constant.SellStateOutOfStock)
-	}
-}
-
-// SellOut refuses a product that is not on sale.
-func TestSellOutRefusesWhenNotActive(t *testing.T) {
-	product := mustProduct(t)
-
-	err := product.SellOut(testNow)
-	if !errors.Is(err, domainerr.ErrProductStateTransitionInvalid) {
-		t.Fatalf("expected ErrProductStateTransitionInvalid, got %v", err)
-	}
-	assertCurrentState(t, err, constant.SellStateComingSoon)
-}
-
-// FR-021: OUT_OF_STOCK → ACTIVE (the restock direction research D8 adds).
-func TestRestockReturnsOutOfStockToActive(t *testing.T) {
-	product := mustProduct(t)
-	if err := product.Launch(testNow); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	if err := product.SellOut(testNow); err != nil {
-		t.Fatalf("SellOut: %v", err)
-	}
-
-	if err := product.Restock(testNow.Add(time.Minute)); err != nil {
-		t.Fatalf("Restock: unexpected error %v", err)
-	}
-	if product.SellState != constant.SellStateActive {
-		t.Errorf("SellState = %q, want %q", product.SellState, constant.SellStateActive)
-	}
-}
-
-// FR-021: any of the three non-terminal states → DISCONTINUED.
-func TestRetireMovesAnyNonTerminalStateToDiscontinued(t *testing.T) {
-	setups := []struct {
-		name  string
-		want  constant.SellState
-		setup func(*testing.T, *Product)
-	}{
-		{
-			name: "coming soon",
-			want: constant.SellStateComingSoon,
-		},
-		{
-			name: "active",
-			want: constant.SellStateActive,
-			setup: func(t *testing.T, p *Product) {
-				t.Helper()
-				if err := p.Launch(testNow); err != nil {
-					t.Fatalf("set up active: %v", err)
-				}
-			},
-		},
-		{
-			name: "out of stock",
-			want: constant.SellStateOutOfStock,
-			setup: func(t *testing.T, p *Product) {
-				t.Helper()
-				if err := p.Launch(testNow); err != nil {
-					t.Fatalf("set up out of stock: %v", err)
-				}
-				if err := p.SellOut(testNow); err != nil {
-					t.Fatalf("set up out of stock: %v", err)
-				}
-			},
-		},
-	}
-
-	for _, tc := range setups {
-		t.Run(tc.name, func(t *testing.T) {
-			product := mustProduct(t)
-			if tc.setup != nil {
-				tc.setup(t, product)
-			}
-			if product.SellState != tc.want {
-				t.Fatalf("set up %q failed, got %q", tc.want, product.SellState)
-			}
-
-			if err := product.Retire(testNow.Add(time.Minute)); err != nil {
-				t.Fatalf("Retire from %q: unexpected error %v", tc.want, err)
-			}
-			if product.SellState != constant.SellStateDiscontinued {
-				t.Errorf("SellState = %q, want %q", product.SellState, constant.SellStateDiscontinued)
-			}
-		})
-	}
-}
-
-// FR-026: retiring is terminal, and a second retire is refused naming
-// DISCONTINUED.
-func TestRetireRefusesWhenAlreadyDiscontinued(t *testing.T) {
-	product := mustProduct(t)
-	if err := product.Retire(testNow); err != nil {
-		t.Fatalf("Retire: %v", err)
-	}
-
-	err := product.Retire(testNow.Add(time.Minute))
-	if !errors.Is(err, domainerr.ErrProductStateTransitionInvalid) {
-		t.Fatalf("expected ErrProductStateTransitionInvalid, got %v", err)
-	}
-	assertCurrentState(t, err, constant.SellStateDiscontinued)
-}
-
-// FR-026: DISCONTINUED has no outgoing edge, through any transition.
-func TestDiscontinuedHasNoOutgoingEdge(t *testing.T) {
-	moves := map[string]func(*Product, time.Time) error{
-		"launch":   (*Product).Launch,
-		"sell out": (*Product).SellOut,
-		"restock":  (*Product).Restock,
-		"retire":   (*Product).Retire,
-		"change sell state": func(p *Product, now time.Time) error {
-			return p.ChangeSellState(constant.SellStateComingSoon, now)
-		},
-	}
-
-	for name, move := range moves {
-		t.Run(name, func(t *testing.T) {
-			product := mustProduct(t)
-			if err := product.Retire(testNow); err != nil {
-				t.Fatalf("Retire: %v", err)
-			}
-
-			err := move(product, testNow.Add(time.Minute))
-			if !errors.Is(err, domainerr.ErrProductStateTransitionInvalid) {
-				t.Fatalf("expected ErrProductStateTransitionInvalid, got %v", err)
-			}
-			assertCurrentState(t, err, constant.SellStateDiscontinued)
-			if product.SellState != constant.SellStateDiscontinued {
-				t.Errorf("a refused transition must leave the product retired, got %q", product.SellState)
-			}
-		})
-	}
-}
-
-// FR-022: an edge the table does not have is refused and the current state is
-// named.
-func TestChangeSellStateRefusesAnEdgeTheTableDoesNotHave(t *testing.T) {
-	product := mustProduct(t)
-
-	err := product.ChangeSellState(constant.SellStateOutOfStock, testNow)
-	if !errors.Is(err, domainerr.ErrProductStateTransitionInvalid) {
-		t.Fatalf("expected ErrProductStateTransitionInvalid, got %v", err)
-	}
-	assertCurrentState(t, err, constant.SellStateComingSoon)
-}
-
-// FR-039: launching clears the pre-order label, because a product that is on sale
-// is not "coming soon".
-func TestLaunchClearsThePreorderLabel(t *testing.T) {
-	date := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	draft := validDraft()
-	draft.IsPreorder = true
-	draft.PreorderExpectedAt = &date
-
-	product, err := NewProduct(draft, testNow)
-	if err != nil {
-		t.Fatalf("NewProduct: %v", err)
-	}
-	if !product.IsPreorder || product.PreorderExpectedAt == nil {
-		t.Fatalf("a pre-order draft must keep its label and date")
-	}
-
-	if err := product.Launch(testNow.Add(time.Minute)); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	if product.IsPreorder {
-		t.Errorf("launching must clear the pre-order label (FR-039)")
-	}
-	if product.PreorderExpectedAt != nil {
-		t.Errorf("launching must clear the expected date (FR-039)")
-	}
-}
-
-// FR-040: an expected date without the label belongs to nothing and is refused.
-func TestNewProductRefusesAPreorderDateWithoutTheLabel(t *testing.T) {
-	date := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	draft := validDraft()
-	draft.IsPreorder = false
-	draft.PreorderExpectedAt = &date
-
-	product, err := NewProduct(draft, testNow)
-	if product != nil {
-		t.Errorf("a refused draft must yield no product")
-	}
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldPreorderExpectedAt)
-}
-
 // Apply changes the editable members, recomputes the folding key and bumps
-// updated_at, without touching the identifier or the sell state (FR-012).
+// updated_at, without touching the identifier (FR-009, FR-010).
 func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 	product := mustProduct(t)
 	id := product.ID
@@ -379,6 +170,7 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 
 	edit := ProductEdit{
 		Name:        ptr("Tranh khắc gỗ"),
+		Code:        ptr("TK-002"),
 		Slug:        ptr("tranh-khac-go"),
 		Description: ptr("Mô tả mới."),
 		Price:       ptr(Price{Amount: 250, Currency: "USD"}),
@@ -389,7 +181,8 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 		t.Fatalf("Apply: unexpected error %v", err)
 	}
 
-	if product.Name != "Tranh khắc gỗ" || product.Slug != "tranh-khac-go" || product.Description != "Mô tả mới." {
+	if product.Name != "Tranh khắc gỗ" || product.Code != "TK-002" ||
+		product.Slug != "tranh-khac-go" || product.Description != "Mô tả mới." {
 		t.Errorf("editable text was not applied: %+v", product)
 	}
 	if product.Price.Amount != 250 || product.Price.Currency != "USD" {
@@ -408,10 +201,7 @@ func TestApplyChangesTheEditableFieldsAndBumpsUpdatedAt(t *testing.T) {
 		t.Errorf("UpdatedAt = %v, want %v", product.UpdatedAt, later)
 	}
 	if product.ID != id {
-		t.Errorf("the identifier changed on edit (FR-016)")
-	}
-	if product.SellState != constant.SellStateComingSoon {
-		t.Errorf("an edit must not change the sell state, got %q", product.SellState)
+		t.Errorf("the identifier changed on edit (FR-009)")
 	}
 }
 
@@ -424,7 +214,7 @@ func TestApplyKeepsOmittedFields(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	if product.Name != before.Name || product.Slug != before.Slug ||
+	if product.Name != before.Name || product.Code != before.Code || product.Slug != before.Slug ||
 		product.Description != before.Description || product.CategoryID != before.CategoryID {
 		t.Errorf("an omitted member must keep its value: %+v vs %+v", product, before)
 	}
@@ -433,110 +223,31 @@ func TestApplyKeepsOmittedFields(t *testing.T) {
 	}
 }
 
-// A rejected edit leaves the entity exactly as it was (FR-029).
+// A rejected edit leaves the entity exactly as it was (FR-009, FR-011).
 func TestApplyRejectsInvalidChangeAndLeavesEntityUntouched(t *testing.T) {
-	product := mustProduct(t)
-	before := *product
-
-	err := product.Apply(ProductEdit{Slug: ptr("Tranh Sơn")}, testNow.Add(time.Hour))
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldSlug)
-
-	if *product != before {
-		t.Errorf("a rejected edit must leave the entity untouched: %+v vs %+v", product, before)
-	}
-}
-
-// FR-040: an on-sale product is not "coming soon", so it cannot be marked a
-// pre-order.
-func TestApplyRefusesThePreorderLabelOnAnActiveProduct(t *testing.T) {
-	product := mustProduct(t)
-	if err := product.Launch(testNow); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	err := product.Apply(ProductEdit{IsPreorder: ptr(true)}, testNow.Add(time.Minute))
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldIsPreorder)
-	if product.IsPreorder {
-		t.Errorf("a refused edit must not change the label")
-	}
-}
-
-// FR-040: dropping the pre-order label also drops the expected date.
-func TestApplyClearsTheDateWhenTheLabelIsDropped(t *testing.T) {
-	date := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	draft := validDraft()
-	draft.IsPreorder = true
-	draft.PreorderExpectedAt = &date
-	product, err := NewProduct(draft, testNow)
-	if err != nil {
-		t.Fatalf("NewProduct: %v", err)
-	}
-
-	if err := product.Apply(ProductEdit{IsPreorder: ptr(false)}, testNow.Add(time.Minute)); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	if product.IsPreorder || product.PreorderExpectedAt != nil {
-		t.Errorf("dropping the label must clear the date, got isPreorder=%v date=%v", product.IsPreorder, product.PreorderExpectedAt)
-	}
-}
-
-// FR-002, FR-025, FR-027: the state a customer-facing response implies is a
-// property of the product's own state, enforced when it is read and not only when
-// it is written. The rows below are built by assigning SellState and IsPreorder
-// directly — the way a scan or any other writer produces a row — so the predicate
-// must answer from the state alone, whatever wrote it. A retired product is hidden
-// even when it still carries the pre-order label, because retirement is terminal
-// and takes it out of the catalogue for good (FR-026).
-func TestTheCustomerFacingRuleIsEnforcedFromTheStateWhateverWroteTheRow(t *testing.T) {
 	cases := []struct {
-		name     string
-		state    constant.SellState
-		preorder bool
-		visible  bool
-		buyable  bool
+		name  string
+		field string
+		edit  ProductEdit
 	}{
-		{"announced and hidden", constant.SellStateComingSoon, false, false, false},
-		{"announced as a pre-order", constant.SellStateComingSoon, true, true, false},
-		{"on sale", constant.SellStateActive, false, true, true},
-		{"out of stock", constant.SellStateOutOfStock, false, false, false},
-		{"retired", constant.SellStateDiscontinued, false, false, false},
-		{"retired pre-order", constant.SellStateDiscontinued, true, false, false},
+		{"invalid slug", FieldSlug, ProductEdit{Slug: ptr("Tranh Sơn")}},
+		{"blank code", FieldCode, ProductEdit{Code: ptr("  ")}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Direct assignment, bypassing the transition functions: this is a row
-			// as any writer left it, not an entity this package built.
-			product := Product{SellState: tc.state, IsPreorder: tc.preorder}
+			product := mustProduct(t)
+			before := *product
 
-			if got := product.VisibleToCustomers(); got != tc.visible {
-				t.Errorf("VisibleToCustomers() = %v, want %v for %s (pre-order %v)",
-					got, tc.visible, tc.state, tc.preorder)
+			err := product.Apply(tc.edit, testNow.Add(time.Hour))
+			if !errors.Is(err, domainerr.ErrProductInvalid) {
+				t.Fatalf("expected ErrProductInvalid, got %v", err)
 			}
-			if got := product.Buyable(); got != tc.buyable {
-				t.Errorf("Buyable() = %v, want %v for %s", got, tc.buyable, tc.state)
+			assertField(t, err, tc.field)
+			if *product != before {
+				t.Errorf("a rejected edit must leave the entity untouched: %+v vs %+v", product, before)
 			}
 		})
-	}
-}
-
-// assertCurrentState fails the test unless err carries the state the refused move
-// started from (FR-024).
-func assertCurrentState(t *testing.T, err error, want constant.SellState) {
-	t.Helper()
-
-	var transitionErr *domainerr.StateTransitionError
-	if !errors.As(err, &transitionErr) {
-		t.Fatalf("expected a *StateTransitionError, got %T", err)
-	}
-	if transitionErr.Current != want {
-		t.Errorf("refusal names current state %q, want %q", transitionErr.Current, want)
 	}
 }
 
@@ -553,8 +264,8 @@ func assertField(t *testing.T, err error, want string) {
 	}
 }
 
-// mustProduct builds a product from validDraft for tests that only need a
-// starting entity.
+// mustProduct builds a product from validDraft for tests that only need a starting
+// entity.
 func mustProduct(t *testing.T) *Product {
 	t.Helper()
 
@@ -563,190 +274,4 @@ func mustProduct(t *testing.T) *Product {
 		t.Fatalf("NewProduct: %v", err)
 	}
 	return product
-}
-
-// A draft that names a group and a label attaches the new product as an option,
-// trimming the label (FR-010, FR-021).
-func TestNewProductAttachesAnOption(t *testing.T) {
-	groupID := uuid.New()
-	label := "  Flins  "
-	draft := validDraft()
-	draft.VariantGroupID = &groupID
-	draft.VariantLabel = &label
-
-	product, err := NewProduct(draft, testNow)
-	if err != nil {
-		t.Fatalf("NewProduct: unexpected error %v", err)
-	}
-	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
-		t.Errorf("VariantGroupID = %v, want %s", product.VariantGroupID, groupID)
-	}
-	if product.VariantLabel == nil || *product.VariantLabel != "Flins" {
-		t.Errorf("VariantLabel = %v, want the trimmed %q", product.VariantLabel, "Flins")
-	}
-}
-
-// FR-021: a label without a group belongs to nothing and is refused naming the
-// label.
-func TestNewProductRefusesALabelWithoutAGroup(t *testing.T) {
-	draft := validDraft()
-	draft.VariantLabel = ptr("Flins")
-
-	product, err := NewProduct(draft, testNow)
-	if product != nil {
-		t.Errorf("a refused draft must yield no product")
-	}
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantLabel)
-}
-
-// FR-021: a group without a label is refused naming the missing label.
-func TestNewProductRefusesAGroupWithoutALabel(t *testing.T) {
-	groupID := uuid.New()
-	draft := validDraft()
-	draft.VariantGroupID = &groupID
-
-	product, err := NewProduct(draft, testNow)
-	if product != nil {
-		t.Errorf("a refused draft must yield no product")
-	}
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantLabel)
-}
-
-// A whitespace label is no label, so a grouped product without a real label is
-// refused (FR-021).
-func TestNewProductTreatsABlankLabelAsMissing(t *testing.T) {
-	groupID := uuid.New()
-	draft := validDraft()
-	draft.VariantGroupID = &groupID
-	draft.VariantLabel = ptr("   ")
-
-	product, err := NewProduct(draft, testNow)
-	if product != nil {
-		t.Errorf("a refused draft must yield no product")
-	}
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantLabel)
-}
-
-// FR-024: a combo set cannot be created as an option, naming the group member.
-func TestNewProductRefusesASetAsAnOption(t *testing.T) {
-	groupID := uuid.New()
-	draft := validDraft()
-	draft.IsSet = true
-	draft.VariantGroupID = &groupID
-	draft.VariantLabel = ptr("Flins")
-
-	product, err := NewProduct(draft, testNow)
-	if product != nil {
-		t.Errorf("a refused draft must yield no product")
-	}
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantGroupID)
-}
-
-// FR-010, FR-021: an edit attaches and detaches the option, and neither touches
-// the price, the slug or the sell state.
-func TestApplyAttachesAndDetachesAnOption(t *testing.T) {
-	product := mustProduct(t)
-	groupID := uuid.New()
-	later := testNow.Add(time.Hour)
-	before := product.Price
-
-	if err := product.Apply(ProductEdit{
-		VariantGroupID:  &groupID,
-		VariantGroupSet: true,
-		VariantLabel:    ptr("  Dottore  "),
-		VariantLabelSet: true,
-	}, later); err != nil {
-		t.Fatalf("Apply attach: %v", err)
-	}
-	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
-		t.Errorf("VariantGroupID = %v, want %s", product.VariantGroupID, groupID)
-	}
-	if product.VariantLabel == nil || *product.VariantLabel != "Dottore" {
-		t.Errorf("VariantLabel = %v, want the trimmed %q", product.VariantLabel, "Dottore")
-	}
-	if product.Price != before {
-		t.Errorf("attaching must not touch the price: %+v vs %+v", product.Price, before)
-	}
-
-	if err := product.Apply(ProductEdit{
-		VariantGroupSet: true,
-		VariantLabelSet: true,
-	}, later.Add(time.Minute)); err != nil {
-		t.Fatalf("Apply detach: %v", err)
-	}
-	if product.VariantGroupID != nil || product.VariantLabel != nil {
-		t.Errorf("detaching must clear both the group and the label, got %v / %v", product.VariantGroupID, product.VariantLabel)
-	}
-}
-
-// An edit that does not name the attachment keeps it (partial update).
-func TestApplyKeepsTheAttachmentWhenOmitted(t *testing.T) {
-	groupID := uuid.New()
-	draft := validDraft()
-	draft.VariantGroupID = &groupID
-	draft.VariantLabel = ptr("Flins")
-	product, err := NewProduct(draft, testNow)
-	if err != nil {
-		t.Fatalf("NewProduct: %v", err)
-	}
-
-	if err := product.Apply(ProductEdit{Name: ptr("Tên mới")}, testNow.Add(time.Hour)); err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
-	if product.VariantGroupID == nil || *product.VariantGroupID != groupID {
-		t.Errorf("an omitted attachment must keep the group")
-	}
-	if product.VariantLabel == nil || *product.VariantLabel != "Flins" {
-		t.Errorf("an omitted attachment must keep the label")
-	}
-}
-
-// FR-024: an edit cannot make an existing option a combo set.
-func TestApplyRefusesMakingAnOptionASet(t *testing.T) {
-	groupID := uuid.New()
-	draft := validDraft()
-	draft.VariantGroupID = &groupID
-	draft.VariantLabel = ptr("Flins")
-	product, err := NewProduct(draft, testNow)
-	if err != nil {
-		t.Fatalf("NewProduct: %v", err)
-	}
-
-	err = product.Apply(ProductEdit{IsSet: ptr(true)}, testNow.Add(time.Hour))
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantGroupID)
-	if product.IsSet {
-		t.Errorf("a refused edit must not change the set flag")
-	}
-}
-
-// FR-021: an edit that attaches a group without a label is refused, leaving the
-// entity as it was.
-func TestApplyRefusesAnAttachmentWithoutALabel(t *testing.T) {
-	product := mustProduct(t)
-	before := *product
-	groupID := uuid.New()
-
-	err := product.Apply(ProductEdit{VariantGroupID: &groupID, VariantGroupSet: true}, testNow.Add(time.Hour))
-	if !errors.Is(err, domainerr.ErrProductInvalid) {
-		t.Fatalf("expected ErrProductInvalid, got %v", err)
-	}
-	assertField(t, err, FieldVariantLabel)
-	if *product != before {
-		t.Errorf("a rejected edit must leave the entity untouched: %+v vs %+v", product, before)
-	}
 }

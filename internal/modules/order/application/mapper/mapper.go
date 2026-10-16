@@ -34,16 +34,20 @@ func (m *Mapper) Address(address model.Address) dto.OrderAddressView {
 	}
 }
 
-// Line maps one snapshot line to its DTO shape, carrying its own line total
-// (FR-002).
+// Line maps one snapshot line to its DTO shape, carrying the product name, the
+// variant name and its own line total (FR-002). The stored product code and SKU
+// are deliberately not mapped: the customer view shows the product and variant
+// names only.
 func (m *Mapper) Line(line model.OrderLine) dto.OrderLineView {
 	return dto.OrderLineView{
-		ProductID: line.ProductID,
-		Name:      line.Name,
-		Slug:      line.Slug,
-		Quantity:  line.Quantity,
-		UnitPrice: m.Money(line.UnitPrice),
-		LineTotal: m.Money(line.LineTotal()),
+		ProductID:   line.ProductID,
+		ProductName: line.ProductName,
+		VariantID:   line.VariantID,
+		VariantName: line.VariantName,
+		Quantity:    line.Quantity,
+		UnitPrice:   m.Money(line.UnitPrice),
+		LineTotal:   m.Money(line.LineTotal()),
+		Position:    line.Position,
 	}
 }
 

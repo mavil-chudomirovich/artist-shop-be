@@ -20,7 +20,7 @@ const codeProductNotFound = "PRODUCT_NOT_FOUND"
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its request.
 const (
-	fieldProductID = "productId"
+	fieldVariantID = "variantId"
 	fieldQuantity  = "quantity"
 )
 
@@ -68,12 +68,12 @@ func mapError(err error) *httpx.AppError {
 	case errors.As(err, &notPurchasable):
 		return withField(
 			coded(constant.CodeProductNotPurchasable, http.StatusConflict, "Product not purchasable"),
-			fieldProductID, "is not on sale",
+			fieldVariantID, "is not on sale",
 		)
 	case errors.Is(err, domainerr.ErrProductNotPurchasable):
 		return withField(
 			coded(constant.CodeProductNotPurchasable, http.StatusConflict, "Product not purchasable"),
-			fieldProductID, "is not on sale",
+			fieldVariantID, "is not on sale",
 		)
 	case errors.As(err, &exceeds):
 		return withField(

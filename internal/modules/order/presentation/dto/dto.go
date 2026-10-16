@@ -21,13 +21,13 @@ type CheckoutRequest struct {
 }
 
 // EditLineRequest is one line of an edit request (contracts/openapi.yaml,
-// EditLine). `productId` is a string rather than a uuid.UUID so a value that is
-// not a UUID is reported as VALIDATION_ERROR naming `productId` rather than lost
+// EditLine). `variantId` is a string rather than a uuid.UUID so a value that is
+// not a UUID is reported as VALIDATION_ERROR naming `variantId` rather than lost
 // to a generic decode failure. `quantity` must be at least 1, exactly as the
 // contract's minimum requires.
 type EditLineRequest struct {
-	// ProductID is the product the line is for.
-	ProductID string `json:"productId"`
+	// VariantID is the variant the line is for.
+	VariantID string `json:"variantId"`
 	// Quantity is how many, at least 1.
 	Quantity int64 `json:"quantity"`
 }
@@ -70,21 +70,26 @@ type MoneyResponse struct {
 }
 
 // OrderLineResponse is one order line as a client reads it (contracts/openapi.yaml,
-// OrderLine). `name`, `slug` and `unitPrice` are the product's values as they were
-// at checkout; `productId` is the product recorded, not a live reference.
+// OrderLine). It shows the product name and the variant name as they were at
+// checkout; `productId` and `variantId` are the records, not live references. The
+// stored product code and SKU are never returned in the customer order view.
 type OrderLineResponse struct {
 	// ProductID is the product recorded on the line.
 	ProductID uuid.UUID `json:"productId"`
-	// Name is the product's name at checkout.
-	Name string `json:"name"`
-	// Slug is the product's link segment at checkout.
-	Slug string `json:"slug"`
+	// ProductName is the product's name at checkout.
+	ProductName string `json:"productName"`
+	// VariantID is the variant recorded on the line.
+	VariantID uuid.UUID `json:"variantId"`
+	// VariantName is the variant's display name at checkout.
+	VariantName string `json:"variantName"`
 	// Quantity is the whole number bought.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the snapshot unit price.
 	UnitPrice MoneyResponse `json:"unitPrice"`
 	// LineTotal is quantity times the snapshot unit price.
 	LineTotal MoneyResponse `json:"lineTotal"`
+	// Position is the order the line is listed in.
+	Position int `json:"position"`
 }
 
 // OrderAddressResponse is the delivery address as it was captured at checkout

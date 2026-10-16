@@ -21,11 +21,11 @@ import (
 // identifier and timestamps so the assertions can observe them.
 func testOrder(status constant.Status) *Order {
 	line := OrderLine{
-		ProductID: uuid.New(),
-		Name:      "Ink wash",
-		Slug:      "ink-wash",
-		UnitPrice: Price{Amount: 120000, Currency: "VND"},
-		Quantity:  2,
+		ProductID:   uuid.New(),
+		ProductName: "Ink wash",
+		Slug:        "ink-wash",
+		UnitPrice:   Price{Amount: 120000, Currency: "VND"},
+		Quantity:    2,
 	}
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	order := NewOrder(uuid.New(), testAddress(), []OrderLine{line}, now)
@@ -215,8 +215,8 @@ func TestNewOrderStartsPendingWithItsLinesLinked(t *testing.T) {
 	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	owner := uuid.New()
 	lines := []OrderLine{
-		{ProductID: uuid.New(), Name: "A", Slug: "a", UnitPrice: Price{Amount: 1000, Currency: "VND"}, Quantity: 1},
-		{ProductID: uuid.New(), Name: "B", Slug: "b", UnitPrice: Price{Amount: 2000, Currency: "VND"}, Quantity: 1},
+		{ProductID: uuid.New(), ProductName: "A", Slug: "a", UnitPrice: Price{Amount: 1000, Currency: "VND"}, Quantity: 1},
+		{ProductID: uuid.New(), ProductName: "B", Slug: "b", UnitPrice: Price{Amount: 2000, Currency: "VND"}, Quantity: 1},
 	}
 
 	order := NewOrder(owner, testAddress(), lines, now)
@@ -259,8 +259,8 @@ func TestNewOrderStartsPendingWithItsLinesLinked(t *testing.T) {
 func TestOrderTotalIsTheSumOfLineSnapshots(t *testing.T) {
 	now := time.Now().UTC()
 	lines := []OrderLine{
-		{ProductID: uuid.New(), Name: "A", Slug: "a", UnitPrice: Price{Amount: 120000, Currency: "VND"}, Quantity: 2},
-		{ProductID: uuid.New(), Name: "B", Slug: "b", UnitPrice: Price{Amount: 33333, Currency: "VND"}, Quantity: 3},
+		{ProductID: uuid.New(), ProductName: "A", Slug: "a", UnitPrice: Price{Amount: 120000, Currency: "VND"}, Quantity: 2},
+		{ProductID: uuid.New(), ProductName: "B", Slug: "b", UnitPrice: Price{Amount: 33333, Currency: "VND"}, Quantity: 3},
 	}
 	order := NewOrder(uuid.New(), testAddress(), lines, now)
 

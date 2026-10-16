@@ -71,8 +71,8 @@ func TestCartLinesMapsTheCartLinesInOrder(t *testing.T) {
 		cart:  &model.Cart{ID: cartID, UserID: owner},
 		found: true,
 		lines: []model.CartLine{
-			{ProductID: first, Quantity: 2, UnitPrice: model.Price{Amount: 120000, Currency: "VND"}},
-			{ProductID: second, Quantity: 1, UnitPrice: model.Price{Amount: 50000, Currency: "VND"}},
+			{VariantID: first, Quantity: 2, UnitPrice: model.Price{Amount: 120000, Currency: "VND"}},
+			{VariantID: second, Quantity: 1, UnitPrice: model.Price{Amount: 50000, Currency: "VND"}},
 		},
 	}
 
@@ -89,10 +89,10 @@ func TestCartLinesMapsTheCartLinesInOrder(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 lines, got %d", len(got))
 	}
-	if got[0].ProductID != first || got[0].Quantity != 2 || got[0].UnitPriceAmount != 120000 || got[0].Currency != "VND" {
+	if got[0].VariantID != first || got[0].Quantity != 2 || got[0].UnitPrice.Amount != 120000 || got[0].UnitPrice.Currency != "VND" {
 		t.Errorf("first = %+v, want %s x2 at 120000 VND", got[0], first)
 	}
-	if got[1].ProductID != second || got[1].Quantity != 1 || got[1].UnitPriceAmount != 50000 {
+	if got[1].VariantID != second || got[1].Quantity != 1 || got[1].UnitPrice.Amount != 50000 {
 		t.Errorf("second = %+v, want %s x1 at 50000", got[1], second)
 	}
 }

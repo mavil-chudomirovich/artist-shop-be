@@ -7,10 +7,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// StockResponse is one product's stock as an administrator reads it
+// StockResponse is one variant's stock as an administrator reads it
 // (contracts/openapi.yaml, StockView): what is on the shelf, what active holds
 // have set aside, and what therefore remains available. All three are whole
-// numbers and none is negative. The product identifier is carried by the path and
+// numbers and none is negative. The variant identifier is carried by the path and
 // is deliberately not repeated in the body (FR-007).
 type StockResponse struct {
 	// PhysicalQuantity is what is on the shelf.
@@ -31,8 +31,8 @@ type StockResponse struct {
 type MovementResponse struct {
 	// ID identifies the movement.
 	ID uuid.UUID `json:"id"`
-	// ProductID is the product whose quantity changed.
-	ProductID uuid.UUID `json:"productId"`
+	// VariantID is the variant whose quantity changed.
+	VariantID uuid.UUID `json:"variantId"`
 	// Kind is the kind of change: RESTOCK, DAMAGE, ADJUSTMENT or SALE.
 	Kind string `json:"kind"`
 	// Delta is the signed change.

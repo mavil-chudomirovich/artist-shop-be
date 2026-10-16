@@ -75,7 +75,7 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 		// (FR-014, research D7).
 		if order.Status == constant.StatusPaymentPending {
 			for _, line := range order.Lines {
-				if err := s.Reservations.Release(txCtx, order.ID, line.ProductID); err != nil {
+				if err := s.Reservations.Release(txCtx, order.ID, line.VariantID); err != nil {
 					return err
 				}
 			}
@@ -161,49 +161,53 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 // that asks for more than is available, naming the item; nothing is written when
 // it refuses, because the caller returns the error and the transaction rolls back.
 func (s *Service) editedLines(ctx context.Context, orderID uuid.UUID, inputs []dto.EditLineInput, now time.Time) ([]model.OrderLine, error) {
-	productIDs := make([]uuid.UUID, 0, len(inputs))
+	variantIDs := make([]uuid.UUID, 0, len(inputs))
 	for _, input := range inputs {
-		productIDs = append(productIDs, input.ProductID)
+		variantIDs = append(variantIDs, input.VariantID)
 	}
 
-	summaries, err := s.Products.Products(ctx, productIDs)
+	summaries, err := s.Variants.Variants(ctx, variantIDs)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[uuid.UUID]contracts.ProductSummary, len(summaries))
+	byID := make(map[uuid.UUID]contracts.VariantSummary, len(summaries))
 	for _, summary := range summaries {
-		byID[summary.ID] = summary
+		byID[summary.VariantID] = summary
 	}
 
-	availabilities, err := s.Availability.AvailableQuantity(ctx, productIDs)
+	availabilities, err := s.Availability.AvailableQuantity(ctx, variantIDs)
 	if err != nil {
 		return nil, err
 	}
 	availableByID := make(map[uuid.UUID]int64, len(availabilities))
 	for _, item := range availabilities {
-		availableByID[item.ProductID] = item.Available
+		availableByID[item.VariantID] = item.Available
 	}
 
 	lines := make([]model.OrderLine, 0, len(inputs))
 	for i, input := range inputs {
-		summary, ok := byID[input.ProductID]
+		summary, ok := byID[input.VariantID]
 		if !ok || !summary.OnSale {
-			return nil, domainerr.ItemNotPurchasable(input.ProductID)
+			return nil, domainerr.ItemNotPurchasable(input.VariantID)
 		}
-		available := availableByID[input.ProductID]
+		available := availableByID[input.VariantID]
 		if input.Quantity > available {
-			return nil, domainerr.QuantityExceedsAvailable(input.ProductID, available, input.Quantity)
+			return nil, domainerr.QuantityExceedsAvailable(input.VariantID, available, input.Quantity)
 		}
 		lines = append(lines, model.OrderLine{
-			ID:        uuid.New(),
-			OrderID:   orderID,
-			ProductID: input.ProductID,
-			Name:      summary.Name,
-			Slug:      summary.Slug,
-			UnitPrice: model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
-			Quantity:  input.Quantity,
-			Position:  i,
-			CreatedAt: now,
+			ID:          uuid.New(),
+			OrderID:     orderID,
+			ProductID:   summary.ProductID,
+			VariantID:   summary.VariantID,
+			ProductName: summary.ProductName,
+			ProductCode: summary.ProductCode,
+			VariantName: summary.VariantName,
+			SKU:         summary.SKU,
+			Slug:        summary.ProductSlug,
+			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
+			Quantity:    input.Quantity,
+			Position:    i,
+			CreatedAt:   now,
 		})
 	}
 	return lines, nil

@@ -23,7 +23,7 @@ import (
 // It does not embed share/repository.Repository[model.CartLine, uuid.UUID]: the
 // generic FindAll has no cart predicate, the generic Update cannot classify a
 // missing line into the not-found sentinel the use cases answer with, and the
-// upsert that sums a repeated product's quantity is not entity CRUD at all. Every
+// upsert that sums a repeated variant's quantity is not entity CRUD at all. Every
 // method is stated explicitly, and the adapter embeds share/repository.Base only
 // for the write plumbing, with an explicit Columns projection.
 type CartRepository interface {
@@ -47,8 +47,8 @@ type CartRepository interface {
 	Lock(ctx context.Context, cartID uuid.UUID) error
 
 	// UpsertLine adds a line, or raises the quantity of the line already held for
-	// the product rather than creating a second line (FR-002). The upsert is on
-	// the (cart_id, product_id) unique index, so two concurrent adds converge on
+	// the variant rather than creating a second line (FR-002). The upsert is on
+	// the (cart_id, variant_id) unique index, so two concurrent adds converge on
 	// one line whose quantity is the sum (research D3, D9). It joins the caller's
 	// transaction.
 	UpsertLine(ctx context.Context, cartID uuid.UUID, line model.CartLine, now time.Time) error
@@ -56,12 +56,12 @@ type CartRepository interface {
 	// SetQuantity sets a line's quantity to exactly the requested value. A line
 	// this cart does not hold is reported as domainerr.ErrProductNotFound
 	// (error-codes.md). It joins the caller's transaction.
-	SetQuantity(ctx context.Context, cartID, productID uuid.UUID, quantity int64, now time.Time) error
+	SetQuantity(ctx context.Context, cartID, variantID uuid.UUID, quantity int64, now time.Time) error
 
 	// DeleteLine removes one line. A line this cart does not hold is reported as
 	// domainerr.ErrProductNotFound (error-codes.md). It joins the caller's
 	// transaction.
-	DeleteLine(ctx context.Context, cartID, productID uuid.UUID) error
+	DeleteLine(ctx context.Context, cartID, variantID uuid.UUID) error
 
 	// ClearLines removes every line of a cart in one statement, so checkout can
 	// empty the cart it just turned into an order without reading the lines

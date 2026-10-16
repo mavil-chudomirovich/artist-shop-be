@@ -53,7 +53,11 @@ var lineColumns = []string{
 	"id",
 	"order_id",
 	"product_id",
+	"variant_id",
 	"name",
+	"product_code",
+	"variant_name",
+	"sku",
 	"slug",
 	"unit_price_amount",
 	"currency",
@@ -134,15 +138,19 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, slug, unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	for i := range order.Lines {
 		line := order.Lines[i]
 		if _, err := r.querier(ctx).Exec(ctx, lineQuery,
 			line.ID,
 			line.OrderID,
 			line.ProductID,
-			line.Name,
+			line.VariantID,
+			line.ProductName,
+			line.ProductCode,
+			line.VariantName,
+			line.SKU,
 			line.Slug,
 			line.UnitPrice.Amount,
 			line.UnitPrice.Currency,
@@ -371,8 +379,8 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, slug, unit_price_amount, currency, quantity, position, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	for i := range order.Lines {
 		line := order.Lines[i]
 		lineID := line.ID
@@ -383,7 +391,11 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 			lineID,
 			order.ID,
 			line.ProductID,
-			line.Name,
+			line.VariantID,
+			line.ProductName,
+			line.ProductCode,
+			line.VariantName,
+			line.SKU,
 			line.Slug,
 			line.UnitPrice.Amount,
 			line.UnitPrice.Currency,
@@ -584,7 +596,11 @@ func scanLine(row baserepo.Row) (*model.OrderLine, error) {
 		&line.ID,
 		&line.OrderID,
 		&line.ProductID,
-		&line.Name,
+		&line.VariantID,
+		&line.ProductName,
+		&line.ProductCode,
+		&line.VariantName,
+		&line.SKU,
 		&line.Slug,
 		&line.UnitPrice.Amount,
 		&line.UnitPrice.Currency,

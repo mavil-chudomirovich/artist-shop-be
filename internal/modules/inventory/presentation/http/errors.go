@@ -9,17 +9,17 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
 )
 
-// codeProductNotFound is the shared PRODUCT_NOT_FOUND (404). It is declared here
+// codeVariantNotFound is the shared VARIANT_NOT_FOUND (404). It is declared here
 // rather than imported from module 04, because presentation of one module must
 // not import another module (Constitution I); its value mirrors module 04's and
 // contracts/error-codes.md records it as deliberately reused rather than
 // duplicated in meaning.
-const codeProductNotFound = "PRODUCT_NOT_FOUND"
+const codeVariantNotFound = "VARIANT_NOT_FOUND"
 
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its request.
 const (
-	fieldProductID = "productId"
+	fieldVariantID = "variantId"
 	fieldQuantity  = "quantity"
 	fieldPage      = "page"
 	fieldPageSize  = "pageSize"
@@ -51,8 +51,8 @@ func fieldError(field, issue string) *httpx.AppError {
 //
 // The insufficient-stock refusal is 409 and names the field it is about: the
 // quantity is well formed and it is the current state of the shelf that makes the
-// change impossible (FR-009). An unknown product is the reused PRODUCT_NOT_FOUND
-// (404), because the product is module 04's resource. A value invalid on its own
+// change impossible (FR-009). An unknown variant is the reused VARIANT_NOT_FOUND
+// (404), because the variant is module 04's resource. A value invalid on its own
 // stays on the shared VALIDATION_ERROR and names the field the domain reports
 // (FR-012). A shared AppError the transport produced (a malformed identifier, an
 // authentication failure) passes through unchanged; anything else is hidden
@@ -61,8 +61,8 @@ func mapError(err error) *httpx.AppError {
 	var insufficient *domainerr.InsufficientStockError
 	var invalid *domainerr.InvalidValueError
 	switch {
-	case errors.Is(err, domainerr.ErrProductNotFound):
-		return coded(codeProductNotFound, http.StatusNotFound, "Product not found")
+	case errors.Is(err, domainerr.ErrVariantNotFound):
+		return coded(codeVariantNotFound, http.StatusNotFound, "Variant not found")
 	case errors.As(err, &insufficient):
 		return withField(
 			coded(constant.CodeInsufficientStock, http.StatusConflict, "Insufficient stock"),

@@ -8,16 +8,16 @@ import (
 // Business sentinel errors returned by the inventory module.
 var (
 	// ErrInsufficientStock is the one refusal the module owns: a change would take
-	// a product's physical quantity below zero, or below the quantity currently
+	// a variant's physical quantity below zero, or below the quantity currently
 	// held for orders being paid (FR-009). It maps to
 	// INVENTORY_INSUFFICIENT_STOCK (409).
 	ErrInsufficientStock = errors.New("insufficient stock")
-	// ErrProductNotFound is returned for an unknown product. The product is
-	// module 04's resource, so presentation answers the shared PRODUCT_NOT_FOUND
+	// ErrVariantNotFound is returned for an unknown variant. The variant is
+	// module 04's resource, so presentation answers the shared VARIANT_NOT_FOUND
 	// (404) rather than inventing a second code for one condition
-	// (error-codes.md). It is also what a foreign-key refusal on a missing product
+	// (error-codes.md). It is also what a foreign-key refusal on a missing variant
 	// is classified into, as the storage guard (research D2, D12).
-	ErrProductNotFound = errors.New("product not found")
+	ErrVariantNotFound = errors.New("variant not found")
 	// ErrInvalidValue is returned when a value fails its own rule: a quantity that
 	// is not a positive whole number, a counted value below zero, a movement whose
 	// delta is zero, or a hold operation against a hold that is no longer active
@@ -25,8 +25,8 @@ var (
 	// field a client has to fix; presentation maps it to the shared
 	// VALIDATION_ERROR (400).
 	ErrInvalidValue = errors.New("invalid inventory value")
-	// ErrHoldAlreadyExists is reported when an order already holds a product: the
-	// partial unique index on active (order_id, product_id) refused a second hold.
+	// ErrHoldAlreadyExists is reported when an order already holds a variant: the
+	// partial unique index on active (order_id, variant_id) refused a second hold.
 	// It is the storage guard FR-019 rests on, and a reserve that meets it is a
 	// no-op rather than a failure, so a retried checkout never holds twice. It is
 	// deliberately separate from ErrInvalidValue because the caller treats it as

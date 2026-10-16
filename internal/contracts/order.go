@@ -35,7 +35,7 @@ var ErrOrderStale = errors.New("order content is stale")
 //
 // The provider module (order, 07) supplies an adapter at the composition root.
 // The contract carries only contract-local types — no module's entity or enum —
-// exactly as ProductSummary carries OnSale rather than module 04's state type
+// exactly as VariantSummary carries OnSale rather than module 04's state type
 // (docs/system-design/contract-purity.md).
 type OrderPayment interface {
 	// PaymentTarget returns the facts a payment needs about an order: its owner,
@@ -54,7 +54,7 @@ type OrderPayment interface {
 }
 
 // OrderPaymentTarget carries only what a payment needs, in contract-local types:
-// the package imports no module, exactly as contracts.ProductSummary carries
+// the package imports no module, exactly as contracts.VariantSummary carries
 // OnSale rather than module 04's state type (docs/system-design/contract-purity.md).
 type OrderPaymentTarget struct {
 	// UserID is the account that owns the order.

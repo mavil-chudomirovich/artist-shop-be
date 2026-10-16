@@ -36,11 +36,11 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // GetCart returns the signed-in customer's cart, re-checking each line's live
-// product facts. An empty cart answers an empty list with no subtotal, not an
+// variant facts. An empty cart answers an empty list with no subtotal, not an
 // error.
 //
 //	@Summary		Read the signed-in customer's cart
-//	@Description	Returns every line with its product, quantity, the price captured when it was added and the line total, plus the cart subtotal. An empty cart answers an empty list with a null subtotal.
+//	@Description	Returns every line with its product and variant, quantity, the price captured when it was added and the line total, plus the cart subtotal. An empty cart answers an empty list with a null subtotal.
 //	@Tags			Cart
 //	@Produce		json
 //	@Security		BearerAuth
@@ -63,17 +63,17 @@ func (h *Handler) GetCart(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toCartResponse(view))
 }
 
-// AddItem adds a product with a positive whole quantity to the customer's cart.
-// Adding a product already held raises its line rather than creating a second one;
-// the price captured is the product's current price.
+// AddItem adds a variant with a positive whole quantity to the customer's cart.
+// Adding a variant already held raises its line rather than creating a second one;
+// the price captured is the variant's current effective price.
 //
-//	@Summary		Add a product to the cart
-//	@Description	Adds a product with a positive whole quantity. Adding a product already in the cart raises its quantity; the captured price is the product's current price. An unknown product answers not-found.
+//	@Summary		Add a variant to the cart
+//	@Description	Adds a variant with a positive whole quantity. Adding a variant already in the cart raises its quantity; the captured price is the variant's current effective price. An unknown variant answers not-found.
 //	@Tags			Cart
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			request	body		httpdto.AddItemRequest	true	"Product and quantity to add"
+//	@Param			request	body		httpdto.AddItemRequest	true	"Variant and quantity to add"
 //	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.CartResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError
@@ -92,7 +92,7 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
 		return
 	}
-	productID, appErr := parseUUID(req.ProductID, fieldProductID)
+	variantID, appErr := parseUUID(req.VariantID, fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
@@ -104,7 +104,7 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
-	view, err := h.svc.Add(ctx, appdto.AddItemInput{ProductID: productID, Quantity: quantity})
+	view, err := h.svc.Add(ctx, appdto.AddItemInput{VariantID: variantID, Quantity: quantity})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -112,15 +112,15 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toCartResponse(view))
 }
 
-// ChangeQuantity sets the quantity of the line for one product.
+// ChangeQuantity sets the quantity of the line for one variant.
 //
 //	@Summary		Change a line's quantity
-//	@Description	Sets the quantity of the line for that product. A product that is not a line of this cart answers not-found.
+//	@Description	Sets the quantity of the line for that variant. A variant that is not a line of this cart answers not-found.
 //	@Tags			Cart
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path		string					true	"Product identifier"
+//	@Param			variantId	path		string					true	"Variant identifier"
 //	@Param			request		body		httpdto.QuantityRequest	true	"New quantity"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.CartResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
@@ -129,13 +129,13 @@ func (h *Handler) AddItem(w http.ResponseWriter, r *http.Request) {
 //	@Failure		409			{object}	httpx.SwaggerError
 //	@Failure		429			{object}	httpx.SwaggerError
 //	@Failure		500			{object}	httpx.SwaggerError
-//	@Router			/cart/items/{productId} [patch]
+//	@Router			/cart/items/{variantId} [patch]
 func (h *Handler) ChangeQuantity(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
 		return
 	}
-	productID, appErr := pathUUID(r, "productId", fieldProductID)
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
@@ -152,7 +152,7 @@ func (h *Handler) ChangeQuantity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
-	view, err := h.svc.ChangeQuantity(ctx, appdto.ChangeQuantityInput{ProductID: productID, Quantity: quantity})
+	view, err := h.svc.ChangeQuantity(ctx, appdto.ChangeQuantityInput{VariantID: variantID, Quantity: quantity})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -160,36 +160,36 @@ func (h *Handler) ChangeQuantity(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toCartResponse(view))
 }
 
-// RemoveItem removes the line for one product. An identifier that is not a line of
+// RemoveItem removes the line for one variant. An identifier that is not a line of
 // this cart answers not-found, so the route never confirms what is in another
 // customer's cart.
 //
 //	@Summary		Remove a line from the cart
-//	@Description	Removes the line for that product. An identifier that is not a line of this cart answers not-found.
+//	@Description	Removes the line for that variant. An identifier that is not a line of this cart answers not-found.
 //	@Tags			Cart
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string	true	"Product identifier"
+//	@Param			variantId	path	string	true	"Variant identifier"
 //	@Success		204			"The line is removed."
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
 //	@Failure		429			{object}	httpx.SwaggerError
 //	@Failure		500			{object}	httpx.SwaggerError
-//	@Router			/cart/items/{productId} [delete]
+//	@Router			/cart/items/{variantId} [delete]
 func (h *Handler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
 		return
 	}
-	productID, appErr := pathUUID(r, "productId", fieldProductID)
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
-	if err := h.svc.Remove(ctx, appdto.RemoveItemInput{ProductID: productID}); err != nil {
+	if err := h.svc.Remove(ctx, appdto.RemoveItemInput{VariantID: variantID}); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -262,15 +262,16 @@ func toMoneyResponse(money appdto.MoneyView) httpdto.MoneyResponse {
 	return httpdto.MoneyResponse{Amount: money.Amount, Currency: money.Currency}
 }
 
-// toLineResponse maps one cart line. The name and slug are carried through as
-// null when the product is gone; the buyable flag is always carried and the
-// available quantity only when the line is on sale but short (FR-012, research
+// toLineResponse maps one cart line. The product and variant names are carried
+// through as null when the variant is gone; the buyable flag is always carried and
+// the available quantity only when the line is on sale but short (FR-012, research
 // D10).
 func toLineResponse(line appdto.LineView) httpdto.CartLineResponse {
 	return httpdto.CartLineResponse{
 		ProductID:         line.ProductID,
-		Name:              line.Name,
-		Slug:              line.Slug,
+		ProductName:       line.ProductName,
+		VariantID:         line.VariantID,
+		VariantName:       line.VariantName,
 		Quantity:          line.Quantity,
 		UnitPrice:         toMoneyResponse(line.UnitPrice),
 		LineTotal:         toMoneyResponse(line.LineTotal),

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -23,8 +22,8 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
 
-// Pagination bounds of the public catalogue (contracts/openapi.yaml,
-// Page/PageSize). They match the project's existing convention (research D12).
+// Pagination bounds of the public catalogue. They match the project's existing
+// convention.
 const (
 	defaultPageSize = 20
 	maxPageSize     = 100
@@ -35,8 +34,7 @@ const (
 // It consumes application/interface.ProductService directly — the one declared
 // use-case surface — rather than declaring its own subset of it: the real
 // *implement.Service satisfies it, and a second declaration for the same service
-// is the drift the project refuses elsewhere (reconciliation with module 03's
-// handler, which takes appinterface.CategoryService).
+// is the drift the project refuses elsewhere.
 type Handler struct {
 	svc    appinterface.ProductService
 	cfg    appinterface.Config
@@ -46,7 +44,7 @@ type Handler struct {
 // New creates the product HTTP handler.
 //
 // The picture configuration is carried here as well as in the use cases because
-// the upload route sizes its body limit from the very ceiling the use case
+// the upload routes size their body limit from the very ceiling the use case
 // enforces, so a declared length and a chunked body answer the same rule.
 func New(svc appinterface.ProductService, cfg appinterface.Config, logger *slog.Logger) *Handler {
 	return &Handler{svc: svc, cfg: cfg, logger: logger}
@@ -59,20 +57,19 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 // ListPublic returns a page of the catalogue a customer may see. It is reachable
 // with no session (FR-001): the route installs no authentication middleware.
 //
-// The page is the merged catalogue: a standalone product and a variant group
-// both appear as one entry, discriminated by `type`, so a grouped product is
-// shown once, not once per option (FR-001). The `category` filter is passed down
-// as the slug a customer-facing link carries; the use case resolves it, and a
-// hidden or unknown slug answers an empty page rather than a not-found (FR-006).
+// The page is one entry per product, with the lowest on-sale variant price and the
+// default variant's image. The `category` filter is passed down as the slug a
+// customer-facing link carries; the use case resolves it, and a hidden or unknown
+// slug answers an empty page rather than a not-found (FR-006).
 //
-//	@Summary		List the catalogue a customer can see (products and variant groups)
-//	@Description	Returns a page of the visible catalogue — standalone products and variant groups — ordered by the operator's position. A group is visible only while at least one of its options is; its price is the lowest among its visible options. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.
+//	@Summary		List the catalogue a customer can see
+//	@Description	Returns a page of the visible catalogue — one entry per product, ordered by the operator's position. A product appears only when at least one of its variants is on sale; the card price is the lowest on-sale variant price and the image is the default variant's image. The optional category filter narrows the list by category slug; a hidden or unknown slug answers an empty list. No session is required.
 //	@Tags			Product
 //	@Produce		json
 //	@Param			page		query	int		false	"Page number (default 1)"
 //	@Param			pageSize	query	int		false	"Page size (default 20)"
 //	@Param			category	query	string	false	"Category slug to narrow the list to"
-//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicCatalogueEntryResponse}
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.PublicProductResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Router			/products [get]
 func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
@@ -90,17 +87,15 @@ func (h *Handler) ListPublic(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccessList(w, r, toPublicCatalogueEntryResponses(out.Entries), out.Page, out.PageSize, out.Total)
+	httpx.WriteSuccessList(w, r, toPublicProductResponses(out.Products), out.Page, out.PageSize, out.Total)
 }
 
-// GetPublicBySlug returns one visible product with its description and every
-// picture, addressed by the slug a customer-facing link is built from
-// (FR-005). A hidden, retired, removed or unknown slug answers the same
-// not-found (FR-003). When the product is an option of a variant group, the
-// detail carries the `variantGroup` selector (FR-007).
+// GetPublicBySlug returns one visible product with its shared content, gallery and
+// its visible variants, addressed by the slug a customer-facing link is built from
+// (FR-003). A hidden, removed or unknown slug answers the same not-found (FR-008).
 //
-//	@Summary		Read one product by slug
-//	@Description	Returns one visible product with its description and every picture, plus the variantGroup selector when the product is an option. A hidden, retired, removed or unknown slug answers the same not-found. No session is required.
+//	@Summary		Read one product by slug (with its variants)
+//	@Description	Returns one visible product with its description, gallery and its visible variants (on sale or out of stock), each with name, effective price and stock status. A hidden, removed or unknown slug answers the same not-found. No session is required.
 //	@Tags			Product
 //	@Produce		json
 //	@Param			slug	path	string	true	"Product slug"
@@ -117,232 +112,11 @@ func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toPublicProductDetailResponse(out))
 }
 
-// GetPublicGroupBySlug returns one visible variant group, addressed by the slug a
-// customer-facing link is built from: its shared name, description and gallery
-// together with its visible options (FR-002). A group hidden by its category,
-// with no visible option, removed or unknown answers the same not-found (FR-008).
-//
-//	@Summary		Read a variant group by slug
-//	@Description	Returns a visible variant group's shared name, description, choice-dimension name and its own picture gallery, together with its visible options (each with label, price, picture and preorder flag). A group hidden by its category, with no visible option, removed or unknown answers the same not-found. No session is required.
-//	@Tags			Product
-//	@Produce		json
-//	@Param			slug	path	string	true	"Variant group slug"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.PublicVariantGroupDetailResponse}
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Router			/product-groups/{slug} [get]
-func (h *Handler) GetPublicGroupBySlug(w http.ResponseWriter, r *http.Request) {
-	slug := chi.URLParam(r, "slug")
-	out, err := h.svc.GetPublicGroupBySlug(r.Context(), appdto.PublicVariantGroupRefInput{Slug: slug})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusOK, toPublicVariantGroupDetailResponse(out))
-}
-
-// pageParams reads the catalogue window. Pagination validation is a foundation
-// concern and stays on the shared VALIDATION_ERROR code.
-func pageParams(r *http.Request) (int, int, *httpx.AppError) {
-	query := r.URL.Query()
-	page, err := positiveQuery(query.Get("page"), 1)
-	if err != nil {
-		return 0, 0, fieldError(fieldPage, "must be an integer of at least 1")
-	}
-	pageSize, err := positiveQuery(query.Get("pageSize"), defaultPageSize)
-	if err != nil {
-		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
-	}
-	if pageSize > maxPageSize {
-		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
-	}
-	return page, pageSize, nil
-}
-
-func positiveQuery(raw string, fallback int) (int, error) {
-	if strings.TrimSpace(raw) == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(raw)
-	if err != nil {
-		return 0, errors.New("not an integer")
-	}
-	if parsed < 1 {
-		return 0, errors.New("below the lower bound")
-	}
-	return parsed, nil
-}
-
-// toPublicProductResponse is the single conversion point from the application
-// DTO to the public HTTP shape, so the six-member shape cannot drift per route.
-func toPublicProductResponse(product appdto.PublicProductOutput) httpdto.PublicProductResponse {
-	return httpdto.PublicProductResponse{
-		ID:         product.ID,
-		Name:       product.Name,
-		Slug:       product.Slug,
-		Price:      httpdto.PriceResponse{Amount: product.Price.Amount, Currency: product.Price.Currency},
-		ImageURL:   product.ImageURL,
-		IsPreorder: product.IsPreorder,
-	}
-}
-
-// toPublicCatalogueEntryResponse is the single conversion point from the merged
-// application entry to the public HTTP shape, so the `type` discriminator and
-// the seven members cannot drift per route.
-func toPublicCatalogueEntryResponse(entry appdto.PublicCatalogueEntry) httpdto.PublicCatalogueEntryResponse {
-	return httpdto.PublicCatalogueEntryResponse{
-		Type:       entry.Type,
-		ID:         entry.ID,
-		Name:       entry.Name,
-		Slug:       entry.Slug,
-		Price:      httpdto.PriceResponse{Amount: entry.Price.Amount, Currency: entry.Price.Currency},
-		ImageURL:   entry.ImageURL,
-		IsPreorder: entry.IsPreorder,
-	}
-}
-
-// toPublicCatalogueEntryResponses maps a page. It always allocates, so an empty
-// catalogue answers an empty array rather than null: the contract declares the
-// list as an array, and FR-007 requires an empty result, not an error.
-func toPublicCatalogueEntryResponses(list []appdto.PublicCatalogueEntry) []httpdto.PublicCatalogueEntryResponse {
-	out := make([]httpdto.PublicCatalogueEntryResponse, 0, len(list))
-	for _, entry := range list {
-		out = append(out, toPublicCatalogueEntryResponse(entry))
-	}
-	return out
-}
-
-// toPublicProductDetailResponse maps one product's detail. The pictures are
-// mapped through their own conversion so the public picture shape cannot gain a
-// member the contract does not declare; the optional variantGroup selector is
-// mapped through its own conversion too.
-func toPublicProductDetailResponse(detail appdto.PublicProductDetailOutput) httpdto.PublicProductDetailResponse {
-	return httpdto.PublicProductDetailResponse{
-		PublicProductResponse: toPublicProductResponse(detail.PublicProductOutput),
-		Description:           detail.Description,
-		Images:                toPublicImageResponses(detail.Images),
-		VariantGroup:          toPublicProductVariantGroupResponse(detail.VariantGroup),
-	}
-}
-
-// toPublicProductVariantGroupResponse maps the selector when the product is an
-// option. A nil selector stays nil, so a standalone product omits the member.
-func toPublicProductVariantGroupResponse(selector *appdto.PublicProductVariantGroupOutput) *httpdto.PublicProductVariantGroupResponse {
-	if selector == nil {
-		return nil
-	}
-	return &httpdto.PublicProductVariantGroupResponse{
-		ID:         selector.ID,
-		Slug:       selector.Slug,
-		Name:       selector.Name,
-		OptionName: selector.OptionName,
-		Images:     toPublicImageResponses(selector.Images),
-		Options:    toPublicVariantOptionResponses(selector.Options),
-	}
-}
-
-// toPublicVariantGroupDetailResponse maps one group's detail. It always
-// allocates the lists, so a group with no picture or no option answers `[]`
-// rather than null.
-func toPublicVariantGroupDetailResponse(detail appdto.PublicVariantGroupDetailOutput) httpdto.PublicVariantGroupDetailResponse {
-	return httpdto.PublicVariantGroupDetailResponse{
-		ID:          detail.ID,
-		Name:        detail.Name,
-		Slug:        detail.Slug,
-		Description: detail.Description,
-		OptionName:  detail.OptionName,
-		Images:      toPublicImageResponses(detail.Images),
-		Options:     toPublicVariantOptionResponses(detail.Options),
-	}
-}
-
-// toPublicVariantOptionResponse is the single conversion point for an option as
-// a customer reads it, so its label and its own price cannot drift per route.
-func toPublicVariantOptionResponse(option appdto.PublicVariantOptionOutput) httpdto.PublicVariantOptionResponse {
-	return httpdto.PublicVariantOptionResponse{
-		ID:         option.ID,
-		Slug:       option.Slug,
-		Label:      option.Label,
-		Price:      httpdto.PriceResponse{Amount: option.Price.Amount, Currency: option.Price.Currency},
-		ImageURL:   option.ImageURL,
-		IsPreorder: option.IsPreorder,
-	}
-}
-
-// toPublicVariantOptionResponses maps the options in the order they were given —
-// the display order the use case and the repository already applied. It always
-// allocates, so a group with no visible option answers `[]` rather than null.
-func toPublicVariantOptionResponses(list []appdto.PublicVariantOptionOutput) []httpdto.PublicVariantOptionResponse {
-	out := make([]httpdto.PublicVariantOptionResponse, 0, len(list))
-	for _, option := range list {
-		out = append(out, toPublicVariantOptionResponse(option))
-	}
-	return out
-}
-
-// toPublicImageResponses maps the pictures in the order they were given — the
-// display order the use case and the repository already applied. It always
-// allocates, so a product with no picture answers `[]` rather than null.
-func toPublicImageResponses(list []appdto.PublicImageOutput) []httpdto.PublicImageResponse {
-	out := make([]httpdto.PublicImageResponse, 0, len(list))
-	for _, image := range list {
-		out = append(out, httpdto.PublicImageResponse{
-			ID:     image.ID,
-			URL:    image.URL,
-			Width:  image.Width,
-			Height: image.Height,
-		})
-	}
-	return out
-}
-
-// --- Administrator surface (US2) ---
-
-// decode reads a JSON body and rejects unknown members, matching the
-// additionalProperties: false of the administrator request schemas. A body that
-// tries to name the acting account is therefore refused rather than decoded.
-func decode(r *http.Request, dst any) error {
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
-}
-
-// sessionActor returns the acting account taken from the authenticated session.
-//
-// No maintenance route accepts an owner identifier: the session is the only
-// source of the acting account, which is what makes an actor chosen by a client
-// impossible by construction (FR-015). It reports false after writing the
-// response, so the caller returns without doing any work.
-func (h *Handler) sessionActor(w http.ResponseWriter, r *http.Request) (appinterface.Actor, bool) {
-	identity, ok := middleware.IdentityFromContext(r.Context())
-	if !ok {
-		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
-		return appinterface.Actor{}, false
-	}
-	accountID, err := uuid.Parse(identity.Subject)
-	if err != nil {
-		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
-		return appinterface.Actor{}, false
-	}
-	return appinterface.Actor{ID: accountID, Role: access.Role(identity.Role)}, true
-}
-
-// pathUUID reads a UUID path parameter. A value that is not a UUID is a request
-// error, never a lookup that returns nothing: it answers 400 VALIDATION_ERROR
-// with the offending member named (contracts/error-codes.md).
-func pathUUID(r *http.Request, name, field string) (uuid.UUID, *httpx.AppError) {
-	raw := chi.URLParam(r, name)
-	parsed, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil, fieldError(field, "must be a UUID")
-	}
-	return parsed, nil
-}
-
 // ListAdmin returns a page of every product, including the ones withheld from
-// customers (FR-011). It is reached only behind the administrator role guard.
+// customers (FR-010). It is reached only behind the administrator role guard.
 //
 //	@Summary		List every product (ADMIN)
-//	@Description	Returns a page of every product, including the ones withheld from customers, with the sell state, the position, the category and the picture summary a customer never sees.
+//	@Description	Returns a page of every product, including the ones withheld from customers, with the code, the default price, the position, the variant count and the picture summary a customer never sees.
 //	@Tags			Product
 //	@Produce		json
 //	@Security		BearerAuth
@@ -368,11 +142,10 @@ func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAdmin returns one product by identifier, including one not visible to
-// customers (FR-011). A malformed identifier is answered with the field named; an
-// unknown one is the module not-found.
+// customers, with its gallery and every variant (FR-010).
 //
 //	@Summary		Read one product by identifier (ADMIN)
-//	@Description	Returns one product, including one not visible to customers, with its pictures and, for a set, its members.
+//	@Description	Returns one product, including one not visible to customers, with its gallery and every variant.
 //	@Tags			Product
 //	@Produce		json
 //	@Security		BearerAuth
@@ -397,13 +170,12 @@ func (h *Handler) GetAdmin(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
-// CreateProduct creates a product in COMING_SOON (FR-010). The acting
+// CreateProduct creates a product with at least one variant (FR-012). The acting
 // administrator comes from the session the middleware resolved, never from the
-// body: the input carries no account member and the decoder refuses an unknown
-// one.
+// body: the input carries no account member and the decoder refuses an unknown one.
 //
-//	@Summary		Create a product (ADMIN)
-//	@Description	Creates a product in COMING_SOON. The acting administrator comes from the session, never the body.
+//	@Summary		Create a product with at least one variant (ADMIN)
+//	@Description	Creates a product together with at least one variant. The acting administrator comes from the session, never the body.
 //	@Tags			Product
 //	@Accept			json
 //	@Produce		json
@@ -425,20 +197,25 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
 		return
 	}
+	variants := make([]appdto.CreateVariantInput, 0, len(req.Variants))
+	for _, v := range req.Variants {
+		variants = append(variants, appdto.CreateVariantInput{
+			Name:        v.Name,
+			SKU:         v.SKU,
+			PriceAmount: variantPriceAmount(v.Price),
+			Position:    v.Position,
+		})
+	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.CreateProduct(ctx, appdto.CreateProductInput{
-		Name:               req.Name,
-		Slug:               req.Slug,
-		Description:        req.Description,
-		Price:              model.Price{Amount: req.Price.Amount, Currency: req.Price.Currency},
-		CategoryID:         req.CategoryID,
-		Position:           req.Position,
-		IsSet:              req.IsSet,
-		MemberProductIDs:   req.MemberProductIDs,
-		IsPreorder:         req.IsPreorder,
-		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
-		VariantGroupID:     req.VariantGroupID,
-		VariantLabel:       req.VariantLabel,
+		Name:        req.Name,
+		Code:        req.Code,
+		Slug:        req.Slug,
+		Description: req.Description,
+		Price:       model.Price{Amount: req.DefaultPrice.Amount, Currency: req.DefaultPrice.Currency},
+		CategoryID:  req.CategoryID,
+		Position:    req.Position,
+		Variants:    variants,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -447,11 +224,11 @@ func (h *Handler) CreateProduct(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminProductDetailResponse(out))
 }
 
-// UpdateProduct applies a partial administrator edit (FR-012). An omitted member
-// keeps its current value; the sell state is never changed here (research D11).
+// UpdateProduct applies a partial administrator edit (FR-010). An omitted member
+// keeps its current value; the variants are edited through their own routes.
 //
 //	@Summary		Update a product (ADMIN)
-//	@Description	Applies a partial edit. An omitted member keeps its value; the sell state is never changed here (it has its own transition endpoint).
+//	@Description	Applies a partial edit. An omitted member keeps its value; variants are edited through their own routes.
 //	@Tags			Product
 //	@Accept			json
 //	@Produce		json
@@ -482,21 +259,14 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.UpdateProduct(ctx, appdto.UpdateProductInput{
-		ID:                 id,
-		Name:               req.Name,
-		Slug:               req.Slug,
-		Description:        req.Description,
-		Price:              toPricePointer(req.Price),
-		CategoryID:         req.CategoryID,
-		Position:           req.Position,
-		IsSet:              req.IsSet,
-		MemberProductIDs:   req.MemberProductIDs,
-		IsPreorder:         req.IsPreorder,
-		PreorderExpectedAt: toPreorderDate(req.PreorderExpectedAt),
-		VariantGroupID:     req.VariantGroupID.Value,
-		VariantGroupSet:    req.VariantGroupID.Set,
-		VariantLabel:       req.VariantLabel.Value,
-		VariantLabelSet:    req.VariantLabel.Set,
+		ID:          id,
+		Name:        req.Name,
+		Code:        req.Code,
+		Slug:        req.Slug,
+		Description: req.Description,
+		Price:       toPrice(req.DefaultPrice),
+		CategoryID:  req.CategoryID,
+		Position:    req.Position,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -505,11 +275,11 @@ func (h *Handler) UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
-// DeleteProduct removes a product (FR-013). Removal is a hard delete; the audit
-// entry is what survives it.
+// DeleteProduct removes a product and its variants (FR-010). Removal is a hard
+// delete; the audit entry is what survives it.
 //
 //	@Summary		Delete a product (ADMIN)
-//	@Description	Removes a product. Removal is a hard delete; the audit entry is what survives it.
+//	@Description	Removes a product and its variants. Removal is a hard delete; the audit entry is what survives it.
 //	@Tags			Product
 //	@Produce		json
 //	@Security		BearerAuth
@@ -538,30 +308,25 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ChangeSellState moves a product through its selling life (FR-022 to FR-026).
+// AddVariant adds a variant to a product (FR-014). A created variant starts in
+// COMING_SOON; its sell state moves through the variant state endpoint.
 //
-// The handler only decodes the requested target and reports: whether the move is
-// one the current state allows is the domain transition table's decision, and the
-// refusal names the current state (FR-023, FR-024). A target that is not one of the
-// four states is reported against `to` by the use case. The acting administrator
-// comes from the session, never from the body (FR-015).
-//
-//	@Summary		Move a product through its selling life (ADMIN)
-//	@Description	Requests a sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. The acting administrator comes from the session, never the body.
+//	@Summary		Add a variant to a product (ADMIN)
+//	@Description	Adds a variant. A new variant starts in COMING_SOON. A duplicate SKU is a conflict.
 //	@Tags			Product
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			id		path	string					true	"Product identifier"
-//	@Param			request	body	httpdto.ChangeStateRequest	true	"Target sell state"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Param			id		path	string						true	"Product identifier"
+//	@Param			request	body	httpdto.CreateVariantRequest	true	"Variant payload"
+//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError
 //	@Failure		403		{object}	httpx.SwaggerError
 //	@Failure		404		{object}	httpx.SwaggerError
 //	@Failure		409		{object}	httpx.SwaggerError
-//	@Router			/admin/products/{id}/state [post]
-func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
+//	@Router			/admin/products/{id}/variants [post]
+func (h *Handler) AddVariant(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
 		return
@@ -571,15 +336,267 @@ func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	var req httpdto.ChangeStateRequest
+	var req httpdto.CreateVariantRequest
 	if err := decode(r, &req); err != nil {
 		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
 		return
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.ChangeSellState(ctx, appdto.ChangeSellStateInput{
-		ID: id,
-		To: constant.SellState(req.To),
+	out, err := h.svc.AddVariant(ctx, appdto.AddVariantInput{
+		ProductID:   id,
+		Name:        req.Name,
+		SKU:         req.SKU,
+		PriceAmount: variantPriceAmount(req.Price),
+		Position:    req.Position,
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminProductDetailResponse(out))
+}
+
+// UpdateVariant edits a variant (FR-010). An omitted member keeps its current
+// value; an explicit null price clears the variant's own amount (FR-017).
+//
+//	@Summary		Update a variant (ADMIN)
+//	@Description	Applies a partial variant edit. An omitted member keeps its value; an explicit null price clears the variant's own amount back to the product's default.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id			path	string						true	"Product identifier"
+//	@Param			variantId	path	string						true	"Variant identifier"
+//	@Param			request		body	httpdto.UpdateVariantRequest	true	"Variant update"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/{variantId} [patch]
+func (h *Handler) UpdateVariant(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	var req httpdto.UpdateVariantRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	in := appdto.UpdateVariantInput{
+		ProductID:      id,
+		VariantID:      variantID,
+		Name:           req.Name,
+		SKU:            req.SKU,
+		PriceAmountSet: req.Price.Set,
+		Position:       req.Position,
+	}
+	if req.Price.Set && req.Price.Value != nil {
+		amount := req.Price.Value.Amount
+		in.PriceAmount = &amount
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.UpdateVariant(ctx, in)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
+}
+
+// RemoveVariant removes a variant (FR-012). Refused when it is the product's last.
+//
+//	@Summary		Remove a variant (ADMIN)
+//	@Description	Removes a variant. Refused with VARIANT_LAST_REMOVAL when it is the product's last variant.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id			path	string	true	"Product identifier"
+//	@Param			variantId	path	string	true	"Variant identifier"
+//	@Success		204			"No Content"
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/{variantId} [delete]
+func (h *Handler) RemoveVariant(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	if err := h.svc.RemoveVariant(ctx, appdto.VariantRefInput{ProductID: id, VariantID: variantID}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AddVariantImage stores an uploaded variant image. The bytes are read with a hard
+// ceiling and handed to the use case, which validates them by content; uploading
+// again replaces the variant's single image (FR-016).
+//
+//	@Summary		Upload the variant image (ADMIN)
+//	@Description	Stores a picture for the variant through the media provider. Uploading again replaces the variant's single image. The content is validated by signature, not by name or declared media type.
+//	@Tags			Product
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id			path		string	true	"Product identifier"
+//	@Param			variantId	path		string	true	"Variant identifier"
+//	@Param			image		formData	file	true	"Variant image (JPEG, PNG or WebP)"
+//	@Success		201			{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		413			{object}	httpx.SwaggerError
+//	@Failure		503			{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/{variantId}/image [post]
+func (h *Handler) AddVariantImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	content, appErr := h.readPictureFile(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.AddVariantImage(ctx, appdto.AddVariantImageInput{
+		ProductID: id,
+		VariantID: variantID,
+		Content:   content,
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminProductDetailResponse(out))
+}
+
+// RemoveVariantImage clears the variant's image and releases its stored asset
+// (FR-016).
+//
+//	@Summary		Remove the variant image (ADMIN)
+//	@Description	Clears the variant's image and releases its stored asset.
+//	@Tags			Product
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id			path	string	true	"Product identifier"
+//	@Param			variantId	path	string	true	"Variant identifier"
+//	@Success		204			"No Content"
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/{variantId}/image [delete]
+func (h *Handler) RemoveVariantImage(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	if _, err := h.svc.RemoveVariantImage(ctx, appdto.VariantRefInput{ProductID: id, VariantID: variantID}); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ChangeVariantState moves a variant through its selling life (FR-015).
+//
+// The handler only decodes the requested target and reports: whether the move is
+// one the current state allows is the domain transition table's decision, and the
+// refusal names the current state. A target that is not one of the four states is
+// reported against `to` by the use case. The acting administrator comes from the
+// session, never from the body.
+//
+//	@Summary		Move a variant through its selling life (ADMIN)
+//	@Description	Requests a variant sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. The acting administrator comes from the session, never the body.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id			path	string							true	"Product identifier"
+//	@Param			variantId	path	string							true	"Variant identifier"
+//	@Param			request		body	httpdto.ChangeVariantStateRequest	true	"Target sell state"
+//	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.AdminProductDetailResponse}
+//	@Failure		400			{object}	httpx.SwaggerError
+//	@Failure		401			{object}	httpx.SwaggerError
+//	@Failure		403			{object}	httpx.SwaggerError
+//	@Failure		404			{object}	httpx.SwaggerError
+//	@Failure		409			{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/{variantId}/state [post]
+func (h *Handler) ChangeVariantState(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	variantID, appErr := pathUUID(r, "variantId", fieldVariantID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	var req httpdto.ChangeVariantStateRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ChangeVariantState(ctx, appdto.ChangeVariantStateInput{
+		ProductID: id,
+		VariantID: variantID,
+		To:        constant.SellState(req.To),
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -588,13 +605,13 @@ func (h *Handler) ChangeSellState(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
-// AddPicture stores an uploaded picture. The bytes are read with a hard ceiling
-// and handed to the use case, which validates them by content and by the
-// product's count; neither the file name nor the client-declared media type is
-// trusted (FR-019, FR-020).
+// AddPicture stores an uploaded gallery picture. The bytes are read with a hard
+// ceiling and handed to the use case, which validates them by content and by the
+// gallery's count; neither the file name nor the client-declared media type is
+// trusted (FR-019).
 //
 //	@Summary		Upload a product picture (ADMIN)
-//	@Description	Stores a picture for the product through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.
+//	@Description	Stores a picture for the product's gallery through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.
 //	@Tags			Product
 //	@Accept			multipart/form-data
 //	@Produce		json
@@ -634,11 +651,11 @@ func (h *Handler) AddPicture(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminProductDetailResponse(out))
 }
 
-// RemovePicture detaches one picture from a product and releases its stored asset
-// (FR-021).
+// RemovePicture detaches one gallery picture from a product and releases its
+// stored asset (FR-021).
 //
 //	@Summary		Remove a product picture (ADMIN)
-//	@Description	Detaches one picture from the product and releases its stored asset. Removing the main picture promotes the next one by position.
+//	@Description	Detaches one picture from the product's gallery and releases its stored asset. Removing the main picture promotes the next one by position.
 //	@Tags			Product
 //	@Produce		json
 //	@Security		BearerAuth
@@ -673,7 +690,7 @@ func (h *Handler) RemovePicture(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SetPrimaryPicture makes one picture the product's main one (FR-017).
+// SetPrimaryPicture makes one gallery picture the product's main one (FR-021).
 //
 //	@Summary		Set the main product picture (ADMIN)
 //	@Description	Makes one picture the product's main one, clearing any other in the same operation.
@@ -712,13 +729,86 @@ func (h *Handler) SetPrimaryPicture(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
+// pageParams reads the catalogue window. Pagination validation is a foundation
+// concern and stays on the shared VALIDATION_ERROR code.
+func pageParams(r *http.Request) (int, int, *httpx.AppError) {
+	query := r.URL.Query()
+	page, err := positiveQuery(query.Get("page"), 1)
+	if err != nil {
+		return 0, 0, fieldError(fieldPage, "must be an integer of at least 1")
+	}
+	pageSize, err := positiveQuery(query.Get("pageSize"), defaultPageSize)
+	if err != nil {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	if pageSize > maxPageSize {
+		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+	}
+	return page, pageSize, nil
+}
+
+func positiveQuery(raw string, fallback int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, errors.New("not an integer")
+	}
+	if parsed < 1 {
+		return 0, errors.New("below the lower bound")
+	}
+	return parsed, nil
+}
+
+// decode reads a JSON body and rejects unknown members, matching the
+// additionalProperties: false of the administrator request schemas. A body that
+// tries to name the acting account is therefore refused rather than decoded.
+func decode(r *http.Request, dst any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+
+// sessionActor returns the acting account taken from the authenticated session.
+//
+// No maintenance route accepts an owner identifier: the session is the only
+// source of the acting account, which is what makes an actor chosen by a client
+// impossible by construction (FR-015). It reports false after writing the
+// response, so the caller returns without doing any work.
+func (h *Handler) sessionActor(w http.ResponseWriter, r *http.Request) (appinterface.Actor, bool) {
+	identity, ok := middleware.IdentityFromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
+		return appinterface.Actor{}, false
+	}
+	accountID, err := uuid.Parse(identity.Subject)
+	if err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeUnauthenticated), h.logger)
+		return appinterface.Actor{}, false
+	}
+	return appinterface.Actor{ID: accountID, Role: access.Role(identity.Role)}, true
+}
+
+// pathUUID reads a UUID path parameter. A value that is not a UUID is a request
+// error, never a lookup that returns nothing: it answers 400 VALIDATION_ERROR
+// with the offending member named.
+func pathUUID(r *http.Request, name, field string) (uuid.UUID, *httpx.AppError) {
+	raw := chi.URLParam(r, name)
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, fieldError(field, "must be a UUID")
+	}
+	return parsed, nil
+}
+
 // readPictureFile streams the "image" part of the multipart body, refusing to
 // buffer more than the configured ceiling. Reading with a ceiling is what makes
 // the size rule enforceable: a post-hoc check on an already buffered body cannot
 // stop a memory-exhaustion upload.
 //
 // The client-declared file name and media type are deliberately not trusted: the
-// use case decides the image type from the leading signature (FR-019).
+// use case decides the image type from the leading signature.
 func (h *Handler) readPictureFile(r *http.Request) ([]byte, *httpx.AppError) {
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -759,35 +849,99 @@ func (h *Handler) readPictureFile(r *http.Request) ([]byte, *httpx.AppError) {
 	return nil, fieldError(fieldImage, "an image part is required")
 }
 
-// toPricePointer converts an optional request price to the domain value. A nil
-// request price keeps the stored one, which is what makes a partial edit partial.
-func toPricePointer(price *httpdto.PriceRequest) *model.Price {
+// variantPriceAmount converts an optional request price to the domain's optional
+// amount. A nil price means the variant uses the product's default (FR-017).
+func variantPriceAmount(price *httpdto.VariantPriceRequest) *int64 {
+	if price == nil {
+		return nil
+	}
+	amount := price.Amount
+	return &amount
+}
+
+// toPrice converts an optional request price to the domain value. A nil request
+// price keeps the stored one, which is what makes a partial edit partial.
+func toPrice(price *httpdto.PriceRequest) *model.Price {
 	if price == nil {
 		return nil
 	}
 	return &model.Price{Amount: price.Amount, Currency: price.Currency}
 }
 
-// toPreorderDate converts the request's date-only value to the domain's optional
-// time. A nil request date keeps the stored one, which is what makes a partial
-// edit partial; clearing the label clears the date explicitly (FR-040).
-func toPreorderDate(date *httpdto.PreorderDate) *time.Time {
-	if date == nil {
-		return nil
-	}
-	at := date.Time
-	return &at
+// toPriceResponse is the single conversion from a domain price to its HTTP shape.
+func toPriceResponse(price model.Price) httpdto.PriceResponse {
+	return httpdto.PriceResponse{Amount: price.Amount, Currency: price.Currency}
 }
 
-// toPreorderDateResponse converts the stored optional time to the response's
-// contract form. The administrator response writes the calendar date
-// (format: date), so this is where the stored value becomes the date the
-// contract declares; a nil date stays nil and marshals as null.
-func toPreorderDateResponse(date *time.Time) *httpdto.PreorderDate {
-	if date == nil {
-		return nil
+// toPublicProductResponse is the single conversion point from the application DTO
+// to the public HTTP shape, so the shape cannot drift per route.
+func toPublicProductResponse(product appdto.PublicProductOutput) httpdto.PublicProductResponse {
+	return httpdto.PublicProductResponse{
+		ID:       product.ID,
+		Name:     product.Name,
+		Slug:     product.Slug,
+		Price:    toPriceResponse(product.Price),
+		ImageURL: product.ImageURL,
 	}
-	return &httpdto.PreorderDate{Time: *date}
+}
+
+// toPublicProductResponses maps a page. It always allocates, so an empty
+// catalogue answers an empty array rather than null.
+func toPublicProductResponses(list []appdto.PublicProductOutput) []httpdto.PublicProductResponse {
+	out := make([]httpdto.PublicProductResponse, 0, len(list))
+	for _, product := range list {
+		out = append(out, toPublicProductResponse(product))
+	}
+	return out
+}
+
+// toPublicProductDetailResponse maps one product's detail, including its gallery
+// and its variants.
+func toPublicProductDetailResponse(detail appdto.PublicProductDetailOutput) httpdto.PublicProductDetailResponse {
+	return httpdto.PublicProductDetailResponse{
+		PublicProductResponse: toPublicProductResponse(detail.PublicProductOutput),
+		Description:           detail.Description,
+		Images:                toPublicImageResponses(detail.Images),
+		Variants:              toPublicVariantResponses(detail.Variants),
+	}
+}
+
+// toPublicVariantResponse is the single conversion point for a variant a customer
+// reads, so its effective price and stock flag cannot drift per route.
+func toPublicVariantResponse(variant appdto.PublicVariantOutput) httpdto.PublicVariantResponse {
+	return httpdto.PublicVariantResponse{
+		ID:        variant.ID,
+		Name:      variant.Name,
+		Price:     toPriceResponse(variant.Price),
+		ImageURL:  variant.ImageURL,
+		SellState: string(variant.SellState),
+		InStock:   variant.InStock,
+	}
+}
+
+// toPublicVariantResponses maps the visible variants in the order they were given.
+// It always allocates, so a product with no visible variant answers an empty array.
+func toPublicVariantResponses(list []appdto.PublicVariantOutput) []httpdto.PublicVariantResponse {
+	out := make([]httpdto.PublicVariantResponse, 0, len(list))
+	for _, variant := range list {
+		out = append(out, toPublicVariantResponse(variant))
+	}
+	return out
+}
+
+// toPublicImageResponses maps the gallery pictures in the order they were given.
+// It always allocates, so a product with no picture answers an empty array.
+func toPublicImageResponses(list []appdto.PublicImageOutput) []httpdto.PublicImageResponse {
+	out := make([]httpdto.PublicImageResponse, 0, len(list))
+	for _, image := range list {
+		out = append(out, httpdto.PublicImageResponse{
+			ID:     image.ID,
+			URL:    image.URL,
+			Width:  image.Width,
+			Height: image.Height,
+		})
+	}
+	return out
 }
 
 // toAdminProductResponse is the single conversion point from the application
@@ -795,26 +949,23 @@ func toPreorderDateResponse(date *time.Time) *httpdto.PreorderDate {
 // must not see cannot drift per route.
 func toAdminProductResponse(product appdto.AdminProductOutput) httpdto.AdminProductResponse {
 	return httpdto.AdminProductResponse{
-		ID:                 product.ID,
-		Name:               product.Name,
-		Slug:               product.Slug,
-		Description:        product.Description,
-		Price:              httpdto.PriceResponse{Amount: product.Price.Amount, Currency: product.Price.Currency},
-		CategoryID:         product.CategoryID,
-		Position:           product.Position,
-		SellState:          string(product.SellState),
-		IsSet:              product.IsSet,
-		IsPreorder:         product.IsPreorder,
-		PreorderExpectedAt: toPreorderDateResponse(product.PreorderExpectedAt),
-		ImageCount:         product.ImageCount,
-		ImageURL:           product.ImageURL,
-		CreatedAt:          product.CreatedAt,
-		UpdatedAt:          product.UpdatedAt,
+		ID:           product.ID,
+		Name:         product.Name,
+		Code:         product.Code,
+		Slug:         product.Slug,
+		Description:  product.Description,
+		DefaultPrice: toPriceResponse(product.Price),
+		CategoryID:   product.CategoryID,
+		Position:     product.Position,
+		VariantCount: product.VariantCount,
+		ImageURL:     product.ImageURL,
+		CreatedAt:    product.CreatedAt,
+		UpdatedAt:    product.UpdatedAt,
 	}
 }
 
-// toAdminProductResponses maps a page. It always allocates, so an empty
-// catalogue answers an empty array rather than null.
+// toAdminProductResponses maps a page. It always allocates, so an empty catalogue
+// answers an empty array rather than null.
 func toAdminProductResponses(list []appdto.AdminProductOutput) []httpdto.AdminProductResponse {
 	out := make([]httpdto.AdminProductResponse, 0, len(list))
 	for _, product := range list {
@@ -824,17 +975,52 @@ func toAdminProductResponses(list []appdto.AdminProductOutput) []httpdto.AdminPr
 }
 
 // toAdminProductDetailResponse maps one product's administrator detail, including
-// its pictures and, for a set, its members.
+// its gallery and every variant.
 func toAdminProductDetailResponse(detail appdto.AdminProductDetailOutput) httpdto.AdminProductDetailResponse {
 	return httpdto.AdminProductDetailResponse{
 		AdminProductResponse: toAdminProductResponse(detail.AdminProductOutput),
 		Images:               toAdminImageResponses(detail.Images),
-		Members:              toSetMemberResponses(detail.Members),
+		Variants:             toAdminVariantResponses(detail.Variants),
 	}
 }
 
-// toAdminImageResponses maps the pictures in the order they were given. It always
-// allocates, so a product with no picture answers `[]` rather than null.
+// toAdminVariantResponse is the single conversion point for a variant as an
+// administrator reads it.
+func toAdminVariantResponse(variant appdto.AdminVariantOutput) httpdto.AdminVariantResponse {
+	return httpdto.AdminVariantResponse{
+		ID:             variant.ID,
+		Name:           variant.Name,
+		SKU:            variant.SKU,
+		Price:          toAdminVariantPrice(variant.PriceAmount),
+		EffectivePrice: toPriceResponse(variant.EffectivePrice),
+		ImageURL:       variant.ImageURL,
+		Position:       variant.Position,
+		SellState:      string(variant.SellState),
+	}
+}
+
+// toAdminVariantPrice turns the optional own amount into the nullable price object
+// the contract exposes: a nil amount is the variant falling back to the product's
+// default, never a zero price.
+func toAdminVariantPrice(amount *int64) *httpdto.AdminVariantPriceResponse {
+	if amount == nil {
+		return nil
+	}
+	return &httpdto.AdminVariantPriceResponse{Amount: *amount}
+}
+
+// toAdminVariantResponses maps the variants in the order they were given. It
+// always allocates, so a product with no variant answers an empty array.
+func toAdminVariantResponses(list []appdto.AdminVariantOutput) []httpdto.AdminVariantResponse {
+	out := make([]httpdto.AdminVariantResponse, 0, len(list))
+	for _, variant := range list {
+		out = append(out, toAdminVariantResponse(variant))
+	}
+	return out
+}
+
+// toAdminImageResponses maps the gallery pictures in the order they were given. It
+// always allocates, so a product with no picture answers an empty array.
 func toAdminImageResponses(list []appdto.AdminImageOutput) []httpdto.AdminImageResponse {
 	out := make([]httpdto.AdminImageResponse, 0, len(list))
 	for _, image := range list {
@@ -846,409 +1032,6 @@ func toAdminImageResponses(list []appdto.AdminImageOutput) []httpdto.AdminImageR
 			Height:    image.Height,
 			Position:  image.Position,
 			IsPrimary: image.IsPrimary,
-		})
-	}
-	return out
-}
-
-// toSetMemberResponses maps a set's members in the order they were given. An
-// empty list maps to a nil slice, which the contract omits.
-func toSetMemberResponses(list []appdto.SetMemberOutput) []httpdto.SetMemberResponse {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]httpdto.SetMemberResponse, 0, len(list))
-	for _, member := range list {
-		out = append(out, httpdto.SetMemberResponse{ID: member.ID, Name: member.Name, Slug: member.Slug})
-	}
-	return out
-}
-
-// --- Variant-group administrator surface (US2) ---
-
-// ListAdminGroups returns a page of every variant group, including the ones
-// withheld from customers (FR-013). It is reached only behind the administrator
-// role guard.
-//
-//	@Summary		List every variant group (ADMIN)
-//	@Description	Returns a page of every variant group, including the ones not visible to customers, with the category, the position and the picture summary a customer never sees.
-//	@Tags			VariantGroup
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			page		query	int	false	"Page number (default 1)"
-//	@Param			pageSize	query	int	false	"Page size (default 20)"
-//	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminVariantGroupResponse}
-//	@Failure		400			{object}	httpx.SwaggerError
-//	@Failure		401			{object}	httpx.SwaggerError
-//	@Failure		403			{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups [get]
-func (h *Handler) ListAdminGroups(w http.ResponseWriter, r *http.Request) {
-	page, pageSize, appErr := pageParams(r)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	out, err := h.svc.ListAdminGroups(r.Context(), appdto.ListAdminGroupsInput{Page: page, PageSize: pageSize})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccessList(w, r, toAdminVariantGroupResponses(out.Groups), out.Page, out.PageSize, out.Total)
-}
-
-// CreateVariantGroup creates a variant group (FR-009). The acting administrator
-// comes from the session, never from the body: the input carries no account member
-// and the decoder refuses an unknown one.
-//
-//	@Summary		Create a variant group (ADMIN)
-//	@Description	Creates a variant group. A slug another group holds is a conflict; a category that does not exist is refused naming the field. The acting administrator comes from the session, never the body.
-//	@Tags			VariantGroup
-//	@Accept			json
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			request	body	httpdto.CreateVariantGroupRequest	true	"Variant-group payload"
-//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		409		{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups [post]
-func (h *Handler) CreateVariantGroup(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	var req httpdto.CreateVariantGroupRequest
-	if err := decode(r, &req); err != nil {
-		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.CreateVariantGroup(ctx, appdto.CreateVariantGroupInput{
-		Name:        req.Name,
-		Slug:        req.Slug,
-		Description: req.Description,
-		CategoryID:  req.CategoryID,
-		Position:    req.Position,
-		OptionName:  req.OptionName,
-	})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminVariantGroupDetailResponse(out))
-}
-
-// GetAdminGroup returns one variant group by identifier, including one not visible
-// to customers, with its pictures and every option (FR-013).
-//
-//	@Summary		Read one variant group by identifier (ADMIN)
-//	@Description	Returns one variant group, including one not visible to customers, with its own pictures and every option, visible or not.
-//	@Tags			VariantGroup
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id	path	string	true	"Variant-group identifier"
-//	@Success		200	{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
-//	@Failure		400	{object}	httpx.SwaggerError
-//	@Failure		401	{object}	httpx.SwaggerError
-//	@Failure		403	{object}	httpx.SwaggerError
-//	@Failure		404	{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id} [get]
-func (h *Handler) GetAdminGroup(w http.ResponseWriter, r *http.Request) {
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	out, err := h.svc.GetAdminGroup(r.Context(), appdto.AdminVariantGroupRefInput{ID: id})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
-}
-
-// UpdateVariantGroup applies a partial administrator edit (FR-011). An omitted
-// member keeps its current value; the pictures are edited through their own
-// endpoints.
-//
-//	@Summary		Update a variant group (ADMIN)
-//	@Description	Applies a partial edit. An omitted member keeps its value; the pictures are edited through their own endpoints. A slug another group holds is a conflict.
-//	@Tags			VariantGroup
-//	@Accept			json
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id		path	string							true	"Variant-group identifier"
-//	@Param			request	body	httpdto.UpdateVariantGroupRequest	true	"Variant-group update"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Failure		409		{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id} [patch]
-func (h *Handler) UpdateVariantGroup(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	var req httpdto.UpdateVariantGroupRequest
-	if err := decode(r, &req); err != nil {
-		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.UpdateVariantGroup(ctx, appdto.UpdateVariantGroupInput{
-		ID:          id,
-		Name:        req.Name,
-		Slug:        req.Slug,
-		Description: req.Description,
-		CategoryID:  req.CategoryID,
-		Position:    req.Position,
-		OptionName:  req.OptionName,
-	})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
-}
-
-// DeleteVariantGroup removes a variant group (FR-012). Removal is refused while
-// options remain; the products are never removed with the group.
-//
-//	@Summary		Remove a variant group (ADMIN)
-//	@Description	Removes a variant group. Refused with VARIANT_GROUP_HAS_OPTIONS while the group still has options; the options are never removed with it.
-//	@Tags			VariantGroup
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id	path	string	true	"Variant-group identifier"
-//	@Success		204	"No Content"
-//	@Failure		400	{object}	httpx.SwaggerError
-//	@Failure		401	{object}	httpx.SwaggerError
-//	@Failure		403	{object}	httpx.SwaggerError
-//	@Failure		404	{object}	httpx.SwaggerError
-//	@Failure		409	{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id} [delete]
-func (h *Handler) DeleteVariantGroup(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	if err := h.svc.DeleteVariantGroup(ctx, appdto.AdminVariantGroupRefInput{ID: id}); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// AddGroupImage stores an uploaded group picture. The bytes are read with a hard
-// ceiling and handed to the use case, which validates them by content and by the
-// gallery's count; neither the file name nor the client-declared media type is
-// trusted (FR-018).
-//
-//	@Summary		Upload a group picture (ADMIN)
-//	@Description	Stores a picture for the variant group through the media provider. The content is validated by signature, not by name or declared media type. The first picture becomes the main one.
-//	@Tags			VariantGroup
-//	@Accept			multipart/form-data
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id		path		string	true	"Variant-group identifier"
-//	@Param			image	formData	file	true	"Group image (JPEG, PNG or WebP)"
-//	@Success		201		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Failure		409		{object}	httpx.SwaggerError
-//	@Failure		413		{object}	httpx.SwaggerError
-//	@Failure		503		{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id}/images [post]
-func (h *Handler) AddGroupImage(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	content, appErr := h.readPictureFile(r)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.AddGroupImage(ctx, appdto.AddGroupImageInput{GroupID: id, Content: content})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusCreated, toAdminVariantGroupDetailResponse(out))
-}
-
-// RemoveGroupImage detaches one picture from a variant group and releases its
-// stored asset (FR-018).
-//
-//	@Summary		Remove a group picture (ADMIN)
-//	@Description	Detaches one picture from the variant group and releases its stored asset. Removing the main picture promotes the next one by position.
-//	@Tags			VariantGroup
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id		path	string	true	"Variant-group identifier"
-//	@Param			imageId	path	string	true	"Picture identifier"
-//	@Success		204		"No Content"
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id}/images/{imageId} [delete]
-func (h *Handler) RemoveGroupImage(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	imageID, appErr := pathUUID(r, "imageId", fieldImageID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	if err := h.svc.RemoveGroupImage(ctx, appdto.RemoveGroupImageInput{GroupID: id, ImageID: imageID}); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// SetPrimaryGroupImage makes one picture the group's main one (FR-018).
-//
-//	@Summary		Set the main group picture (ADMIN)
-//	@Description	Makes one picture the variant group's main one, clearing any other in the same operation.
-//	@Tags			VariantGroup
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			id		path	string	true	"Variant-group identifier"
-//	@Param			imageId	path	string	true	"Picture identifier"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminVariantGroupDetailResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Router			/admin/product-groups/{id}/images/{imageId}/primary [post]
-func (h *Handler) SetPrimaryGroupImage(w http.ResponseWriter, r *http.Request) {
-	actor, ok := h.sessionActor(w, r)
-	if !ok {
-		return
-	}
-	id, appErr := pathUUID(r, "id", fieldID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	imageID, appErr := pathUUID(r, "imageId", fieldImageID)
-	if appErr != nil {
-		httpx.WriteError(w, r, appErr, h.logger)
-		return
-	}
-	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.SetPrimaryGroupImage(ctx, appdto.SetPrimaryGroupImageInput{GroupID: id, ImageID: imageID})
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	httpx.WriteSuccess(w, r, http.StatusOK, toAdminVariantGroupDetailResponse(out))
-}
-
-// toAdminVariantGroupResponse is the single conversion point from the application
-// group DTO to the administrator HTTP shape, so the members a customer must not
-// see cannot drift per route.
-func toAdminVariantGroupResponse(group appdto.AdminVariantGroupOutput) httpdto.AdminVariantGroupResponse {
-	return httpdto.AdminVariantGroupResponse{
-		ID:          group.ID,
-		Name:        group.Name,
-		Slug:        group.Slug,
-		Description: group.Description,
-		CategoryID:  group.CategoryID,
-		Position:    group.Position,
-		OptionName:  group.OptionName,
-		ImageCount:  group.ImageCount,
-		ImageURL:    group.ImageURL,
-		CreatedAt:   group.CreatedAt,
-		UpdatedAt:   group.UpdatedAt,
-	}
-}
-
-// toAdminVariantGroupResponses maps a page. It always allocates, so an empty
-// catalogue answers an empty array rather than null.
-func toAdminVariantGroupResponses(list []appdto.AdminVariantGroupOutput) []httpdto.AdminVariantGroupResponse {
-	out := make([]httpdto.AdminVariantGroupResponse, 0, len(list))
-	for _, group := range list {
-		out = append(out, toAdminVariantGroupResponse(group))
-	}
-	return out
-}
-
-// toAdminVariantGroupDetailResponse maps one group's administrator detail,
-// including its pictures and every option.
-func toAdminVariantGroupDetailResponse(detail appdto.AdminVariantGroupDetailOutput) httpdto.AdminVariantGroupDetailResponse {
-	return httpdto.AdminVariantGroupDetailResponse{
-		AdminVariantGroupResponse: toAdminVariantGroupResponse(detail.AdminVariantGroupOutput),
-		Images:                    toAdminGroupImageResponses(detail.Images),
-		Options:                   toAdminGroupOptionResponses(detail.Options),
-	}
-}
-
-// toAdminGroupImageResponses maps the group pictures in the order they were given.
-// It always allocates, so a group with no picture answers `[]` rather than null.
-func toAdminGroupImageResponses(list []appdto.AdminGroupImageOutput) []httpdto.AdminGroupImageResponse {
-	out := make([]httpdto.AdminGroupImageResponse, 0, len(list))
-	for _, image := range list {
-		out = append(out, httpdto.AdminGroupImageResponse{
-			ID:        image.ID,
-			PublicID:  image.PublicID,
-			URL:       image.URL,
-			Width:     image.Width,
-			Height:    image.Height,
-			Position:  image.Position,
-			IsPrimary: image.IsPrimary,
-		})
-	}
-	return out
-}
-
-// toAdminGroupOptionResponses maps a group's options in the order they were given.
-// It always allocates, so an empty group answers `[]` rather than null.
-func toAdminGroupOptionResponses(list []appdto.AdminGroupOptionOutput) []httpdto.AdminGroupOptionResponse {
-	out := make([]httpdto.AdminGroupOptionResponse, 0, len(list))
-	for _, option := range list {
-		out = append(out, httpdto.AdminGroupOptionResponse{
-			ID:         option.ID,
-			Name:       option.Name,
-			Slug:       option.Slug,
-			Label:      option.Label,
-			Price:      httpdto.PriceResponse{Amount: option.Price.Amount, Currency: option.Price.Currency},
-			ImageURL:   option.ImageURL,
-			Position:   option.Position,
-			SellState:  string(option.SellState),
-			IsPreorder: option.IsPreorder,
 		})
 	}
 	return out

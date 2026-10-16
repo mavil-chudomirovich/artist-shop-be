@@ -47,7 +47,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ItemNotPurchasable(uuid.New()),
 			code:    constant.CodeItemNotPurchasable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -55,7 +55,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ErrItemNotPurchasable,
 			code:    constant.CodeItemNotPurchasable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -63,7 +63,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ItemPriceChanged(uuid.New()),
 			code:    constant.CodeItemPriceChanged,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -71,7 +71,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ErrItemPriceChanged,
 			code:    constant.CodeItemPriceChanged,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -79,7 +79,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.QuantityExceedsAvailable(uuid.New(), 3, 5),
 			code:    constant.CodeQuantityExceedsAvailable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -87,7 +87,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ErrQuantityExceedsAvailable,
 			code:    constant.CodeQuantityExceedsAvailable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -200,7 +200,7 @@ func TestConfirmShortageMapsToTheReusedQuantityCode(t *testing.T) {
 	if appErr.Status != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", appErr.Status)
 	}
-	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldProductID {
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldVariantID {
 		t.Fatalf("expected one detail naming productId, got %+v", appErr.Details)
 	}
 	if !strings.Contains(appErr.Details[0].Issue, product.String()) {
@@ -249,8 +249,8 @@ func TestCodedCarriesTheDocumentedStatus(t *testing.T) {
 // withField attaches the field detail to the coded error.
 func TestWithFieldAttachesTheDetail(t *testing.T) {
 	appErr := withField(coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
-		model.FieldProductID, "only 3 available")
-	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldProductID {
+		model.FieldVariantID, "only 3 available")
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldVariantID {
 		t.Fatalf("expected a detail naming productId, got %+v", appErr.Details)
 	}
 	if !strings.Contains(appErr.Details[0].Issue, "3") {

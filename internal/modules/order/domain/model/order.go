@@ -14,8 +14,9 @@ import (
 // presentation can put one straight into the response detail without a second
 // vocabulary that could drift away from the contract.
 const (
-	// FieldProductID is the member carrying a product identifier.
-	FieldProductID = "productId"
+	// FieldVariantID is the member carrying a variant identifier. Under the SKU
+	// model the variant is the unit of sale, so the item refusals name it.
+	FieldVariantID = "variantId"
 	// FieldStatus is the member carrying an order state.
 	FieldStatus = "status"
 	// FieldAddressID is the member carrying the delivery-address identifier the
@@ -37,9 +38,9 @@ type Price struct {
 	Currency string
 }
 
-// OrderLine is one item of an order. It holds a snapshot of the product as it was
-// at checkout, so nothing an order line shows depends on the product still
-// existing (FR-002, research D3).
+// OrderLine is one item of an order. It holds a snapshot of the product and the
+// variant as they were at checkout, so nothing an order line shows depends on the
+// product or its variant still existing (FR-002, research D3, D8).
 type OrderLine struct {
 	// ID identifies the line.
 	ID uuid.UUID
@@ -49,9 +50,24 @@ type OrderLine struct {
 	// the plan's record of what was bought. It is never read to resolve the
 	// product (research D3).
 	ProductID uuid.UUID
-	// Name is the product's name at checkout.
-	Name string
-	// Slug is the product's link segment at checkout.
+	// VariantID is the variant bought, a loose informational reference with no
+	// foreign key, exactly as ProductID is (research D8).
+	VariantID uuid.UUID
+	// ProductName is the product's name at checkout. It reuses the order_items
+	// name column; there is no second name column (research D8).
+	ProductName string
+	// ProductCode is the product's operator-facing code at checkout, part of the
+	// line's natural key (FR-019, FR-020, research D8).
+	ProductCode string
+	// VariantName is the variant's display name at checkout (FR-019).
+	VariantName string
+	// SKU is the variant's SKU at checkout, part of the line's natural key. It is
+	// stored but never shown to a customer (FR-019, FR-020).
+	SKU string
+	// Slug is the product's link segment at checkout, the OrderLine.Slug column
+	// the historic rows already carried. The variant-facts contract reports the
+	// product's current slug, so a line written after the SKU model keeps a
+	// working product link without resolving the product (research D8).
 	Slug string
 	// UnitPrice is the price at checkout, as an integer amount plus its currency.
 	UnitPrice Price

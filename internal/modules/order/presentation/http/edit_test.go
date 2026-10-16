@@ -60,7 +60,7 @@ func TestEditReturns200WithTheEditedOrder(t *testing.T) {
 	fake := &fakeEditOrders{editView: edited}
 	router := newOrderRouter(fake)
 
-	body := `{"lines":[{"productId":"` + uuid.New().String() + `","quantity":2}]}`
+	body := `{"lines":[{"variantId":"` + uuid.New().String() + `","quantity":2}]}`
 	rec := perform(router, http.MethodPut, ordersPath+"/"+edited.ID.String(), body, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -117,8 +117,8 @@ func TestEditMapsEveryRefusal(t *testing.T) {
 	}{
 		{"not editable", domainerr.ErrNotEditable, constant.CodeNotEditable, http.StatusConflict, ""},
 		{"empty order", domainerr.ErrEmptyOrder, constant.CodeEmptyOrder, http.StatusConflict, ""},
-		{"off-sale line", domainerr.ItemNotPurchasable(product), constant.CodeItemNotPurchasable, http.StatusConflict, "productId"},
-		{"over available", domainerr.QuantityExceedsAvailable(product, 3, 5), constant.CodeQuantityExceedsAvailable, http.StatusConflict, "productId"},
+		{"off-sale line", domainerr.ItemNotPurchasable(product), constant.CodeItemNotPurchasable, http.StatusConflict, "variantId"},
+		{"over available", domainerr.QuantityExceedsAvailable(product, 3, 5), constant.CodeQuantityExceedsAvailable, http.StatusConflict, "variantId"},
 		{"unknown or foreign order", domainerr.ErrNotFound, constant.CodeOrderNotFound, http.StatusNotFound, ""},
 		{"foreign addressId", domainerr.InvalidValue(model.FieldAddressID, "is not one of the customer's addresses"), "VALIDATION_ERROR", http.StatusBadRequest, "addressId"},
 	}
@@ -126,7 +126,7 @@ func TestEditMapsEveryRefusal(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			router := newOrderRouter(&fakeEditOrders{editErr: tc.err})
-			body := `{"lines":[{"productId":"` + product.String() + `","quantity":1}]}`
+			body := `{"lines":[{"variantId":"` + product.String() + `","quantity":1}]}`
 			rec := perform(router, http.MethodPut, ordersPath+"/"+uuid.New().String(), body, "customer-token")
 			if rec.Code != tc.status {
 				t.Fatalf("expected %d, got %d (%s)", tc.status, rec.Code, rec.Body.String())
@@ -162,14 +162,14 @@ func TestEditRejectsBadRequestShapes(t *testing.T) {
 			field: "addressId",
 		},
 		{
-			name:  "productId is not a UUID",
-			body:  `{"lines":[{"productId":"not-a-uuid","quantity":1}]}`,
+			name:  "variantId is not a UUID",
+			body:  `{"lines":[{"variantId":"not-a-uuid","quantity":1}]}`,
 			code:  "VALIDATION_ERROR",
-			field: "productId",
+			field: "variantId",
 		},
 		{
 			name:  "quantity is not positive",
-			body:  `{"lines":[{"productId":"` + product.String() + `","quantity":0}]}`,
+			body:  `{"lines":[{"variantId":"` + product.String() + `","quantity":0}]}`,
 			code:  "VALIDATION_ERROR",
 			field: "quantity",
 		},

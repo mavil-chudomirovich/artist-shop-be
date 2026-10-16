@@ -20,7 +20,7 @@ const FieldDelta = "delta"
 // key on the ledger.
 const FieldSourceReference = "sourceReference"
 
-// Movement is one immutable record of a single change to a product's physical
+// Movement is one immutable record of a single change to a variant's physical
 // stock. It is append-only: nothing edits or removes a row, so the ledger is the
 // traceable history of how a quantity came to be (FR-004, research D1).
 //
@@ -28,8 +28,8 @@ const FieldSourceReference = "sourceReference"
 type Movement struct {
 	// ID identifies the movement.
 	ID uuid.UUID
-	// ProductID is the product whose quantity changed.
-	ProductID uuid.UUID
+	// VariantID is the variant whose quantity changed.
+	VariantID uuid.UUID
 	// Kind is the kind of change.
 	Kind constant.MovementKind
 	// Delta is the signed change: positive for a restock and a positive
@@ -54,7 +54,7 @@ type Movement struct {
 // NewMovement builds one ledger row, refusing a delta of zero (a change that
 // changes nothing is not a change), a negative resulting quantity and a kind the
 // module does not know (FR-004, FR-009, research D9).
-func NewMovement(productID uuid.UUID, kind constant.MovementKind, delta, resultingQuantity int64, actorID *uuid.UUID, sourceReference, note *string, now time.Time) (*Movement, error) {
+func NewMovement(variantID uuid.UUID, kind constant.MovementKind, delta, resultingQuantity int64, actorID *uuid.UUID, sourceReference, note *string, now time.Time) (*Movement, error) {
 	if !constant.IsValidMovementKind(kind) {
 		return nil, domainerr.InvalidValue(FieldDelta, "is not a known movement kind")
 	}
@@ -66,7 +66,7 @@ func NewMovement(productID uuid.UUID, kind constant.MovementKind, delta, resulti
 	}
 	return &Movement{
 		ID:                uuid.New(),
-		ProductID:         productID,
+		VariantID:         variantID,
 		Kind:              kind,
 		Delta:             delta,
 		ResultingQuantity: resultingQuantity,

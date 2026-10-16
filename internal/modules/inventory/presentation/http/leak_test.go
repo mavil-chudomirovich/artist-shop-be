@@ -103,7 +103,7 @@ func TestStockResponseCarriesOnlyTheThreeQuantities(t *testing.T) {
 	id := uuid.New()
 	repo := &httpRepository{physical: 5}
 	svc := newLeakService(repo, &leakAuditor{})
-	if err := svc.Reserve(context.Background(), appdto.ReserveInput{OrderID: uuid.New(), ProductID: id, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), appdto.ReserveInput{OrderID: uuid.New(), VariantID: id, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 	root := newLeakRouter(svc)
@@ -137,18 +137,18 @@ func TestStockResponseCarriesOnlyTheThreeQuantities(t *testing.T) {
 	// The raw body must not name an internal hold or ledger concept, nor repeat
 	// the product identifier the path already carries.
 	raw := strings.ToLower(rec.Body.String())
-	for _, forbidden := range []string{"holdid", "orderid", "sourcereference", "actorid", "movements", "note", "productid"} {
+	for _, forbidden := range []string{"holdid", "orderid", "sourcereference", "actorid", "movements", "note", "variantid"} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("the stock response leaks %q: %s", forbidden, rec.Body.String())
 		}
 	}
 }
 
-// Every manual operation writes one audit entry naming the product and the
+// Every manual operation writes one audit entry naming the variant and the
 // acting administrator, and the metadata carries only the change (kind and
 // delta) — never the operator's free-text note and never a customer's personal
 // data (FR-006, Constitution VI).
-func TestManualAuditEntriesCarryOnlyTheProductAndChange(t *testing.T) {
+func TestManualAuditEntriesCarryOnlyTheVariantAndChange(t *testing.T) {
 	id := uuid.New()
 	audit := &leakAuditor{}
 	svc := newLeakService(&httpRepository{physical: 10}, audit)
@@ -175,8 +175,8 @@ func TestManualAuditEntriesCarryOnlyTheProductAndChange(t *testing.T) {
 		t.Fatalf("expected %d audit entries, got %d", len(requests), len(events))
 	}
 	for _, event := range events {
-		if event.targetType != "product" || event.targetID != id.String() {
-			t.Fatalf("an audit entry must name the product, got type=%q target=%q", event.targetType, event.targetID)
+		if event.targetType != "variant" || event.targetID != id.String() {
+			t.Fatalf("an audit entry must name the variant, got type=%q target=%q", event.targetType, event.targetID)
 		}
 		if event.actorID == nil || *event.actorID != testAdminID {
 			t.Fatalf("an audit entry must name the acting administrator, got %v", event.actorID)

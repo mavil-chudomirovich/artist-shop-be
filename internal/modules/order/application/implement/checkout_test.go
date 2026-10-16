@@ -56,20 +56,20 @@ func (f *fakeCart) ClearCart(_ context.Context, userID uuid.UUID) error {
 	return f.clearErr
 }
 
-// fakeCatalog answers the ProductCatalog contract from a fixed set of products.
-type fakeCatalog struct {
-	products map[uuid.UUID]contracts.ProductSummary
+// fakeVariants answers the ProductVariants contract from a fixed set of variants.
+type fakeVariants struct {
+	products map[uuid.UUID]contracts.VariantSummary
 	err      error
 }
 
-func (f *fakeCatalog) Products(_ context.Context, productIDs []uuid.UUID) ([]contracts.ProductSummary, error) {
+func (f *fakeVariants) Variants(_ context.Context, variantIDs []uuid.UUID) ([]contracts.VariantSummary, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	out := make([]contracts.ProductSummary, 0, len(productIDs))
-	for _, id := range productIDs {
-		if product, ok := f.products[id]; ok {
-			out = append(out, product)
+	out := make([]contracts.VariantSummary, 0, len(variantIDs))
+	for _, id := range variantIDs {
+		if variant, ok := f.products[id]; ok {
+			out = append(out, variant)
 		}
 	}
 	return out, nil
@@ -82,13 +82,13 @@ type fakeAvailability struct {
 	err       error
 }
 
-func (f *fakeAvailability) AvailableQuantity(_ context.Context, productIDs []uuid.UUID) ([]contracts.Availability, error) {
+func (f *fakeAvailability) AvailableQuantity(_ context.Context, variantIDs []uuid.UUID) ([]contracts.Availability, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	out := make([]contracts.Availability, 0, len(productIDs))
-	for _, id := range productIDs {
-		out = append(out, contracts.Availability{ProductID: id, Available: f.available[id]})
+	out := make([]contracts.Availability, 0, len(variantIDs))
+	for _, id := range variantIDs {
+		out = append(out, contracts.Availability{VariantID: id, Available: f.available[id]})
 	}
 	return out, nil
 }
@@ -96,7 +96,7 @@ func (f *fakeAvailability) AvailableQuantity(_ context.Context, productIDs []uui
 // reserveCall records one hold taken for an order.
 type reserveCall struct {
 	orderID   uuid.UUID
-	productID uuid.UUID
+	variantID uuid.UUID
 	quantity  int64
 }
 
@@ -104,20 +104,20 @@ type reserveCall struct {
 // reference the payment event produced (FR-014, research D5).
 type saleCall struct {
 	orderID   uuid.UUID
-	productID uuid.UUID
+	variantID uuid.UUID
 	reference string
 }
 
 // releaseCall records one hold returned to availability (FR-015).
 type releaseCall struct {
 	orderID   uuid.UUID
-	productID uuid.UUID
+	variantID uuid.UUID
 }
 
 // fakeReservation answers the InventoryReservation contract. It records every
 // hold, sale and release so a test can prove which lines were touched and that
 // the same line's effect is applied exactly once. failOn makes Reserve refuse the
-// named product, so a test can force a partial hold to be rolled back (FR-005,
+// named variant, so a test can force a partial hold to be rolled back (FR-005,
 // FR-024).
 type fakeReservation struct {
 	calls    []reserveCall
@@ -127,21 +127,21 @@ type fakeReservation struct {
 	failOn   map[uuid.UUID]error
 }
 
-func (f *fakeReservation) Reserve(_ context.Context, orderID, productID uuid.UUID, quantity int64) error {
-	if err, ok := f.failOn[productID]; ok {
+func (f *fakeReservation) Reserve(_ context.Context, orderID, variantID uuid.UUID, quantity int64) error {
+	if err, ok := f.failOn[variantID]; ok {
 		return err
 	}
-	f.calls = append(f.calls, reserveCall{orderID: orderID, productID: productID, quantity: quantity})
+	f.calls = append(f.calls, reserveCall{orderID: orderID, variantID: variantID, quantity: quantity})
 	return nil
 }
 
-func (f *fakeReservation) Release(_ context.Context, orderID, productID uuid.UUID) error {
-	f.releases = append(f.releases, releaseCall{orderID: orderID, productID: productID})
+func (f *fakeReservation) Release(_ context.Context, orderID, variantID uuid.UUID) error {
+	f.releases = append(f.releases, releaseCall{orderID: orderID, variantID: variantID})
 	return nil
 }
 
-func (f *fakeReservation) ApplySale(_ context.Context, orderID, productID uuid.UUID, reference string) error {
-	f.sales = append(f.sales, saleCall{orderID: orderID, productID: productID, reference: reference})
+func (f *fakeReservation) ApplySale(_ context.Context, orderID, variantID uuid.UUID, reference string) error {
+	f.sales = append(f.sales, saleCall{orderID: orderID, variantID: variantID, reference: reference})
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (memoryClock) Now() time.Time { return fixedNow }
 type checkoutFixture struct {
 	svc          *Service
 	cart         *fakeCart
-	catalog      *fakeCatalog
+	catalog      *fakeVariants
 	availability *fakeAvailability
 	reservations *fakeReservation
 	customers    *fakeCustomers
@@ -213,7 +213,7 @@ type checkoutFixture struct {
 func newCheckoutFixture(t *testing.T) *checkoutFixture {
 	t.Helper()
 	cart := &fakeCart{}
-	catalog := &fakeCatalog{products: map[uuid.UUID]contracts.ProductSummary{}}
+	catalog := &fakeVariants{products: map[uuid.UUID]contracts.VariantSummary{}}
 	availability := &fakeAvailability{available: map[uuid.UUID]int64{}}
 	reservations := &fakeReservation{}
 	customers := &fakeCustomers{}
@@ -221,7 +221,7 @@ func newCheckoutFixture(t *testing.T) *checkoutFixture {
 	svc := New(Service{
 		Orders:       orders,
 		Carts:        cart,
-		Products:     catalog,
+		Variants:     catalog,
 		Availability: availability,
 		Reservations: reservations,
 		Customers:    customers,
@@ -246,16 +246,20 @@ func actorContext(userID uuid.UUID) context.Context {
 	return appinterface.WithActor(context.Background(), appinterface.Actor{ID: userID, Role: access.RoleCustomer})
 }
 
-// seedProduct puts one on-sale product in the fake catalogue with the given shelf
-// and returns its identifier.
-func seedProduct(f *checkoutFixture, name, slug string, amount, available int64) uuid.UUID {
+// seedProduct puts one on-sale variant in the fake catalogue with the given
+// shelf and returns its identifier.
+func seedProduct(f *checkoutFixture, name, variantName string, amount, available int64) uuid.UUID {
 	id := uuid.New()
-	f.catalog.products[id] = contracts.ProductSummary{
-		ID:     id,
-		Name:   name,
-		Slug:   slug,
-		OnSale: true,
-		Price:  contracts.ProductPrice{Amount: amount, Currency: "VND"},
+	suffix := id.String()[:8]
+	f.catalog.products[id] = contracts.VariantSummary{
+		VariantID:   id,
+		ProductID:   uuid.New(),
+		ProductName: name,
+		ProductCode: "P-" + suffix,
+		VariantName: variantName,
+		SKU:         "SKU-" + suffix,
+		OnSale:      true,
+		Price:       contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
 	return id
@@ -311,8 +315,8 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsNothing(t *testing.T) {
 	first := seedProduct(f, "Tranh sơn dầu", firstSlug, 120000, 5)
 	second := seedProduct(f, "Silk scroll", secondSlug, 33333, 5)
 	f.cart.lines = []contracts.CartLine{
-		{ProductID: first, Quantity: 2, UnitPriceAmount: 120000, Currency: "VND"},
-		{ProductID: second, Quantity: 3, UnitPriceAmount: 33333, Currency: "VND"},
+		{VariantID: first, Quantity: 2, UnitPrice: contracts.ProductPrice{Amount: 120000, Currency: "VND"}},
+		{VariantID: second, Quantity: 3, UnitPrice: contracts.ProductPrice{Amount: 33333, Currency: "VND"}},
 	}
 
 	view, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
@@ -329,12 +333,12 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsNothing(t *testing.T) {
 	if view.ItemCount != 2 || len(view.Lines) != 2 {
 		t.Fatalf("expected 2 lines, got %+v", view.Lines)
 	}
-	if view.Lines[0].Name != "Tranh sơn dầu" || view.Lines[0].Slug != firstSlug ||
+	if view.Lines[0].ProductName != "Tranh sơn dầu" || view.Lines[0].VariantName != firstSlug ||
 		view.Lines[0].UnitPrice.Amount != 120000 ||
 		view.Lines[0].LineTotal.Amount != 240000 || view.Lines[0].Quantity != 2 {
 		t.Fatalf("first line snapshot = %+v", view.Lines[0])
 	}
-	if view.Lines[1].Name != "Silk scroll" || view.Lines[1].Slug != secondSlug ||
+	if view.Lines[1].ProductName != "Silk scroll" || view.Lines[1].VariantName != secondSlug ||
 		view.Lines[1].UnitPrice.Amount != 33333 ||
 		view.Lines[1].LineTotal.Amount != 99999 {
 		t.Fatalf("second line snapshot = %+v", view.Lines[1])
@@ -386,7 +390,7 @@ func TestCheckoutUsesTheNamedAddress(t *testing.T) {
 	}
 	f.customers.customer.Addresses = append(f.customers.customer.Addresses, named)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 
 	view, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{AddressID: &named.ID})
 	if err != nil {
@@ -421,8 +425,8 @@ func TestCheckoutRefusesAnOffSaleProduct(t *testing.T) {
 	user := uuid.New()
 	seedAddress(f, user)
 	product := seedProduct(f, "Sắp ra mắt", "sap-ra-mat", 100000, 5)
-	f.catalog.products[product] = contracts.ProductSummary{ID: product, Name: "Sắp ra mắt", Slug: "sap-ra-mat", OnSale: false}
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.catalog.products[product] = contracts.VariantSummary{VariantID: product, ProductID: uuid.New(), ProductName: "Sắp ra mắt", VariantName: "sap-ra-mat", OnSale: false}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
@@ -430,7 +434,7 @@ func TestCheckoutRefusesAnOffSaleProduct(t *testing.T) {
 		t.Fatalf("expected ErrItemNotPurchasable, got %v", err)
 	}
 	var refusal *domainerr.ItemNotPurchasableError
-	if !errors.As(err, &refusal) || refusal.ProductID != product {
+	if !errors.As(err, &refusal) || refusal.VariantID != product {
 		t.Fatalf("the refusal must name the product, got %v", err)
 	}
 	if len(f.orders.created) != 0 {
@@ -446,7 +450,7 @@ func TestCheckoutRefusesARemovedProduct(t *testing.T) {
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
 	delete(f.catalog.products, product)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	if _, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{}); !errors.Is(err, domainerr.ErrItemNotPurchasable) {
@@ -462,7 +466,7 @@ func TestCheckoutRefusesAChangedPrice(t *testing.T) {
 	user := uuid.New()
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 150000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
@@ -470,7 +474,7 @@ func TestCheckoutRefusesAChangedPrice(t *testing.T) {
 		t.Fatalf("expected ErrItemPriceChanged, got %v", err)
 	}
 	var refusal *domainerr.ItemPriceChangedError
-	if !errors.As(err, &refusal) || refusal.ProductID != product {
+	if !errors.As(err, &refusal) || refusal.VariantID != product {
 		t.Fatalf("the refusal must name the product, got %v", err)
 	}
 	if len(f.orders.created) != 0 {
@@ -486,7 +490,7 @@ func TestCheckoutRefusesAQuantityAboveAvailable(t *testing.T) {
 	user := uuid.New()
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 2)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 5, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 5, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
@@ -497,7 +501,7 @@ func TestCheckoutRefusesAQuantityAboveAvailable(t *testing.T) {
 	if !errors.As(err, &refusal) {
 		t.Fatalf("expected the typed refusal, got %v", err)
 	}
-	if refusal.ProductID != product || refusal.Available != 2 || refusal.Requested != 5 {
+	if refusal.VariantID != product || refusal.Available != 2 || refusal.Requested != 5 {
 		t.Fatalf("the refusal must name the item and the amounts, got %+v", refusal)
 	}
 	if len(f.orders.created) != 0 {
@@ -512,7 +516,7 @@ func TestCheckoutRefusesACustomerWithNoAddress(t *testing.T) {
 	user := uuid.New()
 	f.customers.customer = contracts.Customer{ID: user}
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	want := append([]contracts.CartLine(nil), f.cart.lines...)
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
@@ -532,7 +536,7 @@ func TestCheckoutRefusesAForeignAddressID(t *testing.T) {
 	user := uuid.New()
 	seedAddress(f, user)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
-	f.cart.lines = []contracts.CartLine{{ProductID: product, Quantity: 1, UnitPriceAmount: 100000, Currency: "VND"}}
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
 	foreign := uuid.New()
 
 	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{AddressID: &foreign})

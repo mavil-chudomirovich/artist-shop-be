@@ -302,32 +302,36 @@ func run() error {
 	// one queue, one retry policy, one shutdown.
 	productConfig := productappinterface.Config{}
 	productRepository := productpostgres.NewProductRepository(db.Pool)
-	variantGroupRepository := productpostgres.NewVariantGroupRepository(db.Pool)
+	variantRepository := productpostgres.NewVariantRepository(db.Pool)
+	// The inventory repository is built before the product service because the
+	// product detail reads each variant's stock status through module 05's
+	// availability contract (research D10, Constitution I).
+	inventoryRepository := inventorypostgres.NewInventoryRepository(db.Pool)
 	productService := productimplement.New(productimplement.Service{
-		Products:   productRepository,
-		Groups:     variantGroupRepository,
-		Visibility: categoryvisibility.New(categoryRepository),
-		Audit:      productauditor.New(auditWriter),
-		Media:      userMediaStore,
-		Tx:         db,
-		Config:     productConfig,
-		Mapper:     productmapper.New(),
+		Products:     productRepository,
+		Variants:     variantRepository,
+		Visibility:   categoryvisibility.New(categoryRepository),
+		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
+		Audit:        productauditor.New(auditWriter),
+		Media:        userMediaStore,
+		Tx:           db,
+		Config:       productConfig,
+		Mapper:       productmapper.New(),
 	})
 	productHandler := producthttp.New(productService, productConfig, logger)
 
 	// Module 05 (inventory). One administrator group, /admin/inventory, carries
 	// the administrator role guard. The module depends on module 04 through the
-	// two cross-module contracts: the availability signal it sends when stock
-	// crosses zero (US4) and the existence question a read or a decrease must ask.
-	// Both are answered by module 04's own adapter, supplied here, so inventory
-	// never imports product's internals (research D4, Constitution I). The module
-	// reuses the foundation audit writer one more time: one queue, one retry
-	// policy, one shutdown.
+	// two cross-module contracts: the variant-keyed availability signal it sends
+	// when stock crosses zero and the existence question a read or a decrease must
+	// ask. Both are answered by module 04's own adapter, supplied here, so
+	// inventory never imports product's internals (research D4, Constitution I).
+	// The module reuses the foundation audit writer one more time: one queue, one
+	// retry policy, one shutdown.
 	//
 	// The wall clock is the one seam that makes the hold window and the sweep
 	// testable; the manual operations only stamp rows with it (research D15).
-	productAvailability := productavailability.New(productService, productRepository)
-	inventoryRepository := inventorypostgres.NewInventoryRepository(db.Pool)
+	productAvailability := productavailability.New(productService, variantRepository)
 	inventoryService := inventoryimplement.New(inventoryimplement.Service{
 		Inventory:    inventoryRepository,
 		Lookup:       productAvailability,
@@ -357,7 +361,7 @@ func run() error {
 	cartRepository := cartpostgres.NewCartRepository(db.Pool)
 	cartService := cartimplement.New(cartimplement.Service{
 		Carts:        cartRepository,
-		Products:     productcatalog.New(productRepository),
+		Variants:     productcatalog.New(variantRepository),
 		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
 		Tx:           db,
 		Clock:        wallClock{},
@@ -388,7 +392,7 @@ func run() error {
 	orderService := orderimplement.New(orderimplement.Service{
 		Orders:       orderRepository,
 		Carts:        cartcheckout.New(cartRepository),
-		Products:     productcatalog.New(productRepository),
+		Variants:     productcatalog.New(variantRepository),
 		Availability: inventoryavailability.New(inventoryRepository, wallClock{}),
 		Reservations: inventoryreservation.New(inventoryService),
 		Customers:    userService,
@@ -478,23 +482,17 @@ func run() error {
 			// administrator role guard (research D7).
 			r.Mount("/categories", categoryHandler.Router(authHooks))
 			r.Mount("/admin/categories", categoryHandler.AdminRouter(authHooks))
-			// The public catalogue: on sale or pre-order, in a category the
-			// operator has left on display, addressed by slug. No session is
-			// required (FR-001). The /admin/products group is addressed by
-			// identifier behind the administrator role guard (research D11).
+			// The public catalogue: one entry per product with its lowest on-sale
+			// variant price and default image, in a category the operator has left
+			// on display, addressed by slug. No session is required (FR-001). The
+			// /admin/products group is addressed by identifier behind the
+			// administrator role guard; its variants are their own sub-resource
+			// (FR-012, FR-015).
 			r.Mount("/products", productHandler.Router(authHooks))
-			// The public variant-group group: a group's shared content and its
-			// visible options, addressed by its own slug namespace. No session is
-			// required (FR-002, research D6).
-			r.Mount("/product-groups", productHandler.GroupRouter(authHooks))
 			r.Mount("/admin/products", productHandler.AdminRouter(authHooks))
-			// The variant-group administrator surface: group CRUD and the
-			// group's own picture gallery, addressed by identifier behind the
-			// administrator role guard (FR-009 to FR-014, research D8).
-			r.Mount("/admin/product-groups", productHandler.GroupAdminRouter(authHooks))
-			// The inventory administrator surface: one product's stock and its
-			// manual operations, addressed by identifier behind the administrator
-			// role guard (research D8).
+			// The inventory administrator surface: one variant's stock and its
+			// manual operations, addressed by variant identifier behind the
+			// administrator role guard (research D8).
 			r.Mount("/admin/inventory", inventoryHandler.AdminRouter(authHooks))
 			// The cart: the signed-in customer's singleton resource, addressed at
 			// /cart with no identifier behind the session guard; lines are

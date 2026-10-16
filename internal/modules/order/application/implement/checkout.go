@@ -35,9 +35,11 @@ type Service struct {
 	// supplied by module 06's adapter at the composition root, so the order never
 	// reads the cart's tables (research D1).
 	Carts appinterface.CartCheckout
-	// Products answers a line's current name, slug, on-sale state and price. It
-	// is supplied by module 04's adapter at the composition root (research D2).
-	Products appinterface.ProductCatalog
+	// Variants answers a line's current product and variant facts: the product
+	// name and code, the variant name and SKU, whether the variant may be sold and
+	// its current effective price. It is supplied by module 04's adapter at the
+	// composition root (research D6).
+	Variants appinterface.ProductVariants
 	// Availability answers what is currently available for a line. It is
 	// supplied by module 05's adapter at the composition root (research D2).
 	Availability appinterface.InventoryAvailability
@@ -150,50 +152,54 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 		return nil, domainerr.ErrCartEmpty
 	}
 
-	productIDs := make([]uuid.UUID, 0, len(lines))
+	variantIDs := make([]uuid.UUID, 0, len(lines))
 	for _, line := range lines {
-		productIDs = append(productIDs, line.ProductID)
+		variantIDs = append(variantIDs, line.VariantID)
 	}
 
-	// One bulk read of the products and one of availability, however many lines
-	// the cart holds (plan Performance Goals).
-	summaries, err := s.Products.Products(ctx, productIDs)
+	// One bulk read of the variant facts and one of availability, however many
+	// lines the cart holds (plan Performance Goals).
+	summaries, err := s.Variants.Variants(ctx, variantIDs)
 	if err != nil {
 		return nil, err
 	}
-	byID := make(map[uuid.UUID]contracts.ProductSummary, len(summaries))
+	byID := make(map[uuid.UUID]contracts.VariantSummary, len(summaries))
 	for _, summary := range summaries {
-		byID[summary.ID] = summary
+		byID[summary.VariantID] = summary
 	}
 
-	availabilities, err := s.Availability.AvailableQuantity(ctx, productIDs)
+	availabilities, err := s.Availability.AvailableQuantity(ctx, variantIDs)
 	if err != nil {
 		return nil, err
 	}
 	availableByID := make(map[uuid.UUID]int64, len(availabilities))
 	for _, item := range availabilities {
-		availableByID[item.ProductID] = item.Available
+		availableByID[item.VariantID] = item.Available
 	}
 
 	snapshot := make([]model.OrderLine, 0, len(lines))
 	for _, line := range lines {
-		summary, ok := byID[line.ProductID]
+		summary, ok := byID[line.VariantID]
 		if !ok || !summary.OnSale {
-			return nil, domainerr.ItemNotPurchasable(line.ProductID)
+			return nil, domainerr.ItemNotPurchasable(line.VariantID)
 		}
-		if summary.Price.Amount != line.UnitPriceAmount || summary.Price.Currency != line.Currency {
-			return nil, domainerr.ItemPriceChanged(line.ProductID)
+		if summary.Price.Amount != line.UnitPrice.Amount || summary.Price.Currency != line.UnitPrice.Currency {
+			return nil, domainerr.ItemPriceChanged(line.VariantID)
 		}
-		available := availableByID[line.ProductID]
+		available := availableByID[line.VariantID]
 		if line.Quantity > available {
-			return nil, domainerr.QuantityExceedsAvailable(line.ProductID, available, line.Quantity)
+			return nil, domainerr.QuantityExceedsAvailable(line.VariantID, available, line.Quantity)
 		}
 		snapshot = append(snapshot, model.OrderLine{
-			ProductID: line.ProductID,
-			Name:      summary.Name,
-			Slug:      summary.Slug,
-			UnitPrice: model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
-			Quantity:  line.Quantity,
+			ProductID:   summary.ProductID,
+			VariantID:   summary.VariantID,
+			ProductName: summary.ProductName,
+			ProductCode: summary.ProductCode,
+			VariantName: summary.VariantName,
+			SKU:         summary.SKU,
+			Slug:        summary.ProductSlug,
+			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
+			Quantity:    line.Quantity,
 		})
 	}
 
@@ -253,16 +259,16 @@ func (s *Service) deliveryAddress(ctx context.Context, ownerID uuid.UUID, addres
 	return toAddress(customer.Addresses[0]), nil
 }
 
-// available reads what is currently available for one product through the bulk
+// available reads what is currently available for one variant through the bulk
 // contract, used to name the remaining amount when a hold could not be taken. A
-// product the result does not carry is read as zero.
-func (s *Service) available(ctx context.Context, productID uuid.UUID) (int64, error) {
-	items, err := s.Availability.AvailableQuantity(ctx, []uuid.UUID{productID})
+// variant the result does not carry is read as zero.
+func (s *Service) available(ctx context.Context, variantID uuid.UUID) (int64, error) {
+	items, err := s.Availability.AvailableQuantity(ctx, []uuid.UUID{variantID})
 	if err != nil {
 		return 0, err
 	}
 	for _, item := range items {
-		if item.ProductID == productID {
+		if item.VariantID == variantID {
 			return item.Available, nil
 		}
 	}

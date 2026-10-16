@@ -1,12 +1,15 @@
 // Package mapper converts between the product domain models and application DTOs.
 //
 // It is the single place a model becomes a DTO. It carries no dependency: unlike
-// the user module's mapper, resolving a product needs no external read. The
-// public and administrator families are mapped separately so a field only the
-// administrator may see cannot reach a customer response by accident (FR-008).
+// the user module's mapper, resolving a product needs no external read — the
+// per-variant availability a detail shows is passed in already resolved by the use
+// case. The public and administrator families are mapped separately so a field only
+// the administrator may see cannot reach a customer response by accident (FR-008).
 package mapper
 
 import (
+	"github.com/google/uuid"
+
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
@@ -19,24 +22,23 @@ type Mapper struct{}
 // New creates a Mapper.
 func New() *Mapper { return &Mapper{} }
 
-// PublicProduct maps one list row to the customer-facing entry. The sell state,
-// the position, the category, the set flag and the folding key are deliberately
-// not carried (FR-004, FR-008).
-func (m *Mapper) PublicProduct(item repository.ProductListItem) dto.PublicProductOutput {
+// PublicProduct maps one catalogue entry to the customer-facing card. The code,
+// the position and the variant count are deliberately not carried (FR-001,
+// FR-008).
+func (m *Mapper) PublicProduct(item repository.CatalogueEntry) dto.PublicProductOutput {
 	return dto.PublicProductOutput{
-		ID:         item.Product.ID,
-		Name:       item.Product.Name,
-		Slug:       item.Product.Slug,
-		Price:      item.Product.Price,
-		ImageURL:   imageURL(item.ImageURL),
-		IsPreorder: item.Product.IsPreorder,
+		ID:       item.ID,
+		Name:     item.Name,
+		Slug:     item.Slug,
+		Price:    item.Price,
+		ImageURL: imageURL(item.ImageURL),
 	}
 }
 
-// PublicProducts maps a list of rows, preserving the caller's order — the FR-009
-// order the repository already applied. An empty list maps to a nil slice, never
-// to an allocated empty one.
-func (m *Mapper) PublicProducts(items []repository.ProductListItem) []dto.PublicProductOutput {
+// PublicProducts maps a page of catalogue entries, preserving the caller's order —
+// the order the repository already applied. An empty list maps to a nil slice,
+// never to an allocated empty one.
+func (m *Mapper) PublicProducts(items []repository.CatalogueEntry) []dto.PublicProductOutput {
 	if len(items) == 0 {
 		return nil
 	}
@@ -47,29 +49,30 @@ func (m *Mapper) PublicProducts(items []repository.ProductListItem) []dto.Public
 	return out
 }
 
-// PublicProductDetail maps one product with its pictures to the customer-facing
-// detail: the list fields plus the description and every picture (FR-005). The
-// main picture's link drives ImageURL; a product with no picture maps to nil.
-func (m *Mapper) PublicProductDetail(view repository.ProductView) dto.PublicProductDetailOutput {
-	primary, _ := model.PrimaryPicture(view.Pictures)
+// PublicProductDetail maps one product with its pictures and its visible variants
+// to the customer-facing detail (FR-003, FR-005). The card price and image come
+// from the repository's summary — the lowest on-sale price and the default
+// variant's image — while each variant's stock status comes from the availability
+// the use case resolved (D10).
+func (m *Mapper) PublicProductDetail(view repository.ProductView, available map[uuid.UUID]int64) dto.PublicProductDetailOutput {
 	return dto.PublicProductDetailOutput{
 		PublicProductOutput: dto.PublicProductOutput{
-			ID:         view.Product.ID,
-			Name:       view.Product.Name,
-			Slug:       view.Product.Slug,
-			Price:      view.Product.Price,
-			ImageURL:   imageURL(primary.URL),
-			IsPreorder: view.Product.IsPreorder,
+			ID:       view.Product.ID,
+			Name:     view.Product.Name,
+			Slug:     view.Product.Slug,
+			Price:    view.Summary.Price,
+			ImageURL: imageURL(view.Summary.ImageURL),
 		},
 		Description: view.Product.Description,
 		Images:      publicImages(view.Pictures),
+		Variants:    publicVariants(view.Variants, view.Product.Price, available),
 	}
 }
 
 // AdminProduct maps one list row to the administrator entry, including the
-// members a customer must not receive (FR-011).
+// members a customer must not receive (FR-010).
 func (m *Mapper) AdminProduct(item repository.ProductListItem) dto.AdminProductOutput {
-	return adminProduct(item.Product, item.PictureCount, imageURL(item.ImageURL))
+	return adminProduct(item.Product, item.VariantCount, imageURL(item.ImageURL))
 }
 
 // AdminProducts maps a list of rows, preserving the caller's order. An empty list
@@ -85,43 +88,39 @@ func (m *Mapper) AdminProducts(items []repository.ProductListItem) []dto.AdminPr
 	return out
 }
 
-// AdminProductDetail maps one product with its pictures and set members to the
-// administrator detail (FR-011). The main picture's link drives ImageURL, and the
-// member list is passed straight through — a non-set product maps to a nil
-// member list (research D18).
-func (m *Mapper) AdminProductDetail(view repository.ProductView, members []repository.SetMember) dto.AdminProductDetailOutput {
+// AdminProductDetail maps one product with its pictures and every variant —
+// including the variants withheld from customers — to the administrator detail
+// (FR-010).
+func (m *Mapper) AdminProductDetail(view repository.ProductView) dto.AdminProductDetailOutput {
 	primary, _ := model.PrimaryPicture(view.Pictures)
 	return dto.AdminProductDetailOutput{
-		AdminProductOutput: adminProduct(view.Product, len(view.Pictures), imageURL(primary.URL)),
+		AdminProductOutput: adminProduct(view.Product, len(view.Variants), imageURL(primary.URL)),
 		Images:             adminImages(view.Pictures),
-		Members:            setMembers(members),
+		Variants:           adminVariants(view.Variants, view.Product.Price),
 	}
 }
 
 // adminProduct maps the product fields both administrator shapes share. It is a
 // free function because it has no mapper state.
-func adminProduct(product model.Product, imageCount int, mainURL *string) dto.AdminProductOutput {
+func adminProduct(product model.Product, variantCount int, mainURL *string) dto.AdminProductOutput {
 	return dto.AdminProductOutput{
-		ID:                 product.ID,
-		Name:               product.Name,
-		Slug:               product.Slug,
-		Description:        product.Description,
-		Price:              product.Price,
-		CategoryID:         product.CategoryID,
-		Position:           product.Position,
-		SellState:          product.SellState,
-		IsSet:              product.IsSet,
-		IsPreorder:         product.IsPreorder,
-		PreorderExpectedAt: product.PreorderExpectedAt,
-		ImageCount:         imageCount,
-		ImageURL:           mainURL,
-		CreatedAt:          product.CreatedAt,
-		UpdatedAt:          product.UpdatedAt,
+		ID:           product.ID,
+		Name:         product.Name,
+		Code:         product.Code,
+		Slug:         product.Slug,
+		Description:  product.Description,
+		Price:        product.Price,
+		CategoryID:   product.CategoryID,
+		Position:     product.Position,
+		VariantCount: variantCount,
+		ImageURL:     mainURL,
+		CreatedAt:    product.CreatedAt,
+		UpdatedAt:    product.UpdatedAt,
 	}
 }
 
 // imageURL turns a stored link into the nullable value the contract exposes: an
-// empty link is the product having no picture, never an empty URL.
+// empty link is the entity having no image, never an empty URL.
 func imageURL(url string) *string {
 	if url == "" {
 		return nil
@@ -129,8 +128,8 @@ func imageURL(url string) *string {
 	return &url
 }
 
-// publicImages maps the pictures in the order they were given — the display order
-// the repository already applied. An empty list maps to a nil slice.
+// publicImages maps the gallery pictures in the order they were given — the
+// display order the repository already applied. An empty list maps to a nil slice.
 func publicImages(pictures []model.Picture) []dto.PublicImageOutput {
 	if len(pictures) == 0 {
 		return nil
@@ -147,8 +146,8 @@ func publicImages(pictures []model.Picture) []dto.PublicImageOutput {
 	return out
 }
 
-// adminImages maps the pictures in the order they were given. An empty list maps
-// to a nil slice.
+// adminImages maps the gallery pictures in the order they were given. An empty
+// list maps to a nil slice.
 func adminImages(pictures []model.Picture) []dto.AdminImageOutput {
 	if len(pictures) == 0 {
 		return nil
@@ -168,227 +167,55 @@ func adminImages(pictures []model.Picture) []dto.AdminImageOutput {
 	return out
 }
 
-// setMembers maps a set's members in the order they were given. An empty list
-// maps to a nil slice.
-func setMembers(members []repository.SetMember) []dto.SetMemberOutput {
-	if len(members) == 0 {
+// publicVariants maps the product's visible variants in display order, taking each
+// variant's effective price and its stock status from the availability the use
+// case resolved. A variant the availability map does not carry is read as not in
+// stock, which is what a variant with no stock row means (D10).
+func publicVariants(variants []model.Variant, productPrice model.Price, available map[uuid.UUID]int64) []dto.PublicVariantOutput {
+	if len(variants) == 0 {
 		return nil
 	}
-	out := make([]dto.SetMemberOutput, 0, len(members))
-	for _, member := range members {
-		out = append(out, dto.SetMemberOutput{
-			ID:   member.ID,
-			Name: member.Name,
-			Slug: member.Slug,
+	out := make([]dto.PublicVariantOutput, 0, len(variants))
+	for _, variant := range variants {
+		out = append(out, dto.PublicVariantOutput{
+			ID:        variant.ID,
+			Name:      variant.Name,
+			Price:     variant.EffectivePrice(productPrice),
+			ImageURL:  variantImageURL(variant.Image),
+			SellState: variant.SellState,
+			InStock:   available[variant.ID] > 0,
 		})
 	}
 	return out
 }
 
-// PublicCatalogueEntry maps one merged-list row to the customer-facing entry,
-// carrying the `type` discriminator a client picks the route by (FR-001,
-// research D4, D12). A group's price and picture are what the repository already
-// derived from its visible options; the mapper never derives them itself.
-func (m *Mapper) PublicCatalogueEntry(item repository.CatalogueItem) dto.PublicCatalogueEntry {
-	return dto.PublicCatalogueEntry{
-		Type:       string(item.Type),
-		ID:         item.ID,
-		Name:       item.Name,
-		Slug:       item.Slug,
-		Price:      item.Price,
-		ImageURL:   imageURL(item.ImageURL),
-		IsPreorder: item.IsPreorder,
-	}
-}
-
-// PublicCatalogueEntries maps a page of merged rows, preserving the caller's
-// order — the FR-009 order the repository already applied. An empty list maps to
-// a nil slice.
-func (m *Mapper) PublicCatalogueEntries(items []repository.CatalogueItem) []dto.PublicCatalogueEntry {
-	if len(items) == 0 {
+// adminVariants maps every variant in display order, including the ones a customer
+// cannot see. An empty list maps to a nil slice.
+func adminVariants(variants []model.Variant, productPrice model.Price) []dto.AdminVariantOutput {
+	if len(variants) == 0 {
 		return nil
 	}
-	out := make([]dto.PublicCatalogueEntry, 0, len(items))
-	for _, item := range items {
-		out = append(out, m.PublicCatalogueEntry(item))
-	}
-	return out
-}
-
-// PublicVariantGroupDetail maps a group with its pictures and visible options to
-// the customer-facing detail (FR-002, FR-005, FR-007). The provider's opaque
-// image identifier is deliberately absent from the public shapes.
-func (m *Mapper) PublicVariantGroupDetail(view repository.VariantGroupView) dto.PublicVariantGroupDetailOutput {
-	return dto.PublicVariantGroupDetailOutput{
-		ID:          view.Group.ID,
-		Name:        view.Group.Name,
-		Slug:        view.Group.Slug,
-		Description: view.Group.Description,
-		OptionName:  view.Group.OptionName,
-		Images:      publicGroupImages(view.Images),
-		Options:     publicVariantOptions(view.Options),
-	}
-}
-
-// PublicProductVariantGroup maps an option product's group to the detail
-// selector: the group's shared content, its own gallery and its visible sibling
-// options (FR-007). It carries no description — the selector is a switch, not a
-// full page — and a group with no picture maps to nil images, exactly as the
-// public group detail does.
-func (m *Mapper) PublicProductVariantGroup(group model.VariantGroup, images []model.VariantGroupImage, options []repository.GroupOptionItem) *dto.PublicProductVariantGroupOutput {
-	return &dto.PublicProductVariantGroupOutput{
-		ID:         group.ID,
-		Slug:       group.Slug,
-		Name:       group.Name,
-		OptionName: group.OptionName,
-		Images:     publicGroupImages(images),
-		Options:    publicVariantOptions(options),
-	}
-}
-
-// AdminVariantGroup maps one group list row to the administrator entry,
-// including the members a customer must not receive (FR-013).
-func (m *Mapper) AdminVariantGroup(item repository.VariantGroupListItem) dto.AdminVariantGroupOutput {
-	return adminVariantGroup(item.Group, item.ImageCount, imageURL(item.ImageURL))
-}
-
-// AdminVariantGroups maps a list of rows, preserving the caller's order. An
-// empty list maps to a nil slice.
-func (m *Mapper) AdminVariantGroups(items []repository.VariantGroupListItem) []dto.AdminVariantGroupOutput {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]dto.AdminVariantGroupOutput, 0, len(items))
-	for _, item := range items {
-		out = append(out, m.AdminVariantGroup(item))
-	}
-	return out
-}
-
-// AdminVariantGroupDetail maps one group with its pictures and every option —
-// including the ones withheld from customers — to the administrator detail
-// (FR-013). The main picture's link drives ImageURL.
-func (m *Mapper) AdminVariantGroupDetail(view repository.VariantGroupView) dto.AdminVariantGroupDetailOutput {
-	primary := primaryGroupImage(view.Images)
-	return dto.AdminVariantGroupDetailOutput{
-		AdminVariantGroupOutput: adminVariantGroup(view.Group, len(view.Images), imageURL(primary)),
-		Images:                  adminGroupImages(view.Images),
-		Options:                 adminGroupOptions(view.Options),
-	}
-}
-
-// adminVariantGroup maps the group fields both administrator shapes share. It is
-// a free function because it has no mapper state.
-func adminVariantGroup(group model.VariantGroup, imageCount int, mainURL *string) dto.AdminVariantGroupOutput {
-	return dto.AdminVariantGroupOutput{
-		ID:          group.ID,
-		Name:        group.Name,
-		Slug:        group.Slug,
-		Description: group.Description,
-		CategoryID:  group.CategoryID,
-		Position:    group.Position,
-		OptionName:  group.OptionName,
-		ImageCount:  imageCount,
-		ImageURL:    mainURL,
-		CreatedAt:   group.CreatedAt,
-		UpdatedAt:   group.UpdatedAt,
-	}
-}
-
-// publicGroupImages maps a group's pictures in the order they were given — the
-// display order the repository already applied. An empty list maps to a nil
-// slice, and the provider's opaque identifier is dropped as it is for a product.
-func publicGroupImages(images []model.VariantGroupImage) []dto.PublicImageOutput {
-	if len(images) == 0 {
-		return nil
-	}
-	out := make([]dto.PublicImageOutput, 0, len(images))
-	for _, image := range images {
-		out = append(out, dto.PublicImageOutput{
-			ID:     image.ID,
-			URL:    image.URL,
-			Width:  image.Width,
-			Height: image.Height,
+	out := make([]dto.AdminVariantOutput, 0, len(variants))
+	for _, variant := range variants {
+		out = append(out, dto.AdminVariantOutput{
+			ID:             variant.ID,
+			Name:           variant.Name,
+			SKU:            variant.SKU,
+			PriceAmount:    variant.PriceAmount,
+			EffectivePrice: variant.EffectivePrice(productPrice),
+			ImageURL:       variantImageURL(variant.Image),
+			Position:       variant.Position,
+			SellState:      variant.SellState,
 		})
 	}
 	return out
 }
 
-// adminGroupImages maps a group's pictures in the order they were given,
-// including the provider's opaque identifier, its position and the main flag. An
-// empty list maps to a nil slice.
-func adminGroupImages(images []model.VariantGroupImage) []dto.AdminGroupImageOutput {
-	if len(images) == 0 {
+// variantImageURL turns a variant's optional image into the nullable link the
+// contract exposes.
+func variantImageURL(image *model.VariantImage) *string {
+	if image == nil {
 		return nil
 	}
-	out := make([]dto.AdminGroupImageOutput, 0, len(images))
-	for _, image := range images {
-		out = append(out, dto.AdminGroupImageOutput{
-			ID:        image.ID,
-			PublicID:  image.PublicID,
-			URL:       image.URL,
-			Width:     image.Width,
-			Height:    image.Height,
-			Position:  image.Position,
-			IsPrimary: image.IsPrimary,
-		})
-	}
-	return out
-}
-
-// publicVariantOptions maps a group's options to the customer-facing shape,
-// preserving the FR-009 order the repository already applied. An empty list maps
-// to a nil slice.
-func publicVariantOptions(options []repository.GroupOptionItem) []dto.PublicVariantOptionOutput {
-	if len(options) == 0 {
-		return nil
-	}
-	out := make([]dto.PublicVariantOptionOutput, 0, len(options))
-	for _, option := range options {
-		out = append(out, dto.PublicVariantOptionOutput{
-			ID:         option.ID,
-			Slug:       option.Slug,
-			Label:      option.Label,
-			Price:      option.Price,
-			ImageURL:   imageURL(option.ImageURL),
-			IsPreorder: option.IsPreorder,
-		})
-	}
-	return out
-}
-
-// adminGroupOptions maps a group's options to the administrator shape, carrying
-// each option's own name, position and sell state as well. An empty list maps to
-// a nil slice.
-func adminGroupOptions(options []repository.GroupOptionItem) []dto.AdminGroupOptionOutput {
-	if len(options) == 0 {
-		return nil
-	}
-	out := make([]dto.AdminGroupOptionOutput, 0, len(options))
-	for _, option := range options {
-		out = append(out, dto.AdminGroupOptionOutput{
-			ID:         option.ID,
-			Name:       option.Name,
-			Slug:       option.Slug,
-			Label:      option.Label,
-			Price:      option.Price,
-			ImageURL:   imageURL(option.ImageURL),
-			Position:   option.Position,
-			SellState:  option.SellState,
-			IsPreorder: option.IsPreorder,
-		})
-	}
-	return out
-}
-
-// primaryGroupImage returns the group's current main picture's link, or "" when
-// the group has no main picture. A group with no pictures is valid, so the
-// answer is an empty link rather than an error.
-func primaryGroupImage(images []model.VariantGroupImage) string {
-	for _, image := range images {
-		if image.IsPrimary {
-			return image.URL
-		}
-	}
-	return ""
+	return imageURL(image.URL)
 }

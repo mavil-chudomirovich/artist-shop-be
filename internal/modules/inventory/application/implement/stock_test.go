@@ -114,7 +114,7 @@ type fakeLookup struct {
 	err    error
 }
 
-func (l *fakeLookup) ProductExists(context.Context, uuid.UUID) (bool, error) {
+func (l *fakeLookup) VariantExists(context.Context, uuid.UUID) (bool, error) {
 	return l.exists, l.err
 }
 
@@ -151,7 +151,7 @@ func TestRestockRaisesTheShelfAndWritesOneRestockMovement(t *testing.T) {
 	note := "hàng về kho"
 	productID := uuid.New()
 
-	out, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: productID, Quantity: 10, Note: &note})
+	out, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: productID, Quantity: 10, Note: &note})
 	if err != nil {
 		t.Fatalf("Restock: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestDamageLowersTheShelfAndWritesOneDamageMovement(t *testing.T) {
 	repo := &fakeRepository{physical: 10}
 	svc := newTestService(repo, &fakeLookup{exists: true}, &fakeAuditor{})
 
-	out, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 4})
+	out, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: 4})
 	if err != nil {
 		t.Fatalf("Damage: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestDamageLargerThanTheShelfIsRefusedAndWritesNothing(t *testing.T) {
 	audit := &fakeAuditor{}
 	svc := newTestService(repo, &fakeLookup{exists: true}, audit)
 
-	_, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 5})
+	_, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: 5})
 	if !errors.Is(err, domainerr.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock, got %v", err)
 	}
@@ -238,7 +238,7 @@ func TestAnEmptyConditionalDecreaseIsReportedAsInsufficientStock(t *testing.T) {
 	audit := &fakeAuditor{}
 	svc := newTestService(repo, &fakeLookup{exists: true}, audit)
 
-	_, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 4})
+	_, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: 4})
 	if err == nil {
 		t.Fatal("a decrease over the shelf must be refused by the conditional update")
 	}
@@ -268,7 +268,7 @@ func TestAdjustmentRecordsOnlyTheDifferenceAndANoOpWritesNothing(t *testing.T) {
 	svc := newTestService(repo, &fakeLookup{exists: true}, &fakeAuditor{})
 	productID := uuid.New()
 
-	out, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: productID, Quantity: 7})
+	out, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: productID, Quantity: 7})
 	if err != nil {
 		t.Fatalf("Adjust: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestAdjustmentRecordsOnlyTheDifferenceAndANoOpWritesNothing(t *testing.T) {
 	}
 
 	// Correcting to the value already stored changes nothing.
-	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: productID, Quantity: 7}); err != nil {
+	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: productID, Quantity: 7}); err != nil {
 		t.Fatalf("Adjust to the stored value: %v", err)
 	}
 	if len(repo.movements) != 1 {
@@ -300,7 +300,7 @@ func TestAdjustmentAcceptsZeroAsACountedValue(t *testing.T) {
 	repo := &fakeRepository{physical: 5}
 	svc := newTestService(repo, &fakeLookup{exists: true}, &fakeAuditor{})
 
-	out, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: uuid.New(), Quantity: 0})
+	out, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: uuid.New(), Quantity: 0})
 	if err != nil {
 		t.Fatalf("Adjust to zero: %v", err)
 	}
@@ -321,23 +321,23 @@ func TestNonPositiveQuantityIsRefusedNamingTheField(t *testing.T) {
 		call func(svc *Service) error
 	}{
 		{"restock zero", func(svc *Service) error {
-			_, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: uuid.New(), Quantity: 0})
+			_, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: uuid.New(), Quantity: 0})
 			return err
 		}},
 		{"restock negative", func(svc *Service) error {
-			_, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: uuid.New(), Quantity: -1})
+			_, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: uuid.New(), Quantity: -1})
 			return err
 		}},
 		{"damage zero", func(svc *Service) error {
-			_, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 0})
+			_, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: 0})
 			return err
 		}},
 		{"damage negative", func(svc *Service) error {
-			_, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: -1})
+			_, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: -1})
 			return err
 		}},
 		{"adjustment negative", func(svc *Service) error {
-			_, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: uuid.New(), Quantity: -1})
+			_, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: uuid.New(), Quantity: -1})
 			return err
 		}},
 	}
@@ -370,12 +370,12 @@ func TestNonPositiveQuantityIsRefusedNamingTheField(t *testing.T) {
 // exists but has never been stocked answers zero.
 func TestAnUnknownProductIsNotFoundWhileANeverStockedOneIsZero(t *testing.T) {
 	unknown := newTestService(&fakeRepository{}, &fakeLookup{exists: false}, &fakeAuditor{})
-	if _, err := unknown.Stock(adminContext(), dto.StockRefInput{ProductID: uuid.New()}); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("expected ErrProductNotFound for an unknown product, got %v", err)
+	if _, err := unknown.Stock(adminContext(), dto.StockRefInput{VariantID: uuid.New()}); !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("expected ErrVariantNotFound for an unknown product, got %v", err)
 	}
 
 	neverStocked := newTestService(&fakeRepository{}, &fakeLookup{exists: true}, &fakeAuditor{})
-	out, err := neverStocked.Stock(adminContext(), dto.StockRefInput{ProductID: uuid.New()})
+	out, err := neverStocked.Stock(adminContext(), dto.StockRefInput{VariantID: uuid.New()})
 	if err != nil {
 		t.Fatalf("Stock of a never-stocked product: %v", err)
 	}
@@ -391,14 +391,14 @@ func TestWritesAgainstAnUnknownProductAnswerNotFoundAndWriteNothing(t *testing.T
 	repo := &fakeRepository{physical: 5}
 	svc := newTestService(repo, &fakeLookup{exists: false}, &fakeAuditor{})
 
-	if _, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("restock: expected ErrProductNotFound, got %v", err)
+	if _, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("restock: expected ErrVariantNotFound, got %v", err)
 	}
-	if _, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("damage: expected ErrProductNotFound, got %v", err)
+	if _, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("damage: expected ErrVariantNotFound, got %v", err)
 	}
-	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("adjustment: expected ErrProductNotFound, got %v", err)
+	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: uuid.New(), Quantity: 1}); !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("adjustment: expected ErrVariantNotFound, got %v", err)
 	}
 	if repo.physical != 5 || len(repo.movements) != 0 {
 		t.Fatalf("a not-found write must change nothing: shelf %d, %d movements", repo.physical, len(repo.movements))
@@ -413,13 +413,13 @@ func TestEachManualOperationRecordsItsAuditAction(t *testing.T) {
 	svc := newTestService(repo, &fakeLookup{exists: true}, audit)
 	productID := uuid.New()
 
-	if _, err := svc.Restock(adminContext(), dto.RestockInput{ProductID: productID, Quantity: 2}); err != nil {
+	if _, err := svc.Restock(adminContext(), dto.RestockInput{VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Restock: %v", err)
 	}
-	if _, err := svc.Damage(adminContext(), dto.DamageInput{ProductID: productID, Quantity: 1}); err != nil {
+	if _, err := svc.Damage(adminContext(), dto.DamageInput{VariantID: productID, Quantity: 1}); err != nil {
 		t.Fatalf("Damage: %v", err)
 	}
-	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{ProductID: productID, Quantity: 3}); err != nil {
+	if _, err := svc.Adjust(adminContext(), dto.AdjustmentInput{VariantID: productID, Quantity: 3}); err != nil {
 		t.Fatalf("Adjust: %v", err)
 	}
 

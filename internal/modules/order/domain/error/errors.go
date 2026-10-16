@@ -78,17 +78,17 @@ var (
 	ErrStalePayment = errors.New("order payment is stale")
 )
 
-// ItemNotPurchasableError carries the product that cannot be bought, so the
+// ItemNotPurchasableError carries the variant that cannot be bought, so the
 // response can name it without the caller re-reading the catalogue
 // (error-codes.md, "Where the offending item is named").
 type ItemNotPurchasableError struct {
-	// ProductID is the product that is not on sale or was removed.
-	ProductID uuid.UUID
+	// VariantID is the variant that is not on sale or was removed.
+	VariantID uuid.UUID
 }
 
 // Error implements the error interface.
 func (e *ItemNotPurchasableError) Error() string {
-	return ErrItemNotPurchasable.Error() + ": " + e.ProductID.String()
+	return ErrItemNotPurchasable.Error() + ": " + e.VariantID.String()
 }
 
 // Is makes errors.Is(err, ErrItemNotPurchasable) match this error.
@@ -97,21 +97,21 @@ func (e *ItemNotPurchasableError) Is(target error) bool { return target == ErrIt
 // Unwrap exposes the sentinel to errors.Is and errors.As.
 func (e *ItemNotPurchasableError) Unwrap() error { return ErrItemNotPurchasable }
 
-// ItemNotPurchasable builds the typed refusal for one product.
-func ItemNotPurchasable(productID uuid.UUID) error {
-	return &ItemNotPurchasableError{ProductID: productID}
+// ItemNotPurchasable builds the typed refusal for one variant.
+func ItemNotPurchasable(variantID uuid.UUID) error {
+	return &ItemNotPurchasableError{VariantID: variantID}
 }
 
-// ItemPriceChangedError carries the product whose price moved, so the response
+// ItemPriceChangedError carries the variant whose price moved, so the response
 // can name the line the customer must review (FR-004).
 type ItemPriceChangedError struct {
-	// ProductID is the product whose price differs from the cart's snapshot.
-	ProductID uuid.UUID
+	// VariantID is the variant whose price differs from the cart's snapshot.
+	VariantID uuid.UUID
 }
 
 // Error implements the error interface.
 func (e *ItemPriceChangedError) Error() string {
-	return ErrItemPriceChanged.Error() + ": " + e.ProductID.String()
+	return ErrItemPriceChanged.Error() + ": " + e.VariantID.String()
 }
 
 // Is makes errors.Is(err, ErrItemPriceChanged) match this error.
@@ -120,17 +120,17 @@ func (e *ItemPriceChangedError) Is(target error) bool { return target == ErrItem
 // Unwrap exposes the sentinel to errors.Is and errors.As.
 func (e *ItemPriceChangedError) Unwrap() error { return ErrItemPriceChanged }
 
-// ItemPriceChanged builds the typed refusal for one product.
-func ItemPriceChanged(productID uuid.UUID) error {
-	return &ItemPriceChangedError{ProductID: productID}
+// ItemPriceChanged builds the typed refusal for one variant.
+func ItemPriceChanged(variantID uuid.UUID) error {
+	return &ItemPriceChangedError{VariantID: variantID}
 }
 
 // QuantityExceedsAvailableError carries what the refusal is about, so the response
 // can state how far the customer must reduce the line. It is the single typed
 // carrier for ErrQuantityExceedsAvailable (FR-005, FR-017).
 type QuantityExceedsAvailableError struct {
-	// ProductID is the product the line is for.
-	ProductID uuid.UUID
+	// VariantID is the variant the line is for.
+	VariantID uuid.UUID
 	// Available is what could have been taken when the shelf said no.
 	Available int64
 	// Requested is the quantity the operation asked for.
@@ -141,7 +141,7 @@ type QuantityExceedsAvailableError struct {
 // the customer must be told.
 func (e *QuantityExceedsAvailableError) Error() string {
 	return fmt.Sprintf("%s: %s requested %d, available %d",
-		ErrQuantityExceedsAvailable, e.ProductID, e.Requested, e.Available)
+		ErrQuantityExceedsAvailable, e.VariantID, e.Requested, e.Available)
 }
 
 // Is makes errors.Is(err, ErrQuantityExceedsAvailable) match this error.
@@ -153,8 +153,8 @@ func (e *QuantityExceedsAvailableError) Is(target error) bool {
 func (e *QuantityExceedsAvailableError) Unwrap() error { return ErrQuantityExceedsAvailable }
 
 // QuantityExceedsAvailable builds the typed refusal for one operation.
-func QuantityExceedsAvailable(productID uuid.UUID, available, requested int64) error {
-	return &QuantityExceedsAvailableError{ProductID: productID, Available: available, Requested: requested}
+func QuantityExceedsAvailable(variantID uuid.UUID, available, requested int64) error {
+	return &QuantityExceedsAvailableError{VariantID: variantID, Available: available, Requested: requested}
 }
 
 // StateTransitionError carries the move that was refused and the state that

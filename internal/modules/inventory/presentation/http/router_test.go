@@ -32,7 +32,7 @@ func TestTheUS1InventoryPathsResolve(t *testing.T) {
 
 	read, _, _ := newStockRouter(t, 3, true, inventoryHooks(nil))
 	if rec := performJSON(read, http.MethodGet, inventoryAdminPath+"/"+id.String(), "", "admin-token"); rec.Code != http.StatusOK {
-		t.Fatalf("GET .../{productId}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("GET .../{variantId}: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 

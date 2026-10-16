@@ -29,12 +29,18 @@ func New(carts domainrepo.CartRepository) *Adapter {
 }
 
 // CartLines returns the caller's cart lines as the order module needs them: one
-// entry per product, in the cart's stable order. It locks the cart row before
+// entry per variant, in the cart's stable order. It locks the cart row before
 // reading its lines, so two concurrent checkouts of one cart serialise: the
 // second blocks until the first commits and then finds the lines already gone. A
 // customer with no cart answers an empty slice rather than an error, because a
 // checkout of nothing is the order module's to refuse, not the cart's to hide
 // (FR-006, research D1).
+//
+// It carries the line's identity (the variant), the quantity and the captured
+// price. The order's checkout re-reads the variant's live facts anyway — its
+// on-sale state, its availability and its current effective price — so the
+// snapshot fields of the contract are filled there, from the same read, rather
+// than stored on the cart line (data-model.md "Cart table").
 func (a *Adapter) CartLines(ctx context.Context, userID uuid.UUID) ([]contracts.CartLine, error) {
 	cart, found, err := a.Carts.FindByOwner(ctx, userID)
 	if err != nil {
@@ -53,10 +59,12 @@ func (a *Adapter) CartLines(ctx context.Context, userID uuid.UUID) ([]contracts.
 	out := make([]contracts.CartLine, 0, len(lines))
 	for _, line := range lines {
 		out = append(out, contracts.CartLine{
-			ProductID:       line.ProductID,
-			Quantity:        line.Quantity,
-			UnitPriceAmount: line.UnitPrice.Amount,
-			Currency:        line.UnitPrice.Currency,
+			VariantID: line.VariantID,
+			Quantity:  line.Quantity,
+			UnitPrice: contracts.ProductPrice{
+				Amount:   line.UnitPrice.Amount,
+				Currency: line.UnitPrice.Currency,
+			},
 		})
 	}
 	return out, nil

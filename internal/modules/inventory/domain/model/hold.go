@@ -13,15 +13,15 @@ import (
 // the hold is no longer active. It is not a request member.
 const FieldHold = "hold"
 
-// Hold is a quantity of one product set aside for one order while that order is
+// Hold is a quantity of one variant set aside for one order while that order is
 // being paid. While it is active the quantity is unavailable to anyone else; it
 // ends by being paid (which turns it into a sale), cancelled (which returns it) or
 // expiring (which returns it) (the clarification, FR-014, FR-015).
 type Hold struct {
 	// ID identifies the hold.
 	ID uuid.UUID
-	// ProductID is the product set aside.
-	ProductID uuid.UUID
+	// VariantID is the variant set aside.
+	VariantID uuid.UUID
 	// OrderID is the order the hold belongs to. It is a loose reference: module 07
 	// owns orders and does not exist yet (research D5).
 	OrderID uuid.UUID
@@ -42,13 +42,13 @@ type Hold struct {
 // after the instant the injected clock produced (FR-014, research D15). The
 // window is computed from that instant rather than from the database clock, so the
 // same time source creates and judges the hold.
-func NewHold(productID, orderID uuid.UUID, quantity int64, now time.Time) (*Hold, error) {
+func NewHold(variantID, orderID uuid.UUID, quantity int64, now time.Time) (*Hold, error) {
 	if quantity <= 0 {
 		return nil, domainerr.InvalidValue(FieldQuantity, "must be a positive whole number")
 	}
 	return &Hold{
 		ID:        uuid.New(),
-		ProductID: productID,
+		VariantID: variantID,
 		OrderID:   orderID,
 		Quantity:  quantity,
 		Status:    constant.HoldStatusActive,

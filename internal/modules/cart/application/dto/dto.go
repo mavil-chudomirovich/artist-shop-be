@@ -14,27 +14,28 @@ import "github.com/google/uuid"
 // (research D7).
 type GetCartInput struct{}
 
-// AddItemInput adds a product to the caller's cart. The owner is taken from the
+// AddItemInput adds a variant to the caller's cart. The owner is taken from the
 // session, never from this input (FR-010).
 type AddItemInput struct {
-	// ProductID is the product to add.
-	ProductID uuid.UUID
+	// VariantID is the variant to add. A cart line is identified by its variant,
+	// so adding a product without a variant is impossible (FR-006, research D7).
+	VariantID uuid.UUID
 	// Quantity is the positive whole number of units to add to the line.
 	Quantity int64
 }
 
-// ChangeQuantityInput sets the quantity of the line for one product.
+// ChangeQuantityInput sets the quantity of the line for one variant.
 type ChangeQuantityInput struct {
-	// ProductID is the product whose line changes.
-	ProductID uuid.UUID
+	// VariantID is the variant whose line changes.
+	VariantID uuid.UUID
 	// Quantity is the new positive whole number for the line.
 	Quantity int64
 }
 
-// RemoveItemInput removes the line for one product.
+// RemoveItemInput removes the line for one variant.
 type RemoveItemInput struct {
-	// ProductID is the product whose line is removed.
-	ProductID uuid.UUID
+	// VariantID is the variant whose line is removed.
+	VariantID uuid.UUID
 }
 
 // MoneyView is money as an integer amount in the currency's minor unit plus the
@@ -47,18 +48,20 @@ type MoneyView struct {
 }
 
 // LineView is one cart line as a use case answers it. The unit price is the one
-// captured when the product was added; the name and slug are the product's
-// current values and are nil when the product is gone. Buyable reports whether
+// captured when the variant was added; the product name and the variant name are
+// the current values and are nil when the variant is gone. Buyable reports whether
 // the line can be bought as it stands, and AvailableQuantity is present only when
-// the product is on sale but short (FR-004, FR-012, research D10).
+// the variant is on sale but short (FR-004, FR-012, research D10).
 type LineView struct {
-	// ProductID is the product the line is for.
+	// ProductID is the product the variant belongs to.
 	ProductID uuid.UUID
-	// Name is the product's current name, or nil when the product is gone.
-	Name *string
-	// Slug is the product's current link segment, or nil when the product is
-	// gone.
-	Slug *string
+	// ProductName is the product's current name, or nil when the variant is gone.
+	ProductName *string
+	// VariantID is the variant the line is for.
+	VariantID uuid.UUID
+	// VariantName is the variant's current display name, or nil when the variant
+	// is gone.
+	VariantName *string
 	// Quantity is the whole number the customer chose.
 	Quantity int64
 	// UnitPrice is the captured price.
@@ -75,7 +78,7 @@ type LineView struct {
 // CartView is the caller's whole cart. Subtotal is absent (nil) when the cart is
 // empty, because an empty cart carries no money (FR-004, spec Assumptions).
 type CartView struct {
-	// Lines is one entry per product the customer added; an empty cart is an
+	// Lines is one entry per variant the customer added; an empty cart is an
 	// empty slice.
 	Lines []LineView
 	// Subtotal is the cart total, or nil when the cart is empty.

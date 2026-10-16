@@ -71,7 +71,7 @@ func (r *fakeHoldRepository) ActiveHeld(_ context.Context, productID uuid.UUID, 
 	var total int64
 	for i := range r.holds {
 		hold := r.holds[i]
-		if hold.ProductID == productID && hold.IsActive(now) {
+		if hold.VariantID == productID && hold.IsActive(now) {
 			total += hold.Quantity
 		}
 	}
@@ -81,7 +81,7 @@ func (r *fakeHoldRepository) ActiveHeld(_ context.Context, productID uuid.UUID, 
 func (r *fakeHoldRepository) InsertHold(_ context.Context, hold *model.Hold) error {
 	for i := range r.holds {
 		existing := r.holds[i]
-		if existing.OrderID == hold.OrderID && existing.ProductID == hold.ProductID && existing.Status == constant.HoldStatusActive {
+		if existing.OrderID == hold.OrderID && existing.VariantID == hold.VariantID && existing.Status == constant.HoldStatusActive {
 			return domainerr.ErrHoldAlreadyExists
 		}
 	}
@@ -92,7 +92,7 @@ func (r *fakeHoldRepository) InsertHold(_ context.Context, hold *model.Hold) err
 func (r *fakeHoldRepository) FindActiveHold(_ context.Context, orderID, productID uuid.UUID, now time.Time) (*model.Hold, bool, error) {
 	for i := range r.holds {
 		hold := &r.holds[i]
-		if hold.OrderID == orderID && hold.ProductID == productID && hold.IsActive(now) {
+		if hold.OrderID == orderID && hold.VariantID == productID && hold.IsActive(now) {
 			return hold, true, nil
 		}
 	}
@@ -147,7 +147,7 @@ func TestReserveReducesAvailabilityWithoutMovingTheShelf(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 	if repo.locks < 1 {
@@ -167,7 +167,7 @@ func TestReserveReducesAvailabilityWithoutMovingTheShelf(t *testing.T) {
 		t.Fatalf("the hold must expire one HoldTTL after the injected instant, got %s", hold.ExpiresAt)
 	}
 
-	out, err := svc.Stock(context.Background(), dto.StockRefInput{ProductID: productID})
+	out, err := svc.Stock(context.Background(), dto.StockRefInput{VariantID: productID})
 	if err != nil {
 		t.Fatalf("Stock: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestReserveMoreThanAvailableIsRefused(t *testing.T) {
 	clock := &movableClock{at: fixedNow}
 	svc := newHoldService(repo, clock)
 
-	err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: uuid.New(), ProductID: uuid.New(), Quantity: 4})
+	err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: uuid.New(), VariantID: uuid.New(), Quantity: 4})
 	if !errors.Is(err, domainerr.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock, got %v", err)
 	}
@@ -200,7 +200,7 @@ func TestAnExpiredHoldReturnsItsQuantityToAvailability(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 	clock.advance(constant.HoldTTL + time.Minute)
@@ -216,7 +216,7 @@ func TestAnExpiredHoldReturnsItsQuantityToAvailability(t *testing.T) {
 	if repo.holds[0].Status != constant.HoldStatusActive {
 		t.Fatal("the hold must still be unswept at this point")
 	}
-	out, err := svc.Stock(context.Background(), dto.StockRefInput{ProductID: productID})
+	out, err := svc.Stock(context.Background(), dto.StockRefInput{VariantID: productID})
 	if err != nil {
 		t.Fatalf("Stock: %v", err)
 	}
@@ -242,10 +242,10 @@ func TestReleaseReturnsTheQuantityWithoutMovingTheShelf(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
-	if err := svc.Release(context.Background(), dto.ReleaseInput{OrderID: orderID, ProductID: productID}); err != nil {
+	if err := svc.Release(context.Background(), dto.ReleaseInput{OrderID: orderID, VariantID: productID}); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 	if repo.holds[0].Status != constant.HoldStatusReleased || repo.holds[0].ResolvedAt == nil {
@@ -270,7 +270,7 @@ func TestASecondReserveForTheSameOrderDoesNotDoubleHold(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	in := dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}
+	in := dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}
 	if err := svc.Reserve(context.Background(), in); err != nil {
 		t.Fatalf("first Reserve: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestReserveAfterExpiryDoesNotDoubleHold(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	in := dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 2}
+	in := dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 2}
 	if err := svc.Reserve(context.Background(), in); err != nil {
 		t.Fatalf("first Reserve: %v", err)
 	}
@@ -326,10 +326,10 @@ func TestTwoOrdersContestingTheLastAvailableUnit(t *testing.T) {
 	productID := uuid.New()
 	firstOrder, secondOrder := uuid.New(), uuid.New()
 
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: firstOrder, ProductID: productID, Quantity: 1}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: firstOrder, VariantID: productID, Quantity: 1}); err != nil {
 		t.Fatalf("first Reserve: %v", err)
 	}
-	out, err := svc.Stock(context.Background(), dto.StockRefInput{ProductID: productID})
+	out, err := svc.Stock(context.Background(), dto.StockRefInput{VariantID: productID})
 	if err != nil {
 		t.Fatalf("Stock: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestTwoOrdersContestingTheLastAvailableUnit(t *testing.T) {
 		t.Fatalf("the first hold must consume the last available unit without moving the shelf: %+v", out)
 	}
 
-	err = svc.Reserve(context.Background(), dto.ReserveInput{OrderID: secondOrder, ProductID: productID, Quantity: 1})
+	err = svc.Reserve(context.Background(), dto.ReserveInput{OrderID: secondOrder, VariantID: productID, Quantity: 1})
 	if !errors.Is(err, domainerr.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock for the contesting order, got %v", err)
 	}
@@ -361,12 +361,12 @@ func TestDamageBelowHeldIsRefused(t *testing.T) {
 	svc := newHoldService(repo, clock)
 	productID, orderID := uuid.New(), uuid.New()
 
-	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, ProductID: productID, Quantity: 3}); err != nil {
+	if err := svc.Reserve(context.Background(), dto.ReserveInput{OrderID: orderID, VariantID: productID, Quantity: 3}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 
 	// 5 - 3 = 2 would fall below the 3 units promised: refused.
-	_, err := svc.Damage(context.Background(), dto.DamageInput{ProductID: productID, Quantity: 3})
+	_, err := svc.Damage(context.Background(), dto.DamageInput{VariantID: productID, Quantity: 3})
 	if !errors.Is(err, domainerr.ErrInsufficientStock) {
 		t.Fatalf("expected ErrInsufficientStock, got %v", err)
 	}
@@ -375,7 +375,7 @@ func TestDamageBelowHeldIsRefused(t *testing.T) {
 	}
 
 	// 5 - 2 = 3 leaves exactly what is held: allowed.
-	if _, err := svc.Damage(context.Background(), dto.DamageInput{ProductID: productID, Quantity: 2}); err != nil {
+	if _, err := svc.Damage(context.Background(), dto.DamageInput{VariantID: productID, Quantity: 2}); err != nil {
 		t.Fatalf("a damage down to the held floor must be allowed: %v", err)
 	}
 	if repo.physical != 3 || len(repo.movements) != 1 {

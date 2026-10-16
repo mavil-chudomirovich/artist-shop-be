@@ -14,7 +14,7 @@ import (
 // contract, so a client can map a detail straight onto its request
 // (contracts/error-codes.md).
 const (
-	fieldProductID = "productId"
+	fieldVariantID = "variantId"
 	fieldAddressID = "addressId"
 	fieldOrderID   = "orderId"
 	fieldQuantity  = "quantity"
@@ -72,32 +72,32 @@ func mapError(err error) *httpx.AppError {
 	case errors.As(err, &notPurchasable):
 		return withField(
 			coded(constant.CodeItemNotPurchasable, http.StatusConflict, "Order item is not purchasable"),
-			fieldProductID, notPurchasable.ProductID.String(),
+			fieldVariantID, notPurchasable.VariantID.String(),
 		)
 	case errors.Is(err, domainerr.ErrItemNotPurchasable):
 		return withField(
 			coded(constant.CodeItemNotPurchasable, http.StatusConflict, "Order item is not purchasable"),
-			fieldProductID, "is not on sale or was removed",
+			fieldVariantID, "is not on sale or was removed",
 		)
 	case errors.As(err, &priceChanged):
 		return withField(
 			coded(constant.CodeItemPriceChanged, http.StatusConflict, "Order item price changed"),
-			fieldProductID, priceChanged.ProductID.String(),
+			fieldVariantID, priceChanged.VariantID.String(),
 		)
 	case errors.Is(err, domainerr.ErrItemPriceChanged):
 		return withField(
 			coded(constant.CodeItemPriceChanged, http.StatusConflict, "Order item price changed"),
-			fieldProductID, "price changed since it was added",
+			fieldVariantID, "price changed since it was added",
 		)
 	case errors.As(err, &exceeds):
 		return withField(
 			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
-			fieldProductID, fmt.Sprintf("%s: requested %d, only %d available", exceeds.ProductID, exceeds.Requested, exceeds.Available),
+			fieldVariantID, fmt.Sprintf("%s: requested %d, only %d available", exceeds.VariantID, exceeds.Requested, exceeds.Available),
 		)
 	case errors.Is(err, domainerr.ErrQuantityExceedsAvailable):
 		return withField(
 			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
-			fieldProductID, "exceeds the available quantity",
+			fieldVariantID, "exceeds the available quantity",
 		)
 	case errors.Is(err, domainerr.ErrNoAddress):
 		return coded(constant.CodeNoAddress, http.StatusConflict, "Customer has no address")

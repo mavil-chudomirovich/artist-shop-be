@@ -22,7 +22,7 @@ func (m *Mapper) Stock(stock model.Stock) (dto.StockOutput, error) {
 		return dto.StockOutput{}, err
 	}
 	return dto.StockOutput{
-		ProductID:         stock.ProductID,
+		VariantID:         stock.VariantID,
 		PhysicalQuantity:  stock.Quantity,
 		HeldQuantity:      stock.Held,
 		AvailableQuantity: available,
@@ -34,7 +34,7 @@ func (m *Mapper) Stock(stock model.Stock) (dto.StockOutput, error) {
 func (m *Mapper) Movement(movement model.Movement) dto.MovementOutput {
 	return dto.MovementOutput{
 		ID:                movement.ID,
-		ProductID:         movement.ProductID,
+		VariantID:         movement.VariantID,
 		Kind:              movement.Kind,
 		Delta:             movement.Delta,
 		ResultingQuantity: movement.ResultingQuantity,

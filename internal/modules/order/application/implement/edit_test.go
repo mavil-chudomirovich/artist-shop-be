@@ -72,20 +72,20 @@ func (r *editOrders) InsertEditHistory(_ context.Context, record model.EditHisto
 type editFixture struct {
 	svc          *Service
 	orders       *editOrders
-	catalog      *fakeCatalog
+	catalog      *fakeVariants
 	availability *fakeAvailability
 	reservations *fakeReservation
 	customers    *fakeCustomers
 }
 
 func newEditFixture(store *editOrders) *editFixture {
-	catalog := &fakeCatalog{products: map[uuid.UUID]contracts.ProductSummary{}}
+	catalog := &fakeVariants{products: map[uuid.UUID]contracts.VariantSummary{}}
 	availability := &fakeAvailability{available: map[uuid.UUID]int64{}}
 	reservations := &fakeReservation{}
 	customers := &fakeCustomers{}
 	svc := New(Service{
 		Orders:       store,
-		Products:     catalog,
+		Variants:     catalog,
 		Availability: availability,
 		Reservations: reservations,
 		Customers:    customers,
@@ -124,16 +124,20 @@ func confirmEditOrder(order *model.Order) {
 	order.PaymentExpiresAt = &expires
 }
 
-// seedEditProduct puts one on-sale product in the fake catalogue with the given
+// seedEditProduct puts one on-sale variant in the fake catalogue with the given
 // shelf and returns its identifier.
-func seedEditProduct(f *editFixture, name, slug string, amount, available int64) uuid.UUID {
+func seedEditProduct(f *editFixture, name, variantName string, amount, available int64) uuid.UUID {
 	id := uuid.New()
-	f.catalog.products[id] = contracts.ProductSummary{
-		ID:     id,
-		Name:   name,
-		Slug:   slug,
-		OnSale: true,
-		Price:  contracts.ProductPrice{Amount: amount, Currency: "VND"},
+	suffix := id.String()[:8]
+	f.catalog.products[id] = contracts.VariantSummary{
+		VariantID:   id,
+		ProductID:   uuid.New(),
+		ProductName: name,
+		ProductCode: "P-" + suffix,
+		VariantName: variantName,
+		SKU:         "SKU-" + suffix,
+		OnSale:      true,
+		Price:       contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
 	return id
@@ -152,13 +156,13 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 
 	// The catalogue now prices the kept product differently and carries a second
 	// one — an edit re-takes the current price rather than refusing it.
-	f.catalog.products[kept] = contracts.ProductSummary{
-		ID: kept, Name: "Tranh mới", Slug: "tranh-moi", OnSale: true,
+	f.catalog.products[kept] = contracts.VariantSummary{
+		VariantID: kept, ProductID: uuid.New(), ProductName: "Tranh mới", VariantName: "tranh-moi", OnSale: true,
 		Price: contracts.ProductPrice{Amount: 1500, Currency: "VND"},
 	}
 	f.availability.available[kept] = 10
-	f.catalog.products[added] = contracts.ProductSummary{
-		ID: added, Name: "Sản phẩm B", Slug: "san-pham-b", OnSale: true,
+	f.catalog.products[added] = contracts.VariantSummary{
+		VariantID: added, ProductID: uuid.New(), ProductName: "Sản phẩm B", VariantName: "san-pham-b", OnSale: true,
 		Price: contracts.ProductPrice{Amount: 2000, Currency: "VND"},
 	}
 	f.availability.available[added] = 10
@@ -166,8 +170,8 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 	view, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
 		Lines: []appdto.EditLineInput{
-			{ProductID: kept, Quantity: 3},
-			{ProductID: added, Quantity: 1},
+			{VariantID: kept, Quantity: 3},
+			{VariantID: added, Quantity: 1},
 		},
 	})
 	if err != nil {
@@ -183,12 +187,12 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 	if len(view.Lines) != 2 {
 		t.Fatalf("expected two lines, got %+v", view.Lines)
 	}
-	if view.Lines[0].ProductID != kept || view.Lines[0].Name != "Tranh mới" ||
-		view.Lines[0].Slug != "tranh-moi" || view.Lines[0].UnitPrice.Amount != 1500 ||
+	if view.Lines[0].VariantID != kept || view.Lines[0].ProductName != "Tranh mới" ||
+		view.Lines[0].VariantName != "tranh-moi" || view.Lines[0].UnitPrice.Amount != 1500 ||
 		view.Lines[0].Quantity != 3 {
 		t.Fatalf("the kept line must be re-snapshotted at its current values, got %+v", view.Lines[0])
 	}
-	if view.Lines[1].ProductID != added || view.Lines[1].Name != "Sản phẩm B" || view.Lines[1].UnitPrice.Amount != 2000 {
+	if view.Lines[1].VariantID != added || view.Lines[1].ProductName != "Sản phẩm B" || view.Lines[1].UnitPrice.Amount != 2000 {
 		t.Fatalf("the added line must carry the product's snapshot, got %+v", view.Lines[1])
 	}
 	if view.Address.RecipientName != "Nguyễn Văn A" || view.Address.StreetAddress != "1 Đinh Tiên Hoàng" {
@@ -235,7 +239,7 @@ func TestEditAppliesTheNamedAddress(t *testing.T) {
 	view, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID:   order.ID,
 		AddressID: &second.ID,
-		Lines:     []appdto.EditLineInput{{ProductID: product, Quantity: 1}},
+		Lines:     []appdto.EditLineInput{{VariantID: product, Quantity: 1}},
 	})
 	if err != nil {
 		t.Fatalf("EditMine: %v", err)
@@ -259,7 +263,7 @@ func TestEditPaymentPendingReleasesHoldClearsDeadlineAndReturnsToPending(t *test
 
 	view, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: product, Quantity: 4}},
+		Lines:   []appdto.EditLineInput{{VariantID: product, Quantity: 4}},
 	})
 	if err != nil {
 		t.Fatalf("EditMine: %v", err)
@@ -271,7 +275,7 @@ func TestEditPaymentPendingReleasesHoldClearsDeadlineAndReturnsToPending(t *test
 	if len(f.reservations.releases) != 1 {
 		t.Fatalf("the old hold must be released exactly once, got %+v", f.reservations.releases)
 	}
-	if release := f.reservations.releases[0]; release.orderID != order.ID || release.productID != product {
+	if release := f.reservations.releases[0]; release.orderID != order.ID || release.variantID != product {
 		t.Fatalf("the release must name the order and its line, got %+v", release)
 	}
 	if order.ConfirmedAt != nil || order.PaymentExpiresAt != nil {
@@ -302,7 +306,7 @@ func TestEditRefusesAnOrderThatIsNotEditable(t *testing.T) {
 
 	_, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: product, Quantity: 2}},
+		Lines:   []appdto.EditLineInput{{VariantID: product, Quantity: 2}},
 	})
 	if !errors.Is(err, domainerr.ErrNotEditable) {
 		t.Fatalf("expected ErrNotEditable, got %v", err)
@@ -348,24 +352,24 @@ func TestEditRefusesAnInvalidLine(t *testing.T) {
 	short := seedEditProduct(f, "Ít hàng", "it-hang", 1000, 2)
 	order := editOrder(owner, line(kept, 1000, 1))
 	store.orders[order.ID] = order
-	f.catalog.products[offSale] = contracts.ProductSummary{ID: offSale, Name: "Ngừng bán", Slug: "ngung-ban", OnSale: false}
+	f.catalog.products[offSale] = contracts.VariantSummary{VariantID: offSale, ProductID: uuid.New(), ProductName: "Ngừng bán", VariantName: "ngung-ban", OnSale: false}
 	f.availability.available[offSale] = 10
 
 	_, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: offSale, Quantity: 1}},
+		Lines:   []appdto.EditLineInput{{VariantID: offSale, Quantity: 1}},
 	})
 	var notPurchasable *domainerr.ItemNotPurchasableError
-	if !errors.As(err, &notPurchasable) || notPurchasable.ProductID != offSale {
+	if !errors.As(err, &notPurchasable) || notPurchasable.VariantID != offSale {
 		t.Fatalf("an off-sale line must refuse the edit naming the item, got %v", err)
 	}
 
 	_, err = f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: short, Quantity: 5}},
+		Lines:   []appdto.EditLineInput{{VariantID: short, Quantity: 5}},
 	})
 	var exceeds *domainerr.QuantityExceedsAvailableError
-	if !errors.As(err, &exceeds) || exceeds.ProductID != short || exceeds.Available != 2 || exceeds.Requested != 5 {
+	if !errors.As(err, &exceeds) || exceeds.VariantID != short || exceeds.Available != 2 || exceeds.Requested != 5 {
 		t.Fatalf("a line above available must refuse the edit naming the item and amounts, got %v", err)
 	}
 
@@ -394,7 +398,7 @@ func TestEditRefusesAForeignAddressID(t *testing.T) {
 	_, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
 		OrderID:   order.ID,
 		AddressID: &foreign,
-		Lines:     []appdto.EditLineInput{{ProductID: product, Quantity: 1}},
+		Lines:     []appdto.EditLineInput{{VariantID: product, Quantity: 1}},
 	})
 	var invalid *domainerr.InvalidValueError
 	if !errors.As(err, &invalid) || invalid.Field != model.FieldAddressID {
@@ -419,7 +423,7 @@ func TestEditAnswersNotFoundForAnotherCustomersOrder(t *testing.T) {
 
 	_, err := f.svc.EditMine(actorContext(intruder), appdto.EditInput{
 		OrderID: order.ID,
-		Lines:   []appdto.EditLineInput{{ProductID: product, Quantity: 1}},
+		Lines:   []appdto.EditLineInput{{VariantID: product, Quantity: 1}},
 	})
 	if !errors.Is(err, domainerr.ErrNotFound) {
 		t.Fatalf("another customer's order must answer not-found, got %v", err)

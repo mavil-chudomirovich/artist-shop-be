@@ -87,7 +87,7 @@ func (r *httpRepository) ActiveHeld(_ context.Context, productID uuid.UUID, now 
 	var total int64
 	for i := range r.holds {
 		hold := r.holds[i]
-		if hold.ProductID == productID && hold.IsActive(now) {
+		if hold.VariantID == productID && hold.IsActive(now) {
 			total += hold.Quantity
 		}
 	}
@@ -102,7 +102,7 @@ func (r *httpRepository) InsertHold(_ context.Context, hold *model.Hold) error {
 func (r *httpRepository) FindActiveHold(_ context.Context, orderID, productID uuid.UUID, now time.Time) (*model.Hold, bool, error) {
 	for i := range r.holds {
 		hold := &r.holds[i]
-		if hold.OrderID == orderID && hold.ProductID == productID && hold.IsActive(now) {
+		if hold.OrderID == orderID && hold.VariantID == productID && hold.IsActive(now) {
 			return hold, true, nil
 		}
 	}
@@ -114,7 +114,7 @@ func (r *httpRepository) FindActiveHold(_ context.Context, orderID, productID uu
 func (r *httpRepository) Movements(_ context.Context, productID uuid.UUID, page, pageSize int) ([]model.Movement, int64, error) {
 	product := make([]model.Movement, 0, len(r.movementRows))
 	for _, movement := range r.movementRows {
-		if movement.ProductID == productID {
+		if movement.VariantID == productID {
 			product = append(product, movement)
 		}
 	}
@@ -135,7 +135,7 @@ type httpLookup struct {
 	exists bool
 }
 
-func (l *httpLookup) ProductExists(context.Context, uuid.UUID) (bool, error) {
+func (l *httpLookup) VariantExists(context.Context, uuid.UUID) (bool, error) {
 	return l.exists, nil
 }
 
@@ -338,7 +338,7 @@ func TestEachManualOperationAnswers200WithTheStockShape(t *testing.T) {
 }
 
 // FR-007, research D12, quickstart 1b: an unknown identifier is 404
-// PRODUCT_NOT_FOUND on the read and on every write.
+// VARIANT_NOT_FOUND on the read and on every write.
 func TestAnUnknownProductAnswers404(t *testing.T) {
 	id := uuid.New()
 	router, _, _ := newStockRouter(t, 0, false, inventoryHooks(nil))
@@ -355,8 +355,8 @@ func TestAnUnknownProductAnswers404(t *testing.T) {
 			if rec.Code != http.StatusNotFound {
 				t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
 			}
-			if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
-				t.Fatalf("expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+			if body := decodeError(t, rec); body.Error.Code != "VARIANT_NOT_FOUND" {
+				t.Fatalf("expected VARIANT_NOT_FOUND, got %s", body.Error.Code)
 			}
 		})
 	}
@@ -384,7 +384,7 @@ func TestAMalformedIdentifierIs400NamingTheField(t *testing.T) {
 			if body.Error.Code != "VALIDATION_ERROR" {
 				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
 			}
-			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "productId" {
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "variantId" {
 				t.Fatalf("expected the detail to name productId, got %+v", body.Error.Details)
 			}
 		})
@@ -488,7 +488,7 @@ func TestReadShowsHeldWhilePhysicalIsUnchanged(t *testing.T) {
 		Mapper:    mapper.New(),
 	})
 
-	if err := svc.Reserve(context.Background(), appdto.ReserveInput{OrderID: uuid.New(), ProductID: id, Quantity: 2}); err != nil {
+	if err := svc.Reserve(context.Background(), appdto.ReserveInput{OrderID: uuid.New(), VariantID: id, Quantity: 2}); err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
 
@@ -511,7 +511,7 @@ func TestReadShowsHeldWhilePhysicalIsUnchanged(t *testing.T) {
 type movementBody struct {
 	Data []struct {
 		ID                uuid.UUID  `json:"id"`
-		ProductID         uuid.UUID  `json:"productId"`
+		VariantID         uuid.UUID  `json:"variantId"`
 		Kind              string     `json:"kind"`
 		Delta             int64      `json:"delta"`
 		ResultingQuantity int64      `json:"resultingQuantity"`
@@ -564,9 +564,9 @@ func TestTheMovementsRouteAnswersThePaginatedHistory(t *testing.T) {
 	note := "hàng về kho"
 	reference := "evt-1"
 	rows := []model.Movement{
-		{ID: uuid.New(), ProductID: id, Kind: constant.MovementRestock, Delta: 10, ResultingQuantity: 10, ActorID: &actor, Note: &note, CreatedAt: fixedHTTPNow},
-		{ID: uuid.New(), ProductID: id, Kind: constant.MovementDamage, Delta: -3, ResultingQuantity: 7, ActorID: &actor, CreatedAt: fixedHTTPNow.Add(time.Minute)},
-		{ID: uuid.New(), ProductID: id, Kind: constant.MovementSale, Delta: -2, ResultingQuantity: 5, SourceReference: &reference, CreatedAt: fixedHTTPNow.Add(2 * time.Minute)},
+		{ID: uuid.New(), VariantID: id, Kind: constant.MovementRestock, Delta: 10, ResultingQuantity: 10, ActorID: &actor, Note: &note, CreatedAt: fixedHTTPNow},
+		{ID: uuid.New(), VariantID: id, Kind: constant.MovementDamage, Delta: -3, ResultingQuantity: 7, ActorID: &actor, CreatedAt: fixedHTTPNow.Add(time.Minute)},
+		{ID: uuid.New(), VariantID: id, Kind: constant.MovementSale, Delta: -2, ResultingQuantity: 5, SourceReference: &reference, CreatedAt: fixedHTTPNow.Add(2 * time.Minute)},
 	}
 	router := newMovementRouter(t, rows, true)
 
@@ -613,7 +613,7 @@ func TestTheMovementsRoutePagesThroughTheHistory(t *testing.T) {
 	rows := make([]model.Movement, 0, 3)
 	for i := 0; i < 3; i++ {
 		rows = append(rows, model.Movement{
-			ID: uuid.New(), ProductID: id, Kind: constant.MovementRestock,
+			ID: uuid.New(), VariantID: id, Kind: constant.MovementRestock,
 			Delta: 1, ResultingQuantity: int64(i + 1), CreatedAt: fixedHTTPNow.Add(time.Duration(i) * time.Minute),
 		})
 	}
@@ -650,7 +650,7 @@ func TestTheMovementsRouteAnswersAnEmptyHistory(t *testing.T) {
 	}
 }
 
-// FR-007, research D12: an unknown product answers 404 PRODUCT_NOT_FOUND.
+// FR-007, research D12: an unknown product answers 404 VARIANT_NOT_FOUND.
 func TestTheMovementsRouteAnswers404ForAnUnknownProduct(t *testing.T) {
 	id := uuid.New()
 	router, _, _ := newStockRouter(t, 0, false, inventoryHooks(nil))
@@ -659,8 +659,8 @@ func TestTheMovementsRouteAnswers404ForAnUnknownProduct(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown product: expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if body := decodeError(t, rec); body.Error.Code != "PRODUCT_NOT_FOUND" {
-		t.Fatalf("expected PRODUCT_NOT_FOUND, got %s", body.Error.Code)
+	if body := decodeError(t, rec); body.Error.Code != "VARIANT_NOT_FOUND" {
+		t.Fatalf("expected VARIANT_NOT_FOUND, got %s", body.Error.Code)
 	}
 }
 

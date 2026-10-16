@@ -18,8 +18,8 @@ import (
 // RestockInput records goods arriving. The acting administrator is taken from the
 // session, never from this input (FR-005).
 type RestockInput struct {
-	// ProductID is the product whose stock rises.
-	ProductID uuid.UUID
+	// VariantID is the variant whose stock rises.
+	VariantID uuid.UUID
 	// Quantity is the positive whole number of units received.
 	Quantity int64
 	// Note is an optional free-text note for the change.
@@ -28,18 +28,18 @@ type RestockInput struct {
 
 // DamageInput records goods lost.
 type DamageInput struct {
-	// ProductID is the product whose stock falls.
-	ProductID uuid.UUID
+	// VariantID is the variant whose stock falls.
+	VariantID uuid.UUID
 	// Quantity is the positive whole number of units lost.
 	Quantity int64
 	// Note is an optional free-text note for the change.
 	Note *string
 }
 
-// AdjustmentInput corrects a product's stock to a recounted value.
+// AdjustmentInput corrects a variant's stock to a recounted value.
 type AdjustmentInput struct {
-	// ProductID is the product being corrected.
-	ProductID uuid.UUID
+	// VariantID is the variant being corrected.
+	VariantID uuid.UUID
 	// Quantity is the counted value; zero is valid. Only the signed difference
 	// from the stored quantity is recorded, and correcting to the stored value
 	// writes no movement (FR-003, research D9).
@@ -48,18 +48,18 @@ type AdjustmentInput struct {
 	Note *string
 }
 
-// StockRefInput addresses one product's stock.
+// StockRefInput addresses one variant's stock.
 type StockRefInput struct {
-	// ProductID is the product being read.
-	ProductID uuid.UUID
+	// VariantID is the variant being read.
+	VariantID uuid.UUID
 }
 
-// StockOutput is one product's stock: what is on the shelf, what is set aside, and
+// StockOutput is one variant's stock: what is on the shelf, what is set aside, and
 // what therefore remains available. All three are whole numbers and none is
 // negative (FR-007).
 type StockOutput struct {
-	// ProductID is the product the stock belongs to.
-	ProductID uuid.UUID
+	// VariantID is the variant the stock belongs to.
+	VariantID uuid.UUID
 	// PhysicalQuantity is what is on the shelf.
 	PhysicalQuantity int64
 	// HeldQuantity is what active holds have set aside.
@@ -68,10 +68,10 @@ type StockOutput struct {
 	AvailableQuantity int64
 }
 
-// HistoryInput pages through one product's movement history.
+// HistoryInput pages through one variant's movement history.
 type HistoryInput struct {
-	// ProductID is the product whose history is read.
-	ProductID uuid.UUID
+	// VariantID is the variant whose history is read.
+	VariantID uuid.UUID
 	// Page is 1-based.
 	Page int
 	// PageSize is the number of movements per page.
@@ -84,8 +84,8 @@ type HistoryInput struct {
 type MovementOutput struct {
 	// ID identifies the movement.
 	ID uuid.UUID
-	// ProductID is the product whose quantity changed.
-	ProductID uuid.UUID
+	// VariantID is the variant whose quantity changed.
+	VariantID uuid.UUID
 	// Kind is the kind of change.
 	Kind constant.MovementKind
 	// Delta is the signed change.
@@ -103,14 +103,14 @@ type MovementOutput struct {
 	CreatedAt time.Time
 }
 
-// MovementPage is one page of a product's movement history.
+// MovementPage is one page of a variant's movement history.
 type MovementPage struct {
 	// Movements holds the page's movements, oldest first.
 	Movements []MovementOutput
 	// Page and PageSize echo the requested window.
 	Page     int
 	PageSize int
-	// Total is the number of movements the product has.
+	// Total is the number of movements the variant has.
 	Total int64
 }
 
@@ -120,8 +120,8 @@ type MovementPage struct {
 type ReserveInput struct {
 	// OrderID is the order the hold belongs to.
 	OrderID uuid.UUID
-	// ProductID is the product set aside.
-	ProductID uuid.UUID
+	// VariantID is the variant set aside.
+	VariantID uuid.UUID
 	// Quantity is the positive whole number of units to hold.
 	Quantity int64
 }
@@ -131,8 +131,8 @@ type ReserveInput struct {
 type ReleaseInput struct {
 	// OrderID is the order whose hold is released.
 	OrderID uuid.UUID
-	// ProductID is the product the hold set aside.
-	ProductID uuid.UUID
+	// VariantID is the variant the hold set aside.
+	VariantID uuid.UUID
 }
 
 // SaleInput turns a held order into a sale, idempotently keyed by the payment
@@ -140,8 +140,8 @@ type ReleaseInput struct {
 type SaleInput struct {
 	// OrderID is the order being paid.
 	OrderID uuid.UUID
-	// ProductID is the product whose hold is consumed.
-	ProductID uuid.UUID
+	// VariantID is the variant whose hold is consumed.
+	VariantID uuid.UUID
 	// SourceReference is the identity of the outside payment event. Applying the
 	// same reference more than once changes stock at most once.
 	SourceReference string

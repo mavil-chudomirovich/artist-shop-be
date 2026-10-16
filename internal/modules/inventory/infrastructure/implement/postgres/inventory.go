@@ -25,14 +25,15 @@ import (
 const table = "stock_levels"
 
 // The constraint names that carry a meaning this adapter has to translate. A
-// missing product is attributed by the constraint name PostgreSQL reports, never
+// missing variant is attributed by the constraint name PostgreSQL reports, never
 // by the text of its message, because the message is localized and free to change
-// while the constraint name is part of the schema (research D2, D12).
+// while the constraint name is part of the schema (research D2, D12). The names
+// are the ones migrations/00014_product_sku_model.sql installs.
 const (
-	constraintLevelProduct       = "stock_levels_product_fk"
-	constraintTransactionProduct = "inventory_transactions_product_fk"
+	constraintLevelVariant       = "stock_levels_variant_fk"
+	constraintTransactionVariant = "inventory_transactions_variant_fk"
 	constraintTransactionSource  = "inventory_transactions_source_key"
-	constraintHoldProduct        = "stock_holds_product_fk"
+	constraintHoldVariant        = "stock_holds_variant_fk"
 	constraintHoldActive         = "stock_holds_active_key"
 )
 
@@ -48,7 +49,7 @@ const (
 // a later ALTER TABLE cannot break a scan. Held is not a column: it is derived from
 // the active holds and is never selected here (research D1).
 var stockColumns = []string{
-	"product_id",
+	"variant_id",
 	"quantity",
 	"updated_at",
 }
@@ -57,7 +58,7 @@ var stockColumns = []string{
 // arity of scanMovement.
 var movementColumns = []string{
 	"id",
-	"product_id",
+	"variant_id",
 	"kind",
 	"delta",
 	"resulting_quantity",
@@ -71,7 +72,7 @@ var movementColumns = []string{
 // of scanHold.
 var holdColumns = []string{
 	"id",
-	"product_id",
+	"variant_id",
 	"order_id",
 	"quantity",
 	"status",
@@ -100,9 +101,9 @@ func NewInventoryRepository(pool *pgxpool.Pool) *InventoryRepository {
 	r.Base = baserepo.Base[model.Stock, uuid.UUID]{
 		Pool:     pool,
 		Table:    table,
-		IDColumn: "product_id",
+		IDColumn: "variant_id",
 		Columns:  stockColumns,
-		IDValue:  func(s *model.Stock) any { return s.ProductID },
+		IDValue:  func(s *model.Stock) any { return s.VariantID },
 		Scan:     scanStock,
 	}
 	return r
@@ -117,13 +118,13 @@ func (r *InventoryRepository) querier(ctx context.Context) database.Querier {
 	return database.FromContext(ctx, r.pool)
 }
 
-// Level returns the stored physical quantity. A product with no row answers zero,
-// because a product that has never been stocked is understood as zero (research
+// Level returns the stored physical quantity. A variant with no row answers zero,
+// because a variant that has never been stocked is understood as zero (research
 // D12).
-func (r *InventoryRepository) Level(ctx context.Context, productID uuid.UUID) (int64, error) {
-	const query = `SELECT quantity FROM stock_levels WHERE product_id = $1`
+func (r *InventoryRepository) Level(ctx context.Context, variantID uuid.UUID) (int64, error) {
+	const query = `SELECT quantity FROM stock_levels WHERE variant_id = $1`
 	var quantity int64
-	err := r.querier(ctx).QueryRow(ctx, query, productID).Scan(&quantity)
+	err := r.querier(ctx).QueryRow(ctx, query, variantID).Scan(&quantity)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -133,39 +134,39 @@ func (r *InventoryRepository) Level(ctx context.Context, productID uuid.UUID) (i
 	return quantity, nil
 }
 
-// Increase adds amount to the product's quantity, materialising the level row on
+// Increase adds amount to the variant's quantity, materialising the level row on
 // the first call, and returns the new quantity. The upsert is what makes a level
-// row appear lazily; the foreign key refuses a row for a product that does not
+// row appear lazily; the foreign key refuses a row for a variant that does not
 // exist (research D12).
-func (r *InventoryRepository) Increase(ctx context.Context, productID uuid.UUID, amount int64, now time.Time) (int64, error) {
+func (r *InventoryRepository) Increase(ctx context.Context, variantID uuid.UUID, amount int64, now time.Time) (int64, error) {
 	const query = `
-		INSERT INTO stock_levels (product_id, quantity, updated_at)
+		INSERT INTO stock_levels (variant_id, quantity, updated_at)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (product_id) DO UPDATE
+		ON CONFLICT (variant_id) DO UPDATE
 		SET quantity   = stock_levels.quantity + EXCLUDED.quantity,
 		    updated_at = EXCLUDED.updated_at
 		RETURNING quantity`
 	var quantity int64
-	if err := r.querier(ctx).QueryRow(ctx, query, productID, amount, now).Scan(&quantity); err != nil {
+	if err := r.querier(ctx).QueryRow(ctx, query, variantID, amount, now).Scan(&quantity); err != nil {
 		return 0, classifyWriteError("increase stock level", err)
 	}
 	return quantity, nil
 }
 
-// Decrease removes amount from the product's quantity and returns the new
+// Decrease removes amount from the variant's quantity and returns the new
 // quantity. It is a conditional update, so the storage itself evaluates the
 // no-negative rule against the current value; an update that matches no row is
 // reported as the insufficient-stock sentinel, which is what lets the use case
 // answer 409 rather than 500 (FR-010, research D2).
-func (r *InventoryRepository) Decrease(ctx context.Context, productID uuid.UUID, amount int64, now time.Time) (int64, error) {
+func (r *InventoryRepository) Decrease(ctx context.Context, variantID uuid.UUID, amount int64, now time.Time) (int64, error) {
 	const query = `
 		UPDATE stock_levels
 		SET quantity   = quantity - $2,
 		    updated_at = $3
-		WHERE product_id = $1 AND quantity >= $2
+		WHERE variant_id = $1 AND quantity >= $2
 		RETURNING quantity`
 	var quantity int64
-	err := r.querier(ctx).QueryRow(ctx, query, productID, amount, now).Scan(&quantity)
+	err := r.querier(ctx).QueryRow(ctx, query, variantID, amount, now).Scan(&quantity)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, domainerr.InsufficientStock(model.FieldQuantity, 0, amount)
 	}
@@ -175,13 +176,13 @@ func (r *InventoryRepository) Decrease(ctx context.Context, productID uuid.UUID,
 	return quantity, nil
 }
 
-// LockLevel takes the level's row lock inside the caller's transaction. A product
+// LockLevel takes the level's row lock inside the caller's transaction. A variant
 // with no level row has nothing to lock and answers success, because its
 // availability is zero and no hold can be placed against it (research D2, D12).
-func (r *InventoryRepository) LockLevel(ctx context.Context, productID uuid.UUID) error {
-	const query = `SELECT product_id FROM stock_levels WHERE product_id = $1 FOR UPDATE`
+func (r *InventoryRepository) LockLevel(ctx context.Context, variantID uuid.UUID) error {
+	const query = `SELECT variant_id FROM stock_levels WHERE variant_id = $1 FOR UPDATE`
 	var locked uuid.UUID
-	err := r.querier(ctx).QueryRow(ctx, query, productID).Scan(&locked)
+	err := r.querier(ctx).QueryRow(ctx, query, variantID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -191,18 +192,18 @@ func (r *InventoryRepository) LockLevel(ctx context.Context, productID uuid.UUID
 	return nil
 }
 
-// InsertMovement appends one immutable ledger row. A product no row carries is
+// InsertMovement appends one immutable ledger row. A variant no row carries is
 // reported as the not-found sentinel through the foreign key; a duplicate source
 // reference is refused by the partial unique index and left for the use case to
 // interpret (FR-020, FR-022).
 func (r *InventoryRepository) InsertMovement(ctx context.Context, movement *model.Movement) error {
 	const query = `
 		INSERT INTO inventory_transactions
-			(id, product_id, kind, delta, resulting_quantity, source_reference, actor_id, note, created_at)
+			(id, variant_id, kind, delta, resulting_quantity, source_reference, actor_id, note, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err := r.querier(ctx).Exec(ctx, query,
 		movement.ID,
-		movement.ProductID,
+		movement.VariantID,
 		string(movement.Kind),
 		movement.Delta,
 		movement.ResultingQuantity,
@@ -217,10 +218,10 @@ func (r *InventoryRepository) InsertMovement(ctx context.Context, movement *mode
 	return nil
 }
 
-// Movements returns one page of a product's changes, oldest first, ordered by
+// Movements returns one page of a variant's changes, oldest first, ordered by
 // created_at then id so the order is stable across two reads sharing a timestamp
 // (FR-008, research D14), plus the total number of them.
-func (r *InventoryRepository) Movements(ctx context.Context, productID uuid.UUID, page, pageSize int) ([]model.Movement, int64, error) {
+func (r *InventoryRepository) Movements(ctx context.Context, variantID uuid.UUID, page, pageSize int) ([]model.Movement, int64, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -229,17 +230,17 @@ func (r *InventoryRepository) Movements(ctx context.Context, productID uuid.UUID
 	}
 
 	var total int64
-	const countQuery = `SELECT count(*) FROM inventory_transactions WHERE product_id = $1`
-	if err := r.querier(ctx).QueryRow(ctx, countQuery, productID).Scan(&total); err != nil {
+	const countQuery = `SELECT count(*) FROM inventory_transactions WHERE variant_id = $1`
+	if err := r.querier(ctx).QueryRow(ctx, countQuery, variantID).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count inventory movements: %w", err)
 	}
 
 	query := fmt.Sprintf(`
 		SELECT %s FROM inventory_transactions
-		WHERE product_id = $1
+		WHERE variant_id = $1
 		ORDER BY created_at, id
 		LIMIT $2 OFFSET $3`, projection(movementColumns))
-	rows, err := r.querier(ctx).Query(ctx, query, productID, pageSize, (page-1)*pageSize)
+	rows, err := r.querier(ctx).Query(ctx, query, variantID, pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list inventory movements: %w", err)
 	}
@@ -259,17 +260,17 @@ func (r *InventoryRepository) Movements(ctx context.Context, productID uuid.UUID
 	return out, total, nil
 }
 
-// InsertHold records one active hold. A product no row carries is reported as the
+// InsertHold records one active hold. A variant no row carries is reported as the
 // not-found sentinel through the foreign key; a second active hold for the same
-// order and product is refused by the partial unique index (FR-019).
+// order and variant is refused by the partial unique index (FR-019).
 func (r *InventoryRepository) InsertHold(ctx context.Context, hold *model.Hold) error {
 	const query = `
 		INSERT INTO stock_holds
-			(id, product_id, order_id, quantity, status, expires_at, created_at, resolved_at)
+			(id, variant_id, order_id, quantity, status, expires_at, created_at, resolved_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.querier(ctx).Exec(ctx, query,
 		hold.ID,
-		hold.ProductID,
+		hold.VariantID,
 		hold.OrderID,
 		hold.Quantity,
 		string(hold.Status),
@@ -283,56 +284,56 @@ func (r *InventoryRepository) InsertHold(ctx context.Context, hold *model.Hold) 
 	return nil
 }
 
-// ActiveHeld returns the total quantity a product's active holds set aside at the
+// ActiveHeld returns the total quantity a variant's active holds set aside at the
 // given instant. The comparison is against the instant the caller passed, never
 // the database clock, so the sum and the sweeper agree on what has expired
 // (FR-018, research D6, D15).
-func (r *InventoryRepository) ActiveHeld(ctx context.Context, productID uuid.UUID, now time.Time) (int64, error) {
+func (r *InventoryRepository) ActiveHeld(ctx context.Context, variantID uuid.UUID, now time.Time) (int64, error) {
 	const query = `
 		SELECT COALESCE(sum(quantity), 0)
 		FROM stock_holds
-		WHERE product_id = $1 AND status = 'ACTIVE' AND expires_at > $2`
+		WHERE variant_id = $1 AND status = 'ACTIVE' AND expires_at > $2`
 	var held int64
-	if err := r.querier(ctx).QueryRow(ctx, query, productID, now).Scan(&held); err != nil {
+	if err := r.querier(ctx).QueryRow(ctx, query, variantID, now).Scan(&held); err != nil {
 		return 0, fmt.Errorf("sum active stock holds: %w", err)
 	}
 	return held, nil
 }
 
 // Availability returns the physical level and the active-held quantity of each
-// requested product that has a level row, in one read. It is the read behind the
+// requested variant that has a level row, in one read. It is the read behind the
 // cross-module InventoryAvailability contract: the whole set is answered by one
 // indexed `= ANY(...)` query, so a cart view does not make the database work grow
-// with its number of lines. A product with no level row is absent from the
+// with its number of lines. A variant with no level row is absent from the
 // result, because it is understood as zero (research D2, D12).
 //
 // The active-held sum is computed in the same statement against the instant the
 // caller passed, never the database clock, so it agrees with the sweeper on what
 // has expired (research D15).
-func (r *InventoryRepository) Availability(ctx context.Context, productIDs []uuid.UUID, now time.Time) ([]domainrepo.AvailabilityReading, error) {
-	if len(productIDs) == 0 {
+func (r *InventoryRepository) Availability(ctx context.Context, variantIDs []uuid.UUID, now time.Time) ([]domainrepo.AvailabilityReading, error) {
+	if len(variantIDs) == 0 {
 		return []domainrepo.AvailabilityReading{}, nil
 	}
 	const query = `
-		SELECT l.product_id, l.quantity, COALESCE(h.held, 0)
+		SELECT l.variant_id, l.quantity, COALESCE(h.held, 0)
 		FROM stock_levels l
 		LEFT JOIN (
-			SELECT product_id, sum(quantity) AS held
+			SELECT variant_id, sum(quantity) AS held
 			FROM stock_holds
 			WHERE status = 'ACTIVE' AND expires_at > $2
-			GROUP BY product_id
-		) h ON h.product_id = l.product_id
-		WHERE l.product_id = ANY($1)`
-	rows, err := r.querier(ctx).Query(ctx, query, productIDs, now)
+			GROUP BY variant_id
+		) h ON h.variant_id = l.variant_id
+		WHERE l.variant_id = ANY($1)`
+	rows, err := r.querier(ctx).Query(ctx, query, variantIDs, now)
 	if err != nil {
 		return nil, fmt.Errorf("read stock availability: %w", err)
 	}
 	defer rows.Close()
 
-	out := make([]domainrepo.AvailabilityReading, 0, len(productIDs))
+	out := make([]domainrepo.AvailabilityReading, 0, len(variantIDs))
 	for rows.Next() {
 		var reading domainrepo.AvailabilityReading
-		if err := rows.Scan(&reading.ProductID, &reading.Level, &reading.Held); err != nil {
+		if err := rows.Scan(&reading.VariantID, &reading.Level, &reading.Held); err != nil {
 			return nil, fmt.Errorf("scan stock availability: %w", err)
 		}
 		out = append(out, reading)
@@ -343,15 +344,15 @@ func (r *InventoryRepository) Availability(ctx context.Context, productIDs []uui
 	return out, nil
 }
 
-// FindActiveHold returns the active hold of one order and product, reporting
+// FindActiveHold returns the active hold of one order and variant, reporting
 // whether one exists. An expired hold is not active even before it is swept, so a
 // payment arriving after expiry finds nothing to consume (FR-015, research D6).
-func (r *InventoryRepository) FindActiveHold(ctx context.Context, orderID, productID uuid.UUID, now time.Time) (*model.Hold, bool, error) {
+func (r *InventoryRepository) FindActiveHold(ctx context.Context, orderID, variantID uuid.UUID, now time.Time) (*model.Hold, bool, error) {
 	query := fmt.Sprintf(`
 		SELECT %s FROM stock_holds
-		WHERE order_id = $1 AND product_id = $2 AND status = 'ACTIVE' AND expires_at > $3`,
+		WHERE order_id = $1 AND variant_id = $2 AND status = 'ACTIVE' AND expires_at > $3`,
 		projection(holdColumns))
-	hold, err := scanHold(r.querier(ctx).QueryRow(ctx, query, orderID, productID, now))
+	hold, err := scanHold(r.querier(ctx).QueryRow(ctx, query, orderID, variantID, now))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -424,7 +425,7 @@ func projection(columns []string) string {
 // whole entity, so it is only exercised through Base.
 func scanStock(row baserepo.Row) (*model.Stock, error) {
 	var stock model.Stock
-	if err := row.Scan(&stock.ProductID, &stock.Quantity, &stock.UpdatedAt); err != nil {
+	if err := row.Scan(&stock.VariantID, &stock.Quantity, &stock.UpdatedAt); err != nil {
 		return nil, fmt.Errorf("scan stock level: %w", err)
 	}
 	return &stock, nil
@@ -438,7 +439,7 @@ func scanMovement(row baserepo.Row) (*model.Movement, error) {
 	)
 	if err := row.Scan(
 		&movement.ID,
-		&movement.ProductID,
+		&movement.VariantID,
 		&kind,
 		&movement.Delta,
 		&movement.ResultingQuantity,
@@ -462,7 +463,7 @@ func scanHold(row baserepo.Row) (*model.Hold, error) {
 	)
 	err := row.Scan(
 		&hold.ID,
-		&hold.ProductID,
+		&hold.VariantID,
 		&hold.OrderID,
 		&hold.Quantity,
 		&status,
@@ -481,7 +482,7 @@ func scanHold(row baserepo.Row) (*model.Hold, error) {
 }
 
 // classifyWriteError labels a failed write and maps the storage guard to the
-// module's sentinel. A foreign-key refusal of a missing product becomes the
+// module's sentinel. A foreign-key refusal of a missing variant becomes the
 // not-found sentinel (research D2, D12); a refusal of a second active hold by the
 // partial unique index becomes ErrHoldAlreadyExists, which the reserve use case
 // treats as already applied rather than a failure (FR-019); and a refusal of a
@@ -495,8 +496,8 @@ func classifyWriteError(operation string, err error) error {
 		switch pgErr.Code {
 		case foreignKeyViolationCode:
 			switch pgErr.ConstraintName {
-			case constraintLevelProduct, constraintTransactionProduct, constraintHoldProduct:
-				return domainerr.ErrProductNotFound
+			case constraintLevelVariant, constraintTransactionVariant, constraintHoldVariant:
+				return domainerr.ErrVariantNotFound
 			}
 		case uniqueViolationCode:
 			switch pgErr.ConstraintName {

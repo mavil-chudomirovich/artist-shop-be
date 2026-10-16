@@ -57,29 +57,29 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	httpx.WriteError(w, r, mapError(err), h.logger)
 }
 
-// GetStock returns one product's physical, held and available quantities
-// (FR-007). An unknown product is 404 PRODUCT_NOT_FOUND; one that exists but has
+// GetStock returns one variant's physical, held and available quantities
+// (FR-007). An unknown variant is 404 VARIANT_NOT_FOUND; one that exists but has
 // never been stocked answers zero.
 //
-//	@Summary		Read a product's stock (ADMIN)
-//	@Description	Returns the physical quantity, the quantity currently held for orders being paid, and what remains available. A product that does not exist answers not-found; one that exists but has never been stocked answers zero.
+//	@Summary		Read a variant's stock (ADMIN)
+//	@Description	Returns the physical quantity, the quantity currently held for orders being paid, and what remains available. A variant that does not exist answers not-found; one that exists but has never been stocked answers zero.
 //	@Tags			Inventory
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string	true	"Product identifier"
+//	@Param			variantId	path	string	true	"Variant identifier"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
 //	@Failure		403			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
-//	@Router			/admin/inventory/{productId} [get]
+//	@Router			/admin/inventory/{variantId} [get]
 func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
-	id, appErr := pathUUID(r, "productId", fieldProductID)
+	id, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	out, err := h.svc.Stock(r.Context(), appdto.StockRefInput{ProductID: id})
+	out, err := h.svc.Stock(r.Context(), appdto.StockRefInput{VariantID: id})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -87,18 +87,18 @@ func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toStockResponse(out))
 }
 
-// GetMovements returns one page of a product's movement history, oldest first
-// (FR-008). An unknown product is 404 PRODUCT_NOT_FOUND, because the history of a
-// product that does not exist is not an empty history (research D12). The window
+// GetMovements returns one page of a variant's movement history, oldest first
+// (FR-008). An unknown variant is 404 VARIANT_NOT_FOUND, because the history of a
+// variant that does not exist is not an empty history (research D12). The window
 // is validated here — a page or size outside its range is 400 VALIDATION_ERROR
 // naming the field — and the paginated envelope carries the page metadata.
 //
-//	@Summary		Read a product's movement history (ADMIN)
-//	@Description	Returns a page of a product's physical stock changes, oldest first, with the signed amount and the resulting quantity. Pagination is reported in meta.
+//	@Summary		Read a variant's movement history (ADMIN)
+//	@Description	Returns a page of a variant's physical stock changes, oldest first, with the signed amount and the resulting quantity. Pagination is reported in meta.
 //	@Tags			Inventory
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string	true	"Product identifier"
+//	@Param			variantId	path	string	true	"Variant identifier"
 //	@Param			page		query	int		false	"Page number (default 1)"
 //	@Param			pageSize	query	int		false	"Page size (default 20)"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.MovementResponse}
@@ -106,9 +106,9 @@ func (h *Handler) GetStock(w http.ResponseWriter, r *http.Request) {
 //	@Failure		401			{object}	httpx.SwaggerError
 //	@Failure		403			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
-//	@Router			/admin/inventory/{productId}/movements [get]
+//	@Router			/admin/inventory/{variantId}/movements [get]
 func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
-	id, appErr := pathUUID(r, "productId", fieldProductID)
+	id, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
@@ -118,7 +118,7 @@ func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	out, err := h.svc.History(r.Context(), appdto.HistoryInput{ProductID: id, Page: page, PageSize: pageSize})
+	out, err := h.svc.History(r.Context(), appdto.HistoryInput{VariantID: id, Page: page, PageSize: pageSize})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -131,19 +131,19 @@ func (h *Handler) GetMovements(w http.ResponseWriter, r *http.Request) {
 // account member and the decoder refuses an unknown one.
 //
 //	@Summary		Record goods arriving (ADMIN)
-//	@Description	Increases the product's physical quantity by a positive amount and records one ledger entry naming the administrator. The acting administrator comes from the session, never the body.
+//	@Description	Increases the variant's physical quantity by a positive amount and records one ledger entry naming the administrator. The acting administrator comes from the session, never the body.
 //	@Tags			Inventory
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			variantId	path	string					true	"Variant identifier"
 //	@Param			request		body	httpdto.QuantityRequest	true	"Quantity to add"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
 //	@Failure		403			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
-//	@Router			/admin/inventory/{productId}/restock [post]
+//	@Router			/admin/inventory/{variantId}/restock [post]
 func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -154,7 +154,7 @@ func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.Restock(ctx, appdto.RestockInput{ProductID: id, Quantity: quantity, Note: note})
+	out, err := h.svc.Restock(ctx, appdto.RestockInput{VariantID: id, Quantity: quantity, Note: note})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -166,12 +166,12 @@ func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 // use case with the insufficient-stock sentinel, which maps to 409.
 //
 //	@Summary		Record damaged goods (ADMIN)
-//	@Description	Decreases the product's physical quantity by a positive amount. A decrease over the shelf, or below what is held, is refused and changes nothing.
+//	@Description	Decreases the variant's physical quantity by a positive amount. A decrease over the shelf, or below what is held, is refused and changes nothing.
 //	@Tags			Inventory
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			variantId	path	string					true	"Variant identifier"
 //	@Param			request		body	httpdto.QuantityRequest	true	"Quantity to remove"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
@@ -179,7 +179,7 @@ func (h *Handler) Restock(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
 //	@Failure		409			{object}	httpx.SwaggerError
-//	@Router			/admin/inventory/{productId}/damage [post]
+//	@Router			/admin/inventory/{variantId}/damage [post]
 func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
@@ -190,7 +190,7 @@ func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.Damage(ctx, appdto.DamageInput{ProductID: id, Quantity: quantity, Note: note})
+	out, err := h.svc.Damage(ctx, appdto.DamageInput{VariantID: id, Quantity: quantity, Note: note})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -198,17 +198,17 @@ func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toStockResponse(out))
 }
 
-// Adjustment corrects a product's physical stock to a recounted value (FR-003).
+// Adjustment corrects a variant's physical stock to a recounted value (FR-003).
 // Zero is a valid counted value; correcting to what is stored changes nothing and
 // writes no movement.
 //
 //	@Summary		Correct the physical quantity (ADMIN)
-//	@Description	Sets the product's physical quantity to a recounted value and records only the difference. Correcting to the stored value changes nothing and writes no ledger entry; zero is a valid counted value.
+//	@Description	Sets the variant's physical quantity to a recounted value and records only the difference. Correcting to the stored value changes nothing and writes no ledger entry; zero is a valid counted value.
 //	@Tags			Inventory
 //	@Accept			json
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			productId	path	string					true	"Product identifier"
+//	@Param			variantId	path	string					true	"Variant identifier"
 //	@Param			request		body	httpdto.AdjustmentRequest	true	"Counted quantity"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=httpdto.StockResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
@@ -216,13 +216,13 @@ func (h *Handler) Damage(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403			{object}	httpx.SwaggerError
 //	@Failure		404			{object}	httpx.SwaggerError
 //	@Failure		409			{object}	httpx.SwaggerError
-//	@Router			/admin/inventory/{productId}/adjustment [post]
+//	@Router			/admin/inventory/{variantId}/adjustment [post]
 func (h *Handler) Adjustment(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
 	if !ok {
 		return
 	}
-	id, appErr := pathUUID(r, "productId", fieldProductID)
+	id, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
@@ -238,7 +238,7 @@ func (h *Handler) Adjustment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := appinterface.WithActor(r.Context(), actor)
-	out, err := h.svc.Adjust(ctx, appdto.AdjustmentInput{ProductID: id, Quantity: quantity, Note: req.Note})
+	out, err := h.svc.Adjust(ctx, appdto.AdjustmentInput{VariantID: id, Quantity: quantity, Note: req.Note})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -249,7 +249,7 @@ func (h *Handler) Adjustment(w http.ResponseWriter, r *http.Request) {
 // quantityBody parses the path identifier and the shared restock/damage body,
 // reporting false after writing the response when either is unacceptable.
 func (h *Handler) quantityBody(w http.ResponseWriter, r *http.Request) (uuid.UUID, int64, *string, bool) {
-	id, appErr := pathUUID(r, "productId", fieldProductID)
+	id, appErr := pathUUID(r, "variantId", fieldVariantID)
 	if appErr != nil {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return uuid.Nil, 0, nil, false
@@ -375,7 +375,7 @@ func toStockResponse(out appdto.StockOutput) httpdto.StockResponse {
 func toMovementResponse(out appdto.MovementOutput) httpdto.MovementResponse {
 	return httpdto.MovementResponse{
 		ID:                out.ID,
-		ProductID:         out.ProductID,
+		VariantID:         out.VariantID,
 		Kind:              string(out.Kind),
 		Delta:             out.Delta,
 		ResultingQuantity: out.ResultingQuantity,

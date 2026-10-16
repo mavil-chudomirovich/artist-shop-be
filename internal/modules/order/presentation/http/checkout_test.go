@@ -124,12 +124,14 @@ type orderBody struct {
 			StreetAddress  string `json:"streetAddress"`
 		} `json:"address"`
 		Lines []struct {
-			ProductID uuid.UUID `json:"productId"`
-			Name      string    `json:"name"`
-			Slug      string    `json:"slug"`
-			Quantity  int64     `json:"quantity"`
-			UnitPrice moneyBody `json:"unitPrice"`
-			LineTotal moneyBody `json:"lineTotal"`
+			ProductID   uuid.UUID `json:"productId"`
+			ProductName string    `json:"productName"`
+			VariantID   uuid.UUID `json:"variantId"`
+			VariantName string    `json:"variantName"`
+			Quantity    int64     `json:"quantity"`
+			UnitPrice   moneyBody `json:"unitPrice"`
+			LineTotal   moneyBody `json:"lineTotal"`
+			Position    int       `json:"position"`
 		} `json:"lines"`
 	} `json:"data"`
 }
@@ -171,9 +173,13 @@ func sampleView() appdto.OrderView {
 			StreetAddress: "1 Đinh Tiên Hoàng",
 		},
 		Lines: []appdto.OrderLineView{{
-			ProductID: product, Name: "Tranh", Slug: "tranh", Quantity: 2,
-			UnitPrice: appdto.MoneyView{Amount: 120000, Currency: "VND"},
-			LineTotal: appdto.MoneyView{Amount: 240000, Currency: "VND"},
+			ProductID:   product,
+			ProductName: "Tranh",
+			VariantID:   uuid.New(),
+			VariantName: "Khổ lớn",
+			Quantity:    2,
+			UnitPrice:   appdto.MoneyView{Amount: 120000, Currency: "VND"},
+			LineTotal:   appdto.MoneyView{Amount: 240000, Currency: "VND"},
 		}},
 	}
 }
@@ -204,7 +210,7 @@ func TestCheckoutReturns201WithTheCreatedOrder(t *testing.T) {
 	if body.Data.ItemCount != 1 || len(body.Data.Lines) != 1 {
 		t.Fatalf("unexpected lines: %+v", body.Data.Lines)
 	}
-	if body.Data.Lines[0].Name != "Tranh" || body.Data.Lines[0].UnitPrice.Amount != 120000 ||
+	if body.Data.Lines[0].ProductName != "Tranh" || body.Data.Lines[0].UnitPrice.Amount != 120000 ||
 		body.Data.Lines[0].LineTotal.Amount != 240000 || body.Data.Lines[0].Quantity != 2 {
 		t.Fatalf("unexpected line: %+v", body.Data.Lines[0])
 	}
@@ -268,9 +274,9 @@ func TestCheckoutMapsEveryRefusal(t *testing.T) {
 		field  string
 	}{
 		{"empty cart", domainerr.ErrCartEmpty, constant.CodeCartEmpty, http.StatusConflict, ""},
-		{"off-sale item", domainerr.ItemNotPurchasable(product), constant.CodeItemNotPurchasable, http.StatusConflict, "productId"},
-		{"changed price", domainerr.ItemPriceChanged(product), constant.CodeItemPriceChanged, http.StatusConflict, "productId"},
-		{"over available", domainerr.QuantityExceedsAvailable(product, 3, 5), constant.CodeQuantityExceedsAvailable, http.StatusConflict, "productId"},
+		{"off-sale item", domainerr.ItemNotPurchasable(product), constant.CodeItemNotPurchasable, http.StatusConflict, "variantId"},
+		{"changed price", domainerr.ItemPriceChanged(product), constant.CodeItemPriceChanged, http.StatusConflict, "variantId"},
+		{"over available", domainerr.QuantityExceedsAvailable(product, 3, 5), constant.CodeQuantityExceedsAvailable, http.StatusConflict, "variantId"},
 		{"no address", domainerr.ErrNoAddress, constant.CodeNoAddress, http.StatusConflict, ""},
 		{"foreign addressId", domainerr.InvalidValue("addressId", "is not one of the customer's addresses"), "VALIDATION_ERROR", http.StatusBadRequest, "addressId"},
 	}

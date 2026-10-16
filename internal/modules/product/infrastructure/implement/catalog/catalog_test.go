@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
 	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
 )
@@ -17,86 +16,95 @@ import (
 // a test that drifts from the adapter's actual dependency fails loudly instead of
 // returning a zero value.
 type fakeRepository struct {
-	domainrepo.ProductRepository
-	products []model.Product
-	err      error
+	domainrepo.VariantRepository
+	facts []domainrepo.VariantFacts
+	err   error
 }
 
-func (f *fakeRepository) FindByIDs(context.Context, []uuid.UUID) ([]model.Product, error) {
-	return f.products, f.err
+func (f *fakeRepository) FindFactsByIDs(context.Context, []uuid.UUID) ([]domainrepo.VariantFacts, error) {
+	return f.facts, f.err
 }
 
-// research D1: the adapter maps each product to the contract DTO, taking OnSale
-// from the domain's own buyable decision and carrying the price through unchanged.
-func TestProductsMapsTheDomainFactsToTheContract(t *testing.T) {
+// research D6: the adapter maps each variant fact to the contract DTO, carrying
+// the product slugs and the effective price through unchanged.
+func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 	onSaleID := uuid.New()
 	draftID := uuid.New()
-	repo := &fakeRepository{products: []model.Product{
+	productID := uuid.New()
+	repo := &fakeRepository{facts: []domainrepo.VariantFacts{
 		{
-			ID:        onSaleID,
-			Name:      "Tranh sơn dầu",
-			Slug:      "tranh-son-dau",
-			SellState: constant.SellStateActive,
-			Price:     model.Price{Amount: 120000, Currency: "VND"},
+			VariantID:   onSaleID,
+			ProductID:   productID,
+			ProductName: "Tranh sơn dầu",
+			ProductCode: "P-1",
+			ProductSlug: "tranh-son-dau",
+			VariantName: "Khổ lớn",
+			SKU:         "SKU-1",
+			OnSale:      true,
+			Price:       model.Price{Amount: 120000, Currency: "VND"},
 		},
 		{
-			ID:        draftID,
-			Name:      "Tranh sắp ra mắt",
-			Slug:      "tranh-sap-ra-mat",
-			SellState: constant.SellStateComingSoon,
-			Price:     model.Price{Amount: 90000, Currency: "VND"},
+			VariantID:   draftID,
+			ProductID:   productID,
+			ProductName: "Tranh sắp ra mắt",
+			ProductCode: "P-2",
+			ProductSlug: "tranh-sap-ra-mat",
+			VariantName: "Khổ nhỏ",
+			SKU:         "SKU-2",
+			OnSale:      false,
+			Price:       model.Price{Amount: 90000, Currency: "VND"},
 		},
 	}}
 
-	got, err := New(repo).Products(context.Background(), []uuid.UUID{onSaleID, draftID})
+	got, err := New(repo).Variants(context.Background(), []uuid.UUID{onSaleID, draftID})
 	if err != nil {
-		t.Fatalf("Products: %v", err)
+		t.Fatalf("Variants: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 summaries, got %d", len(got))
 	}
 
-	if got[0].ID != onSaleID || got[0].Name != "Tranh sơn dầu" || got[0].Slug != "tranh-son-dau" {
+	if got[0].VariantID != onSaleID || got[0].ProductName != "Tranh sơn dầu" || got[0].ProductSlug != "tranh-son-dau" {
 		t.Errorf("first summary = %+v", got[0])
 	}
 	if !got[0].OnSale {
-		t.Errorf("an ACTIVE product must report OnSale=true")
+		t.Errorf("an ACTIVE variant must report OnSale=true")
 	}
 	if got[0].Price.Amount != 120000 || got[0].Price.Currency != "VND" {
 		t.Errorf("first price = %+v, want 120000 VND", got[0].Price)
 	}
 
-	if got[1].ID != draftID {
-		t.Errorf("second summary id = %s, want %s", got[1].ID, draftID)
+	if got[1].VariantID != draftID {
+		t.Errorf("second summary id = %s, want %s", got[1].VariantID, draftID)
 	}
 	if got[1].OnSale {
-		t.Errorf("a COMING_SOON product must report OnSale=false")
+		t.Errorf("a COMING_SOON variant must report OnSale=false")
 	}
 }
 
-// research D1: an unknown identifier is simply absent from the result, not an
-// error, so the consumer can tell a removed product from an available one.
-func TestProductsReturnsOnlyTheProductsThatExist(t *testing.T) {
+// research D6: an unknown identifier is simply absent from the result, not an
+// error, so the consumer can tell a removed variant from an available one.
+func TestVariantsReturnsOnlyTheVariantsThatExist(t *testing.T) {
 	known := uuid.New()
-	repo := &fakeRepository{products: []model.Product{
-		{ID: known, Name: "Có", Slug: "co", SellState: constant.SellStateActive},
+	repo := &fakeRepository{facts: []domainrepo.VariantFacts{
+		{VariantID: known, ProductName: "Có", ProductSlug: "co", OnSale: true},
 	}}
 
-	got, err := New(repo).Products(context.Background(), []uuid.UUID{known, uuid.New()})
+	got, err := New(repo).Variants(context.Background(), []uuid.UUID{known, uuid.New()})
 	if err != nil {
-		t.Fatalf("Products: %v", err)
+		t.Fatalf("Variants: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != known {
-		t.Fatalf("expected only the existing product, got %+v", got)
+	if len(got) != 1 || got[0].VariantID != known {
+		t.Fatalf("expected only the existing variant, got %+v", got)
 	}
 }
 
 // A repository failure is reported as itself, never swallowed or replaced: the
-// cart decides what an unavailable catalogue read means for its own answer.
-func TestProductsReportsTheRepositoryError(t *testing.T) {
+// cart decides what an unavailable variant-facts read means for its own answer.
+func TestVariantsReportsTheRepositoryError(t *testing.T) {
 	want := errors.New("storage unavailable")
 
-	_, err := New(&fakeRepository{err: want}).Products(context.Background(), []uuid.UUID{uuid.New()})
+	_, err := New(&fakeRepository{err: want}).Variants(context.Background(), []uuid.UUID{uuid.New()})
 	if !errors.Is(err, want) {
 		t.Fatalf("expected the repository error, got %v", err)
 	}

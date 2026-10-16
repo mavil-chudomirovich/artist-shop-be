@@ -40,19 +40,19 @@ func (s *Service) ApplySale(ctx context.Context, in dto.SaleInput) error {
 	if in.SourceReference == "" {
 		return domainerr.InvalidValue(model.FieldSourceReference, "must name the outside event")
 	}
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return err
 	}
 
 	now := s.now()
 	applied := false
 	err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		hold, found, err := s.Inventory.FindActiveHold(txCtx, in.OrderID, in.ProductID, now)
+		hold, found, err := s.Inventory.FindActiveHold(txCtx, in.OrderID, in.VariantID, now)
 		if err != nil {
 			return err
 		}
 		if !found {
-			// Nothing is set aside for this order and product: the hold was
+			// Nothing is set aside for this order and variant: the hold was
 			// already turned into a sale, or it was released or expired. There is
 			// nothing to consume and nothing to change, and FR-021 makes this a
 			// success rather than a failure.
@@ -62,7 +62,7 @@ func (s *Service) ApplySale(ctx context.Context, in dto.SaleInput) error {
 		// The conditional decrease is what decides whether the sale is possible;
 		// an event that would take the shelf below zero matches no row and is
 		// refused with no movement (FR-009, FR-023).
-		resulting, err := s.Inventory.Decrease(txCtx, in.ProductID, hold.Quantity, now)
+		resulting, err := s.Inventory.Decrease(txCtx, in.VariantID, hold.Quantity, now)
 		if err != nil {
 			return err
 		}
@@ -72,7 +72,7 @@ func (s *Service) ApplySale(ctx context.Context, in dto.SaleInput) error {
 		// meets; the insert failing rolls back the decrease and the resolution
 		// together (FR-022).
 		reference := in.SourceReference
-		movement, err := model.NewMovement(in.ProductID, constant.MovementSale, -hold.Quantity, resulting, nil, &reference, nil, now)
+		movement, err := model.NewMovement(in.VariantID, constant.MovementSale, -hold.Quantity, resulting, nil, &reference, nil, now)
 		if err != nil {
 			return err
 		}
@@ -112,14 +112,14 @@ func (s *Service) ApplySale(ctx context.Context, in dto.SaleInput) error {
 // source reference with a nil actor — no human caused it — so a payment event's
 // inventory effect is auditable even though the payment module does not exist yet
 // (FR-020, Constitution VI, research D13). It carries no customer's personal
-// data: the reference identifies the event and the target is the product whose
+// data: the reference identifies the event and the target is the variant whose
 // quantity moved.
 func (s *Service) recordSale(ctx context.Context, in dto.SaleInput) {
 	if s.Audit == nil {
 		return
 	}
 	s.Audit.Record(ctx, constant.AuditInventorySaleApplied, string(audit.OutcomeSuccess),
-		nil, "", targetTypeProduct, in.ProductID.String(),
+		nil, "", targetTypeVariant, in.VariantID.String(),
 		map[string]any{
 			"kind":            string(constant.MovementSale),
 			"sourceReference": in.SourceReference,

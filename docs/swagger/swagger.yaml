@@ -108,12 +108,13 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.AddItemRequest:
     properties:
-      productId:
-        description: ProductID is the product to add.
-        type: string
       quantity:
         description: Quantity is the positive whole number of units to add.
         type: integer
+      variantId:
+        description: VariantID is the variant to add (a product without a variant
+          is refused).
+        type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartLineResponse:
     properties:
@@ -129,25 +130,29 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
         description: LineTotal is quantity times the captured price.
-      name:
-        description: Name is the product's current name, or null when the product
-          is gone.
-        type: string
       productId:
-        description: ProductID is the product the line is for.
+        description: ProductID is the product the variant belongs to.
+        type: string
+      productName:
+        description: |-
+          ProductName is the product's current name, or null when the variant is
+          gone.
         type: string
       quantity:
         description: Quantity is the whole number the customer chose.
         type: integer
-      slug:
-        description: |-
-          Slug is the product's current link segment, or null when the product is
-          gone.
-        type: string
       unitPrice:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
         description: UnitPrice is the captured price.
+      variantId:
+        description: VariantID is the variant the line is for.
+        type: string
+      variantName:
+        description: |-
+          VariantName is the variant's current display name, or null when the variant
+          is gone.
+        type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.CartResponse:
     properties:
@@ -291,9 +296,6 @@ definitions:
       note:
         description: Note is the optional note a manual change carries, or null.
         type: string
-      productId:
-        description: ProductID is the product whose quantity changed.
-        type: string
       resultingQuantity:
         description: ResultingQuantity is the physical quantity after the change.
         type: integer
@@ -301,6 +303,9 @@ definitions:
         description: |-
           SourceReference is the outside event's identity, or null for a manual
           change.
+        type: string
+      variantId:
+        description: VariantID is the variant whose quantity changed.
         type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_inventory_presentation_dto.QuantityRequest:
@@ -386,12 +391,12 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest:
     properties:
-      productId:
-        description: ProductID is the product the line is for.
-        type: string
       quantity:
         description: Quantity is how many, at least 1.
         type: integer
+      variantId:
+        description: VariantID is the variant the line is for.
+        type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditOrderRequest:
     properties:
@@ -442,22 +447,28 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.MoneyResponse'
         description: LineTotal is quantity times the snapshot unit price.
-      name:
-        description: Name is the product's name at checkout.
-        type: string
+      position:
+        description: Position is the order the line is listed in.
+        type: integer
       productId:
         description: ProductID is the product recorded on the line.
+        type: string
+      productName:
+        description: ProductName is the product's name at checkout.
         type: string
       quantity:
         description: Quantity is the whole number bought.
         type: integer
-      slug:
-        description: Slug is the product's link segment at checkout.
-        type: string
       unitPrice:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.MoneyResponse'
         description: UnitPrice is the snapshot unit price.
+      variantId:
+        description: VariantID is the variant recorded on the line.
+        type: string
+      variantName:
+        description: VariantName is the variant's display name at checkout.
+        type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderResponse:
     properties:
@@ -602,62 +613,6 @@ definitions:
         description: UpdatedAt is when the payment was last written.
         type: string
     type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse:
-    properties:
-      height:
-        type: integer
-      id:
-        description: ID identifies the picture.
-        type: string
-      isPrimary:
-        description: IsPrimary reports whether this is the group's main picture.
-        type: boolean
-      position:
-        description: Position is the display order.
-        type: integer
-      publicId:
-        description: PublicID is the provider's opaque identifier.
-        type: string
-      url:
-        description: URL is the displayable link.
-        type: string
-      width:
-        description: Width and Height are the stored pixel dimensions.
-        type: integer
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse:
-    properties:
-      id:
-        description: ID is the option product's stable identifier.
-        type: string
-      imageUrl:
-        description: ImageURL is the option's main picture's link, or null when it
-          has none.
-        type: string
-      isPreorder:
-        description: IsPreorder reports whether the option is an announced pre-order.
-        type: boolean
-      label:
-        description: Label is the option's value in the group's single choice dimension.
-        type: string
-      name:
-        description: Name is the option product's name.
-        type: string
-      position:
-        description: Position is the option product's ordering preference (research
-          D5).
-        type: integer
-      price:
-        allOf:
-        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the option's own price and currency.
-      sellState:
-        description: SellState is the option product's selling-life state (FR-017).
-        type: string
-      slug:
-        description: Slug is the option product's public link segment.
-        type: string
-    type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse:
     properties:
       height:
@@ -686,9 +641,16 @@ definitions:
       categoryId:
         description: CategoryID is the one category the product belongs to.
         type: string
+      code:
+        description: Code is the operator-facing product code (FR-011).
+        type: string
       createdAt:
         description: CreatedAt and UpdatedAt are the stored timestamps.
         type: string
+      defaultPrice:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: DefaultPrice is the product's default price with its currency.
       description:
         description: Description is the text shown to customers; an empty string is
           valid.
@@ -696,9 +658,6 @@ definitions:
       id:
         description: ID is the product's stable identifier.
         type: string
-      imageCount:
-        description: ImageCount is how many pictures the product has.
-        type: integer
       imageUrl:
         description: ImageURL is the main picture's link, or null when the product
           has none.
@@ -710,51 +669,43 @@ definitions:
         items:
           $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminImageResponse'
         type: array
-      isPreorder:
-        description: IsPreorder reports whether the product is announced as a pre-order.
-        type: boolean
-      isSet:
-        description: IsSet reports whether the product is a combo set (FR-039).
-        type: boolean
-      members:
-        description: |-
-          Members holds the products inside a set, in order. It is omitted for a
-          product that is not a set.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse'
-        type: array
       name:
         description: Name is the name the operator wrote.
         type: string
       position:
         description: Position is the operator's ordering preference.
         type: integer
-      preorderExpectedAt:
-        description: |-
-          PreorderExpectedAt is the optional expected availability date, or null. It
-          is written in the contract's date-only form (format: date).
-        type: string
-      price:
-        allOf:
-        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the integer amount with its currency.
-      sellState:
-        description: SellState is where the product is in its selling life (FR-022).
-        type: string
       slug:
         description: Slug is the link segment the operator wrote.
         type: string
       updatedAt:
         type: string
+      variantCount:
+        description: VariantCount is how many variants the product carries.
+        type: integer
+      variants:
+        description: |-
+          Variants holds every variant in display order. It is always an array, never
+          null.
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantResponse'
+        type: array
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductResponse:
     properties:
       categoryId:
         description: CategoryID is the one category the product belongs to.
         type: string
+      code:
+        description: Code is the operator-facing product code (FR-011).
+        type: string
       createdAt:
         description: CreatedAt and UpdatedAt are the stored timestamps.
         type: string
+      defaultPrice:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: DefaultPrice is the product's default price with its currency.
       description:
         description: Description is the text shown to customers; an empty string is
           valid.
@@ -762,132 +713,63 @@ definitions:
       id:
         description: ID is the product's stable identifier.
         type: string
-      imageCount:
-        description: ImageCount is how many pictures the product has.
-        type: integer
       imageUrl:
         description: ImageURL is the main picture's link, or null when the product
           has none.
         type: string
-      isPreorder:
-        description: IsPreorder reports whether the product is announced as a pre-order.
-        type: boolean
-      isSet:
-        description: IsSet reports whether the product is a combo set (FR-039).
-        type: boolean
       name:
         description: Name is the name the operator wrote.
         type: string
       position:
         description: Position is the operator's ordering preference.
         type: integer
-      preorderExpectedAt:
-        description: |-
-          PreorderExpectedAt is the optional expected availability date, or null. It
-          is written in the contract's date-only form (format: date).
+      slug:
+        description: Slug is the link segment the operator wrote.
         type: string
-      price:
+      updatedAt:
+        type: string
+      variantCount:
+        description: VariantCount is how many variants the product carries.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantPriceResponse:
+    properties:
+      amount:
+        description: Amount is the variant's own price in the currency's minor unit.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantResponse:
+    properties:
+      effectivePrice:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the integer amount with its currency.
+        description: EffectivePrice is the price actually charged.
+      id:
+        description: ID is the variant's stable identifier.
+        type: string
+      imageUrl:
+        description: ImageURL is the variant's image link, or null when it has none.
+        type: string
+      name:
+        description: Name is the variant's display name.
+        type: string
+      position:
+        description: Position is the display order; the smallest is the default variant.
+        type: integer
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantPriceResponse'
+        description: |-
+          Price is the variant's own amount, or null when it falls back to the
+          product's default (FR-017).
       sellState:
-        description: SellState is where the product is in its selling life (FR-022).
+        description: SellState is where the variant is in its selling life.
         type: string
-      slug:
-        description: Slug is the link segment the operator wrote.
-        type: string
-      updatedAt:
+      sku:
+        description: SKU is the operator-written stock-keeping unit (FR-011).
         type: string
     type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse:
-    properties:
-      categoryId:
-        description: CategoryID is the one category the group belongs to.
-        type: string
-      createdAt:
-        description: CreatedAt and UpdatedAt are the stored timestamps.
-        type: string
-      description:
-        description: Description is the text shown to customers; an empty string is
-          valid.
-        type: string
-      id:
-        description: ID is the group's stable identifier.
-        type: string
-      imageCount:
-        description: ImageCount is how many pictures the group has.
-        type: integer
-      imageUrl:
-        description: ImageURL is the group's main picture's link, or null when it
-          has none.
-        type: string
-      images:
-        description: |-
-          Images holds every picture in display order. It is always an array, never
-          null.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupImageResponse'
-        type: array
-      name:
-        description: Name is the name the operator wrote.
-        type: string
-      optionName:
-        description: OptionName is the single choice-dimension name, for example "Card".
-        type: string
-      options:
-        description: |-
-          Options holds every option, visible or not. It is always an array, never
-          null.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminGroupOptionResponse'
-        type: array
-      position:
-        description: Position is the operator's ordering preference.
-        type: integer
-      slug:
-        description: Slug is the link segment the operator wrote.
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse:
-    properties:
-      categoryId:
-        description: CategoryID is the one category the group belongs to.
-        type: string
-      createdAt:
-        description: CreatedAt and UpdatedAt are the stored timestamps.
-        type: string
-      description:
-        description: Description is the text shown to customers; an empty string is
-          valid.
-        type: string
-      id:
-        description: ID is the group's stable identifier.
-        type: string
-      imageCount:
-        description: ImageCount is how many pictures the group has.
-        type: integer
-      imageUrl:
-        description: ImageURL is the group's main picture's link, or null when it
-          has none.
-        type: string
-      name:
-        description: Name is the name the operator wrote.
-        type: string
-      optionName:
-        description: OptionName is the single choice-dimension name, for example "Card".
-        type: string
-      position:
-        description: Position is the operator's ordering preference.
-        type: integer
-      slug:
-        description: Slug is the link segment the operator wrote.
-        type: string
-      updatedAt:
-        type: string
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest:
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeVariantStateRequest:
     properties:
       to:
         description: |-
@@ -901,80 +783,63 @@ definitions:
       categoryId:
         description: CategoryID is the one category the product belongs to.
         type: string
+      code:
+        description: Code is the unique operator-facing product code (FR-011).
+        type: string
+      defaultPrice:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
+        description: DefaultPrice is the product's default price with its currency.
       description:
         description: |-
           Description is the text shown to customers; an omitted or empty value is
           stored empty.
         type: string
-      isPreorder:
-        description: |-
-          IsPreorder reports whether the product is announced as a pre-order
-          (FR-040, research D9). A created product is COMING_SOON, so the label may
-          always be set here; the domain refuses it only once the product is on sale.
-        type: boolean
-      isSet:
-        description: IsSet reports whether the product is a combo set (FR-039, research
-          D10).
-        type: boolean
-      memberProductIds:
-        description: |-
-          MemberProductIDs are the products inside the set, in the order they are
-          listed. They are recorded only when IsSet is true (research D10).
-        items:
-          type: string
-        type: array
       name:
         description: Name is the product name.
         type: string
       position:
         description: Position is the ordering preference.
         type: integer
-      preorderExpectedAt:
-        description: |-
-          PreorderExpectedAt is the optional expected-availability date, in the
-          contract's date-only form. It is meaningful only together with IsPreorder.
-        type: string
-      price:
-        allOf:
-        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
-        description: Price is the price with its currency.
       slug:
         description: Slug is the public link segment.
         type: string
-      variantGroupId:
+      variants:
         description: |-
-          VariantGroupID attaches the new product to a group as an option; an omitted
-          or null value creates an ordinary product (FR-010). It requires
-          VariantLabel.
-        type: string
-      variantLabel:
-        description: |-
-          VariantLabel is the option's short choice label; required when
-          VariantGroupID is present (FR-021).
-        type: string
+          Variants is the variants the product is created with; it must hold at least
+          one (FR-012).
+        items:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest'
+        type: array
     type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest:
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest:
     properties:
-      categoryId:
-        description: CategoryID is the one category the group belongs to (FR-023).
-        type: string
-      description:
-        description: |-
-          Description is the text shown to customers; an omitted or empty value is
-          stored empty.
-        type: string
       name:
-        description: Name is the group name.
-        type: string
-      optionName:
-        description: OptionName is the single choice-dimension name (FR-009).
+        description: Name is the variant's display name.
         type: string
       position:
         description: Position is the ordering preference.
         type: integer
-      slug:
-        description: Slug is the public link segment.
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest'
+        description: |-
+          Price is the variant's own price; null or omitted uses the product's
+          default (FR-017).
+      sku:
+        description: SKU is the variant's globally unique stock-keeping unit (FR-011).
         type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.OptionalVariantPrice:
+    properties:
+      set:
+        description: Set reports whether the JSON key was present at all.
+        type: boolean
+      value:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest'
+        description: Value is the parsed price, or nil when the key was present and
+          null.
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest:
     properties:
@@ -992,34 +857,6 @@ definitions:
         type: integer
       currency:
         description: 'Currency is the currency code: exactly three uppercase letters.'
-        type: string
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse:
-    properties:
-      id:
-        description: ID is the entry's stable public identifier.
-        type: string
-      imageUrl:
-        description: ImageURL is the entry's main picture's link, or null when it
-          has none.
-        type: string
-      isPreorder:
-        description: |-
-          IsPreorder reports whether a standalone product is announced but not yet
-          available; it is always false for a group, which carries no sell state.
-        type: boolean
-      name:
-        description: Name is the name the operator wrote.
-        type: string
-      price:
-        allOf:
-        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the integer amount with its currency.
-      slug:
-        description: Slug is the segment a customer-facing link is built from.
-        type: string
-      type:
-        description: Type is "product" or "variant-group".
         type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse:
@@ -1045,131 +882,77 @@ definitions:
         description: ID is the product's stable public identifier.
         type: string
       imageUrl:
-        description: ImageURL is the main picture's link, or null when the product
-          has none.
+        description: ImageURL is the card image's link, or null when the product has
+          none.
         type: string
       images:
         description: |-
-          Images holds every picture in display order. It is always an array, never
-          null, so a product with no picture answers `[]`.
+          Images holds every gallery picture in display order. It is always an array,
+          never null.
         items:
           $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse'
         type: array
-      isPreorder:
-        description: |-
-          IsPreorder reports whether the product is announced but not yet available.
-          Such a product is visible and not buyable (FR-002, FR-040).
-        type: boolean
       name:
         description: Name is the name the operator wrote.
         type: string
       price:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the integer amount with its currency.
+        description: Price is the lowest on-sale variant price with its currency.
       slug:
         description: Slug is the segment a customer-facing link is built from.
         type: string
-      variantGroup:
-        allOf:
-        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse'
+      variants:
         description: |-
-          VariantGroup is the selector present when the product is an option of a
-          variant group, and omitted for a standalone product (FR-007).
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductVariantGroupResponse:
-    properties:
-      id:
-        description: ID is the group's stable identifier.
-        type: string
-      images:
-        description: Images holds the group's own pictures in display order; always
-          an array.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse'
-        type: array
-      name:
-        description: Name is the group's shared name.
-        type: string
-      optionName:
-        description: OptionName is the single choice-dimension name.
-        type: string
-      options:
-        description: |-
-          Options holds the group's visible options in display order; always an
-          array.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse'
-        type: array
-      slug:
-        description: Slug is the group's public link segment.
-        type: string
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse:
-    properties:
-      description:
-        description: Description may be empty.
-        type: string
-      id:
-        description: ID is the group's stable identifier.
-        type: string
-      images:
-        description: |-
-          Images holds the group's own pictures in display order. It is always an
+          Variants holds the visible variants in display order. It is always an
           array, never null.
         items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicImageResponse'
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantResponse'
         type: array
-      name:
-        description: Name is the group's shared name.
-        type: string
-      optionName:
-        description: OptionName is the single choice-dimension name, for example "Card".
-        type: string
-      options:
-        description: |-
-          Options holds the visible options in display order. It is always an array,
-          never null.
-        items:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse'
-        type: array
-      slug:
-        description: Slug is the group's public link segment.
-        type: string
     type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantOptionResponse:
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse:
     properties:
       id:
-        description: ID is the option product's stable identifier.
+        description: ID is the product's stable public identifier.
         type: string
       imageUrl:
-        description: ImageURL is the option's main picture's link, or null when it
-          has none.
+        description: ImageURL is the card image's link, or null when the product has
+          none.
         type: string
-      isPreorder:
-        description: IsPreorder reports whether the option is an announced pre-order.
-        type: boolean
-      label:
-        description: Label is the option's value in the group's single choice dimension.
+      name:
+        description: Name is the name the operator wrote.
         type: string
       price:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
-        description: Price is the option's own price and currency (FR-016).
+        description: Price is the lowest on-sale variant price with its currency.
       slug:
-        description: Slug is the option product's public link segment (FR-007).
+        description: Slug is the segment a customer-facing link is built from.
         type: string
     type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.SetMemberResponse:
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantResponse:
     properties:
       id:
-        description: ID is the member product's identifier.
+        description: |-
+          ID is the variant's stable identifier, the value a customer sends to add
+          the variant to the cart.
         type: string
+      imageUrl:
+        description: ImageURL is the variant's image link, or null when it has none.
+        type: string
+      inStock:
+        description: InStock reports whether the variant currently has stock a customer
+          can take.
+        type: boolean
       name:
-        description: Name is the member product's name.
+        description: Name is the variant's display name.
         type: string
-      slug:
-        description: Slug is the member product's public link segment.
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceResponse'
+        description: Price is the variant's effective price.
+      sellState:
+        description: SellState is where the variant is in its selling life.
         type: string
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateProductRequest:
@@ -1177,62 +960,14 @@ definitions:
       categoryId:
         description: CategoryID is the new category; nil keeps the current value.
         type: string
-      description:
-        description: |-
-          Description is the new description; nil keeps the current value, an empty
-          string clears it.
+      code:
+        description: Code is the new product code; nil keeps the current value.
         type: string
-      isPreorder:
-        description: |-
-          IsPreorder is the new pre-order label; nil keeps the current value. Setting
-          it false also clears PreorderExpectedAt (FR-040). The domain refuses
-          setting it true while the product is on sale, naming isPreorder.
-        type: boolean
-      isSet:
-        description: IsSet is the new combo-set flag; nil keeps the current value.
-        type: boolean
-      memberProductIds:
-        description: |-
-          MemberProductIDs replaces the whole member list when non-nil. It is
-          recorded only when the product is a set (research D10); sending an empty
-          list clears the set's members.
-        items:
-          type: string
-        type: array
-      name:
-        description: Name is the new name; nil keeps the current value.
-        type: string
-      position:
-        description: Position is the new position; nil keeps the current value.
-        type: integer
-      preorderExpectedAt:
-        description: |-
-          PreorderExpectedAt is the new expected-availability date, in the
-          contract's date-only form; nil keeps the current value.
-        type: string
-      price:
+      defaultPrice:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PriceRequest'
-        description: Price is the new price; nil keeps the current value.
-      slug:
-        description: Slug is the new slug; nil keeps the current value.
-        type: string
-      variantGroupId:
-        description: |-
-          VariantGroupID attaches or detaches the product's option role; the JSON key
-          being absent keeps the current attachment (research D13).
-        type: string
-      variantLabel:
-        description: |-
-          VariantLabel sets or clears the option label; the JSON key being absent
-          keeps the current label (research D13).
-        type: string
-    type: object
-  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest:
-    properties:
-      categoryId:
-        description: CategoryID is the new category; nil keeps the current value.
-        type: string
+        description: DefaultPrice is the new default price; nil keeps the current
+          value.
       description:
         description: |-
           Description is the new description; nil keeps the current value, an empty
@@ -1241,16 +976,36 @@ definitions:
       name:
         description: Name is the new name; nil keeps the current value.
         type: string
-      optionName:
-        description: OptionName is the new choice-dimension name; nil keeps the current
-          value.
-        type: string
       position:
         description: Position is the new position; nil keeps the current value.
         type: integer
       slug:
         description: Slug is the new slug; nil keeps the current value.
         type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantRequest:
+    properties:
+      name:
+        description: Name is the new name; nil keeps the current value.
+        type: string
+      position:
+        description: Position is the new position; nil keeps the current value.
+        type: integer
+      price:
+        allOf:
+        - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.OptionalVariantPrice'
+        description: |-
+          Price is the new own price; the JSON key being absent keeps the current
+          amount (FR-017).
+      sku:
+        description: SKU is the new SKU; nil keeps the current value.
+        type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.VariantPriceRequest:
+    properties:
+      amount:
+        description: Amount is the variant's own price in the currency's minor unit.
+        type: integer
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.AddressResponse:
     properties:
@@ -1756,15 +1511,15 @@ paths:
       summary: Update a category (ADMIN)
       tags:
       - Category
-  /admin/inventory/{productId}:
+  /admin/inventory/{variantId}:
     get:
       description: Returns the physical quantity, the quantity currently held for
-        orders being paid, and what remains available. A product that does not exist
+        orders being paid, and what remains available. A variant that does not exist
         answers not-found; one that exists but has never been stocked answers zero.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       produces:
@@ -1797,20 +1552,20 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Read a product's stock (ADMIN)
+      summary: Read a variant's stock (ADMIN)
       tags:
       - Inventory
-  /admin/inventory/{productId}/adjustment:
+  /admin/inventory/{variantId}/adjustment:
     post:
       consumes:
       - application/json
-      description: Sets the product's physical quantity to a recounted value and records
+      description: Sets the variant's physical quantity to a recounted value and records
         only the difference. Correcting to the stored value changes nothing and writes
         no ledger entry; zero is a valid counted value.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       - description: Counted quantity
@@ -1856,16 +1611,16 @@ paths:
       summary: Correct the physical quantity (ADMIN)
       tags:
       - Inventory
-  /admin/inventory/{productId}/damage:
+  /admin/inventory/{variantId}/damage:
     post:
       consumes:
       - application/json
-      description: Decreases the product's physical quantity by a positive amount.
+      description: Decreases the variant's physical quantity by a positive amount.
         A decrease over the shelf, or below what is held, is refused and changes nothing.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       - description: Quantity to remove
@@ -1911,15 +1666,15 @@ paths:
       summary: Record damaged goods (ADMIN)
       tags:
       - Inventory
-  /admin/inventory/{productId}/movements:
+  /admin/inventory/{variantId}/movements:
     get:
-      description: Returns a page of a product's physical stock changes, oldest first,
+      description: Returns a page of a variant's physical stock changes, oldest first,
         with the signed amount and the resulting quantity. Pagination is reported
         in meta.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       - description: Page number (default 1)
@@ -1962,20 +1717,20 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Read a product's movement history (ADMIN)
+      summary: Read a variant's movement history (ADMIN)
       tags:
       - Inventory
-  /admin/inventory/{productId}/restock:
+  /admin/inventory/{variantId}/restock:
     post:
       consumes:
       - application/json
-      description: Increases the product's physical quantity by a positive amount
+      description: Increases the variant's physical quantity by a positive amount
         and records one ledger entry naming the administrator. The acting administrator
         comes from the session, never the body.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       - description: Quantity to add
@@ -2483,391 +2238,11 @@ paths:
       summary: List payments, optionally the reconciliation queue
       tags:
       - admin
-  /admin/product-groups:
-    get:
-      description: Returns a page of every variant group, including the ones not visible
-        to customers, with the category, the position and the picture summary a customer
-        never sees.
-      parameters:
-      - description: Page number (default 1)
-        in: query
-        name: page
-        type: integer
-      - description: Page size (default 20)
-        in: query
-        name: pageSize
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupResponse'
-                  type: array
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: List every variant group (ADMIN)
-      tags:
-      - VariantGroup
-    post:
-      consumes:
-      - application/json
-      description: Creates a variant group. A slug another group holds is a conflict;
-        a category that does not exist is refused naming the field. The acting administrator
-        comes from the session, never the body.
-      parameters:
-      - description: Variant-group payload
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantGroupRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Create a variant group (ADMIN)
-      tags:
-      - VariantGroup
-  /admin/product-groups/{id}:
-    delete:
-      description: Removes a variant group. Refused with VARIANT_GROUP_HAS_OPTIONS
-        while the group still has options; the options are never removed with it.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Remove a variant group (ADMIN)
-      tags:
-      - VariantGroup
-    get:
-      description: Returns one variant group, including one not visible to customers,
-        with its own pictures and every option, visible or not.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Read one variant group by identifier (ADMIN)
-      tags:
-      - VariantGroup
-    patch:
-      consumes:
-      - application/json
-      description: Applies a partial edit. An omitted member keeps its value; the
-        pictures are edited through their own endpoints. A slug another group holds
-        is a conflict.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Variant-group update
-        in: body
-        name: request
-        required: true
-        schema:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantGroupRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Update a variant group (ADMIN)
-      tags:
-      - VariantGroup
-  /admin/product-groups/{id}/images:
-    post:
-      consumes:
-      - multipart/form-data
-      description: Stores a picture for the variant group through the media provider.
-        The content is validated by signature, not by name or declared media type.
-        The first picture becomes the main one.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Group image (JPEG, PNG or WebP)
-        in: formData
-        name: image
-        required: true
-        type: file
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "409":
-          description: Conflict
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "413":
-          description: Request Entity Too Large
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Upload a group picture (ADMIN)
-      tags:
-      - VariantGroup
-  /admin/product-groups/{id}/images/{imageId}:
-    delete:
-      description: Detaches one picture from the variant group and releases its stored
-        asset. Removing the main picture promotes the next one by position.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Picture identifier
-        in: path
-        name: imageId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "204":
-          description: No Content
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Remove a group picture (ADMIN)
-      tags:
-      - VariantGroup
-  /admin/product-groups/{id}/images/{imageId}/primary:
-    post:
-      description: Makes one picture the variant group's main one, clearing any other
-        in the same operation.
-      parameters:
-      - description: Variant-group identifier
-        in: path
-        name: id
-        required: true
-        type: string
-      - description: Picture identifier
-        in: path
-        name: imageId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminVariantGroupDetailResponse'
-              type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      security:
-      - BearerAuth: []
-      summary: Set the main group picture (ADMIN)
-      tags:
-      - VariantGroup
   /admin/products:
     get:
       description: Returns a page of every product, including the ones withheld from
-        customers, with the sell state, the position, the category and the picture
-        summary a customer never sees.
+        customers, with the code, the default price, the position, the variant count
+        and the picture summary a customer never sees.
       parameters:
       - description: Page number (default 1)
         in: query
@@ -2911,8 +2286,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a product in COMING_SOON. The acting administrator comes
-        from the session, never the body.
+      description: Creates a product together with at least one variant. The acting
+        administrator comes from the session, never the body.
       parameters:
       - description: Product payload
         in: body
@@ -2950,13 +2325,13 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Create a product (ADMIN)
+      summary: Create a product with at least one variant (ADMIN)
       tags:
       - Product
   /admin/products/{id}:
     delete:
-      description: Removes a product. Removal is a hard delete; the audit entry is
-        what survives it.
+      description: Removes a product and its variants. Removal is a hard delete; the
+        audit entry is what survives it.
       parameters:
       - description: Product identifier
         in: path
@@ -2991,7 +2366,7 @@ paths:
       - Product
     get:
       description: Returns one product, including one not visible to customers, with
-        its pictures and, for a set, its members.
+        its gallery and every variant.
       parameters:
       - description: Product identifier
         in: path
@@ -3034,8 +2409,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Applies a partial edit. An omitted member keeps its value; the
-        sell state is never changed here (it has its own transition endpoint).
+      description: Applies a partial edit. An omitted member keeps its value; variants
+        are edited through their own routes.
       parameters:
       - description: Product identifier
         in: path
@@ -3089,9 +2464,9 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Stores a picture for the product through the media provider. The
-        content is validated by signature, not by name or declared media type. The
-        first picture becomes the main one.
+      description: Stores a picture for the product's gallery through the media provider.
+        The content is validated by signature, not by name or declared media type.
+        The first picture becomes the main one.
       parameters:
       - description: Product identifier
         in: path
@@ -3150,8 +2525,8 @@ paths:
       - Product
   /admin/products/{id}/images/{imageId}:
     delete:
-      description: Detaches one picture from the product and releases its stored asset.
-        Removing the main picture promotes the next one by position.
+      description: Detaches one picture from the product's gallery and releases its
+        stored asset. Removing the main picture promotes the next one by position.
       parameters:
       - description: Product identifier
         in: path
@@ -3237,25 +2612,129 @@ paths:
       summary: Set the main product picture (ADMIN)
       tags:
       - Product
-  /admin/products/{id}/state:
+  /admin/products/{id}/variants:
     post:
       consumes:
       - application/json
-      description: Requests a sell-state transition. The transition table decides
-        whether the move is allowed; an invalid one is refused naming the current
-        state. The acting administrator comes from the session, never the body.
+      description: Adds a variant. A new variant starts in COMING_SOON. A duplicate
+        SKU is a conflict.
       parameters:
       - description: Product identifier
         in: path
         name: id
         required: true
         type: string
-      - description: Target sell state
+      - description: Variant payload
         in: body
         name: request
         required: true
         schema:
-          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeStateRequest'
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.CreateVariantRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Add a variant to a product (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/variants/{variantId}:
+    delete:
+      description: Removes a variant. Refused with VARIANT_LAST_REMOVAL when it is
+        the product's last variant.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant identifier
+        in: path
+        name: variantId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove a variant (ADMIN)
+      tags:
+      - Product
+    patch:
+      consumes:
+      - application/json
+      description: Applies a partial variant edit. An omitted member keeps its value;
+        an explicit null price clears the variant's own amount back to the product's
+        default.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant identifier
+        in: path
+        name: variantId
+        required: true
+        type: string
+      - description: Variant update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateVariantRequest'
       produces:
       - application/json
       responses:
@@ -3290,7 +2769,172 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Move a product through its selling life (ADMIN)
+      summary: Update a variant (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/variants/{variantId}/image:
+    delete:
+      description: Clears the variant's image and releases its stored asset.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant identifier
+        in: path
+        name: variantId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Remove the variant image (ADMIN)
+      tags:
+      - Product
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores a picture for the variant through the media provider. Uploading
+        again replaces the variant's single image. The content is validated by signature,
+        not by name or declared media type.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant identifier
+        in: path
+        name: variantId
+        required: true
+        type: string
+      - description: Variant image (JPEG, PNG or WebP)
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Upload the variant image (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/variants/{variantId}/state:
+    post:
+      consumes:
+      - application/json
+      description: Requests a variant sell-state transition. The transition table
+        decides whether the move is allowed; an invalid one is refused naming the
+        current state. The acting administrator comes from the session, never the
+        body.
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Variant identifier
+        in: path
+        name: variantId
+        required: true
+        type: string
+      - description: Target sell state
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ChangeVariantStateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.AdminProductDetailResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Move a variant through its selling life (ADMIN)
       tags:
       - Product
   /auth/admin/probe:
@@ -3768,9 +3412,9 @@ paths:
       - Auth
   /cart:
     get:
-      description: Returns every line with its product, quantity, the price captured
-        when it was added and the line total, plus the cart subtotal. An empty cart
-        answers an empty list with a null subtotal.
+      description: Returns every line with its product and variant, quantity, the
+        price captured when it was added and the line total, plus the cart subtotal.
+        An empty cart answers an empty list with a null subtotal.
       produces:
       - application/json
       responses:
@@ -3804,11 +3448,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Adds a product with a positive whole quantity. Adding a product
-        already in the cart raises its quantity; the captured price is the product's
-        current price. An unknown product answers not-found.
+      description: Adds a variant with a positive whole quantity. Adding a variant
+        already in the cart raises its quantity; the captured price is the variant's
+        current effective price. An unknown variant answers not-found.
       parameters:
-      - description: Product and quantity to add
+      - description: Variant and quantity to add
         in: body
         name: request
         required: true
@@ -3852,17 +3496,17 @@ paths:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Add a product to the cart
+      summary: Add a variant to the cart
       tags:
       - Cart
-  /cart/items/{productId}:
+  /cart/items/{variantId}:
     delete:
-      description: Removes the line for that product. An identifier that is not a
+      description: Removes the line for that variant. An identifier that is not a
         line of this cart answers not-found.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       produces:
@@ -3898,12 +3542,12 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Sets the quantity of the line for that product. A product that
+      description: Sets the quantity of the line for that variant. A variant that
         is not a line of this cart answers not-found.
       parameters:
-      - description: Product identifier
+      - description: Variant identifier
         in: path
-        name: productId
+        name: variantId
         required: true
         type: string
       - description: New quantity
@@ -4482,45 +4126,14 @@ paths:
       summary: PayOS payment webhook
       tags:
       - webhooks
-  /product-groups/{slug}:
-    get:
-      description: Returns a visible variant group's shared name, description, choice-dimension
-        name and its own picture gallery, together with its visible options (each
-        with label, price, picture and preorder flag). A group hidden by its category,
-        with no visible option, removed or unknown answers the same not-found. No
-        session is required.
-      parameters:
-      - description: Variant group slug
-        in: path
-        name: slug
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
-            - properties:
-                data:
-                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicVariantGroupDetailResponse'
-              type: object
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      summary: Read a variant group by slug
-      tags:
-      - Product
   /products:
     get:
-      description: Returns a page of the visible catalogue — standalone products and
-        variant groups — ordered by the operator's position. A group is visible only
-        while at least one of its options is; its price is the lowest among its visible
-        options. The optional category filter narrows the list by category slug; a
-        hidden or unknown slug answers an empty list. No session is required.
+      description: Returns a page of the visible catalogue — one entry per product,
+        ordered by the operator's position. A product appears only when at least one
+        of its variants is on sale; the card price is the lowest on-sale variant price
+        and the image is the default variant's image. The optional category filter
+        narrows the list by category slug; a hidden or unknown slug answers an empty
+        list. No session is required.
       parameters:
       - description: Page number (default 1)
         in: query
@@ -4545,21 +4158,22 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicCatalogueEntryResponse'
+                    $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.PublicProductResponse'
                   type: array
               type: object
         "400":
           description: Bad Request
           schema:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      summary: List the catalogue a customer can see (products and variant groups)
+      summary: List the catalogue a customer can see
       tags:
       - Product
   /products/{slug}:
     get:
-      description: Returns one visible product with its description and every picture,
-        plus the variantGroup selector when the product is an option. A hidden, retired,
-        removed or unknown slug answers the same not-found. No session is required.
+      description: Returns one visible product with its description, gallery and its
+        visible variants (on sale or out of stock), each with name, effective price
+        and stock status. A hidden, removed or unknown slug answers the same not-found.
+        No session is required.
       parameters:
       - description: Product slug
         in: path
@@ -4582,7 +4196,7 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
-      summary: Read one product by slug
+      summary: Read one product by slug (with its variants)
       tags:
       - Product
   /users/{userId}:

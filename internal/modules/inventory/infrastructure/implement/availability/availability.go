@@ -45,28 +45,28 @@ func (a *Adapter) now() time.Time {
 }
 
 // AvailableQuantity returns one entry per requested identifier, in the same
-// order, with zero for a product that has no stock row. Availability is physical
+// order, with zero for a variant that has no stock row. Availability is physical
 // stock minus the quantity active holds have set aside; the subtraction is the
 // domain's own rule, so the number the cart is shown is the same rule the
 // inventory use cases enforce (research D2).
-func (a *Adapter) AvailableQuantity(ctx context.Context, productIDs []uuid.UUID) ([]contracts.Availability, error) {
-	readings, err := a.Inventory.Availability(ctx, productIDs, a.now())
+func (a *Adapter) AvailableQuantity(ctx context.Context, variantIDs []uuid.UUID) ([]contracts.Availability, error) {
+	readings, err := a.Inventory.Availability(ctx, variantIDs, a.now())
 	if err != nil {
 		return nil, err
 	}
-	byProduct := make(map[uuid.UUID]domainrepo.AvailabilityReading, len(readings))
+	byVariant := make(map[uuid.UUID]domainrepo.AvailabilityReading, len(readings))
 	for _, reading := range readings {
-		byProduct[reading.ProductID] = reading
+		byVariant[reading.VariantID] = reading
 	}
 
-	out := make([]contracts.Availability, 0, len(productIDs))
-	for _, productID := range productIDs {
-		reading := byProduct[productID]
+	out := make([]contracts.Availability, 0, len(variantIDs))
+	for _, variantID := range variantIDs {
+		reading := byVariant[variantID]
 		available, err := model.Availability(reading.Level, reading.Held)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, contracts.Availability{ProductID: productID, Available: available})
+		out = append(out, contracts.Availability{VariantID: variantID, Available: available})
 	}
 	return out, nil
 }

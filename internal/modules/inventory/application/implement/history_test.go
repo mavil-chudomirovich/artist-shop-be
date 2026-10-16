@@ -28,7 +28,7 @@ import (
 func (r *fakeRepository) Movements(_ context.Context, productID uuid.UUID, page, pageSize int) ([]model.Movement, int64, error) {
 	product := make([]model.Movement, 0, len(r.movements))
 	for _, movement := range r.movements {
-		if movement.ProductID == productID {
+		if movement.VariantID == productID {
 			product = append(product, movement)
 		}
 	}
@@ -60,13 +60,13 @@ func TestHistoryReadsOldestFirstAndIsStable(t *testing.T) {
 	tiedHigh := uuid.MustParse("00000000-0000-0000-0000-000000000002")
 	latest := uuid.New()
 	repo := &fakeRepository{movements: []model.Movement{
-		{ID: latest, ProductID: productID, Kind: constant.MovementDamage, Delta: -3, ResultingQuantity: 7, CreatedAt: later},
-		{ID: tiedHigh, ProductID: productID, Kind: constant.MovementAdjustment, Delta: 2, ResultingQuantity: 12, CreatedAt: earlier},
-		{ID: tiedLow, ProductID: productID, Kind: constant.MovementRestock, Delta: 10, ResultingQuantity: 10, CreatedAt: earlier},
+		{ID: latest, VariantID: productID, Kind: constant.MovementDamage, Delta: -3, ResultingQuantity: 7, CreatedAt: later},
+		{ID: tiedHigh, VariantID: productID, Kind: constant.MovementAdjustment, Delta: 2, ResultingQuantity: 12, CreatedAt: earlier},
+		{ID: tiedLow, VariantID: productID, Kind: constant.MovementRestock, Delta: 10, ResultingQuantity: 10, CreatedAt: earlier},
 	}}
 	svc := newTestService(repo, &fakeLookup{exists: true}, nil)
 
-	first, err := svc.History(adminContext(), dto.HistoryInput{ProductID: productID, Page: 1, PageSize: 20})
+	first, err := svc.History(adminContext(), dto.HistoryInput{VariantID: productID, Page: 1, PageSize: 20})
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestHistoryReadsOldestFirstAndIsStable(t *testing.T) {
 		}
 	}
 
-	second, err := svc.History(adminContext(), dto.HistoryInput{ProductID: productID, Page: 1, PageSize: 20})
+	second, err := svc.History(adminContext(), dto.HistoryInput{VariantID: productID, Page: 1, PageSize: 20})
 	if err != nil {
 		t.Fatalf("History (second read): %v", err)
 	}
@@ -100,7 +100,7 @@ func TestHistoryOfAProductWithNoMovementsIsAnEmptyPage(t *testing.T) {
 	repo := &fakeRepository{}
 	svc := newTestService(repo, &fakeLookup{exists: true}, nil)
 
-	out, err := svc.History(adminContext(), dto.HistoryInput{ProductID: uuid.New()})
+	out, err := svc.History(adminContext(), dto.HistoryInput{VariantID: uuid.New()})
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}
@@ -118,9 +118,9 @@ func TestHistoryOfAnUnknownProductAnswersNotFound(t *testing.T) {
 	repo := &fakeRepository{}
 	svc := newTestService(repo, &fakeLookup{exists: false}, nil)
 
-	_, err := svc.History(adminContext(), dto.HistoryInput{ProductID: uuid.New()})
-	if !errors.Is(err, domainerr.ErrProductNotFound) {
-		t.Fatalf("expected ErrProductNotFound, got %v", err)
+	_, err := svc.History(adminContext(), dto.HistoryInput{VariantID: uuid.New()})
+	if !errors.Is(err, domainerr.ErrVariantNotFound) {
+		t.Fatalf("expected ErrVariantNotFound, got %v", err)
 	}
 }
 
@@ -132,7 +132,7 @@ func TestHistoryPagesThroughTheMovements(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		seeded = append(seeded, model.Movement{
 			ID:                uuid.New(),
-			ProductID:         productID,
+			VariantID:         productID,
 			Kind:              constant.MovementRestock,
 			Delta:             1,
 			ResultingQuantity: int64(i + 1),
@@ -142,7 +142,7 @@ func TestHistoryPagesThroughTheMovements(t *testing.T) {
 	repo := &fakeRepository{movements: seeded}
 	svc := newTestService(repo, &fakeLookup{exists: true}, nil)
 
-	out, err := svc.History(adminContext(), dto.HistoryInput{ProductID: productID, Page: 2, PageSize: 2})
+	out, err := svc.History(adminContext(), dto.HistoryInput{VariantID: productID, Page: 2, PageSize: 2})
 	if err != nil {
 		t.Fatalf("History: %v", err)
 	}

@@ -15,11 +15,11 @@ const (
 	maxHistoryPageSize     = 100
 )
 
-// History returns one page of a product's physical changes, oldest first (FR-008).
+// History returns one page of a variant's physical changes, oldest first (FR-008).
 //
-// It resolves the product through the ProductLookup contract first, so an unknown
-// product answers not-found rather than an empty history — the same rule the
-// stock read follows (FR-007, research D12). A product that exists but has no
+// It resolves the variant through the ProductLookup contract first, so an unknown
+// variant answers not-found rather than an empty history — the same rule the
+// stock read follows (FR-007, research D12). A variant that exists but has no
 // movements answers an empty page, not an error.
 //
 // It opens no transaction: the history is a read, and a single paged query is a
@@ -27,12 +27,12 @@ const (
 // adapter's, so the story of how a quantity came to be reads in the order it
 // happened and stays stable across two reads sharing a timestamp (research D14).
 func (s *Service) History(ctx context.Context, in dto.HistoryInput) (dto.MovementPage, error) {
-	if err := s.requireProduct(ctx, in.ProductID); err != nil {
+	if err := s.requireVariant(ctx, in.VariantID); err != nil {
 		return dto.MovementPage{}, err
 	}
 
 	page, pageSize := historyWindow(in.Page, in.PageSize)
-	movements, total, err := s.Inventory.Movements(ctx, in.ProductID, page, pageSize)
+	movements, total, err := s.Inventory.Movements(ctx, in.VariantID, page, pageSize)
 	if err != nil {
 		return dto.MovementPage{}, err
 	}

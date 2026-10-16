@@ -52,50 +52,50 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Schema and domain
 
-- [ ] T003 Write `migrations/00014_product_sku_model.sql` per `data-model.md` D11: create `product_variants`; add `products.code` (backfill = slug, then NOT NULL + unique on `lower(btrim(code))`); backfill one default variant per product; repoint `stock_levels`/`inventory_transactions`/`stock_holds`/`cart_items` to `variant_id`; extend `order_items` (variant_id + product_name/product_code/variant_name/sku) with the new natural key `(order_id, product_code, sku)`; drop 014's objects and the product flags (`sell_state`, `is_preorder`, `preorder_expected_at`, `is_set`) with `DROP ... IF EXISTS`; full `-- +goose Up` and `-- +goose Down`
-- [ ] T004 [P] Add the migration guard test `migrations/product_sku_model_guard_test.go` (every table/column/constraint/index created in Up and dropped in Down; the variant SKU unique index; the code unique index; the sell-state check; the inventory/cart/order re-key)
-- [ ] T005 [P] Create the `Variant` entity and its sell-state transitions in `internal/modules/product/domain/model/variant.go` (`NewVariant`, `Apply`, `Launch`/`SellOut`/`Restock`/`Retire`, effective price = `price_amount` or the product's default, validation of name/sku/position)
-- [ ] T006 [P] Write the variant domain test `internal/modules/product/domain/model/variant_test.go` (effective-price fallback; every transition positive + negative; retired terminal; SKU required)
-- [ ] T007 Update `internal/modules/product/domain/model/product.go`: add `Code`; remove `SellState`/`IsPreorder`/`PreorderExpectedAt`/`IsSet` and 014's `VariantGroupID`/`VariantLabel`; a `ProductDraft` carries ≥1 variant (or creation is refused)
-- [ ] T008 [P] Update `internal/modules/product/domain/model/product_test.go` for the new product shape
-- [ ] T009 [P] Define the `VariantRepository` port and the variant-aware product read views in `internal/modules/product/domain/repository/variant.go` and `internal/modules/product/domain/repository/product.go` (list-by-product ordered, create/update/delete, count; catalogue entry with lowest price + default image; detail with visible variants; variant facts by ids)
+- [x] T003 Write `migrations/00014_product_sku_model.sql` per `data-model.md` D11: create `product_variants`; add `products.code` (backfill = slug, then NOT NULL + unique on `lower(btrim(code))`); backfill one default variant per product; repoint `stock_levels`/`inventory_transactions`/`stock_holds`/`cart_items` to `variant_id`; extend `order_items` (variant_id + product_name/product_code/variant_name/sku) with the new natural key `(order_id, product_code, sku)`; drop 014's objects and the product flags (`sell_state`, `is_preorder`, `preorder_expected_at`, `is_set`) with `DROP ... IF EXISTS`; full `-- +goose Up` and `-- +goose Down`
+- [x] T004 [P] Add the migration guard test `migrations/product_sku_model_guard_test.go` (every table/column/constraint/index created in Up and dropped in Down; the variant SKU unique index; the code unique index; the sell-state check; the inventory/cart/order re-key)
+- [x] T005 [P] Create the `Variant` entity and its sell-state transitions in `internal/modules/product/domain/model/variant.go` (`NewVariant`, `Apply`, `Launch`/`SellOut`/`Restock`/`Retire`, effective price = `price_amount` or the product's default, validation of name/sku/position)
+- [x] T006 [P] Write the variant domain test `internal/modules/product/domain/model/variant_test.go` (effective-price fallback; every transition positive + negative; retired terminal; SKU required)
+- [x] T007 Update `internal/modules/product/domain/model/product.go`: add `Code`; remove `SellState`/`IsPreorder`/`PreorderExpectedAt`/`IsSet` and 014's `VariantGroupID`/`VariantLabel`; a `ProductDraft` carries ≥1 variant (or creation is refused)
+- [x] T008 [P] Update `internal/modules/product/domain/model/product_test.go` for the new product shape
+- [x] T009 [P] Define the `VariantRepository` port and the variant-aware product read views in `internal/modules/product/domain/repository/variant.go` and `internal/modules/product/domain/repository/product.go` (list-by-product ordered, create/update/delete, count; catalogue entry with lowest price + default image; detail with visible variants; variant facts by ids)
 
 ### Persistence adapters
 
-- [ ] T010 Implement the `VariantRepository` adapter in `internal/modules/product/infrastructure/implement/postgres/variant.go` (projection + scan, CRUD, the SKU-unique classification, the ordered list)
-- [ ] T011 Update `internal/modules/product/infrastructure/implement/postgres/product.go`: `code` column + unique classification; remove state/flags; `ListCatalogue` returns one entry per product with the lowest effective variant price and the default-variant image; the detail read returns the product's content + its visible variants
-- [ ] T012 [P] Update/extend the Postgres integration tests `internal/modules/product/infrastructure/implement/postgres/*_integration_test.go` for the one-entry catalogue, per-variant data and storage invariants
-- [ ] T013 [P] Add the migration/backfill integration test `internal/modules/product/infrastructure/implement/postgres/product_sku_model_migration_integration_test.go`: after `00014`, every product has a code and one default variant; the repoint maps variant_ids correctly
+- [x] T010 Implement the `VariantRepository` adapter in `internal/modules/product/infrastructure/implement/postgres/variant.go` (projection + scan, CRUD, the SKU-unique classification, the ordered list)
+- [x] T011 Update `internal/modules/product/infrastructure/implement/postgres/product.go`: `code` column + unique classification; remove state/flags; `ListCatalogue` returns one entry per product with the lowest effective variant price and the default-variant image; the detail read returns the product's content + its visible variants
+- [x] T012 [P] Update/extend the Postgres integration tests `internal/modules/product/infrastructure/implement/postgres/*_integration_test.go` for the one-entry catalogue, per-variant data and storage invariants
+- [x] T013 [P] Add the migration/backfill integration test `internal/modules/product/infrastructure/implement/postgres/product_sku_model_migration_integration_test.go`: after `00014`, every product has a code and one default variant; the repoint maps variant_ids correctly
 
 ### Cross-module contracts
 
-- [ ] T014 Replace `ProductCatalog` with a variant-facts contract and change `ProductLookup`, and make feature 007's availability **signal** variant-keyed, in `internal/contracts/product.go` (`Variants(variantIDs) []VariantSummary` with `{VariantID, ProductID, ProductName, ProductCode, VariantName, SKU, OnSale, Price}`; a variant-existence lookup; `MarkVariantOutOfStock`/`MarkVariantOnSale(variantID)`)
-- [ ] T015 [P] Re-key `internal/contracts/inventory.go` to variant ids (`AvailableQuantity(variantIDs)`, `Reserve`/`Release`/`ApplySale` take `variantID`)
-- [ ] T016 [P] Update `internal/contracts/cart.go`: `CartLine` carries the chosen `VariantID` and the snapshots (`ProductID`, `ProductName`, `ProductCode`, `VariantName`, `SKU`, `Quantity`, `UnitPrice`)
-- [ ] T017 Rebuild the product→contract **read** adapter `internal/modules/product/infrastructure/implement/catalog/catalog.go` on variant facts
-- [ ] T018 Rebuild the product→contract **availability-signal** adapter `internal/modules/product/infrastructure/implement/availability/availability.go` on the variant-keyed `MarkVariantOutOfStock`/`MarkVariantOnSale` (the auto `ACTIVE ↔ OUT_OF_STOCK` edge inventory calls — FR-015, research D4/D6)
+- [x] T014 Replace `ProductCatalog` with a variant-facts contract and change `ProductLookup`, and make feature 007's availability **signal** variant-keyed, in `internal/contracts/product.go` (`Variants(variantIDs) []VariantSummary` with `{VariantID, ProductID, ProductName, ProductCode, VariantName, SKU, OnSale, Price}`; a variant-existence lookup; `MarkVariantOutOfStock`/`MarkVariantOnSale(variantID)`)
+- [x] T015 [P] Re-key `internal/contracts/inventory.go` to variant ids (`AvailableQuantity(variantIDs)`, `Reserve`/`Release`/`ApplySale` take `variantID`)
+- [x] T016 [P] Update `internal/contracts/cart.go`: `CartLine` carries the chosen `VariantID` and the snapshots (`ProductID`, `ProductName`, `ProductCode`, `VariantName`, `SKU`, `Quantity`, `UnitPrice`)
+- [x] T017 Rebuild the product→contract **read** adapter `internal/modules/product/infrastructure/implement/catalog/catalog.go` on variant facts
+- [x] T018 Rebuild the product→contract **availability-signal** adapter `internal/modules/product/infrastructure/implement/availability/availability.go` on the variant-keyed `MarkVariantOutOfStock`/`MarkVariantOnSale` (the auto `ACTIVE ↔ OUT_OF_STOCK` edge inventory calls — FR-015, research D4/D6)
 
 ### Inventory module re-key
 
-- [ ] T019 [P] Re-key `internal/modules/inventory/domain/{model,repository}` and `infrastructure/implement/postgres/inventory.go` to `variant_id` (stock row per variant, ledger, holds)
-- [ ] T020 Re-key the inventory use cases `internal/modules/inventory/application/implement/{stock,holds,reconcile,events,history}.go` and their DTOs to the variant id
-- [ ] T021 Update the inventory availability/reservation adapters `internal/modules/inventory/infrastructure/implement/{availability,reservation}/*.go` to the variant-keyed contract
+- [x] T019 [P] Re-key `internal/modules/inventory/domain/{model,repository}` and `infrastructure/implement/postgres/inventory.go` to `variant_id` (stock row per variant, ledger, holds)
+- [x] T020 Re-key the inventory use cases `internal/modules/inventory/application/implement/{stock,holds,reconcile,events,history}.go` and their DTOs to the variant id
+- [x] T021 Update the inventory availability/reservation adapters `internal/modules/inventory/infrastructure/implement/{availability,reservation}/*.go` to the variant-keyed contract
 
 ### Cart module re-key
 
-- [ ] T022 Re-key `internal/modules/cart/{domain,infrastructure}` (line identity = variant id; `cart_items.variant_id`) and the cart DTOs/mapper
-- [ ] T023 Re-key `internal/modules/cart/application/implement/cart.go` to the variant-facts contract: `Add` takes a `variantId`, reads the variant's on-sale state and effective price, and the view shows product name + variant name + availability
+- [x] T022 Re-key `internal/modules/cart/{domain,infrastructure}` (line identity = variant id; `cart_items.variant_id`) and the cart DTOs/mapper
+- [x] T023 Re-key `internal/modules/cart/application/implement/cart.go` to the variant-facts contract: `Add` takes a `variantId`, reads the variant's on-sale state and effective price, and the view shows product name + variant name + availability
 
 ### Order module re-key
 
-- [ ] T024 Extend `internal/modules/order/domain/model` `OrderLine` with the snapshots (`VariantID`, `ProductName`, `ProductCode`, `VariantName`, `SKU`, `UnitPrice`, `Quantity`) and update `infrastructure/implement/postgres/order.go`
-- [ ] T025 Re-key `internal/modules/order/application/implement/checkout.go` (and the order views) to the variant-facts contract: one line per (product code, SKU), re-checking per variant that it is on sale, that enough is available, and that the captured price still matches the variant's current effective price (a changed price refuses the whole checkout, the order module's existing rule — FR-021)
+- [x] T024 Extend `internal/modules/order/domain/model` `OrderLine` with the snapshots (`VariantID`, `ProductName`, `ProductCode`, `VariantName`, `SKU`, `UnitPrice`, `Quantity`) and update `infrastructure/implement/postgres/order.go`
+- [x] T025 Re-key `internal/modules/order/application/implement/checkout.go` (and the order views) to the variant-facts contract: one line per (product code, SKU), re-checking per variant that it is on sale, that enough is available, and that the captured price still matches the variant's current effective price (a changed price refuses the whole checkout, the order module's existing rule — FR-021)
 
 ### Remove feature 014 and wire up
 
-- [ ] T026 Remove feature 014's grouping code and routes: delete the variant-group model/port/adapter/DTOs/handlers, the `/product-groups` and `/admin/product-groups*` routes, and their tests; **and remove 014's now-unused group code constants (T001) and sentinels (T002)**; keep `product_images`; and remove the product-level sell-state endpoint `POST /admin/products/{id}/state` (the product has no sell state; the variant state endpoint replaces it). `00013_product_variants.sql` is kept as a committed historical migration and its guard test stays; `00014` drops 014's objects with `DROP ... IF EXISTS` (so a DB that ran `00013` and one that did not both reach the new model)
-- [ ] T027 Wire the whole composition root `cmd/api/main.go` to the variant model (variant repository, changed catalog/availability/inventory/cart/order adapters)
-- [ ] T028 [P] Update every affected test fake/stub across `product`, `inventory`, `cart`, `order` so the repository builds and the existing suites compile against the new contracts
+- [x] T026 Remove feature 014's grouping code and routes: delete the variant-group model/port/adapter/DTOs/handlers, the `/product-groups` and `/admin/product-groups*` routes, and their tests; **and remove 014's now-unused group code constants (T001) and sentinels (T002)**; keep `product_images`; and remove the product-level sell-state endpoint `POST /admin/products/{id}/state` (the product has no sell state; the variant state endpoint replaces it). `00013_product_variants.sql` is kept as a committed historical migration and its guard test stays; `00014` drops 014's objects with `DROP ... IF EXISTS` (so a DB that ran `00013` and one that did not both reach the new model)
+- [x] T027 Wire the whole composition root `cmd/api/main.go` to the variant model (variant repository, changed catalog/availability/inventory/cart/order adapters)
+- [x] T028 [P] Update every affected test fake/stub across `product`, `inventory`, `cart`, `order` so the repository builds and the existing suites compile against the new contracts
 
 **Checkpoint**: the repository builds on the variant model and the existing (updated) unit suites pass
 
@@ -184,7 +184,7 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 **Purpose**: contract docs, ADR supersede, swagger, the frontend hand-off and the full gate
 
-- [ ] T049 [P] Update `docs/api-reference.md` for module 04 (and the cart/order sections): the one-entry catalogue, the product detail with variants, the admin product+variant routes, the cart-by-variant routes, the new/removed error codes, the summary table and the change log; **remove** feature 014's product-group endpoints (Constitution VIII)
+- [ ] T049 [P] Update `docs/api-reference.md` for module 04 (and the cart/order sections, **and module 05 inventory whose `/admin/inventory/*` routes are now keyed by `variantId`**): the one-entry catalogue, the product detail with variants, the admin product+variant routes, the cart-by-variant routes, the new/removed error codes, the summary table and the change log; **remove** feature 014's product-group endpoints **and feature 006's product-level state endpoint** (Constitution VIII)
 - [ ] T050 [P] Update `docs/modules/04-product.md` (product/variant model), `docs/modules/05-inventory.md` (per-variant stock), `docs/modules/06-cart.md` and `docs/modules/07-order.md` (variant + snapshots)
 - [ ] T051 [P] Write `docs/decisions/021-product-sku-model.md` superseding `020-product-variants.md`, and add the superseding note to `specs/014-product-variants/`
 
@@ -194,7 +194,7 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance; feature CÓ đổi bề mặt client)*
 
-- [ ] T053 Write `specs/015-product-sku-model/frontend-guide.md` enumerating every affected endpoint with method + path and **before → after** — at minimum: `GET /products` (one entry per product; lowest price; default image; no `type`), `GET /products/{slug}` (gains `variants[]`), `POST/PATCH/DELETE /admin/products/{id}/variants*` (new), `POST /api/v1/admin/products` (requires `variants`), `GET /api/v1/cart` and `POST /api/v1/cart/items` / `PATCH` / `DELETE /api/v1/cart/items/{variantId}` (keyed by `variantId`), the order line `variantName` (customer view) with `productCode`/`sku` stored but not shown; and mark feature 014's `/product-groups*` routes **removed**
+- [ ] T053 Write `specs/015-product-sku-model/frontend-guide.md` enumerating every affected endpoint with method + path and **before → after** — at minimum: `GET /products` (one entry per product; lowest price; default image; no `type`), `GET /products/{slug}` (gains `variants[]`), `POST/PATCH/DELETE /admin/products/{id}/variants*` (new), `POST /api/v1/admin/products` (requires `variants`), `GET /api/v1/cart` and `POST /api/v1/cart/items` / `PATCH` / `DELETE /api/v1/cart/items/{variantId}` (keyed by `variantId`), the order line `variantName` (customer view) with `productCode`/`sku` stored but not shown; and mark feature 014's `/product-groups*` routes **removed**, the product-level `POST /admin/products/{id}/state` **removed** (replaced by the variant state endpoint), and the inventory admin routes now keyed by `variantId`
 - [ ] T054 **Đồng bộ guide** after the source is stable: re-read `frontend-guide.md` and compare against the source **with counts** — every `json:"…"` field of the feature's DTOs, every enum value, every route (gin `:param` → `{param}`), every HTTP status. Fix every mismatch; state any part that could not be checked and why
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*

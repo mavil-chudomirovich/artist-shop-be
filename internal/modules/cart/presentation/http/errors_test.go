@@ -40,7 +40,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ProductNotPurchasable(uuid.New()),
 			code:    constant.CodeProductNotPurchasable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -48,7 +48,7 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 			err:     domainerr.ErrProductNotPurchasable,
 			code:    constant.CodeProductNotPurchasable,
 			status:  http.StatusConflict,
-			field:   model.FieldProductID,
+			field:   model.FieldVariantID,
 			details: true,
 		},
 		{
@@ -115,12 +115,12 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 
 // A field-level rejection is 400 with `details[].field` populated.
 func TestFieldErrorNamesTheField(t *testing.T) {
-	appErr := fieldError(model.FieldProductID, "must be a UUID")
+	appErr := fieldError(model.FieldVariantID, "must be a UUID")
 	if string(appErr.Code) != string(httpx.CodeValidation) || appErr.Status != http.StatusBadRequest {
 		t.Fatalf("expected VALIDATION_ERROR/400, got %s/%d", appErr.Code, appErr.Status)
 	}
-	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldProductID {
-		t.Fatalf("expected the detail to name productId, got %+v", appErr.Details)
+	if len(appErr.Details) != 1 || appErr.Details[0].Field != model.FieldVariantID {
+		t.Fatalf("expected the detail to name variantId, got %+v", appErr.Details)
 	}
 }
 

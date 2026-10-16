@@ -26,16 +26,14 @@ func withField(err *httpx.AppError, field, issue string) *httpx.AppError {
 
 // fieldError reports a request-shape problem the client can fix itself, such as
 // a malformed path identifier or an out-of-range page window. Pagination and
-// request-shape validation stay on the shared VALIDATION_ERROR code: they are a
-// foundation concern, not a product-module rule.
+// request-shape validation stay on the shared VALIDATION_ERROR code.
 func fieldError(field, issue string) *httpx.AppError {
 	return httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: field, Issue: issue})
 }
 
 // imageTooLarge is the one refusal for an upload over the ceiling, wherever the
 // ceiling was reached: while reading the part, or by the route's own body limit.
-// Naming the image in the detail is what lets a client point at the right input
-// (FR-020).
+// Naming the image in the detail is what lets a client point at the right input.
 func imageTooLarge() *httpx.AppError {
 	return withField(
 		coded(constant.CodeProductImageTooLarge, http.StatusRequestEntityTooLarge, "Image exceeds the size limit"),
@@ -43,56 +41,47 @@ func imageTooLarge() *httpx.AppError {
 	)
 }
 
-// mapError translates the module's sentinel errors into the codes and statuses
-// of specs/006-product-catalog/contracts/error-codes.md.
+// mapError translates the module's sentinel errors into the codes and statuses of
+// specs/015-product-sku-model/contracts/error-codes.md.
 //
-// A slug collision is 409, not 400: the value is well formed and simply not
-// available, so the operator's fix is to pick another value rather than to repair
-// the one sent. A picture-format or size refusal names the image, because the
-// client acts on that input. A value invalid on its own stays on the shared
+// A slug, code or SKU collision is 409, not 400: the value is well formed and
+// simply not available, so the operator's fix is to pick another value rather than
+// to repair the one sent. A picture-format or size refusal names the image, because
+// the client acts on that input. A value invalid on its own stays on the shared
 // VALIDATION_ERROR and names the field the domain reports. The public surface
-// produces only the not-found: an unknown slug, a product hidden by its own state,
-// a retired product, a removed product and a product in a hidden category are all
-// the same answer (FR-003, FR-008).
+// produces only the not-found: an unknown slug, a product with no on-sale variant,
+// a removed product and a product in a hidden category are all the same answer
+// (FR-008).
 func mapError(err error) *httpx.AppError {
 	var invalid *domainerr.ProductFieldError
-	var transition *domainerr.StateTransitionError
+	var transition *domainerr.VariantStateTransitionError
 	switch {
 	case errors.Is(err, domainerr.ErrProductNotFound):
 		return coded(constant.CodeProductNotFound, http.StatusNotFound, "Product not found")
-	case errors.Is(err, domainerr.ErrVariantGroupNotFound):
-		// A hidden group, an option-less one, a removed one and an unknown slug
-		// are deliberately one answer on the public surface (FR-008).
-		return coded(constant.CodeVariantGroupNotFound, http.StatusNotFound, "Variant group not found")
-	case errors.Is(err, domainerr.ErrVariantGroupSlugTaken):
-		return withField(
-			coded(constant.CodeVariantGroupSlugTaken, http.StatusConflict, "Another variant group already uses that slug"),
-			model.FieldSlug, "choose a different slug",
-		)
-	case errors.Is(err, domainerr.ErrVariantGroupHasOptions):
-		// The group still has options: the request is well formed and the current
-		// data forbids it, so the operator detaches them first (FR-025).
-		return coded(constant.CodeVariantGroupHasOptions, http.StatusConflict,
-			"The variant group still has options; detach them first")
-	case errors.Is(err, domainerr.ErrVariantLabelTaken):
-		return withField(
-			coded(constant.CodeVariantLabelTaken, http.StatusConflict, "Another option of the group already uses that label"),
-			model.FieldVariantLabel, "choose a different label",
-		)
-	case errors.Is(err, domainerr.ErrProductAlreadyGrouped):
-		return withField(
-			coded(constant.CodeProductAlreadyInVariantGroup, http.StatusConflict, "The product already belongs to a variant group"),
-			model.FieldVariantGroupID, "detach it from its group first",
-		)
+	case errors.Is(err, domainerr.ErrVariantNotFound):
+		return coded(constant.CodeVariantNotFound, http.StatusNotFound, "Variant not found")
 	case errors.Is(err, domainerr.ErrProductSlugTaken):
 		return withField(
 			coded(constant.CodeProductSlugTaken, http.StatusConflict, "Another product already uses that slug"),
 			model.FieldSlug, "choose a different slug",
 		)
+	case errors.Is(err, domainerr.ErrProductCodeTaken):
+		return withField(
+			coded(constant.CodeProductCodeTaken, http.StatusConflict, "Another product already uses that code"),
+			model.FieldCode, "choose a different code",
+		)
+	case errors.Is(err, domainerr.ErrVariantSKUTaken):
+		return withField(
+			coded(constant.CodeVariantSKUTaken, http.StatusConflict, "Another variant already uses that SKU"),
+			model.FieldSKU, "choose a different SKU",
+		)
+	case errors.Is(err, domainerr.ErrVariantLastRemoval):
+		return coded(constant.CodeVariantLastRemoval, http.StatusConflict,
+			"A product must keep at least one variant")
 	case errors.As(err, &transition):
-		// The refusal names the state the product is in, which is what makes an
-		// invalid transition distinguishable from a typo (FR-024).
-		return coded(constant.CodeProductStateTransitionInvalid, http.StatusConflict,
+		// The refusal names the state the variant is in, which is what makes an
+		// invalid transition distinguishable from a typo (FR-015).
+		return coded(constant.CodeVariantStateTransitionInvalid, http.StatusConflict,
 			fmt.Sprintf("Cannot move from %s to %s", transition.Current, transition.Requested))
 	case errors.Is(err, domainerr.ErrProductImageLimitReached):
 		return coded(constant.CodeProductImageLimitReached, http.StatusConflict,
@@ -118,9 +107,10 @@ func mapError(err error) *httpx.AppError {
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its request.
 const (
-	fieldPage     = "page"
-	fieldPageSize = "pageSize"
-	fieldID       = "id"
-	fieldImageID  = "imageId"
-	fieldImage    = "image"
+	fieldPage      = "page"
+	fieldPageSize  = "pageSize"
+	fieldID        = "id"
+	fieldVariantID = "variantId"
+	fieldImageID   = "imageId"
+	fieldImage     = "image"
 )

@@ -184,7 +184,7 @@ func TestGetMineReturnsTheCallersOrderAndHidesAnotherOwners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetMine: %v", err)
 	}
-	if view.ID != mine.ID || len(view.Lines) != 1 || view.Lines[0].ProductID != product {
+	if view.ID != mine.ID || len(view.Lines) != 1 || view.Lines[0].VariantID != product {
 		t.Fatalf("the caller's own order must be returned in full, got %+v", view)
 	}
 
@@ -220,8 +220,8 @@ func TestCancelMineCancelsAnUnpaidOrderAndReturnsTheGoods(t *testing.T) {
 	if len(f.reservations.releases) != 1 {
 		t.Fatalf("cancelling must return the hold of every line once, got %+v", f.reservations.releases)
 	}
-	if release := f.reservations.releases[0]; release.orderID != order.ID || release.productID != product {
-		t.Fatalf("the release must name the order and the product, got %+v", release)
+	if release := f.reservations.releases[0]; release.orderID != order.ID || release.variantID != product {
+		t.Fatalf("the release must name the order and the variant, got %+v", release)
 	}
 	if len(f.reservations.sales) != 0 {
 		t.Fatalf("cancelling must not sell anything, got %+v", f.reservations.sales)

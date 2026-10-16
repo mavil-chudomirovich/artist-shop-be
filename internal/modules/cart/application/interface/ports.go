@@ -18,10 +18,12 @@ import (
 // declaring a second interface that could drift (Constitution I).
 type CartRepository = repository.CartRepository
 
-// ProductCatalog is the cross-module contract the cart consumes for a product's
-// name, on-sale state and price. It is declared in internal/contracts and
-// provided by module 04 at the composition root (research D1).
-type ProductCatalog = contracts.ProductCatalog
+// ProductVariants is the cross-module contract the cart consumes for a variant's
+// product and variant facts: the product's name and code, the variant's name and
+// SKU, whether it may be sold, and its current effective price. It is declared in
+// internal/contracts and provided by module 04 at the composition root (research
+// D6).
+type ProductVariants = contracts.ProductVariants
 
 // InventoryAvailability is the cross-module contract the cart consumes for what
 // is currently available. It is declared in internal/contracts and provided by
@@ -52,15 +54,15 @@ type Clock interface {
 // own (FR-010). The cart never reserves or holds stock: no method here reaches an
 // inventory write (FR-011, research D12).
 type CartService interface {
-	// Get returns the caller's cart, re-checking every line against the product's
+	// Get returns the caller's cart, re-checking every line against the variant's
 	// current facts. A customer with no cart answers an empty cart rather than an
 	// error, and reading never creates a row (FR-004, FR-012, research D8).
 	Get(ctx context.Context, in dto.GetCartInput) (dto.CartView, error)
-	// Add adds a product with a positive whole quantity, creating the cart if it
+	// Add adds a variant with a positive whole quantity, creating the cart if it
 	// is absent and raising an existing line rather than adding a second one
 	// (FR-001, FR-002).
 	Add(ctx context.Context, in dto.AddItemInput) (dto.CartView, error)
-	// ChangeQuantity sets the line's quantity, refusing a product that is not on
+	// ChangeQuantity sets the line's quantity, refusing a variant that is not on
 	// sale and a quantity above what is available (FR-003, FR-005, FR-007).
 	ChangeQuantity(ctx context.Context, in dto.ChangeQuantityInput) (dto.CartView, error)
 	// Remove deletes one line. A line this cart does not hold answers not-found
