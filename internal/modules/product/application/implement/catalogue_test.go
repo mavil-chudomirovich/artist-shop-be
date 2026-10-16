@@ -213,6 +213,107 @@ func TestListPublicResolvesTheCategorySlugFilter(t *testing.T) {
 	}
 }
 
+// FR-002: the catalogue card image is the default (first) variant's image, falling
+// back to the product's primary gallery picture, and absent when neither exists.
+// The cheapest out-of-stock variant never contributes an image or a price.
+func TestListPublicUsesTheDefaultVariantImageWithFallback(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	repo := newMemoryProducts()
+	variantImage := repo.seedWithVariants(t, model.ProductDraft{
+		Name: "Card set", Code: "P1", Slug: "card-set", Price: price(150000),
+		CategoryID: category, Position: 1,
+		Variants: []model.VariantDraft{
+			{Name: "Small", SKU: "S", PriceAmount: ptr[int64](120000), Position: 0,
+				Image: &model.VariantImage{PublicID: "v/s", URL: "https://cdn.test/small.jpg", Width: 10, Height: 10}},
+			{Name: "Large", SKU: "L", PriceAmount: ptr[int64](180000), Position: 1,
+				Image: &model.VariantImage{PublicID: "v/l", URL: "https://cdn.test/large.jpg", Width: 10, Height: 10}},
+		},
+	}, nil, base)
+	// A product gallery picture the default variant's image must win over.
+	repo.addSeedPicture(variantImage.ID, 0, true)
+	for _, variant := range repo.variantsFor(variantImage.ID) {
+		repo.launch(t, variant.ID)
+	}
+
+	// No variant image: the primary gallery picture is the card image.
+	fallback := repo.seedWithVariants(t, productDraft("Fallback", "P2", "fallback", 100, category, 2), nil, base.Add(time.Minute))
+	repo.addSeedPicture(fallback.ID, 0, true)
+	repo.launch(t, repo.variantsFor(fallback.ID)[0].ID)
+
+	// Neither: the card carries no image.
+	bare := repo.seedWithVariants(t, productDraft("Bare", "P3", "bare", 100, category, 3), nil, base.Add(2*time.Minute))
+	repo.launch(t, repo.variantsFor(bare.ID)[0].ID)
+
+	page, err := publicService(repo, &fakeVisibility{visible: []uuid.UUID{category}}).ListPublic(
+		context.Background(), dto.ListPublicInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListPublic: %v", err)
+	}
+	bySlug := make(map[string]dto.PublicProductOutput, len(page.Products))
+	for _, entry := range page.Products {
+		bySlug[entry.Slug] = entry
+	}
+
+	if got := bySlug["card-set"].ImageURL; got == nil || *got != "https://cdn.test/small.jpg" {
+		t.Fatalf("the card image must be the default variant's image, got %+v", got)
+	}
+	if got := bySlug["fallback"].ImageURL; got == nil || *got != "https://cdn.example.test/seed.jpg" {
+		t.Fatalf("with no variant image the card must fall back to the primary picture, got %+v", got)
+	}
+	if got := bySlug["bare"].ImageURL; got != nil {
+		t.Fatalf("with neither image the card must carry no image, got %+v", got)
+	}
+}
+
+// FR-002, FR-003: the product detail orders its visible variants so the first is
+// the default variant, and its summary carries the default variant's image and the
+// lowest on-sale price — never an out-of-stock variant's cheaper price.
+func TestDetailOrdersVariantsDefaultFirstWithTheSummaryFigure(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Hour)
+	category := uuid.New()
+
+	repo := newMemoryProducts()
+	product := repo.seedWithVariants(t, model.ProductDraft{
+		Name: "Card set", Code: "P1", Slug: "card-set", Description: "Bộ card",
+		Price: price(100000), CategoryID: category, Position: 1,
+		Variants: []model.VariantDraft{
+			{Name: "Default", SKU: "D", Position: 0,
+				Image: &model.VariantImage{PublicID: "v/d", URL: "https://cdn.test/default.jpg", Width: 10, Height: 10}},
+			{Name: "Cheaper", SKU: "C", PriceAmount: ptr[int64](60000), Position: 1,
+				Image: &model.VariantImage{PublicID: "v/c", URL: "https://cdn.test/cheaper.jpg", Width: 10, Height: 10}},
+			{Name: "Coming", SKU: "N", Position: 2},
+		},
+	}, nil, base)
+	variants := repo.variantsFor(product.ID)
+	repo.launch(t, variants[0].ID)
+	repo.launch(t, variants[1].ID)
+	// variants[2] stays COMING_SOON and must not be listed.
+
+	availability := newFakeAvailability()
+	availability.available[variants[0].ID] = 3
+	availability.available[variants[1].ID] = 0
+
+	svc := serviceFor(repo, availability, &fakeVisibility{visible: []uuid.UUID{category}}, nil, nil, nil)
+	out, err := svc.GetPublicBySlug(context.Background(), dto.PublicProductRefInput{Slug: "card-set"})
+	if err != nil {
+		t.Fatalf("GetPublicBySlug: %v", err)
+	}
+	if len(out.Variants) != 2 {
+		t.Fatalf("only the visible variants must be listed, got %+v", out.Variants)
+	}
+	if out.Variants[0].Name != "Default" {
+		t.Fatalf("the first (default) variant must be listed first, got %+v", out.Variants)
+	}
+	if out.Price.Amount != 60000 {
+		t.Fatalf("the detail summary price must be the lowest on-sale price, got %d", out.Price.Amount)
+	}
+	if out.ImageURL == nil || *out.ImageURL != "https://cdn.test/default.jpg" {
+		t.Fatalf("the detail summary image must be the default variant's image, got %+v", out.ImageURL)
+	}
+}
+
 // ptr returns a pointer to its argument, so a one-line variant seed can carry an
 // own price.
 func ptr[T any](value T) *T { return &value }

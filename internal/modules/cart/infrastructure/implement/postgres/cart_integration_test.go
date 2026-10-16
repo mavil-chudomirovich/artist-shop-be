@@ -21,10 +21,10 @@ import (
 
 // This file exercises the cart adapter and the migration against a real
 // PostgreSQL container. Its centre of gravity is what a fake repository cannot
-// prove: that one cart per account and one line per product are refused by the
+// prove: that one cart per account and one line per variant are refused by the
 // unique indexes; that the quantity and money checks reject a writer that bypassed
-// the application; that a cart line survives the removal of its product because
-// product_id carries no foreign key; and that two concurrent upserts to one cart
+// the application; that a cart line survives the removal of its variant because
+// variant_id carries no foreign key; and that two concurrent upserts to one cart
 // leave one line whose quantity is the sum. Most constraint tests write the tables
 // directly, with no domain validation and no use case, because a guard against a
 // future writer can only be proven by pretending to be that writer.
@@ -45,7 +45,7 @@ const (
 	insertCartSQL = `INSERT INTO carts (id, user_id) VALUES ($1, $2)`
 	insertLineSQL = `
 		INSERT INTO cart_items
-			(id, cart_id, product_id, quantity, unit_price_amount, currency)
+			(id, cart_id, variant_id, quantity, unit_price_amount, currency)
 		VALUES ($1, $2, $3, $4, $5, $6)`
 )
 
@@ -94,10 +94,10 @@ func (f *cartFixture) insertUser(t *testing.T) uuid.UUID {
 	return id
 }
 
-// insertProduct writes one category and one on-sale product straight into the
-// database, so the survival test has a real product whose removal must not take
-// the cart line with it.
-func (f *cartFixture) insertProduct(t *testing.T) uuid.UUID {
+// insertVariant writes one category, one on-sale product and one on-sale variant
+// straight into the database, so the survival test has a real variant (whose
+// removal must not take the cart line with it) reachable through its product.
+func (f *cartFixture) insertVariant(t *testing.T) uuid.UUID {
 	t.Helper()
 	ctx := context.Background()
 
@@ -116,13 +116,22 @@ func (f *cartFixture) insertProduct(t *testing.T) uuid.UUID {
 	slug := "product-" + productID.String()[:8]
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO products
-			(id, name, slug, normalized_slug, description, price_amount, currency,
-			 category_id, position, sell_state, is_set, is_preorder)
-		VALUES ($1, $2, $3, $4, '', 1000, 'VND', $5, 0, 'ACTIVE', false, false)`,
-		productID, "Product "+slug, slug, slug, categoryID); err != nil {
+			(id, name, code, slug, normalized_slug, description, price_amount, currency,
+			 category_id, position)
+		VALUES ($1, $2, $3, $4, $4, '', 1000, 'VND', $5, 0)`,
+		productID, "Product "+slug, "CODE-"+suffix, slug, categoryID); err != nil {
 		t.Fatalf("insert product: %v", err)
 	}
-	return productID
+
+	variantID := uuid.New()
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO product_variants
+			(id, product_id, name, sku, price_amount, position, sell_state)
+		VALUES ($1, $2, 'Mặc định', $3, 1000, 0, 'ACTIVE')`,
+		variantID, productID, "SKU-"+suffix); err != nil {
+		t.Fatalf("insert variant: %v", err)
+	}
+	return variantID
 }
 
 // insertCart writes an empty cart for an owner and returns its identifier.
@@ -185,13 +194,13 @@ func TestCartStorageConstraintsRejectWhatTheApplicationWouldPrevent(t *testing.T
 		requireConstraint(t, err, sqlStateUnique, "carts_user_key")
 	})
 
-	t.Run("second line for one product", func(t *testing.T) {
-		productID := uuid.New()
-		if _, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, productID, 1, 1000, "VND"); err != nil {
+	t.Run("second line for one variant", func(t *testing.T) {
+		variantID := uuid.New()
+		if _, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, variantID, 1, 1000, "VND"); err != nil {
 			t.Fatalf("seed the first line: %v", err)
 		}
-		_, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, productID, 1, 1000, "VND")
-		requireConstraint(t, err, sqlStateUnique, "cart_items_cart_product_key")
+		_, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, variantID, 1, 1000, "VND")
+		requireConstraint(t, err, sqlStateUnique, "cart_items_cart_variant_key")
 	})
 
 	t.Run("zero quantity", func(t *testing.T) {
@@ -241,22 +250,27 @@ func TestRemovingAnAccountCascadesItsCart(t *testing.T) {
 	}
 }
 
-// FR-012, research D3: removing a product leaves the customer's cart line in
-// place, because product_id carries no foreign key. A cascading key would silently
-// delete the line; a restricting key would block the product's removal, which
-// module 04 deliberately allows.
-func TestCartLineSurvivesTheRemovalOfItsProduct(t *testing.T) {
+// FR-012, research D3: removing a product (cascading its variants) leaves the
+// customer's cart line in place, because variant_id carries no foreign key. A
+// cascading key would silently delete the line; a restricting key would block the
+// product's removal, which module 04 deliberately allows.
+func TestCartLineSurvivesTheRemovalOfItsVariant(t *testing.T) {
 	f := newCartFixture(t)
 	ctx := context.Background()
 	userID := f.insertUser(t)
 	cartID := f.insertCart(t, userID)
-	productID := f.insertProduct(t)
+	variantID := f.insertVariant(t)
 
-	if _, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, productID, 2, 1000, "VND"); err != nil {
+	if _, err := f.pool.Exec(ctx, insertLineSQL, uuid.New(), cartID, variantID, 2, 1000, "VND"); err != nil {
 		t.Fatalf("seed the line: %v", err)
 	}
 
-	// The removal must succeed: the loose reference does not block it.
+	// The removal must succeed: the loose reference does not block it, and the
+	// cascade removes the variant but not the line.
+	productID := uuid.UUID{}
+	if err := f.pool.QueryRow(ctx, `SELECT product_id FROM product_variants WHERE id = $1`, variantID).Scan(&productID); err != nil {
+		t.Fatalf("read the variant's product: %v", err)
+	}
 	if _, err := f.pool.Exec(ctx, `DELETE FROM products WHERE id = $1`, productID); err != nil {
 		t.Fatalf("delete the product: %v", err)
 	}
@@ -265,8 +279,8 @@ func TestCartLineSurvivesTheRemovalOfItsProduct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lines: %v", err)
 	}
-	if len(lines) != 1 || lines[0].ProductID != productID {
-		t.Fatalf("the cart line must survive its product's removal, got %+v", lines)
+	if len(lines) != 1 || lines[0].VariantID != variantID {
+		t.Fatalf("the cart line must survive its variant's removal, got %+v", lines)
 	}
 }
 
@@ -294,9 +308,9 @@ func TestSecondCartForOneAccountIsClassifiedAsAlreadyExisting(t *testing.T) {
 	}
 }
 
-// SC-002, quickstart 9c: two concurrent upserts of the same product to one cart
+// SC-002, quickstart 9c: two concurrent upserts of the same variant to one cart
 // converge on a single line whose quantity is the sum, never two lines. The
-// (cart_id, product_id) unique index and the ON CONFLICT summing update are what
+// (cart_id, variant_id) unique index and the ON CONFLICT summing update are what
 // make it so.
 func TestConcurrentUpsertsLeaveOneLineWithTheSummedQuantity(t *testing.T) {
 	f := newCartFixture(t)
@@ -307,9 +321,9 @@ func TestConcurrentUpsertsLeaveOneLineWithTheSummedQuantity(t *testing.T) {
 		t.Fatalf("Create cart: %v", err)
 	}
 
-	productID := uuid.New()
+	variantID := uuid.New()
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	line, err := model.NewCartLine(productID, 1, model.Price{Amount: 1000, Currency: "VND"})
+	line, err := model.NewCartLine(variantID, 1, model.Price{Amount: 1000, Currency: "VND"})
 	if err != nil {
 		t.Fatalf("NewCartLine: %v", err)
 	}

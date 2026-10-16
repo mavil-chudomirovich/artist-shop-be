@@ -109,17 +109,17 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Tests for User Story 1
 
-- [ ] T029 [P] [US1] Write failing unit tests in `internal/modules/product/application/implement/catalogue_test.go`: one catalogue entry per product with the lowest effective variant price and the default-variant image; a product hidden when no variant is on sale
-- [ ] T030 [P] [US1] Write failing unit tests for the product detail (visible variants with price + stock status; default = first) in `catalogue_test.go`
-- [ ] T031 [P] [US1] Write failing unit tests in `internal/modules/cart/application/implement/cart_test.go`: adding by variant captures the variant's effective price; adding a not-on-sale/short variant is refused; adding without a variant is refused
+- [x] T029 [P] [US1] Write failing unit tests in `internal/modules/product/application/implement/catalogue_test.go`: one catalogue entry per product with the lowest effective variant price and the default-variant image; a product hidden when no variant is on sale
+- [x] T030 [P] [US1] Write failing unit tests for the product detail (visible variants with price + stock status; default = first) in `catalogue_test.go`
+- [x] T031 [P] [US1] Write failing unit tests in `internal/modules/cart/application/implement/cart_test.go`: adding by variant captures the variant's effective price; adding a not-on-sale/short variant is refused; adding without a variant is refused
 
 ### Implementation for User Story 1
 
-- [ ] T032 [US1] Implement the catalogue read in `internal/modules/product/application/implement/catalogue.go` (one entry per product; category-visible and an on-sale variant required)
-- [ ] T033 [US1] Implement the product detail read (product content + gallery + visible variants, each joined with its availability from the inventory read) in `catalogue.go`
-- [ ] T034 [US1] Finish the cart add/change/remove/read by variant in `internal/modules/cart/application/implement/cart.go` and its mapper (product name + variant name + availability)
-- [ ] T035 [US1] Add/annotate the handlers and routes in `internal/modules/product/presentation/http/{handler,router,errors}.go` and `internal/modules/cart/presentation/http/*`; presentation DTOs for the catalogue entry, product detail + variants, and the cart line; map the new codes
-- [ ] T036 [P] [US1] Write the integration test `internal/modules/product/presentation/http/catalogue_sku_integration_test.go` and `internal/modules/cart/presentation/http/cart_sku_integration_test.go` (one-entry catalogue, detail with status, add-by-variant, the three refusals), plus: a hidden or unknown **product** and a hidden or unknown **variant** each answer the same not-found (FR-008), and a checkout produces one order line per (product code, SKU) carrying the snapshot (SC-003)
+- [x] T032 [US1] Implement the catalogue read in `internal/modules/product/application/implement/catalogue.go` (one entry per product; category-visible and an on-sale variant required)
+- [x] T033 [US1] Implement the product detail read (product content + gallery + visible variants, each joined with its availability from the inventory read) in `catalogue.go`
+- [x] T034 [US1] Finish the cart add/change/remove/read by variant in `internal/modules/cart/application/implement/cart.go` and its mapper (product name + variant name + availability)
+- [x] T035 [US1] Add/annotate the handlers and routes in `internal/modules/product/presentation/http/{handler,router,errors}.go` and `internal/modules/cart/presentation/http/*`; presentation DTOs for the catalogue entry, product detail + variants, and the cart line; map the new codes
+- [x] T036 [P] [US1] Write the integration test `internal/modules/product/presentation/http/catalogue_sku_integration_test.go` and `internal/modules/cart/presentation/http/cart_sku_integration_test.go` (one-entry catalogue, detail with status, add-by-variant, the three refusals), plus: a hidden or unknown **product** and a hidden or unknown **variant** each answer the same not-found (FR-008), and a checkout produces one order line per (product code, SKU) carrying the snapshot (SC-003)
 
 **Checkpoint**: US1 works end-to-end against real handlers
 

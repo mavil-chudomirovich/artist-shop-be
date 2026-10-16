@@ -662,3 +662,42 @@ func TestReadReportsNoNameOrQuantityForAGoneLine(t *testing.T) {
 		t.Fatalf("a gone line must report no available quantity, got %d", *line.AvailableQuantity)
 	}
 }
+
+// US1, FR-006: adding without choosing a variant is refused. The zero identifier
+// names no variant, so it is the shared not-found rather than an accepted line,
+// and nothing is written.
+func TestAddWithoutAVariantIsRefused(t *testing.T) {
+	svc, repo, _, _ := newCartService(t)
+
+	_, err := svc.Add(actorContext(uuid.New()), appdto.AddItemInput{VariantID: uuid.Nil, Quantity: 1})
+	if !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("adding without a variant must be refused as not-found, got %v", err)
+	}
+	if len(repo.lines) != 0 {
+		t.Fatalf("a refused add must write no line, got %+v", repo.lines)
+	}
+}
+
+// US1, FR-007: adding a variant that is entirely out of stock (nothing available)
+// is refused with CART_QUANTITY_EXCEEDS_AVAILABLE and writes no line. A sibling
+// variant that is on sale is unaffected.
+func TestAddRefusesAnOutOfStockVariant(t *testing.T) {
+	svc, repo, variants, availability := newCartService(t)
+	user := uuid.New()
+	soldOut := seedVariant(variants, availability, "Tranh", "Hết hàng", 100000)
+	seedAvailable(availability, soldOut, 0)
+	onSale := seedVariant(variants, availability, "Tranh", "Còn hàng", 100000)
+
+	_, err := svc.Add(actorContext(user), appdto.AddItemInput{VariantID: soldOut, Quantity: 1})
+	if !errors.Is(err, domainerr.ErrQuantityExceedsAvailable) {
+		t.Fatalf("adding an out-of-stock variant must be refused, got %v", err)
+	}
+	if len(repo.lines) != 0 {
+		t.Fatalf("a refused add must write no line, got %+v", repo.lines)
+	}
+
+	// The sibling variant still adds: the refusal is per variant (FR-007).
+	if _, err := svc.Add(actorContext(user), appdto.AddItemInput{VariantID: onSale, Quantity: 1}); err != nil {
+		t.Fatalf("an on-sale sibling must still add, got %v", err)
+	}
+}
