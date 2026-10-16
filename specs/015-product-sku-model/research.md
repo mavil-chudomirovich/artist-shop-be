@@ -138,8 +138,8 @@ product); snapshotting only the product id and reading the variant later (breaks
 
 **Decision**:
 - The catalogue (`GET /products`) returns **one entry per product**: name, code, the **lowest effective
-  price** among the product's **on-sale** variants, and a card image (the default variant's image, else the
-  product's primary gallery picture). A product appears only when its category is visible and at least
+  price** among the product's **on-sale** variants, and a card image (the product's primary gallery
+  picture, else the default variant's image). A product appears only when its category is visible and at least
   one variant is **on sale** (spec Clarifications).
 - The product detail returns the product's shared content (name, description, gallery) plus its
   variants that are on sale or out of stock, each with name, effective price and stock status; a

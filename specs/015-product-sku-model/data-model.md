@@ -146,10 +146,11 @@ and replaces the code shape check with the URL-safe format above — a product's
 
 - **Catalogue entry** (`ListCatalogue`, one entry per product): product `id, name, code`, `position`,
   `created_at`, the **lowest effective variant price** (`MIN(COALESCE(v.price_amount, p.price_amount))`
-  over on-sale variants), the default variant's image else the product's primary gallery picture.
+  over on-sale variants), the product's primary gallery picture else the default variant's image.
   Visible only when the category is visible **and** an on-sale variant exists.
 - **Product detail**: the product's content + its gallery **plus a summary (the lowest on-sale variant
-  price and the default variant's image)**, then its `ACTIVE`/`OUT_OF_STOCK` variants
+  price and the product's primary gallery picture)**; when the product has no gallery picture the
+  summary falls back to the default variant's image. Then its `ACTIVE`/`OUT_OF_STOCK` variants
   (`id, name, effective price, sell_state`, ordered by `position, created_at, id`), each joined with
   its availability from the inventory read (D10).
 - **Variant facts** (contract, for cart/order): `id, product_id, product_name, product_code,

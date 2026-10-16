@@ -771,8 +771,8 @@ func visibleListQuery(ids ...uuid.UUID) domainrepo.VisibleListQuery {
 
 // FR-001, FR-002, FR-004, SC-001: the catalogue shows exactly one entry per
 // product, priced at the lowest on-sale variant (an out-of-stock variant's cheaper
-// price never headlines it), imaged by the default variant falling back to the
-// product's primary gallery picture, and visible only when a variant is on sale.
+// price never headlines it), imaged by the product's primary gallery picture
+// falling back to the default variant, and visible only when a variant is on sale.
 func TestCatalogueIsOneEntryPerProductWithLowestOnSalePrice(t *testing.T) {
 	f := newProductFixture(t)
 	ctx := context.Background()
@@ -781,7 +781,7 @@ func TestCatalogueIsOneEntryPerProductWithLowestOnSalePrice(t *testing.T) {
 
 	// Product A: three variants — an out-of-stock cheap one, an on-sale dearer
 	// one and a coming-soon one. The card price must follow the on-sale variant
-	// and the card image the default (position 0) variant.
+	// and, with no gallery picture, the card image the default (position 0) variant.
 	productA, err := f.rawInsertProduct(ctx, validRaw(category, "catalogue-a"))
 	if err != nil {
 		t.Fatalf("insert product A: %v", err)
@@ -949,8 +949,8 @@ func TestProductDetailCarriesVisibleVariantsOnly(t *testing.T) {
 	if view.Summary.Price.Amount != 3000 {
 		t.Fatalf("the summary price must be the lowest on-sale price, got %d", view.Summary.Price.Amount)
 	}
-	if view.Summary.ImageURL != "https://example.test/d-default.jpg" {
-		t.Fatalf("the summary image must be the default variant's, got %q", view.Summary.ImageURL)
+	if view.Summary.ImageURL != "https://example.test/d-gallery.jpg" {
+		t.Fatalf("the summary image must be the primary gallery picture, got %q", view.Summary.ImageURL)
 	}
 	if len(view.Pictures) != 1 {
 		t.Fatalf("the public detail must carry the gallery, got %d pictures", len(view.Pictures))

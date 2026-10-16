@@ -268,7 +268,7 @@ func decodeSKUEnvelope(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 
 // FR-001, FR-002, FR-004, SC-002 against real PostgreSQL: a product with several
 // variants appears exactly once, carrying the lowest on-sale variant price and the
-// default variant's image (falling back to the product's primary gallery picture);
+// product's primary gallery picture (falling back to the default variant's image);
 // a product with no on-sale variant is absent from the catalogue and from its own
 // route.
 func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
@@ -276,8 +276,8 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	category := seedSKUCategory(t, f.categories, "tranh", true)
 
 	// Two on-sale variants at different prices, the default (position 0) with its
-	// own image and the product carrying a primary gallery picture the default
-	// variant's image must win over.
+	// own image and the product carrying a primary gallery picture the primary
+	// gallery picture must win over.
 	_, cardVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
 		Name: "Card set", Code: "card-set", Price: skuProductPrice(150000),
 		CategoryID: category.ID, Position: 1,
@@ -294,8 +294,8 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	f.setSKUStock(t, cardVariants[0].ID, 5)
 	f.setSKUStock(t, cardVariants[1].ID, 5)
 
-	// A product whose only variant has no image: the card image falls back to the
-	// product's primary gallery picture.
+	// A product whose only variant has no image: the card image is the product's
+	// primary gallery picture.
 	_, fallbackVariants := f.seedSKUProduct(t, productmodel.ProductDraft{
 		Name: "Fallback", Code: "fallback", Price: skuProductPrice(50000),
 		CategoryID: category.ID, Position: 2,
@@ -337,14 +337,14 @@ func TestCatalogueCollapsesVariantsToOneEntryAgainstPostgres(t *testing.T) {
 	if list.Data[0].Price.Amount != 120000 {
 		t.Fatalf("the card price must be the lowest on-sale variant price, got %d", list.Data[0].Price.Amount)
 	}
-	if list.Data[0].ImageURL == nil || *list.Data[0].ImageURL != "https://cdn.test/small.jpg" {
-		t.Fatalf("the card image must be the default variant's image, got %+v", list.Data[0].ImageURL)
+	if list.Data[0].ImageURL == nil || *list.Data[0].ImageURL != "https://cdn.example.test/gallery.jpg" {
+		t.Fatalf("the card image must be the primary gallery picture, got %+v", list.Data[0].ImageURL)
 	}
 	if list.Data[1].Price.Amount != 50000 {
 		t.Fatalf("the fallback product's card price must be its default price, got %d", list.Data[1].Price.Amount)
 	}
 	if list.Data[1].ImageURL == nil || *list.Data[1].ImageURL != "https://cdn.example.test/gallery.jpg" {
-		t.Fatalf("the card image must fall back to the primary picture, got %+v", list.Data[1].ImageURL)
+		t.Fatalf("the card image must be the primary gallery picture, got %+v", list.Data[1].ImageURL)
 	}
 
 	// FR-008: a product with no on-sale variant answers the same not-found as an

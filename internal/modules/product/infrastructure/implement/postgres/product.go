@@ -313,8 +313,8 @@ func (r *ProductRepository) VariantIDsByCategories(ctx context.Context, category
 // the lowest effective price among the on-sale variants — COALESCE(v.price_amount,
 // p.price_amount) is the fallback a variant with no own price takes (FR-017) — so
 // an out-of-stock variant's cheaper price never headlines the product (FR-002).
-// The image is the default variant's image (the first by position, created_at,
-// id) falling back to the product's primary gallery picture (FR-002). The outer
+// The image is the product's primary gallery picture, falling back to the default
+// variant's image (FR-002). The outer
 // query orders by position, created_at, id and pages, and a COUNT(*) over the
 // same CTE gives the total, so pagination and the total stay correct.
 const catalogueCTE = `
@@ -328,13 +328,13 @@ const catalogueCTE = `
 				WHERE v.product_id = p.id AND v.sell_state = 'ACTIVE') AS price_amount,
 			p.currency AS currency,
 		COALESCE(
-			(SELECT v.image_secure_url FROM product_variants v
-				WHERE v.product_id = p.id
-				ORDER BY v.position, v.created_at, v.id
-				LIMIT 1),
 			(SELECT i.secure_url FROM product_images i
 				WHERE i.product_id = p.id
 				ORDER BY (CASE WHEN i.is_primary THEN 0 ELSE 1 END), i.position, i.id
+				LIMIT 1),
+			(SELECT v.image_secure_url FROM product_variants v
+				WHERE v.product_id = p.id AND v.image_secure_url IS NOT NULL AND v.image_secure_url != ''
+				ORDER BY v.position, v.created_at, v.id
 				LIMIT 1),
 			'') AS image_url,
 			p.category_id AS category_id,
@@ -766,8 +766,8 @@ func visibleVariants(variants []model.Variant, visibleOnly bool) []model.Variant
 }
 
 // summarizeProduct derives the card figure: the lowest effective price among the
-// product's on-sale variants and the default variant's image, falling back to the
-// product's primary gallery picture (FR-002, FR-003). The variants are already in
+// product's on-sale variants and the product's primary gallery picture, falling back to the
+// default variant's image (FR-002, FR-003). The variants are already in
 // display order, so the first is the default variant.
 func summarizeProduct(product *model.Product, pictures []model.Picture, variants []model.Variant) domainrepo.ProductSummary {
 	var summary domainrepo.ProductSummary
@@ -785,15 +785,15 @@ func summarizeProduct(product *model.Product, pictures []model.Picture, variants
 	if lowest != nil {
 		summary.Price = model.Price{Amount: *lowest, Currency: product.Price.Currency}
 	}
-	if len(variants) > 0 && variants[0].Image != nil {
-		summary.ImageURL = variants[0].Image.URL
-	}
-	if summary.ImageURL == "" && len(pictures) > 0 {
+	if len(pictures) > 0 {
 		if picture, ok := model.PrimaryPicture(pictures); ok {
 			summary.ImageURL = picture.URL
 		} else {
 			summary.ImageURL = pictures[0].URL
 		}
+	}
+	if summary.ImageURL == "" && len(variants) > 0 && variants[0].Image != nil {
+		summary.ImageURL = variants[0].Image.URL
 	}
 	return summary
 }

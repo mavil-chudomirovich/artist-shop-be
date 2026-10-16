@@ -73,7 +73,7 @@ Ngoài phạm vi (giữ hoãn, ghi rõ để không mất):
 ### User Story 1 - A customer picks a variant and buys it (Priority: P1)
 
 A visitor browses the catalogue and sees each product as **one** entry, showing the lowest price among
-its variants and the image of its default (first) variant. Opening the product, they read the shared
+its variants and the product's primary gallery picture. Opening the product, they read the shared
 content — the product name, description and picture gallery — and see the list of variants, each with
 its own name, price and stock status. They pick a variant and add it to the cart; the exact variant
 chosen (the pair of product code and SKU) is what gets purchased.
@@ -198,11 +198,11 @@ and exactly one default variant, and that buying it behaves as before.
 - **FR-001**: System MUST list one catalogue entry per product, with all of a product's variants
   collapsed into that single entry.
 - **FR-002**: A product's catalogue entry MUST show the product name, the lowest effective price among
-  its **on-sale** variants, and the image of its default (first) variant (falling back to the product's
-  primary gallery picture). Only a buyable price is shown on the card, so an out-of-stock variant's
+  its **on-sale** variants, and the product's primary gallery picture (falling back to the image of its
+  default (first) variant). Only a buyable price is shown on the card, so an out-of-stock variant's
   cheaper price never headlines a product.
 - **FR-003**: A product's detail MUST show the shared content — name, description and picture gallery,
-  plus a summary of the lowest on-sale variant price and the default variant's image — together with
+  plus a summary of the lowest on-sale variant price and the primary gallery picture — together with
   every visible variant's name, effective price and stock status (a variant is visible when it is on
   sale or out of stock; one not yet on sale or discontinued is not).
 - **FR-004**: A product MUST be visible to customers only when its category is visible and at least one
@@ -355,9 +355,9 @@ and exactly one default variant, and that buying it behaves as before.
 - **The product gallery is managed through the catalogue's existing product-picture routes**
   (feature 006's image endpoints), which this feature does not change; a variant's single image is set
   on the variant, not in the gallery.
-- **The catalogue card image follows the default variant, then falls back.** It shows the default
-  (first) variant's image; when that variant has no image it falls back to the product's primary
-  gallery picture, and to no image when neither exists.
+- **The catalogue card image follows the product gallery, then falls back.** It shows the product's
+  primary gallery picture; when the product has no gallery picture it falls back to the default
+  (first) variant's image, and to no image when neither exists.
 - **Product code and SKU are operator-written and bounded in length**, and uniqueness is compared after
   trimming surrounding whitespace and ignoring letter case, following the same case-fold rule the
   category slug uses, so "ABC" and "abc" cannot coexist.

@@ -24,7 +24,7 @@ danh mục vẫn giữ `slug` riêng của nó.
 
 | Method | Path | Trạng thái | Ghi chú |
 |---|---|---|---|
-| GET | `/api/v1/products` | **Đổi** | Một mục mỗi sản phẩm; giá thấp nhất trong variant đang bán; ảnh variant mặc định; **bỏ** `type` |
+| GET | `/api/v1/products` | **Đổi** | Một mục mỗi sản phẩm; giá thấp nhất trong variant đang bán; ảnh chính gallery; **bỏ** `type` |
 | GET | `/api/v1/products/{code}` | **Đổi** | Địa chỉ theo **`code`** (trước là `{slug}`); thêm `variants[]` (mỗi variant có `sellState`/`inStock`); **bỏ** bộ chọn `variantGroup` |
 | GET | `/api/v1/admin/products` | **Đổi** | Hình dạng `AdminProduct` mới (`code`, `defaultPrice`, `variantCount`; **bỏ** `slug`) |
 | POST | `/api/v1/admin/products` | **Đổi** | Body **bắt buộc** có `code` và `variants` (≥1); `code` là đoạn link công khai (URL-safe); **bỏ** `slug` |
@@ -101,8 +101,8 @@ Catalogue công khai. Giờ là **một mục mỗi sản phẩm** (không còn 
   **Không còn** `type` và `isPreorder`; `slug` đổi thành `code` (đoạn link công khai).
   - `price` là giá **thấp nhất** trong các variant **đang bán** (một variant hết hàng rẻ hơn **không**
     quyết định giá card).
-  - `imageUrl` là ảnh của **variant mặc định** (variant `position` nhỏ nhất), fallback ảnh chính của
-    gallery sản phẩm, hoặc `null`.
+  - `imageUrl` là **ảnh chính của gallery** sản phẩm, fallback ảnh của **variant mặc định** (variant
+    `position` nhỏ nhất), hoặc `null`.
   - Sản phẩm chỉ xuất hiện khi **danh mục hiển thị** **và** còn **ít nhất một variant đang bán**.
 - **Việc client phải làm**: bỏ nhánh theo `type`; mở chi tiết qua `/api/v1/products/{code}` (đoạn link
   công khai nay là `code`, không còn `slug`). Một sản phẩm hết
@@ -125,7 +125,7 @@ Chi tiết sản phẩm.
   - `sellState` nhận `COMING_SOON` / `ACTIVE` / `OUT_OF_STOCK` / `DISCONTINUED`; `inStock` là boolean.
   - Chỉ trả variant **`ACTIVE` hoặc `OUT_OF_STOCK`**; variant `COMING_SOON`/`DISCONTINUED` bị ẩn. **SKU
     không** được trả cho khách.
-  - `price`/`imageUrl` ở cấp sản phẩm là giá thấp nhất trong variant đang bán và ảnh variant mặc định.
+  - `price`/`imageUrl` ở cấp sản phẩm là giá thấp nhất trong variant đang bán và ảnh chính gallery.
 - **Việc client phải làm**: render danh sách variant; dùng `variant.id` (không phải SKU) khi thêm vào
   giỏ; hiển thị "hết hàng" khi `inStock: false`.
 

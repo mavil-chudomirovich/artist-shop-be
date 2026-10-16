@@ -85,7 +85,8 @@ một thay đổi hợp đồng **xuyên module**, ghi ở Complexity Tracking c
 ### 2.6 Danh mục một mục mỗi sản phẩm; chi tiết có variant (D9, D10)
 
 `GET /products` trả **một mục mỗi sản phẩm**: giá **thấp nhất** trong các variant **đang bán** và ảnh
-của variant mặc định (fallback ảnh gallery), và sản phẩm chỉ hiện khi **có ít nhất một variant đang
+chính của gallery sản phẩm (fallback ảnh variant mặc định; đổi từ variant-first sang gallery-first ngày
+2026-10-17), và sản phẩm chỉ hiện khi **có ít nhất một variant đang
 bán**. Phần tử **không** còn `type`. Danh mục chạy trong **một câu SQL** (predicate hiển thị và tổng
 tính trong cùng câu), giữ quy ước phân trang của module. Chi tiết trả nội dung dùng chung + các
 variant **đang bán hoặc hết hàng** (kèm `sellState`, `inStock`), gọi hợp đồng khả dụng của module 05
