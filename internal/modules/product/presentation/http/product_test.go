@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +45,11 @@ type productServiceStub struct {
 	seenActor  appinterface.Actor
 	seenCreate appdto.CreateProductInput
 	seenState  appdto.ChangeVariantStateInput
+
+	seenAddVariant    appdto.AddVariantInput
+	seenUpdateVariant appdto.UpdateVariantInput
+	seenVariantRef    appdto.VariantRefInput
+	seenImage         appdto.AddVariantImageInput
 }
 
 var _ appinterface.ProductService = (*productServiceStub)(nil)
@@ -77,15 +84,18 @@ func (s *productServiceStub) DeleteProduct(context.Context, appdto.AdminProductR
 	return s.err
 }
 
-func (s *productServiceStub) AddVariant(context.Context, appdto.AddVariantInput) (appdto.AdminProductDetailOutput, error) {
+func (s *productServiceStub) AddVariant(_ context.Context, in appdto.AddVariantInput) (appdto.AdminProductDetailOutput, error) {
+	s.seenAddVariant = in
 	return s.adminDetail, s.err
 }
 
-func (s *productServiceStub) UpdateVariant(context.Context, appdto.UpdateVariantInput) (appdto.AdminProductDetailOutput, error) {
+func (s *productServiceStub) UpdateVariant(_ context.Context, in appdto.UpdateVariantInput) (appdto.AdminProductDetailOutput, error) {
+	s.seenUpdateVariant = in
 	return s.adminDetail, s.err
 }
 
-func (s *productServiceStub) RemoveVariant(context.Context, appdto.VariantRefInput) error {
+func (s *productServiceStub) RemoveVariant(_ context.Context, in appdto.VariantRefInput) error {
+	s.seenVariantRef = in
 	return s.err
 }
 
@@ -97,7 +107,8 @@ func (s *productServiceStub) ChangeVariantState(_ context.Context, in appdto.Cha
 func (s *productServiceStub) MarkVariantOutOfStock(context.Context, uuid.UUID) error { return s.err }
 func (s *productServiceStub) MarkVariantOnSale(context.Context, uuid.UUID) error     { return s.err }
 
-func (s *productServiceStub) AddVariantImage(context.Context, appdto.AddVariantImageInput) (appdto.AdminProductDetailOutput, error) {
+func (s *productServiceStub) AddVariantImage(_ context.Context, in appdto.AddVariantImageInput) (appdto.AdminProductDetailOutput, error) {
+	s.seenImage = in
 	return s.adminDetail, s.err
 }
 
@@ -330,5 +341,97 @@ func TestTheAdminDetailShapeCarriesItsMembers(t *testing.T) {
 	}
 	if body.Data.Code != "P-001" || len(body.Data.Variants) != 1 || body.Data.Variants[0].SKU != "SKU-001" {
 		t.Fatalf("the administrator detail shape is wrong: %+v", body.Data)
+	}
+}
+
+// performMultipart sends one multipart frame carrying a single file part, the
+// shape the two picture-upload routes read.
+func performMultipart(handler http.Handler, method, path, field, filename string, content []byte, token string) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, _ := writer.CreateFormFile(field, filename)
+	_, _ = part.Write(content)
+	_ = writer.Close()
+
+	req := httptest.NewRequest(method, path, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// pngBytes is a payload the domain sniffer recognises as a PNG.
+func pngBytes() []byte {
+	return append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x2A}, 16)...)
+}
+
+// FR-010, FR-012, FR-016: every variant sub-resource route resolves behind the
+// administrator guard and carries the addressed identifiers and the session actor
+// through to the use case.
+func TestTheVariantSubResourceRoutesReachTheUseCase(t *testing.T) {
+	stub := &productServiceStub{adminDetail: sampleAdminDetail()}
+	router := newRouter(stub, productHooks(nil))
+	productID, variantID := uuid.New(), uuid.New()
+
+	addRec := performJSON(router, http.MethodPost, productAdminPath+"/"+productID.String()+"/variants",
+		`{"name":"Khổ lớn","sku":"SKU-002","position":1}`, "admin-token")
+	if addRec.Code != http.StatusCreated {
+		t.Fatalf("add variant: expected 201, got %d (%s)", addRec.Code, addRec.Body.String())
+	}
+	if stub.seenAddVariant.ProductID != productID || stub.seenAddVariant.SKU != "SKU-002" {
+		t.Fatalf("the add did not reach the use case, got %+v", stub.seenAddVariant)
+	}
+
+	editRec := performJSON(router, http.MethodPatch, productAdminPath+"/"+productID.String()+"/variants/"+variantID.String(),
+		`{"name":"Đổi tên"}`, "admin-token")
+	if editRec.Code != http.StatusOK {
+		t.Fatalf("edit variant: expected 200, got %d (%s)", editRec.Code, editRec.Body.String())
+	}
+	if stub.seenUpdateVariant.ProductID != productID || stub.seenUpdateVariant.VariantID != variantID ||
+		stub.seenUpdateVariant.Name == nil || *stub.seenUpdateVariant.Name != "Đổi tên" {
+		t.Fatalf("the edit did not reach the use case, got %+v", stub.seenUpdateVariant)
+	}
+
+	imageRec := performMultipart(router, http.MethodPost,
+		productAdminPath+"/"+productID.String()+"/variants/"+variantID.String()+"/image",
+		"image", "variant.png", pngBytes(), "admin-token")
+	if imageRec.Code != http.StatusCreated {
+		t.Fatalf("variant image: expected 201, got %d (%s)", imageRec.Code, imageRec.Body.String())
+	}
+	if stub.seenImage.ProductID != productID || stub.seenImage.VariantID != variantID || len(stub.seenImage.Content) == 0 {
+		t.Fatalf("the image upload did not reach the use case, got %+v", stub.seenImage)
+	}
+
+	removeRec := performJSON(router, http.MethodDelete,
+		productAdminPath+"/"+productID.String()+"/variants/"+variantID.String(), "", "admin-token")
+	if removeRec.Code != http.StatusNoContent {
+		t.Fatalf("remove variant: expected 204, got %d (%s)", removeRec.Code, removeRec.Body.String())
+	}
+	if stub.seenVariantRef.ProductID != productID || stub.seenVariantRef.VariantID != variantID {
+		t.Fatalf("the removal did not reach the use case, got %+v", stub.seenVariantRef)
+	}
+}
+
+// FR-013: a customer's session is refused on the variant routes on role grounds,
+// with the denial recorded, exactly as the group root is.
+func TestACustomerSessionIsRefusedOnTheVariantRoutes(t *testing.T) {
+	stub := &productServiceStub{adminDetail: sampleAdminDetail()}
+	var denied bool
+	router := newRouter(stub, productHooks(&denied))
+	productID := uuid.New()
+
+	rec := performJSON(router, http.MethodPost, productAdminPath+"/"+productID.String()+"/variants",
+		`{"name":"Lén","sku":"SKU-9"}`, "customer-token")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a customer: expected 403, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !denied {
+		t.Fatal("the role denial must be recorded through OnDenied")
+	}
+	if got := decodeError(t, rec).Error.Code; got != "FORBIDDEN" {
+		t.Fatalf("expected FORBIDDEN, got %s", got)
 	}
 }

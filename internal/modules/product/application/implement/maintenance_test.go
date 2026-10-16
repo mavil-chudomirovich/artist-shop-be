@@ -228,6 +228,9 @@ func TestChangeVariantState(t *testing.T) {
 	if out.Variants[0].SellState != constant.SellStateActive {
 		t.Fatalf("expected ACTIVE, got %q", out.Variants[0].SellState)
 	}
+	// A state move is a mutation, so it carries its own audit event naming the
+	// variant as the target (FR-014).
+	requireAudited(t, recorder, constant.AuditProductVariantUpdated, actor, "product_variant", variant.ID)
 
 	_, err = svc.ChangeVariantState(ctx, dto.ChangeVariantStateInput{ProductID: product.ID, VariantID: variant.ID, To: constant.SellStateComingSoon})
 	if !errors.Is(err, domainerr.ErrVariantStateTransitionInvalid) {
@@ -302,9 +305,13 @@ func TestVariantImageAddAndRemove(t *testing.T) {
 	if out.Variants[0].ImageURL == nil || *out.Variants[0].ImageURL != "https://cdn.example.test/products/one.jpg" {
 		t.Fatalf("the variant must carry the stored reference, got %+v", out.Variants[0])
 	}
+	// Attaching and clearing an image are mutations of the variant, so each
+	// carries its audit event naming the variant (FR-014, FR-016).
+	requireAudited(t, recorder, constant.AuditProductVariantUpdated, actor, "product_variant", variant.ID)
 	if _, err := svc.RemoveVariantImage(ctx, dto.VariantRefInput{ProductID: product.ID, VariantID: variant.ID}); err != nil {
 		t.Fatalf("RemoveVariantImage: %v", err)
 	}
+	requireAudited(t, recorder, constant.AuditProductVariantUpdated, actor, "product_variant", variant.ID)
 	if got := repo.variantBySKU(t, product.ID, variant.SKU); got.Image != nil {
 		t.Fatalf("the image must be cleared, got %+v", got.Image)
 	}

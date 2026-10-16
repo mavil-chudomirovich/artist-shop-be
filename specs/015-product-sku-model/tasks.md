@@ -133,16 +133,16 @@ migration. Modules 01/02/03/08 and the shared foundation are unchanged.
 
 ### Tests for User Story 2
 
-- [ ] T037 [P] [US2] Write failing unit tests in `internal/modules/product/application/implement/maintenance_test.go`: create requires ≥1 variant; adding/editing/removing a variant; duplicate code (`ErrProductCodeTaken`); duplicate SKU (`ErrVariantSKUTaken`); removing the last variant (`ErrVariantLastRemoval`); the variant sell-state transition refused naming the state; each mutation audited
-- [ ] T038 [P] [US2] Write failing handler tests for the admin product/variant routes and the role refusal in `internal/modules/product/presentation/http/maintenance_test.go`
+- [x] T037 [P] [US2] Write failing unit tests in `internal/modules/product/application/implement/maintenance_test.go`: create requires ≥1 variant; adding/editing/removing a variant; duplicate code (`ErrProductCodeTaken`); duplicate SKU (`ErrVariantSKUTaken`); removing the last variant (`ErrVariantLastRemoval`); the variant sell-state transition refused naming the state; each mutation audited
+- [x] T038 [P] [US2] Write failing handler tests for the admin product/variant routes and the role refusal in `internal/modules/product/presentation/http/maintenance_test.go`
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Implement the admin product use cases in `internal/modules/product/application/implement/maintenance.go` (create with ≥1 variant; update; delete cascading variants; audit `PRODUCT_CREATED/UPDATED/DELETED`); the product gallery keeps using the catalogue's existing product-picture routes (unchanged)
-- [ ] T040 [US2] Implement the variant use cases (add/edit/remove, `variant.go` or `variants.go` in `application/implement`) with the last-removal and unique-SKU rules, the sell-state transition, the variant image upload/delete through the media capability, and the variant state transition, auditing `PRODUCT_VARIANT_*`
-- [ ] T041 [US2] Add the variant handlers/routes (`POST/PATCH/DELETE /admin/products/{id}/variants...`, `POST/DELETE /admin/products/{id}/variants/{variantId}/image`, `POST /admin/products/{id}/variants/{variantId}/state`) and update the product handlers in `internal/modules/product/presentation/http/{handler,router,errors}.go`; **remove** the product-level state route/handler/annotation; add/refresh the admin product+variant DTOs and Swagger annotations
-- [ ] T042 [US2] Map the new codes in `presentation/http/errors.go` (`PRODUCT_CODE_TAKEN`, `VARIANT_SKU_TAKEN`, `VARIANT_NOT_FOUND`, `VARIANT_LAST_REMOVAL`, `VARIANT_STATE_TRANSITION_INVALID`) and cover them in `errors_test.go`
-- [ ] T043 [P] [US2] Write the integration test `internal/modules/product/presentation/http/variant_maintenance_integration_test.go` (full admin flow, duplicate refusals, last-removal, role refusal, audit entry per mutation)
+- [x] T039 [US2] Implement the admin product use cases in `internal/modules/product/application/implement/maintenance.go` (create with ≥1 variant; update; delete cascading variants; audit `PRODUCT_CREATED/UPDATED/DELETED`); the product gallery keeps using the catalogue's existing product-picture routes (unchanged)
+- [x] T040 [US2] Implement the variant use cases (add/edit/remove, `variant.go` or `variants.go` in `application/implement`) with the last-removal and unique-SKU rules, the sell-state transition, the variant image upload/delete through the media capability, and the variant state transition, auditing `PRODUCT_VARIANT_*`
+- [x] T041 [US2] Add the variant handlers/routes (`POST/PATCH/DELETE /admin/products/{id}/variants...`, `POST/DELETE /admin/products/{id}/variants/{variantId}/image`, `POST /admin/products/{id}/variants/{variantId}/state`) and update the product handlers in `internal/modules/product/presentation/http/{handler,router,errors}.go`; **remove** the product-level state route/handler/annotation; add/refresh the admin product+variant DTOs and Swagger annotations
+- [x] T042 [US2] Map the new codes in `presentation/http/errors.go` (`PRODUCT_CODE_TAKEN`, `VARIANT_SKU_TAKEN`, `VARIANT_NOT_FOUND`, `VARIANT_LAST_REMOVAL`, `VARIANT_STATE_TRANSITION_INVALID`) and cover them in `errors_test.go`
+- [x] T043 [P] [US2] Write the integration test `internal/modules/product/presentation/http/variant_maintenance_integration_test.go` (full admin flow, duplicate refusals, last-removal, role refusal, audit entry per mutation)
 
 **Checkpoint**: US1 + US2 deliver the restructured catalogue and admin surface
 
