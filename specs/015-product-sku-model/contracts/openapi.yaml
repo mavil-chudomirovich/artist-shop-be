@@ -1,0 +1,534 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Product SKU Model (feature 015)
+  version: 2.0.0
+  description: >
+    Restructures the catalogue into a parent product with child variants (SKUs). A product carries the
+    shared content and a default price; each variant carries its own name, SKU, optional price, image,
+    order and sell state. Stock, cart and orders act on the variant: the catalogue shows one entry per
+    product (lowest variant price, default variant image), the product detail lists its variants with
+    per-variant stock status, adding to the cart requires a variant, and an order line snapshots the
+    product code and SKU sold.
+
+    This file **supersedes** feature 014's contract and **removes** its variant-group endpoints
+    (`GET /api/v1/product-groups/{slug}` and `/api/v1/admin/product-groups*`). Every response uses the
+    foundation envelope and the X-Request-Id correlation header.
+
+    The order routes (`/api/v1/orders*`) keep their paths, but each order line's shape gains the
+    product name, product code, variant name and SKU (see the `OrderLine` schema); the full order
+    contract is documented in `docs/api-reference.md`.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: catalogue
+    description: Public browsing. No authentication.
+  - name: admin
+    description: Maintenance. Administrator role required.
+  - name: cart
+    description: The signed-in customer's cart.
+  - name: order
+    description: The signed-in customer's orders.
+paths:
+  /api/v1/products:
+    get:
+      tags: [catalogue]
+      summary: List the catalogue (one entry per product)
+      description: >
+        One entry per product, ordered by the operator's position. A product appears only when its
+        category is visible and at least one variant is on sale. The card price is the lowest effective
+        price among the product's on-sale variants; the image is the default variant's image, falling
+        back to the product's primary gallery picture.
+      security: []
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: category, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/PublicProduct" }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/products/{slug}:
+    get:
+      tags: [catalogue]
+      summary: Read one product by slug (with its variants)
+      description: >
+        The product's shared content (name, description, gallery) plus its visible variants — those on
+        sale or out of stock — each with name, effective price and stock status, ordered by display
+        order. A variant not yet on sale or retired is not returned. The default variant is the first.
+      security: []
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: A product with its variants.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/PublicProductDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products:
+    get:
+      tags: [admin]
+      summary: List every product (ADMIN)
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/AdminProduct" } }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a product with at least one variant (ADMIN)
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProductRequest" }
+      responses:
+        "201":
+          description: The created product.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/{id}:
+    get:
+      tags: [admin]
+      summary: Read one product with its variants (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200":
+          description: The product with its variants and images.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [admin]
+      summary: Update a product (ADMIN)
+      description: Edits the product's shared fields. Variants are edited through their own routes.
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProductRequest" }
+      responses:
+        "200":
+          description: The updated product.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [admin]
+      summary: Remove a product and its variants (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products/{id}/variants:
+    post:
+      tags: [admin]
+      summary: Add a variant to a product (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVariantRequest" }
+      responses:
+        "201":
+          description: The product with the new variant.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/{id}/variants/{variantId}:
+    patch:
+      tags: [admin]
+      summary: Update a variant (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateVariantRequest" }
+      responses:
+        "200":
+          description: The product with the updated variant.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [admin]
+      summary: Remove a variant (ADMIN)
+      description: Refused when it is the product's last variant.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/{id}/variants/{variantId}/image:
+    post:
+      tags: [admin]
+      summary: Upload the variant image (ADMIN)
+      description: Uploads bytes through the media capability; uploading again replaces the variant's single image. The stored reference is kept, never the bytes.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { image: { type: string, format: binary } } }
+      responses:
+        "201":
+          description: The product with the updated variant.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [admin]
+      summary: Remove the variant image (ADMIN)
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products/{id}/variants/{variantId}/state:
+    post:
+      tags: [admin]
+      summary: Move a variant through its selling life (ADMIN)
+      description: Requests a sell-state transition. The transition table decides whether the move is allowed; an invalid one is refused naming the current state. Replaces feature 006's product-level state endpoint.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties: { to: { type: string, enum: [COMING_SOON, ACTIVE, OUT_OF_STOCK, DISCONTINUED] } }
+      responses:
+        "200":
+          description: The product with the moved variant.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # Feature 014 endpoints REMOVED by this feature:
+  #   GET    /api/v1/product-groups/{slug}
+  #   GET    /api/v1/admin/product-groups
+  #   POST   /api/v1/admin/product-groups
+  #   GET    /api/v1/admin/product-groups/{id}
+  #   PATCH  /api/v1/admin/product-groups/{id}
+  #   DELETE /api/v1/admin/product-groups/{id}
+  #   POST   /api/v1/admin/product-groups/{id}/images
+  #   DELETE /api/v1/admin/product-groups/{id}/images/{imageId}
+  #   POST   /api/v1/admin/product-groups/{id}/images/{imageId}/primary
+  # Also REMOVED: the product-level sell-state endpoint (feature 006)
+  #   POST   /api/v1/admin/products/{id}/state  -> replaced by the variant state endpoint above
+
+  /api/v1/cart:
+    get:
+      tags: [cart]
+      summary: Read the caller's cart
+      description: Returns the caller's cart with one line per variant; each line shows the product name, the variant name, the captured price, and the line's buyable decision with the currently available quantity when short.
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: The caller's cart.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Cart" } } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /api/v1/cart/items:
+    post:
+      tags: [cart]
+      summary: Add a variant to the cart
+      description: >
+        Requires a variantId (adding a product without a variant is refused). The variant must be on
+        sale and its availability must cover the resulting quantity. The price is captured here.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [variantId, quantity]
+              properties:
+                variantId: { type: string, format: uuid }
+                quantity: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The updated cart.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Cart" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/cart/items/{variantId}:
+    patch:
+      tags: [cart]
+      summary: Change a cart line's quantity
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [quantity], properties: { quantity: { type: integer, minimum: 1 } } }
+      responses:
+        "200":
+          description: The updated cart.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/Cart" } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [cart]
+      summary: Remove a cart line
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: variantId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    BearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    ValidationError:
+      description: "A field is invalid; details[].field names it."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: "Not found (unknown or hidden)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: "The current data does not allow the request."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthenticated:
+      description: "No valid session."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: "The caller lacks the required role."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    Meta: { type: object, properties: { page: { type: integer }, pageSize: { type: integer }, total: { type: integer, format: int64 } } }
+    ErrorEnvelope:
+      type: object
+      properties:
+        error: { type: object, properties: { code: { type: string }, message: { type: string }, details: { type: array, items: { type: object, properties: { field: { type: string }, message: { type: string } } } } } }
+    Price: { type: object, required: [amount, currency], properties: { amount: { type: integer, format: int64, minimum: 1 }, currency: { type: string, minLength: 3, maxLength: 3 } } }
+    PublicProduct:
+      type: object
+      required: [id, name, slug, price]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+    PublicVariant:
+      type: object
+      required: [id, name, price, sellState, inStock]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: "Display name; the SKU is not exposed to customers." }
+        price: { $ref: "#/components/schemas/Price" }
+        imageUrl: { type: [string, "null"] }
+        sellState: { type: string, enum: [COMING_SOON, ACTIVE, OUT_OF_STOCK, DISCONTINUED] }
+        inStock: { type: boolean }
+    PublicProductDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        price: { $ref: "#/components/schemas/Price", description: "Lowest effective variant price among the product's on-sale variants." }
+        imageUrl: { type: [string, "null"] }
+        images: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, url: { type: string }, width: { type: integer }, height: { type: integer } } } }
+        variants: { type: array, items: { $ref: "#/components/schemas/PublicVariant" } }
+    AdminVariant:
+      type: object
+      required: [id, name, sku, position, sellState]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sku: { type: string }
+        price: { type: [object, "null"], properties: { amount: { type: integer, format: int64 } }, description: "The variant's own price amount; null means the product's default price applies." }
+        effectivePrice: { $ref: "#/components/schemas/Price", description: "The price actually charged: the variant's own amount or the product's default, with the product's currency." }
+        imageUrl: { type: [string, "null"] }
+        position: { type: integer }
+        sellState: { type: string, enum: [COMING_SOON, ACTIVE, OUT_OF_STOCK, DISCONTINUED] }
+    AdminProduct:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        code: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        defaultPrice: { $ref: "#/components/schemas/Price" }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        variantCount: { type: integer }
+        imageUrl: { type: [string, "null"] }
+    AdminProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminProduct"
+        - type: object
+          properties:
+            images: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, publicId: { type: string }, url: { type: string }, width: { type: integer }, height: { type: integer }, position: { type: integer }, isPrimary: { type: boolean } } } }
+            variants: { type: array, items: { $ref: "#/components/schemas/AdminVariant" } }
+    CreateProductRequest:
+      type: object
+      additionalProperties: false
+      required: [name, code, slug, description, defaultPrice, categoryId, variants]
+      properties:
+        name: { type: string, maxLength: 120 }
+        code: { type: string }
+        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 5000 }
+        defaultPrice: { $ref: "#/components/schemas/Price" }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        variants:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CreateVariantRequest" }
+    UpdateProductRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        code: { type: string }
+        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 5000 }
+        defaultPrice: { $ref: "#/components/schemas/Price" }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+    CreateVariantRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sku, position]
+      properties:
+        name: { type: string, maxLength: 120 }
+        sku: { type: string }
+        price: { type: [object, "null"], properties: { amount: { type: integer, format: int64, minimum: 1 } }, description: "The variant's own price amount; null/omitted uses the product's default price. The currency is always the product's, so no currency is accepted." }
+        position: { type: integer }
+    UpdateVariantRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 120 }
+        sku: { type: string }
+        price: { type: [object, "null"], properties: { amount: { type: integer, format: int64, minimum: 1 } }, description: "The variant's own price amount; null clears it back to the product's default. No currency accepted." }
+        position: { type: integer }
+    Cart:
+      type: object
+      properties:
+        lines: { type: array, items: { $ref: "#/components/schemas/CartLine" } }
+        subtotal: { type: [object, "null"], properties: { amount: { type: integer, format: int64 }, currency: { type: string } } }
+    CartLine:
+      type: object
+      properties:
+        productId: { type: string, format: uuid }
+        productName: { type: [string, "null"] }
+        variantId: { type: string, format: uuid }
+        variantName: { type: [string, "null"] }
+        quantity: { type: integer }
+        unitPrice: { $ref: "#/components/schemas/Price" }
+        lineTotal: { $ref: "#/components/schemas/Price" }
+        buyable: { type: boolean }
+        availableQuantity: { type: [integer, "null"] }
+    OrderLine:
+      type: object
+      description: "One line of an order as the customer sees it: productName + variantName. The stored snapshot also keeps productCode and sku for the record, but those are not returned in the customer order view."
+      properties:
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        variantId: { type: string, format: uuid }
+        variantName: { type: string }
+        unitPrice: { $ref: "#/components/schemas/Price" }
+        quantity: { type: integer }
+        position: { type: integer }
