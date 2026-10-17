@@ -52,16 +52,15 @@ func TestMigration00017BackfillsResolvableLines(t *testing.T) {
 		t.Fatalf("seed category: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO products (id, name, slug, normalized_slug, description, price_amount, currency,
-			category_id, position, sell_state, is_set, is_preorder,
-			preorder_expected_at, created_at, updated_at, code)
-		VALUES ($1, 'Prod', 'prod', 'prod', 'desc', 1000, 'VND',
-		 $2, 0, 'ACTIVE', false, false, NULL, now(), now(), 'prod')`, productID, categoryID); err != nil {
+		INSERT INTO products (id, name, code, description, price_amount, currency,
+			category_id, position, is_visible, created_at, updated_at)
+		VALUES ($1, 'Prod', 'prod', 'desc', 1000, 'VND',
+		 $2, 0, true, now(), now())`, productID, categoryID); err != nil {
 		t.Fatalf("seed product: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO product_variants (id, product_id, name, sku, price_amount, currency, position, sell_state, created_at, updated_at)
-		VALUES ($1, $2, 'Var', 'sku-1', 1000, 'VND', 0, 'ACTIVE', now(), now())`, variantID, productID); err != nil {
+		INSERT INTO product_variants (id, product_id, name, sku, price_amount, position, sell_state, created_at, updated_at)
+		VALUES ($1, $2, 'Var', 'sku-1', 1000, 0, 'ACTIVE', now(), now())`, variantID, productID); err != nil {
 		t.Fatalf("seed variant: %v", err)
 	}
 
@@ -70,7 +69,7 @@ func TestMigration00017BackfillsResolvableLines(t *testing.T) {
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO orders (id, user_id, status, total_amount, currency,
 			recipient_name, recipient_phone, province_code, province_name, ward_code, ward_name, street_address,
-			expires_at, created_at, updated_at)
+			payment_expires_at, created_at, updated_at)
 		VALUES ($1, $2, 'PAID', 2000, 'VND',
 			'R', '0912345678', '01', 'P', '00001', 'W', 'S',
 			now() + interval '1 hour', now(), now())`, orderID, uuid.New()); err != nil {
@@ -78,15 +77,15 @@ func TestMigration00017BackfillsResolvableLines(t *testing.T) {
 	}
 	// Resolvable line: variant_id points at the seeded variant.
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO order_items (id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at, variant_id, product_code, variant_name, sku)
-		VALUES ($1, $2, $3, 'Prod', 'prod', 1000, 'VND', 1, 0, now(), $4, 'prod', 'Var', 'sku-1')`,
+		INSERT INTO order_items (id, order_id, product_id, name, unit_price_amount, currency, quantity, position, created_at, variant_id, product_code, variant_name, sku)
+		VALUES ($1, $2, $3, 'Prod', 1000, 'VND', 1, 0, now(), $4, 'prod', 'Var', 'sku-1')`,
 		uuid.New(), orderID, productID, variantID); err != nil {
 		t.Fatalf("seed resolvable line: %v", err)
 	}
 	// Unresolvable line: variant_id null (product gone).
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO order_items (id, order_id, product_id, name, slug, unit_price_amount, currency, quantity, position, created_at, variant_id, product_code, variant_name, sku)
-		VALUES ($1, $2, $3, 'Gone', 'gone', 1000, 'VND', 1, 1, now(), NULL, 'removed', '', 'removed-1')`,
+		INSERT INTO order_items (id, order_id, product_id, name, unit_price_amount, currency, quantity, position, created_at, variant_id, product_code, variant_name, sku)
+		VALUES ($1, $2, $3, 'Gone', 1000, 'VND', 1, 1, now(), NULL, 'removed', '', 'removed-1')`,
 		uuid.New(), orderID, uuid.New()); err != nil {
 		t.Fatalf("seed unresolvable line: %v", err)
 	}
