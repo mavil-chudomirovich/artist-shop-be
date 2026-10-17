@@ -95,8 +95,10 @@ type ProductVariants interface {
 // exposing the enum would put that state machine inside every consumer.
 //
 // ProductName, ProductCode, VariantName and SKU are the snapshots the order keeps
-// when it records the sale (FR-019); Price is the variant's effective price, its
-// own amount or the product's default, in the product's currency (FR-017, FR-024).
+// when it records the sale (FR-019); CategoryID and CategoryName are the category
+// snapshot the order keeps so historical revenue stays with the category the sale
+// was made in (FR-022); Price is the variant's effective price, its own amount or
+// the product's default, in the product's currency (FR-017, FR-024).
 type VariantSummary struct {
 	// VariantID identifies the variant.
 	VariantID uuid.UUID
@@ -107,6 +109,14 @@ type VariantSummary struct {
 	// ProductCode is the product code, snapped onto an order line. It is both the
 	// operator-facing code and the product's link segment.
 	ProductCode string
+	// CategoryID is the identifier of the category the product currently
+	// belongs to, snapped onto the order line as part of the category snapshot.
+	// The facts read always populates it for a visible variant.
+	CategoryID uuid.UUID
+	// CategoryName is the category's current name, snapped onto the same line so
+	// a later rename cannot change a past sale's label. The facts read always
+	// populates it for a visible variant.
+	CategoryName string
 	// VariantName is the variant's current display name, snapped onto an order
 	// line.
 	VariantName string

@@ -108,6 +108,61 @@ func TestValidateForAPI(t *testing.T) {
 	}
 }
 
+// The dashboard measures every calendar boundary in the shop timezone, so the
+// default must be the shop's own zone rather than the server's (FR-007).
+func TestShopTimezoneDefaultsToTheShopZone(t *testing.T) {
+	setValidEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ShopTimezone != "Asia/Ho_Chi_Minh" {
+		t.Fatalf("expected the default shop timezone, got %q", cfg.ShopTimezone)
+	}
+}
+
+// A deployment can point the shop calendar at another zone, and the value must
+// survive Load unchanged.
+func TestShopTimezoneReadsTheEnvironment(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("SHOP_TIMEZONE", "Asia/Tokyo")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ShopTimezone != "Asia/Tokyo" {
+		t.Fatalf("SHOP_TIMEZONE was not read: %q", cfg.ShopTimezone)
+	}
+}
+
+// A valid zone passes the API gate; the time.LoadLocation resolution is what
+// makes a mistyped SHOP_TIMEZONE refuse to start the API instead of silently
+// shifting every day/month boundary (FR-007, plan.md risk table).
+func TestValidateForAPIAcceptsAValidShopTimezone(t *testing.T) {
+	cfg := &Config{
+		Redis:        RedisConfig{Addr: "localhost:6379"},
+		Auth:         AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef"},
+		ShopTimezone: "Asia/Ho_Chi_Minh",
+	}
+	if err := cfg.ValidateForAPI(); err != nil {
+		t.Fatalf("expected a valid shop timezone to pass, got %v", err)
+	}
+}
+
+func TestValidateForAPIRejectsAnUnknownShopTimezone(t *testing.T) {
+	cfg := &Config{
+		Redis:        RedisConfig{Addr: "localhost:6379"},
+		Auth:         AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef"},
+		ShopTimezone: "Mars/Olympus_Mons",
+	}
+	err := cfg.ValidateForAPI()
+	if err == nil || !strings.Contains(err.Error(), "SHOP_TIMEZONE") {
+		t.Fatalf("expected a SHOP_TIMEZONE error, got %v", err)
+	}
+}
+
 func TestAuthDefaults(t *testing.T) {
 	setValidEnv(t)
 

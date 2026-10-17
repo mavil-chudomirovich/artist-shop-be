@@ -61,6 +61,18 @@ type Config struct {
 	// protections against an abusive request; this value exists so one oversized
 	// body is refused early rather than buffered.
 	MaxBodyBytes int64 `env:"MAX_BODY_BYTES" envDefault:"4194304"`
+
+	// ShopTimezone is the IANA name of the shop's own timezone. Every calendar
+	// day, week and month boundary the service reports is derived in this
+	// location, while storage timestamps stay UTC (FR-007). The default is the
+	// shop's own timezone, so a deployment that sets nothing still measures days
+	// the way the operator expects.
+	//
+	// ValidateForAPI resolves it with time.LoadLocation, so a misspelled zone
+	// name refuses to start the API rather than silently shifting every
+	// boundary. The container image ships tzdata, so the name resolves there
+	// too.
+	ShopTimezone string `env:"SHOP_TIMEZONE" envDefault:"Asia/Ho_Chi_Minh"`
 }
 
 // RedisConfig controls the shared cache connection (OTP + blacklist).
@@ -330,8 +342,9 @@ func (c *Config) Validate() error {
 }
 
 // ValidateForAPI enforces the settings the HTTP service needs to start: a
-// reachable Redis address and a strong JWT secret. It is intentionally separate
-// from Validate so that one-off commands (migrate, seed) do not require them.
+// reachable Redis address, a strong JWT secret and a resolvable shop timezone.
+// It is intentionally separate from Validate so that one-off commands (migrate,
+// seed) do not require them.
 func (c *Config) ValidateForAPI() error {
 	var errs []error
 	if c.Redis.Addr == "" {
@@ -339,6 +352,12 @@ func (c *Config) ValidateForAPI() error {
 	}
 	if len(c.Auth.JWTSecret) < 32 {
 		errs = append(errs, errors.New("JWT_SECRET must be at least 32 bytes"))
+	}
+	// time.LoadLocation reports an unknown name as an error, so a mistyped
+	// SHOP_TIMEZONE stops the API instead of quietly moving every calendar
+	// boundary to a different day (FR-007).
+	if _, err := time.LoadLocation(c.ShopTimezone); err != nil {
+		errs = append(errs, errors.New("SHOP_TIMEZONE must be a valid IANA timezone name"))
 	}
 	return errors.Join(errs...)
 }

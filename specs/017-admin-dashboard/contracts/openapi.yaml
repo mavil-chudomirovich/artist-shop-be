@@ -1,0 +1,478 @@
+openapi: 3.0.3
+
+info:
+  title: Artist Shop — Admin Dashboard Overview (module 16)
+  version: 1.0.0
+  description: >
+    The administrator's one-request overview: revenue, order, customer and inventory
+    KPIs, a daily revenue series, a category revenue breakdown and the five newest
+    orders. The endpoint is read-only, requires the ADMIN role, and returns money as
+    integer minor units plus currency. Calendar boundaries use the configured shop
+    timezone (default Asia/Ho_Chi_Minh); storage remains UTC.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: admin
+    description: Administrator-only operational workspace.
+
+paths:
+  /admin/dashboard/overview:
+    get:
+      tags: [admin]
+      summary: Read the admin dashboard overview
+      description: >
+        Returns every dashboard section in one response. `days` controls only the
+        revenue trend length; the month KPIs always use the current month and the
+        same-period previous month. Revenue is recognised for PAID, SHIPPED or COMPLETED
+        orders, currency VND, attributed by the order creation instant. `lowStockThreshold`
+        controls the inventory warning count and is echoed in the response. The whole
+        request is read-only.
+      operationId: getAdminDashboardOverview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Number of trailing calendar days in `revenueTrend` (7 or 30).
+          schema:
+            type: integer
+            enum: [7, 30]
+            default: 7
+        - name: lowStockThreshold
+          in: query
+          required: false
+          description: >
+            A variant counts as low stock when its available quantity is below this
+            value. Available is physical stock minus active, unexpired holds.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10000
+            default: 5
+      responses:
+        '200':
+          description: The dashboard snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverviewEnvelope'
+              example:
+                data:
+                  kpis:
+                    revenue:
+                      currentMonthAmount: { amount: 48250000, currency: VND }
+                      lastMonthAmount: { amount: 42000000, currency: VND }
+                      growthPercent: 14.88
+                    orders:
+                      totalOrders: 1482
+                      thisMonthOrders: 186
+                      lastMonthOrders: 172
+                      pendingConfirmationCount: 9
+                      growthPercent: 8.14
+                    customers:
+                      totalUsers: 412
+                      newUsersThisWeek: 28
+                    inventory:
+                      lowStockCount: 3
+                      threshold: 5
+                  revenueTrend:
+                    - date: '2026-10-12'
+                      dayLabel: T2
+                      amount: { amount: 4200000, currency: VND }
+                    - date: '2026-10-13'
+                      dayLabel: T3
+                      amount: { amount: 5800000, currency: VND }
+                  categoryBreakdown:
+                    - categoryId: 019270bb-336c-76e3-85f0-f925b4fa6c01
+                      categoryName: Acrylic Stand
+                      amount: { amount: 22195000, currency: VND }
+                      percentage: 46.0
+                    - categoryId: 019270bb-336c-76e3-85f0-f925b4fa6c02
+                      categoryName: Shikishi mạ vàng
+                      amount: { amount: 11580000, currency: VND }
+                      percentage: 24.0
+                  recentOrders:
+                    - id: 019270bb-336c-76e3-85f0-f925b4fa6c10
+                      customer:
+                        id: 019270bb-336c-76e3-85f0-f925b4fa6c99
+                        displayName: Nguyễn Minh Anh
+                        email: minhanh.ng@gmail.com
+                      itemSummary: Acrylic Stand Elf Băng Giá (x2) +1
+                      itemCount: 2
+                      itemQuantity: 3
+                      total: { amount: 360000, currency: VND }
+                      status: COMPLETED
+                      createdAt: '2026-10-17T04:02:00Z'
+                meta:
+                  requestId: 5c9f1a1e-6f0e-4a0e-9c3b-2f6a1b8c7d90
+                  timestamp: '2026-10-17T04:15:04Z'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Money:
+      type: object
+      description: An integer amount in the currency's minor unit plus its currency.
+      required: [amount, currency]
+      additionalProperties: false
+      properties:
+        amount:
+          type: integer
+          format: int64
+          description: Never a float; the VND amount in minor units.
+        currency:
+          type: string
+          description: Three uppercase letters; VND for the MVP.
+          example: VND
+
+    Meta:
+      type: object
+      required: [requestId, timestamp]
+      additionalProperties: false
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+          description: The response instant in UTC, RFC 3339.
+
+    OverviewEnvelope:
+      type: object
+      required: [data, meta]
+      additionalProperties: false
+      properties:
+        data:
+          $ref: '#/components/schemas/Overview'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    Overview:
+      type: object
+      required: [kpis, revenueTrend, categoryBreakdown, recentOrders]
+      additionalProperties: false
+      properties:
+        kpis:
+          $ref: '#/components/schemas/KPIs'
+        revenueTrend:
+          type: array
+          description: >
+            Exactly `days` consecutive local dates, oldest first, zero-filled. The
+            example below is truncated to two points for brevity.
+          items:
+            $ref: '#/components/schemas/RevenuePoint'
+        categoryBreakdown:
+          type: array
+          description: >
+            Current-month revenue by snapshotted category, sorted by amount descending
+            then name ascending. A line whose category no longer resolves appears under
+            categoryId = null and categoryName = "Khác".
+          items:
+            $ref: '#/components/schemas/CategoryShare'
+        recentOrders:
+          type: array
+          description: The five newest orders, newest first.
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/RecentOrder'
+
+    KPIs:
+      type: object
+      required: [revenue, orders, customers, inventory]
+      additionalProperties: false
+      properties:
+        revenue:
+          $ref: '#/components/schemas/RevenueKPI'
+        orders:
+          $ref: '#/components/schemas/OrderKPI'
+        customers:
+          $ref: '#/components/schemas/CustomerKPI'
+        inventory:
+          $ref: '#/components/schemas/InventoryKPI'
+
+    RevenueKPI:
+      type: object
+      required: [currentMonthAmount, lastMonthAmount, growthPercent]
+      additionalProperties: false
+      properties:
+        currentMonthAmount:
+          $ref: '#/components/schemas/Money'
+        lastMonthAmount:
+          allOf:
+            - $ref: '#/components/schemas/Money'
+          description: >
+            The same elapsed period of the previous month, clamped to that month's end;
+            not the whole previous month.
+        growthPercent:
+          type: number
+          nullable: true
+          description: >
+            (current - last) / last * 100, rounded to 2 decimals. Null when the previous
+            amount is zero (no comparable base).
+          example: 14.88
+
+    OrderKPI:
+      type: object
+      required:
+        - totalOrders
+        - thisMonthOrders
+        - lastMonthOrders
+        - pendingConfirmationCount
+        - growthPercent
+      additionalProperties: false
+      properties:
+        totalOrders:
+          type: integer
+          format: int64
+          description: All-time order count, every state including CANCELLED.
+        thisMonthOrders:
+          type: integer
+          format: int64
+          description: Orders created in the current month, every state.
+        lastMonthOrders:
+          type: integer
+          format: int64
+          description: Orders created in the same period of the previous month, every state.
+        pendingConfirmationCount:
+          type: integer
+          format: int64
+          description: All-time count of orders in PENDING (awaiting the artist).
+        growthPercent:
+          type: number
+          nullable: true
+          description: thisMonthOrders vs lastMonthOrders, rounded to 2 decimals; null when the previous count is zero.
+          example: 8.14
+
+    CustomerKPI:
+      type: object
+      required: [totalUsers, newUsersThisWeek]
+      additionalProperties: false
+      properties:
+        totalUsers:
+          type: integer
+          format: int64
+          description: All-time count of accounts with role CUSTOMER and status active.
+        newUsersThisWeek:
+          type: integer
+          format: int64
+          description: Active customers created from Monday 00:00 (shop timezone) to the request instant.
+
+    InventoryKPI:
+      type: object
+      required: [lowStockCount, threshold]
+      additionalProperties: false
+      properties:
+        lowStockCount:
+          type: integer
+          format: int64
+          description: >
+            Variants with a stock record, not DISCONTINUED, whose available quantity
+            (physical minus active unexpired holds) is below the threshold.
+        threshold:
+          type: integer
+          format: int64
+          description: Echo of the request's lowStockThreshold.
+
+    RevenuePoint:
+      type: object
+      required: [date, dayLabel, amount]
+      additionalProperties: false
+      properties:
+        date:
+          type: string
+          format: date
+          description: Local calendar date in the shop timezone.
+          example: '2026-10-12'
+        dayLabel:
+          type: string
+          description: T2..T7 or CN for days=7; DD/MM for days=30.
+          example: T2
+        amount:
+          $ref: '#/components/schemas/Money'
+
+    CategoryShare:
+      type: object
+      required: [categoryId, categoryName, amount, percentage]
+      additionalProperties: false
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for legacy lines whose category cannot be resolved.
+        categoryName:
+          type: string
+          description: The name at sale time, or "Khác" for an unresolved category.
+        amount:
+          $ref: '#/components/schemas/Money'
+        percentage:
+          type: number
+          description: >
+            amount / current-month revenue * 100, rounded to 1 decimal. The sum may not
+            be exactly 100 because of rounding.
+          example: 46.0
+
+    RecentOrder:
+      type: object
+      required:
+        - id
+        - customer
+        - itemSummary
+        - itemCount
+        - itemQuantity
+        - total
+        - status
+        - createdAt
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/CustomerSummary'
+          description: Null when the account no longer exists; the order still appears.
+        itemSummary:
+          type: string
+          description: >
+            The first line by position as "<productName> <variantName> (x<quantity>)",
+            with " +N" appended when N more lines exist.
+          example: Acrylic Stand Elf Băng Giá (x2) +1
+        itemCount:
+          type: integer
+          format: int64
+          description: Number of lines in the order.
+        itemQuantity:
+          type: integer
+          format: int64
+          description: Sum of quantities across the order's lines.
+        total:
+          $ref: '#/components/schemas/Money'
+        status:
+          type: string
+          enum: [PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED, CANCELLED]
+        createdAt:
+          type: string
+          format: date-time
+          description: The order creation instant, UTC.
+
+    CustomerSummary:
+      type: object
+      required: [id, displayName, email]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          description: Empty when the customer never set one.
+        email:
+          type: string
+          format: email
+
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+          description: The request member the problem belongs to.
+        issue:
+          type: string
+          description: A short human-readable description.
+
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              description: A stable machine-readable code.
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ErrorDetail'
+            requestId:
+              type: string
+              format: uuid
+
+  responses:
+    ValidationError:
+      description: >
+        days is not 7 or 30, or lowStockThreshold is outside 0..10000. The offending
+        member is named in details[].field.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details:
+                - field: days
+                  issue: must be 7 or 30
+              requestId: 5c9f1a1e-6f0e-4a0e-9c3b-2f6a1b8c7d90
+
+    Unauthenticated:
+      description: No access token, or the token is invalid or expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: The session is not an ADMIN. The denial is audited as AUTH_PRIVILEGE_DENIED.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    RateLimited:
+      description: The shared request limit was exceeded.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalError:
+      description: An unexpected failure occurred; no internal details are exposed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
