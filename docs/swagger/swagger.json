@@ -385,12 +385,18 @@
                 "summary": "Read the admin dashboard overview (ADMIN)",
                 "parameters": [
                     {
+                        "enum": [
+                            7,
+                            30
+                        ],
                         "type": "integer",
                         "description": "Trend length in trailing calendar days (7 or 30; default 7)",
                         "name": "days",
                         "in": "query"
                     },
                     {
+                        "maximum": 10000,
+                        "minimum": 0,
                         "type": "integer",
                         "description": "Inventory warning threshold (0..10000; default 5)",
                         "name": "lowStockThreshold",

@@ -1694,11 +1694,16 @@ paths:
         boundaries use the configured shop timezone. The whole request is read-only.'
       parameters:
       - description: Trend length in trailing calendar days (7 or 30; default 7)
+        enum:
+        - 7
+        - 30
         in: query
         name: days
         type: integer
       - description: Inventory warning threshold (0..10000; default 5)
         in: query
+        maximum: 10000
+        minimum: 0
         name: lowStockThreshold
         type: integer
       produces:

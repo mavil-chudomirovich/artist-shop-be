@@ -41,8 +41,8 @@ func New(svc appinterface.OverviewService, logger *slog.Logger) *Handler {
 //	@Tags			Admin
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			days				query	int	false	"Trend length in trailing calendar days (7 or 30; default 7)"
-//	@Param			lowStockThreshold	query	int	false	"Inventory warning threshold (0..10000; default 5)"
+//	@Param			days				query	int	false	"Trend length in trailing calendar days (7 or 30; default 7)"	Enums(7,30)
+//	@Param			lowStockThreshold	query	int	false	"Inventory warning threshold (0..10000; default 5)"	minimum(0)	maximum(10000)
 //	@Success		200					{object}	httpx.SwaggerSuccess{data=httpdto.OverviewResponse}
 //	@Failure		400					{object}	httpx.SwaggerError
 //	@Failure		401					{object}	httpx.SwaggerError
@@ -55,10 +55,20 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	days, err := daysParam(r)
+	if err != nil {
+		httpx.WriteError(w, r, err, h.logger)
+		return
+	}
+	threshold, err := lowStockThresholdParam(r)
+	if err != nil {
+		httpx.WriteError(w, r, err, h.logger)
+		return
+	}
 	ctx := appinterface.WithActor(r.Context(), actor)
 	out, err := h.svc.Overview(ctx, appdto.OverviewInput{
-		Days:              daysParam(r),
-		LowStockThreshold: lowStockThresholdParam(r),
+		Days:              days,
+		LowStockThreshold: threshold,
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err, h.logger)
@@ -87,34 +97,51 @@ func (h *Handler) sessionActor(w http.ResponseWriter, r *http.Request) (appinter
 	return appinterface.Actor{ID: accountID, Role: access.Role(identity.Role)}, true
 }
 
-// daysParam reads the trend length. The strict {7, 30} validation and the
-// details[].field naming are owned by US6 (T045); this is the US1 working shape,
-// which falls back to the default on an unparseable value.
-func daysParam(r *http.Request) int {
+// daysParam reads and validates the trend length. An absent value answers the
+// default; a present value must be one of the allowed lengths, and anything else
+// answers a field-named VALIDATION_ERROR rather than silently falling back
+// (FR-003).
+func daysParam(r *http.Request) (int, error) {
 	raw := r.URL.Query().Get("days")
 	if raw == "" {
-		return constant.DefaultDays
+		return constant.DefaultDays, nil
 	}
 	parsed, err := strconv.Atoi(raw)
 	if err != nil {
-		return constant.DefaultDays
+		return 0, invalidParam("days", "must be 7 or 30")
 	}
-	return parsed
+	for _, allowed := range constant.AllowedDays {
+		if parsed == allowed {
+			return parsed, nil
+		}
+	}
+	return 0, invalidParam("days", "must be 7 or 30")
 }
 
-// lowStockThresholdParam reads the inventory warning threshold. The strict
-// 0..10000 validation is owned by US6 (T045); this is the US1 working shape,
-// which falls back to the default on an unparseable value.
-func lowStockThresholdParam(r *http.Request) int64 {
+// lowStockThresholdParam reads and validates the inventory warning threshold. An
+// absent value answers the default; a present value must fall inside the accepted
+// range, and anything else answers a field-named VALIDATION_ERROR (FR-004).
+func lowStockThresholdParam(r *http.Request) (int64, error) {
 	raw := r.URL.Query().Get("lowStockThreshold")
 	if raw == "" {
-		return constant.DefaultLowStockThreshold
+		return constant.DefaultLowStockThreshold, nil
 	}
 	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return constant.DefaultLowStockThreshold
+		return 0, invalidParam("lowStockThreshold", "must be between 0 and 10000")
 	}
-	return parsed
+	if parsed < constant.MinLowStockThreshold || parsed > constant.MaxLowStockThreshold {
+		return 0, invalidParam("lowStockThreshold", "must be between 0 and 10000")
+	}
+	return parsed, nil
+}
+
+// invalidParam builds the field-named validation error a rejected query value
+// answers with. The detail names the request member and the accepted range only;
+// it never carries a storage, table or parse detail (FR-031,
+// contracts/error-codes.md).
+func invalidParam(field, issue string) *httpx.AppError {
+	return httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: field, Issue: issue})
 }
 
 // toOverviewResponse is the single conversion point from the application DTO to

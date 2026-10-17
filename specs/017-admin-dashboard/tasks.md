@@ -177,12 +177,12 @@ and `lowStockThreshold=0`; verify statuses and `details[].field`.
 
 ### Tests for User Story 6
 
-- [ ] T044 [P] [US6] Add `internal/modules/admin/presentation/http/router_test.go` with fake `AuthHooks`: guest 401, CUSTOMER 403 and `OnDenied` called, ADMIN 200, and the four invalid-parameter 400 cases naming `days`/`lowStockThreshold`; assert or explicitly note that the 429 `RATE_LIMITED` behaviour is inherited from the shared `/api/v1` limiter (the admin router does not install a second one)
+- [X] T044 [P] [US6] Add `internal/modules/admin/presentation/http/router_test.go` with fake `AuthHooks`: guest 401, CUSTOMER 403 and `OnDenied` called, ADMIN 200, and the four invalid-parameter 400 cases naming `days`/`lowStockThreshold`; assert or explicitly note that the 429 `RATE_LIMITED` behaviour is inherited from the shared `/api/v1` limiter (the admin router does not install a second one)
 
 ### Implementation for User Story 6
 
-- [ ] T045 [US6] Add the query parsing/validation helpers and constants to `internal/modules/admin/presentation/http/handler.go`: default 7/5, `days` in {7,30}, threshold 0..10000, `httpx.NewWithDetails(CodeValidation, Detail{Field, Issue})`
-- [ ] T046 [US6] Verify the router in `internal/modules/admin/presentation/http/router.go` calls the foundation's `OnDenied` for a CUSTOMER and fix the route if the test exposes a gap
+- [X] T045 [US6] Add the query parsing/validation helpers and constants to `internal/modules/admin/presentation/http/handler.go`: default 7/5, `days` in {7,30}, threshold 0..10000, `httpx.NewWithDetails(CodeValidation, Detail{Field, Issue})`
+- [X] T046 [US6] Verify the router in `internal/modules/admin/presentation/http/router.go` calls the foundation's `OnDenied` for a CUSTOMER and fix the route if the test exposes a gap
 
 **Checkpoint**: The endpoint is access-controlled and rejects bad input precisely.
 
