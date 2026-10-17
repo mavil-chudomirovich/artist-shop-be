@@ -95,19 +95,19 @@ returns a valid zero/empty response.
 
 > **NOTE: Write these tests FIRST; they must FAIL before implementation.**
 
-- [ ] T022 [P] [US1] Add `internal/modules/admin/application/implement/overview_test.go` with fake contract ports, a fixed clock/location and a fake auditor: the full response shape, money objects, empty data, exactly one `ADMIN_DASHBOARD_VIEWED` event whose metadata has no PII, and a read-only assertion (the application depends only on read ports; no write/UnitOfWork port exists and none is called); the exact growth/percentage/category/customer/recent rules are covered by the US2–US5 tests
-- [ ] T023 [P] [US1] Add `internal/modules/admin/presentation/http/handler_test.go` for the ADMIN 200 path, the `{data, meta}` envelope and the JSON field names
+- [X] T022 [P] [US1] Add `internal/modules/admin/application/implement/overview_test.go` with fake contract ports, a fixed clock/location and a fake auditor: the full response shape, money objects, empty data, exactly one `ADMIN_DASHBOARD_VIEWED` event whose metadata has no PII, and a read-only assertion (the application depends only on read ports; no write/UnitOfWork port exists and none is called); the exact growth/percentage/category/customer/recent rules are covered by the US2–US5 tests
+- [X] T023 [P] [US1] Add `internal/modules/admin/presentation/http/handler_test.go` for the ADMIN 200 path, the `{data, meta}` envelope and the JSON field names
 
 ### Implementation for User Story 1
 
-- [ ] T024 [US1] Add the admin domain read models in `internal/modules/admin/domain/model/overview.go` (`Overview`, `RevenueKPI`, `OrderKPI`, `CustomerKPI`, `InventoryKPI`, `RevenuePoint`, `CategoryShare`, `RecentOrder`, `Money`, `CustomerSummary`)
-- [ ] T025 [US1] Add the application DTOs in `internal/modules/admin/application/dto/overview.go`
-- [ ] T026 [US1] Add the domain-to-application mapper in `internal/modules/admin/application/mapper/overview.go`
-- [ ] T027 [US1] Add the orchestration in `internal/modules/admin/application/implement/overview.go`: read the clock once, call all four contracts, assemble the four KPI groups, and record the one audit event. Use a basic current/previous calendar-month window here and leave the exact MTD/clamp growth, percentage, customer-summary and item-summary rules to US2–US5. This window is a deliberate placeholder: T037 MUST replace it before the feature is closed out; US1 is a demoable MVP, not the final revenue definition
-- [ ] T028 [P] [US1] Add the HTTP response DTOs in `internal/modules/admin/presentation/dto/overview.go` (`MoneyResponse`, nullable `growthPercent`, nullable `customer`, nullable `categoryId`, `itemCount`/`itemQuantity`)
-- [ ] T029 [US1] Add the handler and full Swagger annotations (`@Summary`, `@Description`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) in `internal/modules/admin/presentation/http/handler.go`
-- [ ] T030 [US1] Add the router in `internal/modules/admin/presentation/http/router.go` with `RequireRole(hooks, string(access.RoleAdmin))` and `GET /overview`
-- [ ] T031 [US1] Wire the order/user/inventory/product statistics adapters, the admin service, auditor, handler and router in `cmd/api/main.go`; load `cfg.ShopTimezone` with `time.LoadLocation` and mount `/admin/dashboard`
+- [X] T024 [US1] Add the admin domain read models in `internal/modules/admin/domain/model/overview.go` (`Overview`, `RevenueKPI`, `OrderKPI`, `CustomerKPI`, `InventoryKPI`, `RevenuePoint`, `CategoryShare`, `RecentOrder`, `Money`, `CustomerSummary`)
+- [X] T025 [US1] Add the application DTOs in `internal/modules/admin/application/dto/overview.go`
+- [X] T026 [US1] Add the domain-to-application mapper in `internal/modules/admin/application/mapper/overview.go`
+- [X] T027 [US1] Add the orchestration in `internal/modules/admin/application/implement/overview.go`: read the clock once, call all four contracts, assemble the four KPI groups, and record the one audit event. Use a basic current/previous calendar-month window here and leave the exact MTD/clamp growth, percentage, customer-summary and item-summary rules to US2–US5. This window is a deliberate placeholder: T037 MUST replace it before the feature is closed out; US1 is a demoable MVP, not the final revenue definition
+- [X] T028 [P] [US1] Add the HTTP response DTOs in `internal/modules/admin/presentation/dto/overview.go` (`MoneyResponse`, nullable `growthPercent`, nullable `customer`, nullable `categoryId`, `itemCount`/`itemQuantity`)
+- [X] T029 [US1] Add the handler and full Swagger annotations (`@Summary`, `@Description`, `@Tags`, `@Param`, `@Success`, `@Failure`, `@Router`) in `internal/modules/admin/presentation/http/handler.go`
+- [X] T030 [US1] Add the router in `internal/modules/admin/presentation/http/router.go` with `RequireRole(hooks, string(access.RoleAdmin))` and `GET /overview`
+- [X] T031 [US1] Wire the order/user/inventory/product statistics adapters, the admin service, auditor, handler and router in `cmd/api/main.go`; load `cfg.ShopTimezone` with `time.LoadLocation` and mount `/admin/dashboard`
 
 **Checkpoint**: The MVP endpoint responds with every section; US2–US6 now harden the
 sections.

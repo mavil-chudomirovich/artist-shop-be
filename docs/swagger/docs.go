@@ -375,6 +375,87 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/dashboard/overview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every dashboard section in one response: the revenue, order, customer and inventory KPIs, a daily revenue trend, the current-month category breakdown and the five newest orders. Revenue counts PAID, SHIPPED and COMPLETED orders in VND, attributed by the order creation instant; calendar boundaries use the configured shop timezone. The whole request is read-only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin"
+                ],
+                "summary": "Read the admin dashboard overview (ADMIN)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Trend length in trailing calendar days (7 or 30; default 7)",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Inventory warning threshold (0..10000; default 5)",
+                        "name": "lowStockThreshold",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.OverviewResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/inventory/{variantId}": {
             "get": {
                 "security": [
@@ -5194,6 +5275,274 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CategoryShareResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the revenue attributed to the category.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "categoryId": {
+                    "description": "CategoryID is null for an unresolved (legacy) category.",
+                    "type": "string"
+                },
+                "categoryName": {
+                    "description": "CategoryName is the snapshotted name, or the unresolved label.",
+                    "type": "string"
+                },
+                "percentage": {
+                    "description": "Percentage is the category's share of the window revenue.",
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CustomerKPIResponse": {
+            "type": "object",
+            "properties": {
+                "newUsersThisWeek": {
+                    "description": "NewUsersThisWeek counts the active newcomers of the week.",
+                    "type": "integer"
+                },
+                "totalUsers": {
+                    "description": "TotalUsers counts active customers all-time.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CustomerSummaryResponse": {
+            "type": "object",
+            "properties": {
+                "displayName": {
+                    "description": "DisplayName is empty when the account never set one.",
+                    "type": "string"
+                },
+                "email": {
+                    "description": "Email is the account's email.",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "ID identifies the account.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.InventoryKPIResponse": {
+            "type": "object",
+            "properties": {
+                "lowStockCount": {
+                    "description": "LowStockCount is the number of low-stock variants.",
+                    "type": "integer"
+                },
+                "threshold": {
+                    "description": "Threshold echoes the requested threshold.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.KPIResponse": {
+            "type": "object",
+            "properties": {
+                "customers": {
+                    "description": "Customers is the customer group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CustomerKPIResponse"
+                        }
+                    ]
+                },
+                "inventory": {
+                    "description": "Inventory is the inventory group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.InventoryKPIResponse"
+                        }
+                    ]
+                },
+                "orders": {
+                    "description": "Orders is the order group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.OrderKPIResponse"
+                        }
+                    ]
+                },
+                "revenue": {
+                    "description": "Revenue is the revenue group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RevenueKPIResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is the amount in the currency's minor unit.",
+                    "type": "integer"
+                },
+                "currency": {
+                    "description": "Currency is the currency code; VND for the MVP.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.OrderKPIResponse": {
+            "type": "object",
+            "properties": {
+                "growthPercent": {
+                    "description": "GrowthPercent is null when the previous count is zero.",
+                    "type": "number"
+                },
+                "lastMonthOrders": {
+                    "description": "LastMonthOrders counts the comparable previous-window orders.",
+                    "type": "integer"
+                },
+                "pendingConfirmationCount": {
+                    "description": "PendingConfirmationCount counts the orders awaiting the artist.",
+                    "type": "integer"
+                },
+                "thisMonthOrders": {
+                    "description": "ThisMonthOrders counts the current-window orders.",
+                    "type": "integer"
+                },
+                "totalOrders": {
+                    "description": "TotalOrders is every order ever placed, every state.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.OverviewResponse": {
+            "type": "object",
+            "properties": {
+                "categoryBreakdown": {
+                    "description": "CategoryBreakdown is the current-window revenue by category.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CategoryShareResponse"
+                    }
+                },
+                "kpis": {
+                    "description": "KPIs holds the four KPI groups.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.KPIResponse"
+                        }
+                    ]
+                },
+                "recentOrders": {
+                    "description": "RecentOrders is the newest orders.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RecentOrderResponse"
+                    }
+                },
+                "revenueTrend": {
+                    "description": "RevenueTrend is the daily revenue series, oldest first.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RevenuePointResponse"
+                    }
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RecentOrderResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "description": "CreatedAt is when the order was placed.",
+                    "type": "string"
+                },
+                "customer": {
+                    "description": "Customer is null when the account no longer exists.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.CustomerSummaryResponse"
+                        }
+                    ]
+                },
+                "id": {
+                    "description": "ID identifies the order.",
+                    "type": "string"
+                },
+                "itemCount": {
+                    "description": "ItemCount is the number of lines.",
+                    "type": "integer"
+                },
+                "itemQuantity": {
+                    "description": "ItemQuantity is the sum of the line quantities.",
+                    "type": "integer"
+                },
+                "itemSummary": {
+                    "description": "ItemSummary describes the first line, or the first line plus a remainder.",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is the order's stored state.",
+                    "type": "string"
+                },
+                "total": {
+                    "description": "Total is the order total.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RevenueKPIResponse": {
+            "type": "object",
+            "properties": {
+                "currentMonthAmount": {
+                    "description": "CurrentMonthAmount is the current-window revenue.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "growthPercent": {
+                    "description": "GrowthPercent is null when the previous amount is zero.",
+                    "type": "number"
+                },
+                "lastMonthAmount": {
+                    "description": "LastMonthAmount is the comparable previous-window revenue.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.RevenuePointResponse": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "Amount is that day's revenue.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_admin_presentation_dto.MoneyResponse"
+                        }
+                    ]
+                },
+                "date": {
+                    "description": "Date is the calendar day as YYYY-MM-DD.",
+                    "type": "string"
+                },
+                "dayLabel": {
+                    "description": "DayLabel is the short label for the day.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.ChangePasswordRequest": {
             "type": "object",
             "properties": {

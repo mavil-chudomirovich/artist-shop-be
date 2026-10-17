@@ -15,6 +15,11 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger/v2"
 
 	_ "github.com/mavil-chudomirovich/artist-shop-be/docs/swagger"
+	adminimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/application/implement"
+	adminappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/application/interface"
+	adminmapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/application/mapper"
+	adminauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/infrastructure/implement/auditor"
+	adminhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/presentation/http"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/implement"
 	authaccount "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/account"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/infrastructure/implement/auditor"
@@ -41,6 +46,7 @@ import (
 	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
 	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
+	inventorystatistics "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/statistics"
 	inventoryhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/http"
 	inventoryworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/presentation/worker"
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
@@ -50,6 +56,7 @@ import (
 	ordernotifier "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/notifier"
 	orderpayment "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/payment"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
+	orderstatistics "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/statistics"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
 	paymentimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/payment/application/implement"
@@ -67,6 +74,7 @@ import (
 	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
 	producthideguard "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/hideguard"
 	productpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/postgres"
+	variantstate "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/variantstate"
 	producthttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/presentation/http"
 	userimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/implement"
 	userappinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/user/application/interface"
@@ -260,6 +268,10 @@ func run() error {
 	userService := userimplement.New(userimplement.Service{
 		Profiles:  userpostgres.NewProfileRepository(db.Pool),
 		Addresses: userpostgres.NewAddressRepository(db.Pool),
+		// Directory answers the admin dashboard's narrow customer read model,
+		// separate from the audited operator lookup (specs/017-admin-dashboard
+		// research D8).
+		Directory: userpostgres.NewDirectoryRepository(db.Pool),
 		Divisions: userDivisions,
 		Tx:        db,
 		Audit:     userauditor.New(auditWriter),
@@ -477,6 +489,37 @@ func run() error {
 	// composition shares (FR-012, research D6).
 	orderSweeper := orderworker.New(orderService, logger)
 
+	// Module 16 (admin). The dashboard is a read-only orchestrator: it owns no
+	// table and reaches each owning module only through the read contracts in
+	// internal/contracts, supplied here by each module's own adapter
+	// (Constitution I, FR-028). The shop timezone is loaded once and validated at
+	// startup, so every calendar boundary the endpoint reports is the operator's
+	// own while storage stays UTC (FR-007). The module reuses the foundation audit
+	// writer one more time: one queue, one retry policy, one shutdown.
+	shopLocation, err := time.LoadLocation(cfg.ShopTimezone)
+	if err != nil {
+		return err
+	}
+	adminService := adminimplement.New(adminimplement.Service{
+		// One read per section: the order module answers the revenue/order KPIs,
+		// the daily trend, the category breakdown and the newest orders.
+		Orders: orderstatistics.New(orderRepository),
+		// The user service implements the customer contract directly, so the
+		// dashboard reuses the same instance the rest of the service uses.
+		Customers: userService,
+		// The inventory adapter reads through the module's own clock, so the
+		// dashboard and the hold window agree on what has expired.
+		Inventory: inventorystatistics.New(inventoryRepository, wallClock{}),
+		// The product adapter answers the DISCONTINUED subset without the admin
+		// reading module 04's table.
+		Variants: variantstate.New(variantRepository),
+		Clock:    wallClock{},
+		Auditor:  adminauditor.New(auditWriter),
+		Config:   adminappinterface.Config{Location: shopLocation},
+		Mapper:   adminmapper.New(),
+	})
+	adminHandler := adminhttp.New(adminService, logger)
+
 	// The interactive API reference is opt-in: the composition hands the shared
 	// server a handler only when the feature is enabled, so a production start
 	// leaves /swagger unregistered. The generated specification in docs/swagger
@@ -546,6 +589,10 @@ func run() error {
 			// payments whose confirmation could not be applied and need review
 			// (FR-018, research D15).
 			r.Mount("/admin/payments", paymentHandler.AdminRouter(authHooks))
+			// The operator's dashboard: the whole shop in one read-only request,
+			// behind the administrator role guard (FR-001). It owns no data; every
+			// figure comes from the owning module's read adapter above (FR-028).
+			r.Mount("/admin/dashboard", adminHandler.AdminRouter(authHooks))
 		},
 	})
 	server := httpserver.New(cfg, logger, router)
