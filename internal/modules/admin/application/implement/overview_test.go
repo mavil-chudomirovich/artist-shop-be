@@ -30,20 +30,31 @@ type fakeOrderStatistics struct {
 	trend      []contracts.DailyRevenue
 	categories []contracts.CategoryRevenue
 	recents    []contracts.RecentOrder
+
+	// The windows and zone the adapter was called with, so a test can prove the
+	// application built the fair shop-timezone windows (US2).
+	kpiCurrent     contracts.TimeWindow
+	kpiLast        contracts.TimeWindow
+	trendWindow    contracts.TimeWindow
+	trendTimeZone  string
+	categoryWindow contracts.TimeWindow
 }
 
-func (f *fakeOrderStatistics) KPIs(context.Context, contracts.TimeWindow, contracts.TimeWindow) (contracts.OrderKPIs, error) {
+func (f *fakeOrderStatistics) KPIs(_ context.Context, current, last contracts.TimeWindow) (contracts.OrderKPIs, error) {
 	f.calls = append(f.calls, "KPIs")
+	f.kpiCurrent, f.kpiLast = current, last
 	return f.kpis, nil
 }
 
-func (f *fakeOrderStatistics) DailyRevenue(context.Context, contracts.TimeWindow, string) ([]contracts.DailyRevenue, error) {
+func (f *fakeOrderStatistics) DailyRevenue(_ context.Context, window contracts.TimeWindow, timeZone string) ([]contracts.DailyRevenue, error) {
 	f.calls = append(f.calls, "DailyRevenue")
+	f.trendWindow, f.trendTimeZone = window, timeZone
 	return f.trend, nil
 }
 
-func (f *fakeOrderStatistics) CategoryRevenue(context.Context, contracts.TimeWindow) ([]contracts.CategoryRevenue, error) {
+func (f *fakeOrderStatistics) CategoryRevenue(_ context.Context, window contracts.TimeWindow) ([]contracts.CategoryRevenue, error) {
 	f.calls = append(f.calls, "CategoryRevenue")
+	f.categoryWindow = window
 	return f.categories, nil
 }
 
@@ -56,10 +67,14 @@ type fakeCustomerStatistics struct {
 	calls     []string
 	kpis      contracts.CustomerKPIs
 	summaries []contracts.CustomerSummary
+
+	// week is the window the application asked for (US2).
+	week contracts.TimeWindow
 }
 
-func (f *fakeCustomerStatistics) KPIs(context.Context, contracts.TimeWindow) (contracts.CustomerKPIs, error) {
+func (f *fakeCustomerStatistics) KPIs(_ context.Context, week contracts.TimeWindow) (contracts.CustomerKPIs, error) {
 	f.calls = append(f.calls, "KPIs")
+	f.week = week
 	return f.kpis, nil
 }
 
@@ -176,10 +191,17 @@ func newOverviewHarness(t *testing.T) *overviewHarness {
 
 func (h *overviewHarness) run(t *testing.T) dto.Overview {
 	t.Helper()
+	return h.runWith(t, constant.DefaultDays)
+}
+
+// runWith runs one request with an explicit trend length, so a test can exercise
+// both the 7-day and 30-day shapes.
+func (h *overviewHarness) runWith(t *testing.T, days int) dto.Overview {
+	t.Helper()
 	actorID := uuid.New()
 	ctx := appinterface.WithActor(context.Background(), appinterface.Actor{ID: actorID, Role: access.RoleAdmin})
 	out, err := h.service.Overview(ctx, dto.OverviewInput{
-		Days:              constant.DefaultDays,
+		Days:              days,
 		LowStockThreshold: constant.DefaultLowStockThreshold,
 	})
 	if err != nil {
@@ -249,8 +271,14 @@ func TestOverviewAssemblesEverySection(t *testing.T) {
 	if out.KPIs.Inventory.LowStockCount != 1 || out.KPIs.Inventory.Threshold != 5 {
 		t.Fatalf("inventory KPI did not map: %+v", out.KPIs.Inventory)
 	}
-	if len(out.RevenueTrend) != 1 || out.RevenueTrend[0].Amount.Amount != 100 {
-		t.Fatalf("revenue trend did not map: %+v", out.RevenueTrend)
+	if len(out.RevenueTrend) != constant.DefaultDays {
+		t.Fatalf("the trend must be zero-filled to the requested days, got %d", len(out.RevenueTrend))
+	}
+	if out.RevenueTrend[len(out.RevenueTrend)-1].Amount.Amount != 100 {
+		t.Fatalf("the seeded day's revenue did not map: %+v", out.RevenueTrend)
+	}
+	if out.RevenueTrend[0].Amount.Amount != 0 || out.RevenueTrend[0].Amount.Currency != "VND" {
+		t.Fatalf("a day the read does not carry must be a zero VND point: %+v", out.RevenueTrend[0])
 	}
 	if len(out.CategoryBreakdown) != 1 || out.CategoryBreakdown[0].Amount.Amount != 300 {
 		t.Fatalf("category breakdown did not map: %+v", out.CategoryBreakdown)
@@ -297,8 +325,15 @@ func TestOverviewHandlesEmptyData(t *testing.T) {
 	if out.KPIs.Revenue.Current.Amount != 0 {
 		t.Fatalf("empty revenue must be zero: %+v", out.KPIs.Revenue.Current)
 	}
-	if out.RevenueTrend == nil || len(out.RevenueTrend) != 0 {
-		t.Fatalf("an empty trend must be an empty slice, got %#v", out.RevenueTrend)
+	// An empty read still yields one zero-filled point per requested day
+	// (FR-019); the earlier US1 "empty trend" placeholder is gone.
+	if len(out.RevenueTrend) != constant.DefaultDays {
+		t.Fatalf("an empty trend must still be zero-filled to %d days, got %d", constant.DefaultDays, len(out.RevenueTrend))
+	}
+	for _, point := range out.RevenueTrend {
+		if point.Amount.Amount != 0 || point.Amount.Currency != "VND" {
+			t.Fatalf("every zero-filled point must be a zero VND money object, got %+v", point)
+		}
 	}
 	if out.CategoryBreakdown == nil || len(out.CategoryBreakdown) != 0 {
 		t.Fatalf("an empty category breakdown must be an empty slice, got %#v", out.CategoryBreakdown)
@@ -408,5 +443,162 @@ func TestOverviewReadsTheClockOnce(t *testing.T) {
 
 	if h.clock.calls != 1 {
 		t.Fatalf("expected the clock to be read once, got %d", h.clock.calls)
+	}
+}
+
+// --- US2: fair windows, growth and the zero-filled trend -----------------
+
+// FR-008, US2 acceptance 2, T032/T035: the application hands the order port the
+// month-to-date window and the previous-month same-period window, clamped to the
+// current month's first day when the elapsed duration overruns the previous one.
+func TestOverviewUsesTheMonthToDateAndClampedPreviousWindows(t *testing.T) {
+	loc := fixedLocation(t)
+	h := newOverviewHarness(t)
+	// 31-day March against 28-day February forces the clamp.
+	h.clock.now = time.Date(2026, time.March, 31, 12, 0, 0, 0, loc)
+
+	h.run(t)
+
+	marchFirst := time.Date(2026, time.March, 1, 0, 0, 0, 0, loc)
+	if !h.orders.kpiCurrent.From.Equal(marchFirst) || !h.orders.kpiCurrent.To.Equal(h.clock.now) {
+		t.Fatalf("current window = %+v, want the March month-to-date [%s, now)", h.orders.kpiCurrent, marchFirst)
+	}
+	februaryFirst := time.Date(2026, time.February, 1, 0, 0, 0, 0, loc)
+	if !h.orders.kpiLast.From.Equal(februaryFirst) || !h.orders.kpiLast.To.Equal(marchFirst) {
+		t.Fatalf("last window = %+v, want February clamped to the current month's first day", h.orders.kpiLast)
+	}
+	// The category breakdown uses the same current-month window as the revenue KPI.
+	if !h.orders.categoryWindow.From.Equal(marchFirst) || !h.orders.categoryWindow.To.Equal(h.clock.now) {
+		t.Fatalf("category window = %+v, want the current month window", h.orders.categoryWindow)
+	}
+}
+
+// FR-009: the customer week is Monday 00:00 in the shop timezone to now.
+func TestOverviewUsesTheMondayWeekWindow(t *testing.T) {
+	loc := fixedLocation(t)
+	h := newOverviewHarness(t)
+	// 2026-10-17 is a Saturday; the week began Monday 2026-10-12.
+	h.clock.now = time.Date(2026, time.October, 17, 4, 0, 0, 0, time.UTC)
+
+	h.run(t)
+
+	monday := time.Date(2026, time.October, 12, 0, 0, 0, 0, loc)
+	if !h.customers.week.From.Equal(monday) || !h.customers.week.To.Equal(h.clock.now) {
+		t.Fatalf("week window = %+v, want Monday %s to now", h.customers.week, monday)
+	}
+	if h.customers.week.From.Weekday() != time.Monday {
+		t.Fatalf("the week must start on Monday, got %s", h.customers.week.From.Weekday())
+	}
+}
+
+// FR-011, FR-013: growth is the nullable, two-decimal ratio of the two windows;
+// a zero base is nil, never 0 or 100.
+func TestOverviewGrowthMatchesTheNullableRule(t *testing.T) {
+	t.Run("non-zero base computes and rounds", func(t *testing.T) {
+		h := newOverviewHarness(t)
+		h.orders.kpis = contracts.OrderKPIs{
+			CurrentRevenue: contracts.Money{Amount: 1000, Currency: "VND"},
+			LastRevenue:    contracts.Money{Amount: 800, Currency: "VND"},
+			CurrentOrders:  10,
+			LastOrders:     8,
+		}
+
+		out := h.run(t)
+
+		if out.KPIs.Revenue.GrowthPercent == nil || *out.KPIs.Revenue.GrowthPercent != 25.0 {
+			t.Fatalf("revenue growth = %v, want 25.0", out.KPIs.Revenue.GrowthPercent)
+		}
+		if out.KPIs.Orders.GrowthPercent == nil || *out.KPIs.Orders.GrowthPercent != 25.0 {
+			t.Fatalf("order growth = %v, want 25.0", out.KPIs.Orders.GrowthPercent)
+		}
+	})
+
+	t.Run("zero base is nil", func(t *testing.T) {
+		h := newOverviewHarness(t)
+		h.orders.kpis = contracts.OrderKPIs{
+			CurrentRevenue: contracts.Money{Amount: 5000, Currency: "VND"},
+			LastRevenue:    contracts.Money{Currency: "VND"},
+			CurrentOrders:  10,
+			LastOrders:     0,
+		}
+
+		out := h.run(t)
+
+		if out.KPIs.Revenue.GrowthPercent != nil {
+			t.Fatalf("revenue growth on a zero base must be nil, got %v", *out.KPIs.Revenue.GrowthPercent)
+		}
+		if out.KPIs.Orders.GrowthPercent != nil {
+			t.Fatalf("order growth on a zero base must be nil, got %v", *out.KPIs.Orders.GrowthPercent)
+		}
+	})
+}
+
+// FR-019, FR-020, T037/T038: the trend always has exactly `days` points, oldest
+// first, from the domain date list; a day without revenue is zero-filled, and the
+// labels are T2..CN for 7 days and DD/MM for 30.
+func TestOverviewZeroFillsTheTrendFromTheDomainDates(t *testing.T) {
+	h := newOverviewHarness(t)
+	h.orders.trend = []contracts.DailyRevenue{
+		{Date: "2026-10-15", Amount: contracts.Money{Amount: 1000, Currency: "VND"}},
+		{Date: "2026-10-17", Amount: contracts.Money{Amount: 3000, Currency: "VND"}},
+	}
+
+	out := h.run(t)
+
+	wantDates := []string{
+		"2026-10-11", "2026-10-12", "2026-10-13", "2026-10-14",
+		"2026-10-15", "2026-10-16", "2026-10-17",
+	}
+	if len(out.RevenueTrend) != len(wantDates) {
+		t.Fatalf("expected %d trend points, got %d", len(wantDates), len(out.RevenueTrend))
+	}
+	amounts := map[string]int64{"2026-10-15": 1000, "2026-10-17": 3000}
+	for i, point := range out.RevenueTrend {
+		if point.Date != wantDates[i] {
+			t.Fatalf("trend[%d].date = %q, want %q", i, point.Date, wantDates[i])
+		}
+		if point.Amount.Amount != amounts[point.Date] || point.Amount.Currency != "VND" {
+			t.Fatalf("trend[%d] amount = %+v, want %d VND", i, point.Amount, amounts[point.Date])
+		}
+	}
+	// 2026-10-11 is a Sunday and 2026-10-17 a Saturday: the 7-day labels are the
+	// weekday forms.
+	if out.RevenueTrend[0].DayLabel != "CN" || out.RevenueTrend[1].DayLabel != "T2" ||
+		out.RevenueTrend[len(out.RevenueTrend)-1].DayLabel != "T7" {
+		t.Fatalf("7-day day labels must be T2..CN, got %q and %q", out.RevenueTrend[0].DayLabel, out.RevenueTrend[1].DayLabel)
+	}
+	if !h.orders.trendWindow.From.Equal(time.Date(2026, time.October, 11, 0, 0, 0, 0, fixedLocation(t))) {
+		t.Fatalf("trend window from = %s, want the oldest local day", h.orders.trendWindow.From)
+	}
+	if h.orders.trendTimeZone != fixedLocation(t).String() {
+		t.Fatalf("trend timezone = %q, want the shop timezone", h.orders.trendTimeZone)
+	}
+
+	thirty := h.runWith(t, 30)
+	if len(thirty.RevenueTrend) != 30 {
+		t.Fatalf("a 30-day trend must have 30 points, got %d", len(thirty.RevenueTrend))
+	}
+	if thirty.RevenueTrend[0].DayLabel != "18/09" || thirty.RevenueTrend[len(thirty.RevenueTrend)-1].DayLabel != "17/10" {
+		t.Fatalf("30-day day labels must be DD/MM, got %q and %q",
+			thirty.RevenueTrend[0].DayLabel, thirty.RevenueTrend[len(thirty.RevenueTrend)-1].DayLabel)
+	}
+}
+
+// FR-007, research D4, US2 acceptance 4: the calendar boundaries follow the shop
+// timezone, not UTC. A request at 23:30 UTC on 31 October is 06:30 on 1 November
+// in Asia/Ho_Chi_Minh, so it belongs to November.
+func TestOverviewUsesTheShopTimezoneAtTheMonthBoundary(t *testing.T) {
+	loc := fixedLocation(t)
+	h := newOverviewHarness(t)
+	h.clock.now = time.Date(2026, time.October, 31, 23, 30, 0, 0, time.UTC)
+
+	out := h.run(t)
+
+	novemberFirst := time.Date(2026, time.November, 1, 0, 0, 0, 0, loc)
+	if !h.orders.kpiCurrent.From.Equal(novemberFirst) {
+		t.Fatalf("the current month must start at November 1 local, got %s", h.orders.kpiCurrent.From)
+	}
+	if out.RevenueTrend[len(out.RevenueTrend)-1].Date != "2026-11-01" {
+		t.Fatalf("the trend must end on the local day 2026-11-01, got %q", out.RevenueTrend[len(out.RevenueTrend)-1].Date)
 	}
 }

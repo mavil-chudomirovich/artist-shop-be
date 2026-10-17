@@ -46,10 +46,11 @@ func New(deps Service) *Service { return &deps }
 // It reads the clock once, so every window, the trend's "today" and the audit
 // agree on "now"; it then performs a fixed, bounded set of reads — one per
 // section — and assembles the four KPI groups, the trend, the category breakdown
-// and the newest orders. The exact window, growth, zero-fill, category, customer
-// and recent-order rules are owned by US2–US5 (T037, T043, T050, T056); US1
-// assembles a working shape around the basic current/previous calendar-month
-// window.
+// and the newest orders. The windows are the fair shop-timezone ones from the
+// domain: month-to-date against the same previous-month period, a Monday week and
+// the trailing trend days. The category, customer and recent-order composition
+// rules remain owned by US4/US5 (T050, T056); US2 owns the windows, growth and the
+// trend zero-fill.
 func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overview, error) {
 	days := in.Days
 	if days <= 0 {
@@ -59,22 +60,20 @@ func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overv
 	now := s.Clock.Now()
 	location := s.location()
 
-	// The US1 window is a deliberate placeholder: the current calendar month
-	// against the full previous calendar month. US2 replaces it with the fair
-	// month-to-date comparison and the clamped previous window (T037).
-	currentWindow, previousWindow := monthWindows(now, location)
-	weekWindow := weekWindow(now, location)
-	trendWindow := trailingWindow(now, location, days)
+	currentWindow := model.CurrentMonth(now, location)
+	previousWindow := model.PreviousMonthSamePeriod(now, location)
+	weekWindow := model.CurrentWeek(now, location)
+	trendWindow := model.TrailingDays(now, location, days)
 
-	orderKPIs, err := s.Orders.KPIs(ctx, currentWindow, previousWindow)
+	orderKPIs, err := s.Orders.KPIs(ctx, contractWindow(currentWindow), contractWindow(previousWindow))
 	if err != nil {
 		return dto.Overview{}, err
 	}
-	trend, err := s.Orders.DailyRevenue(ctx, trendWindow, location.String())
+	trend, err := s.Orders.DailyRevenue(ctx, contractWindow(trendWindow), location.String())
 	if err != nil {
 		return dto.Overview{}, err
 	}
-	categories, err := s.Orders.CategoryRevenue(ctx, currentWindow)
+	categories, err := s.Orders.CategoryRevenue(ctx, contractWindow(currentWindow))
 	if err != nil {
 		return dto.Overview{}, err
 	}
@@ -82,7 +81,7 @@ func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overv
 	if err != nil {
 		return dto.Overview{}, err
 	}
-	customerKPIs, err := s.Customers.KPIs(ctx, weekWindow)
+	customerKPIs, err := s.Customers.KPIs(ctx, contractWindow(weekWindow))
 	if err != nil {
 		return dto.Overview{}, err
 	}
@@ -95,11 +94,11 @@ func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overv
 		return dto.Overview{}, err
 	}
 
-	overview := s.assemble(orderKPIs, trend, categories, recentOrders, customerKPIs, lowStockCount, in.LowStockThreshold)
+	overview := s.assemble(trendWindow.Dates(), orderKPIs, trend, categories, recentOrders, customerKPIs, lowStockCount, in.LowStockThreshold)
 
 	s.recordView(ctx, days, in.LowStockThreshold, len(recentOrders))
 
-	return s.Mapper.Overview(overview), nil
+	return s.Mapper.Overview(overview, days), nil
 }
 
 // location is the shop timezone the calendar boundaries use. The composition
@@ -158,10 +157,12 @@ func (s *Service) lowStockCount(ctx context.Context, candidates []contracts.LowS
 	return count, nil
 }
 
-// assemble builds the admin read model from the contract reads. Growth, the
-// trend zero-fill, the category percentage and the resolved customer label are
-// left at their US1 placeholder values; US2–US5 fill them.
+// assemble builds the admin read model from the contract reads. Growth is the
+// nullable domain arithmetic; the trend is zero-filled over `dates`, the exact
+// days the trend window names (FR-011, FR-013, FR-019). The category percentage
+// and the resolved customer label remain US4/US5 placeholders.
 func (s *Service) assemble(
+	dates []string,
 	kpis contracts.OrderKPIs,
 	trend []contracts.DailyRevenue,
 	categories []contracts.CategoryRevenue,
@@ -173,15 +174,16 @@ func (s *Service) assemble(
 	return model.Overview{
 		KPIs: model.KPIs{
 			Revenue: model.RevenueKPI{
-				Current: money(kpis.CurrentRevenue),
-				Last:    money(kpis.LastRevenue),
-				// GrowthPercent is owned by US2 (T036/T037).
+				Current:       money(kpis.CurrentRevenue),
+				Last:          money(kpis.LastRevenue),
+				GrowthPercent: model.GrowthPercent(kpis.CurrentRevenue.Amount, kpis.LastRevenue.Amount),
 			},
 			Orders: model.OrderKPI{
 				Total:               kpis.TotalOrders,
 				ThisMonth:           kpis.CurrentOrders,
 				LastMonth:           kpis.LastOrders,
 				PendingConfirmation: kpis.PendingConfirmation,
+				GrowthPercent:       model.GrowthPercent(kpis.CurrentOrders, kpis.LastOrders),
 			},
 			Customers: model.CustomerKPI{
 				TotalUsers:       customers.TotalUsers,
@@ -192,20 +194,30 @@ func (s *Service) assemble(
 				Threshold:     threshold,
 			},
 		},
-		RevenueTrend:      s.trend(trend),
+		RevenueTrend:      s.trend(dates, trend),
 		CategoryBreakdown: s.categoryBreakdown(categories),
 		RecentOrders:      s.recentOrders(recentOrders),
 	}
 }
 
-// trend maps the daily read. The trend has only the days the shop earned on; the
-// zero-fill to exactly `days` points is owned by US2 (T037).
-func (s *Service) trend(days []contracts.DailyRevenue) []model.RevenuePoint {
-	out := make([]model.RevenuePoint, 0, len(days))
+// trend maps the daily read onto the exact calendar days the trend window names.
+// A day the shop earned nothing on is absent from the read, so it is zero-filled
+// with the shop currency: the series always has one point per day, oldest first,
+// and every point is a money object (FR-019, FR-005).
+func (s *Service) trend(dates []string, days []contracts.DailyRevenue) []model.RevenuePoint {
+	byDate := make(map[string]contracts.Money, len(days))
 	for _, day := range days {
+		byDate[day.Date] = day.Amount
+	}
+	out := make([]model.RevenuePoint, 0, len(dates))
+	for _, date := range dates {
+		amount, ok := byDate[date]
+		if !ok {
+			amount = contracts.Money{Currency: currencyVND}
+		}
 		out = append(out, model.RevenuePoint{
-			Date:   day.Date,
-			Amount: money(day.Amount),
+			Date:   date,
+			Amount: money(amount),
 		})
 	}
 	return out
@@ -251,36 +263,16 @@ func money(value contracts.Money) model.Money {
 	return model.Money{Amount: value.Amount, Currency: value.Currency}
 }
 
-// monthWindows returns the US1 placeholder windows: the current calendar month up
-// to the request instant, and the full previous calendar month. US2 replaces both
-// with the month-to-date comparison and its clamp (T035/T037).
-func monthWindows(now time.Time, location *time.Location) (contracts.TimeWindow, contracts.TimeWindow) {
-	local := now.In(location)
-	monthStart := time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, location)
-	previousStart := monthStart.AddDate(0, -1, 0)
-	return contracts.TimeWindow{From: monthStart, To: now},
-		contracts.TimeWindow{From: previousStart, To: monthStart}
-}
+// currencyVND is the only currency the MVP shop trades in; a day the read does
+// not carry is zero-filled in it, so every trend point is a VND money object
+// (spec Assumptions "MVP chỉ VND").
+const currencyVND = "VND"
 
-// weekWindow returns the current week from Monday 00:00 in the shop timezone to
-// the request instant (FR-009).
-func weekWindow(now time.Time, location *time.Location) contracts.TimeWindow {
-	local := now.In(location)
-	dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-	// Go's Weekday puts Sunday first; shift so Monday is 0.
-	offset := (int(local.Weekday()) + 6) % 7
-	return contracts.TimeWindow{From: dayStart.AddDate(0, 0, -offset), To: now}
-}
-
-// trailingWindow returns the `days` calendar days ending today, in the shop
-// timezone, up to the request instant.
-func trailingWindow(now time.Time, location *time.Location, days int) contracts.TimeWindow {
-	if days < 1 {
-		days = 1
-	}
-	local := now.In(location)
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
-	return contracts.TimeWindow{From: today.AddDate(0, 0, -(days - 1)), To: now}
+// contractWindow converts the domain window into the cross-module read window.
+// The two carry the same half-open instants; the conversion keeps the domain free
+// of the contract package (Constitution I).
+func contractWindow(w model.Window) contracts.TimeWindow {
+	return contracts.TimeWindow{From: w.From, To: w.To}
 }
 
 // The service must satisfy the module's own use-case interface.

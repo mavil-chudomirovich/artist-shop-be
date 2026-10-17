@@ -126,17 +126,17 @@ has exactly `days` zero-filled local dates.
 
 ### Tests for User Story 2
 
-- [ ] T032 [P] [US2] Add `internal/modules/admin/domain/model/window_test.go`: current-month start, MTD previous window, clamp at the previous month end, Monday week start, trailing 7/30 days, and a leap-year/31-day boundary
-- [ ] T033 [P] [US2] Add `internal/modules/admin/domain/model/metrics_test.go`: growth null on zero base, 2-decimal rounding, negative growth, 1-decimal percentage, zero-revenue denominator
-- [ ] T034 [P] [US2] Add `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: revenue statuses/currency/windows, a local-midnight boundary, and `KPIs` totals against seeded orders
+- [X] T032 [P] [US2] Add `internal/modules/admin/domain/model/window_test.go`: current-month start, MTD previous window, clamp at the previous month end, Monday week start, trailing 7/30 days, and a leap-year/31-day boundary
+- [X] T033 [P] [US2] Add `internal/modules/admin/domain/model/metrics_test.go`: growth null on zero base, 2-decimal rounding, negative growth, 1-decimal percentage, zero-revenue denominator
+- [X] T034 [P] [US2] Add `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: revenue statuses/currency/windows, a local-midnight boundary, and `KPIs` totals against seeded orders
 
 ### Implementation for User Story 2
 
-- [ ] T035 [P] [US2] Add `internal/modules/admin/domain/model/window.go` (`CurrentMonth`, `PreviousMonthSamePeriod`, `CurrentWeek`, `TrailingDays`)
-- [ ] T036 [P] [US2] Add `internal/modules/admin/domain/model/metrics.go` (growth, percentage, rounding)
-- [ ] T037 [US2] Update `internal/modules/admin/application/implement/overview.go` to use the windows/metrics and to zero-fill the trend from the domain date list
-- [ ] T038 [US2] Update `internal/modules/admin/application/mapper/overview.go` for `YYYY-MM-DD`, `T2`..`CN` (7) and `DD/MM` (30)
-- [ ] T039 [US2] Extend `internal/modules/admin/application/implement/overview_test.go` with MTD/clamp, null growth, zero-fill and a timezone-boundary case
+- [X] T035 [P] [US2] Add `internal/modules/admin/domain/model/window.go` (`CurrentMonth`, `PreviousMonthSamePeriod`, `CurrentWeek`, `TrailingDays`)
+- [X] T036 [P] [US2] Add `internal/modules/admin/domain/model/metrics.go` (growth, percentage, rounding)
+- [X] T037 [US2] Update `internal/modules/admin/application/implement/overview.go` to use the windows/metrics and to zero-fill the trend from the domain date list
+- [X] T038 [US2] Update `internal/modules/admin/application/mapper/overview.go` for `YYYY-MM-DD`, `T2`..`CN` (7) and `DD/MM` (30)
+- [X] T039 [US2] Extend `internal/modules/admin/application/implement/overview_test.go` with MTD/clamp, null growth, zero-fill and a timezone-boundary case
 
 **Checkpoint**: The revenue/order KPIs and trend are timezone-correct and fair.
 

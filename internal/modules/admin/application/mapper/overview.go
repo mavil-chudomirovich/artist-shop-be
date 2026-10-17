@@ -21,11 +21,12 @@ type Mapper struct{}
 func New() *Mapper { return &Mapper{} }
 
 // Overview maps the whole snapshot. An empty section maps to an empty slice,
-// never to nil, so the response serialises arrays rather than null.
-func (m *Mapper) Overview(o model.Overview) dto.Overview {
+// never to nil, so the response serialises arrays rather than null. days is the
+// requested trend length, which chooses the day-label shape (FR-020).
+func (m *Mapper) Overview(o model.Overview, days int) dto.Overview {
 	return dto.Overview{
 		KPIs:              m.kpis(o.KPIs),
-		RevenueTrend:      m.revenueTrend(o.RevenueTrend),
+		RevenueTrend:      m.revenueTrend(o.RevenueTrend, days),
 		CategoryBreakdown: m.categoryBreakdown(o.CategoryBreakdown),
 		RecentOrders:      m.recentOrders(o.RecentOrders),
 	}
@@ -58,12 +59,12 @@ func (m *Mapper) kpis(k model.KPIs) dto.KPIs {
 }
 
 // revenueTrend maps the daily series, deriving each point's day label.
-func (m *Mapper) revenueTrend(points []model.RevenuePoint) []dto.RevenuePoint {
+func (m *Mapper) revenueTrend(points []model.RevenuePoint, days int) []dto.RevenuePoint {
 	out := make([]dto.RevenuePoint, 0, len(points))
 	for _, point := range points {
 		out = append(out, dto.RevenuePoint{
 			Date:     point.Date,
-			DayLabel: m.dayLabel(point.Date),
+			DayLabel: m.dayLabel(point.Date, days),
 			Amount:   m.money(point.Amount),
 		})
 	}
@@ -121,15 +122,41 @@ func (m *Mapper) money(value model.Money) dto.Money {
 	return dto.Money{Amount: value.Amount, Currency: value.Currency}
 }
 
-// dayLabel derives the short label for a YYYY-MM-DD day. US1 uses the DD/MM
-// shape as a working placeholder; the day-of-week shape for a 7-day trend is
-// owned by US2 (T038).
-func (m *Mapper) dayLabel(date string) string {
+// dayLabel derives the short label for a YYYY-MM-DD day in the shop timezone. A
+// 7-day trend shows the weekday as T2..T7/CN; a 30-day trend shows DD/MM
+// (FR-020). A date that cannot be parsed is passed through unchanged. The weekday
+// of a date is timezone-independent, so parsing as UTC yields the operator's day
+// of week.
+func (m *Mapper) dayLabel(date string, days int) string {
 	parsed, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return date
 	}
+	if days == 7 {
+		return weekdayLabel(parsed.Weekday())
+	}
 	return parsed.Format("02/01")
+}
+
+// weekdayLabel is the trend label of a weekday: Vietnamese T2..T7 for Monday to
+// Saturday and CN for Sunday (FR-020).
+func weekdayLabel(day time.Weekday) string {
+	switch day {
+	case time.Monday:
+		return "T2"
+	case time.Tuesday:
+		return "T3"
+	case time.Wednesday:
+		return "T4"
+	case time.Thursday:
+		return "T5"
+	case time.Friday:
+		return "T6"
+	case time.Saturday:
+		return "T7"
+	default:
+		return "CN"
+	}
 }
 
 // itemSummary describes the newest order's first line. US1 uses the product name
