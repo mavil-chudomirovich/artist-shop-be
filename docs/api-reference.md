@@ -398,6 +398,10 @@ có hạn mức riêng, chỉ chịu hạn mức toàn cục. Webhook `/payments
 chỉ chịu hạn mức toàn cục — nhưng đây là điểm PayOS **gọi tới và thử lại**, nên một sự kiện đã xử lý phải
 trả `2xx` nhanh để cổng ngừng thử lại thay vì bị chặn (`specs/011-order-payment/research.md` D10).
 
+Nhóm `/admin/dashboard` của module 16 Admin cũng **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục,
+cùng lý do: endpoint là ADMIN-only và chỉ đọc, nên bề mặt lạm dụng mà một hạn mức theo module tồn tại để
+chặn — mọi khách đã đăng nhập đều gọi được — **không tồn tại**.
+
 Ngoài ra: đăng nhập sai liên tiếp **10 lần** sẽ khoá tài khoản 15 phút
 (`AUTH_LOGIN_MAX_FAILURES`, `AUTH_LOGIN_LOCKOUT_TTL`); nhập sai OTP **5 lần** sẽ
 khoá mã 60 giây (`OTP_MAX_ATTEMPTS`, `OTP_BLOCK_TTL`).
@@ -3258,7 +3262,171 @@ Ghi chú:
 
 ---
 
-## 11. Bảng tổng hợp
+## 11. Module 16 — Admin (`/api/v1`)
+
+Không gian vận hành của artist. Module Admin **không sở hữu bảng riêng**: đây là orchestrator
+**read-only**, đọc dữ liệu của các module khác qua các **hợp đồng đọc** do chính module sở hữu công bố
+(`internal/contracts/dashboard.go`), nên một lần gọi trả đủ bốn nhóm KPI, chuỗi doanh thu theo ngày,
+cơ cấu doanh số theo danh mục và các đơn mới nhất mà client **không** phải gọi thêm endpoint nào
+(FR-002). Mọi endpoint admin MUST kiểm tra vai trò `ADMIN`.
+
+**Một endpoint**: `GET /admin/dashboard/overview`.
+
+Ba điều dễ đọc sai, nói ngay:
+
+- **Doanh thu quy theo `orders.created_at`** (chưa có `paid_at`), chỉ gồm đơn `PAID`/`SHIPPED`/
+  `COMPLETED`, currency `VND`; đơn `PENDING`/`PAYMENT_PENDING`/`CANCELLED` **không** được cộng (FR-010).
+- **Mọi giá trị tiền là object `{ amount, currency }`** — số nguyên đơn vị nhỏ nhất, **không** float —
+  kể cả trong `revenueTrend` và `categoryBreakdown` (FR-005).
+- **Ranh giới ngày/tháng theo timezone cửa hàng** (`SHOP_TIMEZONE`, mặc định `Asia/Ho_Chi_Minh`); dữ
+  liệu lưu vẫn UTC (FR-007).
+
+Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5): endpoint là ADMIN-only và chỉ đọc,
+nên bề mặt lạm dụng mà một hạn mức theo module tồn tại để chặn — mọi khách đã đăng nhập đều gọi được —
+**không tồn tại**.
+
+**Hình dạng response** — envelope `{ data, meta }`; `data` là `OverviewResponse` gồm `kpis`,
+`revenueTrend`, `categoryBreakdown`, `recentOrders`:
+
+```json
+{
+  "data": {
+    "kpis": {
+      "revenue": {
+        "currentMonthAmount": { "amount": 48250000, "currency": "VND" },
+        "lastMonthAmount": { "amount": 42000000, "currency": "VND" },
+        "growthPercent": 14.88
+      },
+      "orders": {
+        "totalOrders": 1482,
+        "thisMonthOrders": 186,
+        "lastMonthOrders": 172,
+        "pendingConfirmationCount": 9,
+        "growthPercent": 8.14
+      },
+      "customers": { "totalUsers": 412, "newUsersThisWeek": 28 },
+      "inventory": { "lowStockCount": 3, "threshold": 5 }
+    },
+    "revenueTrend": [
+      { "date": "2026-10-12", "dayLabel": "T2", "amount": { "amount": 4200000, "currency": "VND" } },
+      { "date": "2026-10-13", "dayLabel": "T3", "amount": { "amount": 5800000, "currency": "VND" } }
+    ],
+    "categoryBreakdown": [
+      { "categoryId": "019270bb-336c-76e3-85f0-f925b4fa6c01", "categoryName": "Acrylic Stand",
+        "amount": { "amount": 22195000, "currency": "VND" }, "percentage": 46.0 },
+      { "categoryId": null, "categoryName": "Khác",
+        "amount": { "amount": 360000, "currency": "VND" }, "percentage": 0.7 }
+    ],
+    "recentOrders": [
+      {
+        "id": "019270bb-336c-76e3-85f0-f925b4fa6c10",
+        "customer": {
+          "id": "019270bb-336c-76e3-85f0-f925b4fa6c99",
+          "displayName": "Nguyễn Minh Anh",
+          "email": "minhanh.ng@gmail.com"
+        },
+        "itemSummary": "Acrylic Stand Elf Băng Giá (x2) +1",
+        "itemCount": 2,
+        "itemQuantity": 3,
+        "total": { "amount": 360000, "currency": "VND" },
+        "status": "COMPLETED",
+        "createdAt": "2026-10-17T04:02:00Z"
+      }
+    ]
+  },
+  "meta": { "requestId": "...", "timestamp": "2026-10-17T04:15:04Z" }
+}
+```
+
+Bốn nhóm trong `kpis` có đúng tên member sau:
+
+| Nhóm | Member |
+|---|---|
+| `revenue` | `currentMonthAmount`, `lastMonthAmount`, `growthPercent` |
+| `orders` | `totalOrders`, `thisMonthOrders`, `lastMonthOrders`, `pendingConfirmationCount`, `growthPercent` |
+| `customers` | `totalUsers`, `newUsersThisWeek` |
+| `inventory` | `lowStockCount`, `threshold` |
+
+Các field **nullable** (có thể là `null`):
+
+- `kpis.revenue.growthPercent` và `kpis.orders.growthPercent` — `null` khi mốc so sánh (kỳ trước) bằng 0.
+- `recentOrders[].customer` — `null` khi tài khoản khách không còn tồn tại.
+- `categoryBreakdown[].categoryId` — `null` cho dòng đơn legacy không resolve được danh mục.
+
+`revenueTrend[].date` dạng `YYYY-MM-DD` theo timezone cửa hàng; `dayLabel` là `T2`..`T7`/`CN` khi
+`days=7` và `DD/MM` khi `days=30`; chuỗi luôn đủ `days` phần tử, cũ đến mới, ngày không có doanh thu
+được zero-fill.
+
+`recentOrders` trả tối đa **5** đơn mới nhất (mới nhất trước, tie-break `id` giảm dần). `status` là một
+trong **sáu** trạng thái thô của đơn, **không** dịch sang nhãn hiển thị: `PENDING`, `PAYMENT_PENDING`,
+`PAID`, `SHIPPED`, `COMPLETED`, `CANCELLED`. `itemCount` là **số dòng hàng**; `itemQuantity` là **tổng số
+lượng**. `itemSummary` lấy dòng đầu theo `position` dạng `<name> <variantName> (x<quantity>)` và nối
+` +N` nếu còn N dòng khác.
+
+### 11.1 `GET /admin/dashboard/overview`
+
+Tổng hợp toàn bộ số liệu vận hành cửa hàng trong **một** request read-only: bốn nhóm KPI, chuỗi doanh
+thu `days` ngày, cơ cấu doanh số theo danh mục tháng hiện tại và 5 đơn mới nhất.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Query:
+
+| Tham số | Mặc định | Giá trị hợp lệ | Nghĩa |
+|---|---|---|---|
+| `days` | `7` | `7` hoặc `30` | Số ngày của `revenueTrend` |
+| `lowStockThreshold` | `5` | `0..10000` | Ngưỡng tồn kho thấp; echo lại ở `kpis.inventory.threshold` |
+
+Không có body. Response `200`: `data` = `OverviewResponse` (xem ví dụ trên).
+
+Lỗi: `VALIDATION_ERROR` 400 (`days` ngoài {7, 30}; `lowStockThreshold` ngoài 0..10000 — `details[].field`
+là `"days"` hoặc `"lowStockThreshold"`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với
+action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500. **Không** có `404`: route
+tĩnh, không có định danh tài nguyên.
+
+Ghi chú:
+
+- Tác nhân (administrator) lấy từ **session**, không bao giờ từ query/body (Constitution; FR-001).
+- `days` chỉ đổi độ dài `revenueTrend`; các KPI theo tháng **không** đổi theo `days`.
+- `revenue.currentMonthAmount` là tháng hiện tại tính đến thời điểm request (**MTD**);
+  `revenue.lastMonthAmount` là **cùng kỳ tháng trước** (cùng độ dài thời gian, clamp về cuối tháng trước
+  nếu vượt), **không** phải toàn bộ tháng trước (FR-008). `growthPercent` = `(current - last) / last *
+  100`, làm tròn **2 chữ số thập phân**, `null` khi `last = 0`.
+- `categoryBreakdown` group theo **snapshot danh mục trên từng dòng đơn hàng** tại thời điểm mua, nên đổi
+  danh mục hoặc xoá sản phẩm sau đó **không** làm sai số đã bán; dòng không resolve được vào bucket
+  `categoryId = null`, `categoryName = "Khác"` và **không** bị loại khỏi tổng — tổng các `amount` khớp
+  `kpis.revenue.currentMonthAmount` (FR-021, FR-023). `percentage` làm tròn **1 chữ số thập phân**; danh
+  sách sắp xếp `amount` giảm dần, tie-break `categoryName` tăng dần; chỉ trả danh mục có `amount > 0`.
+  Tổng `percentage` có thể lệch 100 do làm tròn.
+- `kpis.orders.totalOrders` là **tổng all-time, mọi trạng thái** (kể cả `CANCELLED`);
+  `thisMonthOrders`/`lastMonthOrders` đếm đơn tạo trong cửa sổ tháng tương ứng, mọi trạng thái;
+  `pendingConfirmationCount` là số đơn `PENDING` all-time (không gồm `PAYMENT_PENDING`) (FR-012–FR-014).
+- `kpis.customers.totalUsers` đếm tài khoản role `CUSTOMER`, status `active` all-time (loại `ADMIN`,
+  pending, disabled); `newUsersThisWeek` đếm tài khoản active tạo từ **Thứ Hai 00:00** theo timezone cửa
+  hàng đến nay (FR-015, FR-016).
+- `kpis.inventory.lowStockCount` đếm variant **có stock record**, **không** ở trạng thái `DISCONTINUED`,
+  và có `available = max(0, quantity vật lý − tổng quantity của active hold còn hạn) < lowStockThreshold`;
+  variant chưa từng nhập kho **không** tính; hold đã hết hạn **không** trừ (FR-017, FR-018).
+  `kpis.inventory.threshold` echo lại `lowStockThreshold` của request.
+- **Audit**: mỗi lần xem dashboard thành công ghi **đúng một** event `ADMIN_DASHBOARD_VIEWED` với
+  outcome `SUCCESS`, actor từ session, target type `dashboard`, target id `overview`, metadata
+  `{days, lowStockThreshold, recentOrderCount}` — **không** chứa PII và **không** audit từng khách hàng
+  được đọc cho `recentOrders` (FR-030). Một `403` từ phiên CUSTOMER ghi `AUTH_PRIVILEGE_DENIED` (tầng
+  foundation), không phải action này.
+- **Read-only**: không thao tác nào thay đổi order/inventory/customer; dashboard không có endpoint ghi
+  (FR-006). Dashboard dùng số lượng **read bounded**, không tăng theo số đơn/variant/khách (FR-032).
+
+Error codes của endpoint là các **mã dùng chung** ở §1.4; endpoint **không** thêm mã riêng. Không tình
+huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTrend` vẫn zero-fill đủ `days`, và
+`categoryBreakdown`/`recentOrders` có thể rỗng.
+
+---
+
+## 12. Bảng tổng hợp
 
 | Method | Path | Auth | Mô tả |
 |---|---|---|---|
@@ -3337,18 +3505,19 @@ Ghi chú:
 | GET | `/api/v1/orders/{orderId}/payment` | Bearer | Đọc thanh toán của chính mình (đường đọc riêng) |
 | GET | `/api/v1/admin/payments` | ADMIN | Mọi bản ghi thanh toán (phân trang, lọc `status`; `UNMATCHED` = hàng đợi đối soát) |
 | POST | `/api/v1/payments/payos/webhook` | — | Webhook PayOS (công khai, xác minh chữ ký) |
+| GET | `/api/v1/admin/dashboard/overview` | ADMIN | Dashboard tổng quan: 4 nhóm KPI, trend, cơ cấu doanh số danh mục, 5 đơn mới nhất (read-only) |
 
 ---
 
-## 12. Quy tắc cập nhật
+## 13. Quy tắc cập nhật
 
 Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ), thay đổi
 `plan.md`, hoặc sửa/xoá endpoint, **phải** làm trong cùng một thay đổi:
 
 1. Thêm mục cho endpoint vào mục module tương ứng, theo đúng 6 phần mà các mục hiện
    có dùng: bảng thông tin · Request · Response · Lỗi · ghi chú.
-2. Cập nhật bảng tổng hợp ở mục 11.
-3. Thêm dòng vào Change log ở mục 13.
+2. Cập nhật bảng tổng hợp ở mục 12.
+3. Thêm dòng vào Change log ở mục 14.
 4. Nếu là endpoint mới: thêm `openapi.yaml` trong `specs/<feature>/contracts/` cho
    khớp, hoặc ghi rõ trong change log rằng chưa có OpenAPI và lý do.
 5. Nếu phát sinh error code mới: thêm vào bảng ở mục 1.4 (và vào
@@ -3356,10 +3525,11 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 6. Chạy `make swagger` để sinh lại `docs/swagger/` (annotation của handler phải khớp
    mục vừa thêm). CI chạy `make swagger-check` nên quên bước này là build đỏ.
 
-## 13. Change log
+## 14. Change log
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-17 | **Thêm nhóm `/api/v1/admin/dashboard` (module 16 Admin, feature 017).** **Một** endpoint `GET /admin/dashboard/overview` trả toàn bộ dashboard vận hành trong một request **read-only**: bốn nhóm KPI (`revenue`/`orders`/`customers`/`inventory`), `revenueTrend` (`days` = 7 hoặc 30), `categoryBreakdown` (group theo snapshot danh mục trên dòng đơn, bucket "Khác") và `recentOrders` (tối đa 5 đơn mới nhất). Auth `ADMIN` (guest 401, CUSTOMER 403); query `days` (mặc định 7, ∈ {7,30}) và `lowStockThreshold` (mặc định 5, 0..10000). Mọi giá trị tiền là object `{amount, currency}` (VND, số nguyên minor unit). Doanh thu quy theo `orders.created_at`, chỉ `PAID`/`SHIPPED`/`COMPLETED`; cửa sổ tháng hiện tại là MTD so với **cùng kỳ tháng trước**; ranh giới theo `SHOP_TIMEZONE`. Snapshot danh mục thêm vào dòng đơn (migration `00017`). **Không** thêm mã lỗi mới. Xem ADR-022. | `internal/modules/admin/presentation/http/router.go`, `migrations/00017_order_item_category_snapshot.sql` |
 | 2026-10-17 | **Ảnh card của danh mục ưu tiên gallery sản phẩm (module 04 Product, feature 015).** Ảnh của entry trong `GET /products` và `imageUrl` tóm tắt trong `GET /products/{code}` nay là **ảnh chính của gallery** sản phẩm, **fallback về ảnh của variant mặc định** (`position` nhỏ nhất), rồi `null` khi không có ảnh nào. Không đổi route/hình dạng DTO. | `internal/modules/product/infrastructure/implement/postgres/product.go` |
 | 2026-10-16 | **Chặn ẩn khi còn đơn chờ (feature 016).** Ẩn danh mục (`PATCH /admin/categories/{categoryId}` với `isVisible: false`), tắt cờ hiển thị sản phẩm (`PATCH /admin/products/{id}` với `isVisible: false`) và mọi bước chuyển variant **rời** trạng thái đang bán (`POST .../variants/{variantId}/state`) bị từ chối `409` khi còn đơn `PENDING`/`PAYMENT_PENDING` giữ variant liên quan. **Thêm ba** mã vào mục 1.4: `CATEGORY_HAS_PENDING_ORDERS`, `PRODUCT_HAS_PENDING_ORDERS`, `VARIANT_HAS_PENDING_ORDERS` — thân từ chối mang một phần tử `error.details` cho mỗi đơn chặn (`{"field": "orderId", "issue": "<định danh đơn>"}`); không gì bị đổi. Ẩn thành công gỡ các variant khỏi mọi giỏ trong cùng transaction; hiện/bật hiển thị và chuyển **về** đang bán không bao giờ bị chặn; tín hiệu hết hàng của hệ thống bị chặn thành no-op đã ghi nhận. Không thêm route, không đổi method/path; DTO chỉ thêm member `isVisible` (tuỳ chọn ở request, thêm ở response quản trị). | `specs/016-hide-guard/contracts/error-codes.md`, `internal/modules/category/presentation/http/errors.go`, `internal/modules/product/presentation/http/errors.go` |
 | 2026-10-16 | **Mã sản phẩm trở thành đoạn link công khai (module 04 Product, feature 015).** Sản phẩm **không** còn `slug` riêng: `code` vừa là mã sản phẩm operator viết vừa là đoạn link của URL công khai. **Đổi** `GET /products/{slug}` → `GET /products/{code}` (path param `code`). **Đổi** hình dạng công khai: entry và detail mang `code` thay `slug`; body `POST`/`PATCH /admin/products` **bỏ** `slug`, `code` là đoạn link (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140 ký tự, duy nhất trên `lower(btrim(code))`). Dòng đơn **bỏ** snapshot `slug` (giữ `product_code` + `sku`). **Gỡ** mã `PRODUCT_SLUG_TAKEN` 409; va chạm dùng `409 PRODUCT_CODE_TAKEN`. Migration `00015_product_code_as_link_segment.sql` gỡ `products.slug`/`normalized_slug` và `order_items.slug`; danh mục vẫn giữ `slug` riêng. Cập nhật mục 1.4, mục 6 và bảng tổng hợp; `docs/swagger/` sinh lại khớp. | `migrations/00015_product_code_as_link_segment.sql`, `internal/modules/product/presentation/http/router.go`, `internal/modules/product/domain/model/code.go` |

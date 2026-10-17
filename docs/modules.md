@@ -35,7 +35,7 @@ Tài liệu tra cứu:
 | 13 | Review | [13-review.md](modules/13-review.md) | V2.0 | product, order | ⬜ |
 | 14 | Wishlist | [14-wishlist.md](modules/14-wishlist.md) | V2.0 | product, user | ⬜ |
 | 15 | Content | [15-content.md](modules/15-content.md) | V2.0 | cross-cutting | ⬜ |
-| 16 | Admin | [16-admin.md](modules/16-admin.md) | V1.2 | tất cả | ⬜ |
+| 16 | Admin | [16-admin.md](modules/16-admin.md) | V1.2 | tất cả | ✔ `specs/017-admin-dashboard` (dashboard; audit log còn lại) |
 
 ## Thứ tự triển khai
 
@@ -44,6 +44,10 @@ Tài liệu tra cứu:
 **V1.1 — Commission**: 10 commission → 11 chat (tái dùng 08). Mục tiêu: nhận yêu cầu vẽ, báo giá, đặt cọc, thanh toán theo giai đoạn, và trao đổi với artist.
 **V1.2 — Vận hành & phụ trợ**: 09 shipping → 12 notification → 16 admin. Tracking giao hàng, thông báo, dashboard + audit.
 **V2.0 — Mở rộng**: 13 review → 14 wishlist → 15 content.
+
+> **Trạng thái V1.2**: module `16` **đã giao endpoint tổng quan dashboard** (feature
+> `017-admin-dashboard`: `GET /api/v1/admin/dashboard/overview`, read-only, ADMIN-only). Phần **xem audit
+> log** của `16` và hai module `09`/`12` vẫn còn để ngỏ.
 
 > **Vì sao tái thứ tự so với bản "Giai đoạn" cũ**: `07/08` mở khoá thanh toán — vốn là
 > prerequisite chung — nên làm trước; `10/11` (commission) chỉ cần `user` + `payment` nên

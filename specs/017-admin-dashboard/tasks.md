@@ -245,27 +245,27 @@ the close-out gates.
 
 ### Documentation and contracts
 
-- [ ] T058 [P] Add the endpoint section to `docs/api-reference.md`: method/path, ADMIN requirement, `days`/`lowStockThreshold`, response example, the shared error codes, timezone/revenue/VND notes and the `ADMIN_DASHBOARD_VIEWED` audit note
-- [ ] T059 [P] Add the `SHOP_TIMEZONE` row/default/validation rule to `docs/configuration.md`
-- [ ] T060 [P] Update `docs/modules/16-admin.md` with the feature's Spec Kit status and the delivered overview endpoint; update `docs/modules.md` with module 16's status/roadmap; write `docs/decisions/022-admin-dashboard-read-model.md` (read-only admin module over published read contracts, category snapshot on order lines, shop timezone/MTD comparison) and add its row to `docs/decisions/README.md`
+- [X] T058 [P] Add the endpoint section to `docs/api-reference.md`: method/path, ADMIN requirement, `days`/`lowStockThreshold`, response example, the shared error codes, timezone/revenue/VND notes and the `ADMIN_DASHBOARD_VIEWED` audit note
+- [X] T059 [P] Add the `SHOP_TIMEZONE` row/default/validation rule to `docs/configuration.md`
+- [X] T060 [P] Update `docs/modules/16-admin.md` with the feature's Spec Kit status and the delivered overview endpoint; update `docs/modules.md` with module 16's status/roadmap; write `docs/decisions/022-admin-dashboard-read-model.md` (read-only admin module over published read contracts, category snapshot on order lines, shop timezone/MTD comparison) and add its row to `docs/decisions/README.md`
 
 ### Frontend Integration Guide *(bắt buộc — hiến pháp §Governance)*
 
-- [ ] T061 [P] **Có đổi bề mặt client** → write `specs/017-admin-dashboard/frontend-guide.md`: the new endpoint; money objects everywhere; `orders` fields `totalOrders`/`thisMonthOrders`/`lastMonthOrders`; nullable `growthPercent`/`customer`/`categoryId`; `itemCount`/`itemQuantity`; the six BE statuses and their FE labels; `dayLabel` 7 vs 30; `days`/`lowStockThreshold`
-- [ ] T062 **Đồng bộ guide** after the source stabilises: re-read `specs/017-admin-dashboard/frontend-guide.md` and compare it with the handler/DTOs/route with counts (every JSON field, every enum value, every route, every HTTP status); fix every mismatch or record the unverified part and why
+- [X] T061 [P] **Có đổi bề mặt client** → write `specs/017-admin-dashboard/frontend-guide.md`: the new endpoint; money objects everywhere; `orders` fields `totalOrders`/`thisMonthOrders`/`lastMonthOrders`; nullable `growthPercent`/`customer`/`categoryId`; `itemCount`/`itemQuantity`; the six BE statuses and their FE labels; `dayLabel` 7 vs 30; `days`/`lowStockThreshold`
+- [X] T062 **Đồng bộ guide** after the source stabilises: re-read `specs/017-admin-dashboard/frontend-guide.md` and compare it with the handler/DTOs/route with counts (every JSON field, every enum value, every route, every HTTP status); fix every mismatch or record the unverified part and why
 
 ### Swagger annotations *(bắt buộc nếu feature có endpoint)*
 
-- [ ] T063 **Có endpoint thêm**: ensure the handler in `internal/modules/admin/presentation/http/handler.go` carries every Swagger annotation, run `make swagger`, and confirm `make swagger-check` (in `make check`) is green; the generated `docs/swagger/` must be committed
+- [X] T063 **Có endpoint thêm**: ensure the handler in `internal/modules/admin/presentation/http/handler.go` carries every Swagger annotation, run `make swagger`, and confirm `make swagger-check` (in `make check`) is green; the generated `docs/swagger/` must be committed
 
 ### Phát hiện ngoài phạm vi *(hiến pháp §Governance)*
 
-- [ ] T064 [P] **Ghi vào `specs/017-admin-dashboard/deferred.md`**, KHÔNG để nguyên `- [ ]` ở file này. Ghi rõ: revenue attributed by `created_at` (a later `paid_at`/payment-event feature), legacy category gaps, the pre-existing product→`categories` join debt, index/caching if volume grows, and multi-currency support. Nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]`, nêu rõ số task đó.
+- [X] T064 [P] **Ghi vào `specs/017-admin-dashboard/deferred.md`**, KHÔNG để nguyên `- [ ]` ở file này. Ghi rõ: revenue attributed by `created_at` (a later `paid_at`/payment-event feature), legacy category gaps, the pre-existing product→`categories` join debt, index/caching if volume grows, and multi-currency support. Nếu một phát hiện làm mất hiệu lực bằng chứng của một task đã tick `[X]`, nêu rõ số task đó.
 
 ### Close-out gates
 
-- [ ] T065 Run the `quickstart.md` scenarios against a disposable local stack (Scenarios A–J), record PASS/FAIL for each, and fix any implementation/doc drift; a scenario that cannot run is reported BLOCKED with the reason
-- [ ] T066 Add the SC-006/FR-032 verification: (a) a bounded-call assertion in `internal/modules/admin/application/implement/overview_test.go` (the 8 contract-method calls across the four read interfaces are fixed regardless of fixture size); (b) a DB-backed integration test in `internal/modules/admin/presentation/http/overview_integration_test.go` (build tag `integration`) that wires the real order/user/inventory/product adapters and admin service, seeds 10,000 orders and 1,000 variants, and measures the full overview against the 2-second target. It shares `overview_test.go`, so it runs after T049/T055. Record the measured duration; if the environment cannot run the 10k fixture, report the check as BLOCKED with the reason — do not claim SC-006 verified
+- [X] T065 Run the `quickstart.md` scenarios against a disposable local stack (Scenarios A–J), record PASS/FAIL for each, and fix any implementation/doc drift; a scenario that cannot run is reported BLOCKED with the reason
+- [X] T066 Add the SC-006/FR-032 verification: (a) a bounded-call assertion in `internal/modules/admin/application/implement/overview_test.go` (the 8 contract-method calls across the four read interfaces are fixed regardless of fixture size); (b) a DB-backed integration test in `internal/modules/admin/presentation/http/overview_integration_test.go` (build tag `integration`) that wires the real order/user/inventory/product adapters and admin service, seeds 10,000 orders and 1,000 variants, and measures the full overview against the 2-second target. It shares `overview_test.go`, so it runs after T049/T055. Record the measured duration; if the environment cannot run the 10k fixture, report the check as BLOCKED with the reason — do not claim SC-006 verified
 - [ ] T067 Run `make lint` and `make test`; fix every failure on the feature tree
 - [ ] T068 Run `make test-integration` (Docker required); prove the order/customer/inventory/product reads and the 00017 backfill/rollback; a run that reports success without executing a test is a false green and must be investigated
 - [ ] T069 Run `make check` (format + tidy + vet + lint + unit + integration + build + swagger-check) as the close-out gate; it must be green before the feature is reported done

@@ -47,6 +47,7 @@ Dùng [template.md](template.md).
 | [019](019-payos-payment.md) | Payment: tích hợp PayOS bằng thư viện chuẩn, hai hợp đồng liên module, `orderCode` ngẫu nhiên, áp-một-lần hai tầng, và "ghi nhận bất thường, không bao giờ hoàn tiền" | Accepted |
 | [020](020-product-variants.md) | Product Variants: nhóm là bảng riêng, lựa chọn là sản phẩm thường, danh mục gộp bằng một câu SQL union, hai không gian tên slug, và xoá nhóm RESTRICT | Superseded by [021](021-product-sku-model.md) |
 | [021](021-product-sku-model.md) | Product SKU Model: sản phẩm cha + variant (SKU) là đơn vị bán, tồn/giỏ/đơn khoá theo variant, mã sản phẩm & SKU duy nhất, và thay thế 020 | Accepted |
+| [022](022-admin-dashboard-read-model.md) | Admin Dashboard: module admin read-only trên hợp đồng đọc công bố, snapshot danh mục trên dòng đơn, và timezone cửa hàng + so sánh MTD | Accepted |
 
 ## Khi nào phải viết ADR
 

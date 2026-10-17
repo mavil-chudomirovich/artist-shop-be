@@ -38,6 +38,16 @@ file `.env`.
 |---|---|---|---|
 | `APP_ENV` | `development` | | `development` \| `staging` \| `production`. Khi là `production` thì **không** nạp `.env` |
 
+### Shop — tiền tố `SHOP_`
+| Biến | Mặc định | Bắt buộc | Ý nghĩa |
+|---|---|---|---|
+| `SHOP_TIMEZONE` | `Asia/Ho_Chi_Minh` | ✅ (chỉ API) | Tên IANA của múi giờ cửa hàng. Dashboard admin (module 16) dùng múi giờ này cho mọi ranh giới ngày/tuần/tháng và nhãn ngày (`revenueTrend`, cửa sổ MTD/tháng trước, "tuần này"); dữ liệu lưu trữ vẫn là UTC |
+
+`SHOP_TIMEZONE` được xác thực bằng `time.LoadLocation` trong `ValidateForAPI()`: `migrate` và `seed` vẫn
+chạy được mà không cần biến này, nhưng một tên IANA không hợp lệ làm **API từ chối khởi động** thay vì
+âm thầm dời mọi ranh giới lịch (một lỗi cấu hình rất khó phát hiện qua số liệu). Ảnh runtime cài sẵn
+`tzdata` nên `time.LoadLocation` chạy được trong container.
+
 ### HTTP server — tiền tố `HTTP_`
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|

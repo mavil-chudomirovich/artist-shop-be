@@ -441,6 +441,89 @@ func TestTheApplicationDependsOnlyOnReadPorts(t *testing.T) {
 	}
 }
 
+// FR-032, SC-006, T066(a): the dashboard issues a fixed number of read calls —
+// exactly one per contract method across the four read ports (4 order + 2
+// customer + 1 inventory + 1 product = 8) — and that count does not grow with
+// the size of the fixture. This is the bounded-read half of SC-006, which a unit
+// test can prove without a database; the 2-second target is measured by the
+// DB-backed integration test in presentation/http.
+func TestOverviewMakesAFixedNumberOfReadCallsRegardlessOfFixtureSize(t *testing.T) {
+	small := newOverviewHarness(t)
+	small.run(t)
+	if got := countReadCalls(t, small); got != 8 {
+		t.Fatalf("small fixture: expected exactly 8 read calls, got %d", got)
+	}
+
+	// A much larger fixture must not add calls: a thousand low-stock candidates
+	// are still resolved in one inventory read plus one discontinued-id read, and
+	// the recent orders' customers in one bulk read.
+	large := newOverviewHarness(t)
+	large.inventory.variants = make([]contracts.LowStockVariant, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		large.inventory.variants = append(large.inventory.variants, contracts.LowStockVariant{VariantID: uuid.New(), Available: int64(i % 5)})
+	}
+	large.orders.categories = []contracts.CategoryRevenue{
+		{Amount: contracts.Money{Amount: 100, Currency: "VND"}},
+		{Amount: contracts.Money{Amount: 200, Currency: "VND"}},
+	}
+	large.orders.recents = make([]contracts.RecentOrder, 0, 5)
+	for i := 0; i < 5; i++ {
+		large.orders.recents = append(large.orders.recents, contracts.RecentOrder{
+			ID:                uuid.New(),
+			CustomerID:        uuid.New(),
+			Total:             contracts.Money{Amount: 100, Currency: "VND"},
+			Status:            "PAID",
+			CreatedAt:         large.clock.now,
+			FirstLineName:     "Stand",
+			FirstLineQuantity: 1,
+			LineCount:         1,
+			TotalQuantity:     1,
+		})
+	}
+	large.customers.summaries = []contracts.CustomerSummary{}
+	large.run(t)
+	if got := countReadCalls(t, large); got != 8 {
+		t.Fatalf("large fixture: expected exactly 8 read calls, got %d", got)
+	}
+
+	// The large fixture genuinely carried more data; only the call count is fixed.
+	if len(large.inventory.variants) != 1000 {
+		t.Fatalf("test setup: the large fixture must carry 1000 candidates, got %d", len(large.inventory.variants))
+	}
+}
+
+// countReadCalls asserts each contract method of the four read ports was called
+// exactly once and returns the total. Any extra call — or a call that scales with
+// the fixture — fails the test.
+func countReadCalls(t *testing.T, h *overviewHarness) int {
+	t.Helper()
+	orderCalls := map[string]int{}
+	for _, call := range h.orders.calls {
+		orderCalls[call]++
+	}
+	for _, method := range []string{"KPIs", "DailyRevenue", "CategoryRevenue", "RecentOrders"} {
+		if orderCalls[method] != 1 {
+			t.Fatalf("order port method %s must be called exactly once, got %d (%v)", method, orderCalls[method], h.orders.calls)
+		}
+	}
+	customerCalls := map[string]int{}
+	for _, call := range h.customers.calls {
+		customerCalls[call]++
+	}
+	for _, method := range []string{"KPIs", "CustomerSummaries"} {
+		if customerCalls[method] != 1 {
+			t.Fatalf("customer port method %s must be called exactly once, got %d (%v)", method, customerCalls[method], h.customers.calls)
+		}
+	}
+	if len(h.inventory.calls) != 1 || h.inventory.calls[0] != "LowStockVariants" {
+		t.Fatalf("inventory port must be read exactly once, got %v", h.inventory.calls)
+	}
+	if len(h.variants.calls) != 1 || h.variants.calls[0] != "DiscontinuedVariantIDs" {
+		t.Fatalf("product port must be read exactly once, got %v", h.variants.calls)
+	}
+	return len(h.orders.calls) + len(h.customers.calls) + len(h.inventory.calls) + len(h.variants.calls)
+}
+
 // The dashboard reads the clock once per request, so every section agrees on
 // "now".
 func TestOverviewReadsTheClockOnce(t *testing.T) {
