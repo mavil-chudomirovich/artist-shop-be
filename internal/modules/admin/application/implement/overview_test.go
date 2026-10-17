@@ -38,6 +38,7 @@ type fakeOrderStatistics struct {
 	trendWindow    contracts.TimeWindow
 	trendTimeZone  string
 	categoryWindow contracts.TimeWindow
+	recentLimit    int
 }
 
 func (f *fakeOrderStatistics) KPIs(_ context.Context, current, last contracts.TimeWindow) (contracts.OrderKPIs, error) {
@@ -58,8 +59,9 @@ func (f *fakeOrderStatistics) CategoryRevenue(_ context.Context, window contract
 	return f.categories, nil
 }
 
-func (f *fakeOrderStatistics) RecentOrders(context.Context, int) ([]contracts.RecentOrder, error) {
+func (f *fakeOrderStatistics) RecentOrders(_ context.Context, limit int) ([]contracts.RecentOrder, error) {
 	f.calls = append(f.calls, "RecentOrders")
+	f.recentLimit = limit
 	return f.recents, nil
 }
 
@@ -70,6 +72,9 @@ type fakeCustomerStatistics struct {
 
 	// week is the window the application asked for (US2).
 	week contracts.TimeWindow
+
+	// summaryIDs is the ids the application asked about in the bulk read (US5).
+	summaryIDs []uuid.UUID
 }
 
 func (f *fakeCustomerStatistics) KPIs(_ context.Context, week contracts.TimeWindow) (contracts.CustomerKPIs, error) {
@@ -78,8 +83,9 @@ func (f *fakeCustomerStatistics) KPIs(_ context.Context, week contracts.TimeWind
 	return f.kpis, nil
 }
 
-func (f *fakeCustomerStatistics) CustomerSummaries(context.Context, []uuid.UUID) ([]contracts.CustomerSummary, error) {
+func (f *fakeCustomerStatistics) CustomerSummaries(_ context.Context, ids []uuid.UUID) ([]contracts.CustomerSummary, error) {
 	f.calls = append(f.calls, "CustomerSummaries")
+	f.summaryIDs = ids
 	return f.summaries, nil
 }
 
@@ -682,7 +688,65 @@ func TestOverviewCategoryUsesCurrentRevenueAsDenominatorAndCountsUnknownBucket(t
 	}
 }
 
-// FR-018: an empty candidate set still counts zero without asking the product
+// FR-026, T055: recent orders resolve their customers in a single bulk read,
+// a missing account becomes a null customer, and at most five orders are mapped.
+func TestOverviewResolvesRecentCustomersInOneBulkCall(t *testing.T) {
+	h := newOverviewHarness(t)
+	existingID := uuid.New()
+	missingID := uuid.New()
+	orderExisting := uuid.New()
+	orderMissing := uuid.New()
+	h.orders.recents = []contracts.RecentOrder{
+		{ID: orderExisting, CustomerID: existingID, Total: contracts.Money{Amount: 100, Currency: "VND"}, Status: "PAID", CreatedAt: h.clock.now, FirstLineName: "Stand", FirstLineQuantity: 1, LineCount: 1, TotalQuantity: 1},
+		{ID: orderMissing, CustomerID: missingID, Total: contracts.Money{Amount: 200, Currency: "VND"}, Status: "SHIPPED", CreatedAt: h.clock.now, FirstLineName: "Print", FirstLineQuantity: 2, LineCount: 2, TotalQuantity: 2},
+	}
+	h.customers.summaries = []contracts.CustomerSummary{
+		{ID: existingID, DisplayName: "Alice", Email: "alice@example.com"},
+	}
+
+	out := h.run(t)
+
+	// One bulk CustomerSummaries call.
+	customerCalls := 0
+	for _, c := range h.customers.calls {
+		if c == "CustomerSummaries" {
+			customerCalls++
+		}
+	}
+	if customerCalls != 1 {
+		t.Fatalf("expected exactly one CustomerSummaries call, got %d", customerCalls)
+	}
+	// Deduplicated ids: both distinct customer ids asked once.
+	if len(h.customers.summaryIDs) != 2 {
+		t.Fatalf("expected 2 distinct customer ids, got %d: %v", len(h.customers.summaryIDs), h.customers.summaryIDs)
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, id := range h.customers.summaryIDs {
+		seen[id] = true
+	}
+	if !seen[existingID] || !seen[missingID] {
+		t.Fatalf("the bulk read must ask about every distinct customer id, got %v", h.customers.summaryIDs)
+	}
+	// Missing account -> nil customer.
+	byID := map[uuid.UUID]dto.RecentOrder{}
+	for _, r := range out.RecentOrders {
+		byID[r.ID] = r
+	}
+	if byID[orderExisting].Customer == nil || byID[orderExisting].Customer.DisplayName != "Alice" {
+		t.Fatalf("existing customer did not resolve: %+v", byID[orderExisting].Customer)
+	}
+	if byID[orderMissing].Customer != nil {
+		t.Fatalf("missing customer must be nil, got %+v", byID[orderMissing].Customer)
+	}
+	// At most five orders mapped (the contract limit is five).
+	if len(out.RecentOrders) > 5 {
+		t.Fatalf("expected at most 5 recent orders, got %d", len(out.RecentOrders))
+	}
+	if h.orders.recentLimit != constant.RecentOrderLimit {
+		t.Fatalf("recent orders must be requested with limit %d, got %d", constant.RecentOrderLimit, h.orders.recentLimit)
+	}
+}
+
 // state about any id, so the read stays bounded by the low-stock set rather than
 // by the catalogue.
 func TestOverviewCountsZeroWhenNoLowStockCandidates(t *testing.T) {

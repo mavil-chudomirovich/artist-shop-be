@@ -82,6 +82,26 @@ func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overv
 	if err != nil {
 		return dto.Overview{}, err
 	}
+	// Resolve the recent orders' customers in one bulk read, so a deleted
+	// account becomes a null customer instead of breaking the response
+	// (FR-026, research D8). Distinct ids are asked for once.
+	customerIDs := make([]uuid.UUID, 0, len(recentOrders))
+	seenCustomers := make(map[uuid.UUID]struct{}, len(recentOrders))
+	for _, order := range recentOrders {
+		if _, ok := seenCustomers[order.CustomerID]; ok {
+			continue
+		}
+		seenCustomers[order.CustomerID] = struct{}{}
+		customerIDs = append(customerIDs, order.CustomerID)
+	}
+	customerSummaries, err := s.Customers.CustomerSummaries(ctx, customerIDs)
+	if err != nil {
+		return dto.Overview{}, err
+	}
+	customersByID := make(map[uuid.UUID]contracts.CustomerSummary, len(customerSummaries))
+	for _, summary := range customerSummaries {
+		customersByID[summary.ID] = summary
+	}
 	customerKPIs, err := s.Customers.KPIs(ctx, contractWindow(weekWindow))
 	if err != nil {
 		return dto.Overview{}, err
@@ -95,7 +115,7 @@ func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overv
 		return dto.Overview{}, err
 	}
 
-	overview := s.assemble(trendWindow.Dates(), orderKPIs, trend, categories, recentOrders, customerKPIs, lowStockCount, in.LowStockThreshold)
+	overview := s.assemble(trendWindow.Dates(), orderKPIs, trend, categories, recentOrders, customersByID, customerKPIs, lowStockCount, in.LowStockThreshold)
 
 	s.recordView(ctx, days, in.LowStockThreshold, len(recentOrders))
 
@@ -168,6 +188,7 @@ func (s *Service) assemble(
 	trend []contracts.DailyRevenue,
 	categories []contracts.CategoryRevenue,
 	recentOrders []contracts.RecentOrder,
+	customersByID map[uuid.UUID]contracts.CustomerSummary,
 	customers contracts.CustomerKPIs,
 	lowStockCount int64,
 	threshold int64,
@@ -197,7 +218,7 @@ func (s *Service) assemble(
 		},
 		RevenueTrend:      s.trend(dates, trend),
 		CategoryBreakdown: s.categoryBreakdown(categories, kpis.CurrentRevenue.Amount),
-		RecentOrders:      s.recentOrders(recentOrders),
+		RecentOrders:      s.recentOrders(recentOrders, customersByID),
 	}
 }
 
@@ -279,14 +300,19 @@ func (s *Service) categoryBreakdown(categories []contracts.CategoryRevenue, curr
 	return out
 }
 
-// recentOrders maps the newest orders. The resolved customer label and the full
-// item summary are owned by US5 (T056/T057); US1 carries the raw line facts and
-// lets the mapper format a basic summary.
-func (s *Service) recentOrders(orders []contracts.RecentOrder) []model.RecentOrder {
+// recentOrders maps the newest orders, resolving each customer from the bulk
+// read (nil when the account no longer exists) (FR-026, US5).
+func (s *Service) recentOrders(orders []contracts.RecentOrder, customersByID map[uuid.UUID]contracts.CustomerSummary) []model.RecentOrder {
 	out := make([]model.RecentOrder, 0, len(orders))
 	for _, order := range orders {
+		var customer *model.CustomerSummary
+		if summary, ok := customersByID[order.CustomerID]; ok {
+			c := model.CustomerSummary{ID: summary.ID, DisplayName: summary.DisplayName, Email: summary.Email}
+			customer = &c
+		}
 		out = append(out, model.RecentOrder{
 			ID:                   order.ID,
+			Customer:             customer,
 			Total:                money(order.Total),
 			Status:               order.Status,
 			CreatedAt:            order.CreatedAt,

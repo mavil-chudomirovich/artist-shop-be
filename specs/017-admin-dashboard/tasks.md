@@ -224,14 +224,14 @@ deleted account, the `+N` summary, and the two counts.
 
 ### Tests for User Story 5
 
-- [ ] T053 [US5] Add the recent-order cases to `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: five newest by created_at/id, first line by position, line count and total quantity, deleted-account customer id retained
-- [ ] T054 [US5] Add recent-order cases to `internal/modules/admin/application/mapper/overview_test.go`: `itemSummary` formatting, `+N`, missing customer -> nil, `itemCount` vs `itemQuantity`
-- [ ] T055 [US5] Extend `internal/modules/admin/application/implement/overview_test.go`: one bulk `CustomerSummaries` call, missing id -> nullable customer, max five orders
+- [X] T053 [US5] Add the recent-order cases to `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: five newest by created_at/id, first line by position, line count and total quantity, deleted-account customer id retained
+- [X] T054 [US5] Add recent-order cases to `internal/modules/admin/application/mapper/overview_test.go`: `itemSummary` formatting, `+N`, missing customer -> nil, `itemCount` vs `itemQuantity`
+- [X] T055 [US5] Extend `internal/modules/admin/application/implement/overview_test.go`: one bulk `CustomerSummaries` call, missing id -> nullable customer, max five orders
 
 ### Implementation for User Story 5
 
-- [ ] T056 [US5] Update `internal/modules/admin/application/implement/overview.go` to request five recent orders, deduplicate customer ids, call `CustomerSummaries` once, and map missing accounts to nil
-- [ ] T057 [US5] Update `internal/modules/admin/application/mapper/overview.go` to build `itemSummary` (`<name> <variantName> (x<quantity>)` plus ` +N`) and map the counts; trim the joined parts and avoid a double space when `variantName` is empty (legacy tombstone)
+- [X] T056 [US5] Update `internal/modules/admin/application/implement/overview.go` to request five recent orders, deduplicate customer ids, call `CustomerSummaries` once, and map missing accounts to nil
+- [X] T057 [US5] Update `internal/modules/admin/application/mapper/overview.go` to build `itemSummary` (`<name> <variantName> (x<quantity>)` plus ` +N`) and map the counts; trim the joined parts and avoid a double space when `variantName` is empty (legacy tombstone)
 
 **Checkpoint**: Recent orders are operationally useful and PII stays within the
 ADMIN-only response.

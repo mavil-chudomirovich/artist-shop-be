@@ -166,16 +166,36 @@ func weekdayLabel(day time.Weekday) string {
 	}
 }
 
-// itemSummary describes the newest order's first line. US1 uses the product name
-// and quantity as a working placeholder; the variant part and the " +N" remainder
-// are owned by US5 (T057).
+// itemSummary describes the newest order's first line. It formats the first line
+// as "<name> <variantName> (x<quantity>)" and appends " +N" when the order has
+// N more lines. The joined parts are trimmed, and an empty variant name (legacy
+// tombstone) does not leave a double space (FR-027, T057).
 func itemSummary(order model.RecentOrder) string {
 	name := strings.TrimSpace(order.FirstLineName)
-	if name == "" {
-		return ""
+	variant := strings.TrimSpace(order.FirstLineVariantName)
+
+	head := name
+	if variant != "" {
+		if head != "" {
+			head = head + " " + variant
+		} else {
+			head = variant
+		}
 	}
 	if order.FirstLineQuantity > 0 {
-		return fmt.Sprintf("%s (x%d)", name, order.FirstLineQuantity)
+		if head != "" {
+			head = fmt.Sprintf("%s (x%d)", head, order.FirstLineQuantity)
+		} else {
+			head = fmt.Sprintf("(x%d)", order.FirstLineQuantity)
+		}
 	}
-	return name
+	if order.LineCount > 1 {
+		n := order.LineCount - 1
+		if head != "" {
+			head += fmt.Sprintf(" +%d", n)
+		} else {
+			head = fmt.Sprintf("+%d", n)
+		}
+	}
+	return head
 }

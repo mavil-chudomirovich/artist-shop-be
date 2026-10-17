@@ -212,7 +212,125 @@ func TestDailyRevenueBucketsByTheShopTimezone(t *testing.T) {
 	}
 }
 
-// insertOrderWithCategory is like insertOrder but stamps the given category
+// insertOrderWithLines writes one order with several lines through the real
+// repository, so the recent-order read can be exercised against a real database
+// (T053). Lines must carry their own Position and quantity; the helper totals
+// them and stamps the order's total.
+func (f *orderStatsFixture) insertOrderWithLines(t *testing.T, userID uuid.UUID, createdAt time.Time, lines []model.OrderLine) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	total := int64(0)
+	currency := "VND"
+	for i := range lines {
+		lines[i].ID = uuid.New()
+		lines[i].OrderID = id
+		if lines[i].CreatedAt.IsZero() {
+			lines[i].CreatedAt = createdAt
+		}
+		if lines[i].UnitPrice.Currency != "" {
+			currency = lines[i].UnitPrice.Currency
+		}
+		total += lines[i].UnitPrice.Amount * lines[i].Quantity
+	}
+	order := &model.Order{
+		ID:        id,
+		UserID:    userID,
+		Status:    constant.StatusPaid,
+		Total:     model.Price{Amount: total, Currency: currency},
+		Address:   statsAddress(),
+		Version:   1,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+		Lines:     lines,
+	}
+	if err := f.repo.Create(context.Background(), order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	return id
+}
+
+// T053: the recent-order read returns at most five orders, newest first by
+// created_at then id, and carries the first line by position plus the line count
+// and total quantity. A customer id whose account no longer exists is retained
+// as a loose reference (FR-025, FR-026, FR-027, research D10).
+func TestRecentOrdersReturnsFiveNewestWithLineFacts(t *testing.T) {
+	f := newOrderStatsFixture(t)
+	ctx := context.Background()
+
+	base := time.Date(2026, time.February, 10, 12, 0, 0, 0, f.loc)
+	// Seven orders with strictly increasing creation times.
+	ids := make([]uuid.UUID, 7)
+	for i := 0; i < 7; i++ {
+		ids[i] = f.insertOrder(t, constant.StatusPaid, "VND", base.Add(time.Duration(i)*time.Hour), 1000, 1)
+	}
+
+	got, err := New(f.repo).RecentOrders(ctx, 5)
+	if err != nil {
+		t.Fatalf("RecentOrders: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("expected 5 recent orders, got %d", len(got))
+	}
+	want := map[uuid.UUID]bool{}
+	for i := 2; i < 7; i++ {
+		want[ids[i]] = true
+	}
+	for _, r := range got {
+		if !want[r.ID] {
+			t.Fatalf("unexpected order %s in the recent set", r.ID)
+		}
+	}
+	// Newest first.
+	for i := 1; i < len(got); i++ {
+		if got[i-1].CreatedAt.Before(got[i].CreatedAt) {
+			t.Fatalf("recent orders must be newest first: %+v", got)
+		}
+	}
+
+	// Multi-line order: first line by position, line count and total quantity.
+	deletedCustomer := uuid.New()
+	multiCreated := base.Add(10 * time.Hour)
+	lines := []model.OrderLine{
+		{ProductName: "Second", ProductCode: "c2", VariantName: "V2", SKU: "s2", UnitPrice: model.Price{Amount: 200, Currency: "VND"}, Quantity: 2, Position: 1},
+		{ProductName: "First", ProductCode: "c1", VariantName: "V1", SKU: "s1", UnitPrice: model.Price{Amount: 100, Currency: "VND"}, Quantity: 3, Position: 0},
+		{ProductName: "Third", ProductCode: "c3", VariantName: "", SKU: "s3", UnitPrice: model.Price{Amount: 50, Currency: "VND"}, Quantity: 1, Position: 2},
+	}
+	multiID := f.insertOrderWithLines(t, deletedCustomer, multiCreated, lines)
+
+	got2, err := New(f.repo).RecentOrders(ctx, 5)
+	if err != nil {
+		t.Fatalf("RecentOrders: %v", err)
+	}
+	var found *contracts.RecentOrder
+	for i := range got2 {
+		if got2[i].ID == multiID {
+			found = &got2[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("the multi-line order must be among the recent five")
+	}
+	if found.FirstLineName != "First" {
+		t.Fatalf("first line by position: got %q, want First", found.FirstLineName)
+	}
+	if found.FirstLineVariantName != "V1" {
+		t.Fatalf("first line variant: got %q, want V1", found.FirstLineVariantName)
+	}
+	if found.FirstLineQuantity != 3 {
+		t.Fatalf("first line quantity: got %d, want 3", found.FirstLineQuantity)
+	}
+	if found.LineCount != 3 {
+		t.Fatalf("line count: got %d, want 3", found.LineCount)
+	}
+	if found.TotalQuantity != 6 {
+		t.Fatalf("total quantity: got %d, want 6", found.TotalQuantity)
+	}
+	// Deleted-account customer id is retained as a loose reference.
+	if found.CustomerID != deletedCustomer {
+		t.Fatalf("customer id must be retained, got %s want %s", found.CustomerID, deletedCustomer)
+	}
+}
 // snapshot on the single line, so the category read can be exercised against a
 // real database (T047).
 func (f *orderStatsFixture) insertOrderWithCategory(t *testing.T, status constant.Status, currency string, createdAt time.Time, unitPrice, quantity int64, category *model.CategorySnapshot) uuid.UUID {
