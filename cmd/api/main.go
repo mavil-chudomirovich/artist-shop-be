@@ -159,7 +159,7 @@ func run() error {
 	}
 	defer db.Close()
 
-	runner, err := migrate.New(cfg.Database.URL, cfg.Migrations.LockTimeout)
+	runner, err := migrate.New(cfg.Database.URL, cfg.Migrations.LockTimeout, logger)
 	if err != nil {
 		return err
 	}
@@ -169,6 +169,8 @@ func run() error {
 		if err := runner.Up(ctx); err != nil {
 			return err
 		}
+	} else {
+		logger.Info("skipping automatic database migrations (MIGRATIONS_AUTO_APPLY=false)")
 	}
 	db.SetReady(true)
 

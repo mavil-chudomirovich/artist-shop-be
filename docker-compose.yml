@@ -28,6 +28,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB: ${POSTGRES_DB:-artist_shop}
+    ports:
+      - "${DB_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -53,6 +55,8 @@ services:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-redis-dev-password}
     volumes:
       - redisdata:/data
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s

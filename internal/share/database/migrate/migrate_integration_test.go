@@ -15,7 +15,7 @@ func TestMigrateUpDownAndVersion(t *testing.T) {
 	dsn := testsupport.PostgresDSN(t)
 	ctx := context.Background()
 
-	runner, err := New(dsn, 30*time.Second)
+	runner, err := New(dsn, 30*time.Second, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestConcurrentUpAppliesOnce(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			runner, err := New(dsn, 30*time.Second)
+			runner, err := New(dsn, 30*time.Second, nil)
 			if err != nil {
 				errs[idx] = err
 				return
@@ -67,7 +67,7 @@ func TestConcurrentUpAppliesOnce(t *testing.T) {
 		}
 	}
 
-	runner, err := New(dsn, 30*time.Second)
+	runner, err := New(dsn, 30*time.Second, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

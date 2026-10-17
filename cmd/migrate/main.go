@@ -8,6 +8,7 @@ import (
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 )
 
 func main() {
@@ -28,7 +29,7 @@ func run() error {
 		return err
 	}
 
-	runner, err := migrate.New(cfg.Database.URL, cfg.Migrations.LockTimeout)
+	runner, err := migrate.New(cfg.Database.URL, cfg.Migrations.LockTimeout, logging.New(cfg.Log.Level, os.Stderr))
 	if err != nil {
 		return err
 	}

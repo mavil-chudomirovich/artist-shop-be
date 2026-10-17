@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewAndClose(t *testing.T) {
-	runner, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second)
+	runner, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -19,13 +19,13 @@ func TestNewAndClose(t *testing.T) {
 }
 
 func TestNewTwiceReusesSetup(t *testing.T) {
-	first, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second)
+	first, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second, nil)
 	if err != nil {
 		t.Fatalf("first New failed: %v", err)
 	}
 	defer first.Close()
 
-	second, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second)
+	second, err := New("postgres://app:app@localhost:5432/artist_shop?sslmode=disable", time.Second, nil)
 	if err != nil {
 		t.Fatalf("second New failed: %v", err)
 	}
