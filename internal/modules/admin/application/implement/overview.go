@@ -246,7 +246,7 @@ func (s *Service) trend(dates []string, days []contracts.DailyRevenue) []model.R
 }
 
 // categoryBreakdown maps the category read into the admin read model: it names
-// the unresolved bucket "KhA�c", computes each share's percentage against the
+// the unresolved bucket "Khác", computes each share's percentage against the
 // KPI current-month revenue, drops categories with no revenue, and sorts by
 // amount descending, then name ascending, then id (FR-021, FR-023, FR-024).
 func (s *Service) categoryBreakdown(categories []contracts.CategoryRevenue, currentRevenue int64) []model.CategoryShare {
