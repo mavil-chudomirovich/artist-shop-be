@@ -643,6 +643,45 @@ func TestOverviewFiltersDiscontinuedCandidatesAndMapsCustomerKPIs(t *testing.T) 
 	}
 }
 
+// FR-024, T049: the category section uses the KPI current-month revenue as the
+// denominator, and the unresolved ("Khác") bucket is counted in the breakdown.
+func TestOverviewCategoryUsesCurrentRevenueAsDenominatorAndCountsUnknownBucket(t *testing.T) {
+	h := newOverviewHarness(t)
+	h.orders.kpis = contracts.OrderKPIs{
+		CurrentRevenue: contracts.Money{Amount: 1000, Currency: "VND"},
+		LastRevenue:    contracts.Money{Amount: 0, Currency: "VND"},
+	}
+	knownID := uuid.New()
+	unknownID := (*uuid.UUID)(nil)
+	h.orders.categories = []contracts.CategoryRevenue{
+		{CategoryID: &knownID, CategoryName: "Acrylic", Amount: contracts.Money{Amount: 250, Currency: "VND"}},
+		{CategoryID: unknownID, CategoryName: "", Amount: contracts.Money{Amount: 750, Currency: "VND"}},
+	}
+
+	out := h.run(t)
+
+	if len(out.CategoryBreakdown) != 2 {
+		t.Fatalf("expected 2 categories including the unknown bucket, got %d", len(out.CategoryBreakdown))
+	}
+	// percentages: 250/1000*100 = 25.0, 750/1000*100 = 75.0
+	found := map[string]float64{}
+	for _, c := range out.CategoryBreakdown {
+		found[c.CategoryName] = c.Percentage
+	}
+	if found["Acrylic"] != 25.0 {
+		t.Fatalf("Acrylic percentage = %v, want 25.0", found["Acrylic"])
+	}
+	if found[constant.UnknownCategoryName] != 75.0 {
+		t.Fatalf("unknown bucket percentage = %v, want 75.0", found[constant.UnknownCategoryName])
+	}
+	// unknown bucket must carry a nil id
+	for _, c := range out.CategoryBreakdown {
+		if c.CategoryName == constant.UnknownCategoryName && c.CategoryID != nil {
+			t.Fatalf("unknown bucket must have a nil id, got %v", c.CategoryID)
+		}
+	}
+}
+
 // FR-018: an empty candidate set still counts zero without asking the product
 // state about any id, so the read stays bounded by the low-stock set rather than
 // by the catalogue.

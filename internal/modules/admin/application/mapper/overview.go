@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/application/dto"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/admin/domain/model"
 )
 
@@ -71,13 +72,19 @@ func (m *Mapper) revenueTrend(points []model.RevenuePoint, days int) []dto.Reven
 	return out
 }
 
-// categoryBreakdown maps the category shares, preserving the caller's order.
+// categoryBreakdown maps the category shares, preserving the caller's order. A
+// share whose category could not be resolved (nil id) is labelled "Khác"
+// (FR-023); the percentage is carried through unchanged (FR-024).
 func (m *Mapper) categoryBreakdown(shares []model.CategoryShare) []dto.CategoryShare {
 	out := make([]dto.CategoryShare, 0, len(shares))
 	for _, share := range shares {
+		name := share.CategoryName
+		if share.CategoryID == nil {
+			name = constant.UnknownCategoryName
+		}
 		out = append(out, dto.CategoryShare{
 			CategoryID:   share.CategoryID,
-			CategoryName: share.CategoryName,
+			CategoryName: name,
 			Amount:       m.money(share.Amount),
 			Percentage:   share.Percentage,
 		})

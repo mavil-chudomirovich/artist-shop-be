@@ -211,3 +211,121 @@ func TestDailyRevenueBucketsByTheShopTimezone(t *testing.T) {
 		t.Fatalf("expected exactly two local days, got %v", byDay)
 	}
 }
+
+// insertOrderWithCategory is like insertOrder but stamps the given category
+// snapshot on the single line, so the category read can be exercised against a
+// real database (T047).
+func (f *orderStatsFixture) insertOrderWithCategory(t *testing.T, status constant.Status, currency string, createdAt time.Time, unitPrice, quantity int64, category *model.CategorySnapshot) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	line := model.OrderLine{
+		ID:          uuid.New(),
+		OrderID:     id,
+		ProductID:   uuid.New(),
+		VariantID:   uuid.New(),
+		ProductName: "Product " + id.String()[:8],
+		ProductCode: "code-" + id.String()[:8],
+		VariantName: "Variant",
+		SKU:         "sku-" + id.String()[:8],
+		UnitPrice:   model.Price{Amount: unitPrice, Currency: currency},
+		Quantity:    quantity,
+		Position:    0,
+		CreatedAt:   createdAt,
+		Category:    category,
+	}
+	order := &model.Order{
+		ID:        id,
+		UserID:    uuid.New(),
+		Status:    status,
+		Total:     model.Price{Amount: unitPrice * quantity, Currency: currency},
+		Address:   statsAddress(),
+		Version:   1,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+		Lines:     []model.OrderLine{line},
+	}
+	if err := f.repo.Create(context.Background(), order); err != nil {
+		t.Fatalf("create order: %v", err)
+	}
+	return id
+}
+
+// T047: the category snapshot persists on the line and is returned by the read,
+// so a later change to the product's category cannot move historical revenue.
+func TestCategoryRevenueKeepsTheSnapshottedCategory(t *testing.T) {
+	f := newOrderStatsFixture(t)
+	ctx := context.Background()
+
+	catA := uuid.New()
+	catB := uuid.New()
+	catNameA := "Category A"
+	catNameB := "Category B"
+
+	// Seed the categories so the backfill-style scenario is realistic; the
+	// snapshot itself is what the read uses, not this table.
+	if _, err := f.pool.Exec(ctx, `INSERT INTO categories (id, name, normalized_name, slug, normalized_slug, description, position, is_visible) VALUES ($1, $2, $3, $4, $5, '', 0, true)`, catA, catNameA, "category-a", "category-a", "category-a"); err != nil {
+		t.Fatalf("seed category A: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `INSERT INTO categories (id, name, normalized_name, slug, normalized_slug, description, position, is_visible) VALUES ($1, $2, $3, $4, $5, '', 0, true)`, catB, catNameB, "category-b", "category-b", "category-b"); err != nil {
+		t.Fatalf("seed category B: %v", err)
+	}
+
+	window := contracts.TimeWindow{
+		From: time.Date(2026, time.February, 1, 0, 0, 0, 0, f.loc),
+		To:   time.Date(2026, time.March, 1, 0, 0, 0, 0, f.loc),
+	}
+	at := time.Date(2026, time.February, 10, 12, 0, 0, 0, f.loc)
+
+	// Line sold under category A.
+	f.insertOrderWithCategory(t, constant.StatusPaid, "VND", at, 1000, 1, &model.CategorySnapshot{ID: catA, Name: catNameA})
+	// Line sold under category B.
+	f.insertOrderWithCategory(t, constant.StatusPaid, "VND", at, 2000, 1, &model.CategorySnapshot{ID: catB, Name: catNameB})
+	// Legacy line with no snapshot.
+	f.insertOrderWithCategory(t, constant.StatusPaid, "VND", at, 500, 1, nil)
+
+	got, err := New(f.repo).CategoryRevenue(ctx, window)
+	if err != nil {
+		t.Fatalf("CategoryRevenue: %v", err)
+	}
+
+	byID := make(map[string]int64)
+	var nullAmount int64
+	var nullFound bool
+	for _, c := range got {
+		if c.CategoryID == nil {
+			nullAmount = c.Amount.Amount
+			nullFound = true
+			if c.CategoryName != "" {
+				t.Fatalf("null snapshot must carry an empty name from the read, got %q", c.CategoryName)
+			}
+		} else {
+			byID[c.CategoryID.String()] = c.Amount.Amount
+		}
+	}
+	if byID[catA.String()] != 1000 {
+		t.Fatalf("category A revenue = %d, want 1000", byID[catA.String()])
+	}
+	if byID[catB.String()] != 2000 {
+		t.Fatalf("category B revenue = %d, want 2000", byID[catB.String()])
+	}
+	if !nullFound || nullAmount != 500 {
+		t.Fatalf("null snapshot must be returned as a null id with its revenue, got found=%v amount=%d", nullFound, nullAmount)
+	}
+
+	// A later category change (rename) must not move the snapshotted revenue:
+	// rename category A in the categories table and re-read.
+	if _, err := f.pool.Exec(ctx, `UPDATE categories SET name = 'Renamed A' WHERE id = $1`, catA); err != nil {
+		t.Fatalf("rename category: %v", err)
+	}
+	got2, err := New(f.repo).CategoryRevenue(ctx, window)
+	if err != nil {
+		t.Fatalf("CategoryRevenue after rename: %v", err)
+	}
+	for _, c := range got2 {
+		if c.CategoryID != nil && c.CategoryID.String() == catA.String() {
+			if c.CategoryName != catNameA {
+				t.Fatalf("snapshotted name must not follow the rename, got %q want %q", c.CategoryName, catNameA)
+			}
+		}
+	}
+}

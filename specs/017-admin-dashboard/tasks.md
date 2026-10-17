@@ -199,15 +199,15 @@ old revenue stays in A; create a legacy/null-category line and verify it appears
 
 ### Tests for User Story 4
 
-- [ ] T047 [US4] Add the category cases to `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: snapshot persists at checkout/edit, a later category change does not move old revenue, and a null snapshot is returned as a null id
-- [ ] T048 [P] [US4] Add `internal/modules/admin/application/mapper/overview_test.go`: null id -> "Khác", percentage 1-decimal, amount-desc/name-asc ordering
-- [ ] T049 [US4] Extend `internal/modules/admin/application/implement/overview_test.go`: the category section uses the KPI current-month revenue as the denominator and the unknown bucket is counted
+- [X] T047 [US4] Add the category cases to `internal/modules/order/infrastructure/implement/statistics/statistics_integration_test.go`: snapshot persists at checkout/edit, a later category change does not move old revenue, and a null snapshot is returned as a null id
+- [X] T048 [P] [US4] Add `internal/modules/admin/application/mapper/overview_test.go`: null id -> "Khác", percentage 1-decimal, amount-desc/name-asc ordering
+- [X] T049 [US4] Extend `internal/modules/admin/application/implement/overview_test.go`: the category section uses the KPI current-month revenue as the denominator and the unknown bucket is counted
 
 ### Implementation for User Story 4
 
-- [ ] T050 [US4] Update `internal/modules/admin/application/implement/overview.go`: map `CategoryRevenue`, name null ids "Khác", compute percentage, sort and filter `amount > 0`
-- [ ] T051 [US4] Update `internal/modules/admin/application/mapper/overview.go` for the category share fields and the "Khác" label
-- [ ] T052 [P] [US4] Add `migrations/admin_dashboard_migration_integration_test.go`: the 00017 backfill fills resolvable lines, the both-or-none check refuses a half snapshot, and Down/Up is reversible
+- [X] T050 [US4] Update `internal/modules/admin/application/implement/overview.go`: map `CategoryRevenue`, name null ids "Khác", compute percentage, sort and filter `amount > 0`
+- [X] T051 [US4] Update `internal/modules/admin/application/mapper/overview.go` for the category share fields and the "Khác" label
+- [X] T052 [P] [US4] Add `migrations/admin_dashboard_migration_integration_test.go`: the 00017 backfill fills resolvable lines, the both-or-none check refuses a half snapshot, and Down/Up is reversible
 
 **Checkpoint**: Historical category revenue is stable and reconciled.
 

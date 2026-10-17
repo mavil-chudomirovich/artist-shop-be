@@ -34,3 +34,7 @@ const (
 	// TargetIDOverview is the audit target id of the overview endpoint.
 	TargetIDOverview = "overview"
 )
+
+// UnknownCategoryName is the bucket name for order lines whose category could
+// not be resolved (FR-023).
+const UnknownCategoryName = "Khác"

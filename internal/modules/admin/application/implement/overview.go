@@ -2,6 +2,7 @@ package implement
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -195,7 +196,7 @@ func (s *Service) assemble(
 			},
 		},
 		RevenueTrend:      s.trend(dates, trend),
-		CategoryBreakdown: s.categoryBreakdown(categories),
+		CategoryBreakdown: s.categoryBreakdown(categories, kpis.CurrentRevenue.Amount),
 		RecentOrders:      s.recentOrders(recentOrders),
 	}
 }
@@ -223,17 +224,58 @@ func (s *Service) trend(dates []string, days []contracts.DailyRevenue) []model.R
 	return out
 }
 
-// categoryBreakdown maps the category read. The unresolved bucket's label
-// ("Khác"), the percentage and the ordering/filter are owned by US4 (T050).
-func (s *Service) categoryBreakdown(categories []contracts.CategoryRevenue) []model.CategoryShare {
+// categoryBreakdown maps the category read into the admin read model: it names
+// the unresolved bucket "KhA�c", computes each share's percentage against the
+// KPI current-month revenue, drops categories with no revenue, and sorts by
+// amount descending, then name ascending, then id (FR-021, FR-023, FR-024).
+func (s *Service) categoryBreakdown(categories []contracts.CategoryRevenue, currentRevenue int64) []model.CategoryShare {
 	out := make([]model.CategoryShare, 0, len(categories))
 	for _, category := range categories {
+		name := category.CategoryName
+		if category.CategoryID == nil {
+			name = constant.UnknownCategoryName
+		}
 		out = append(out, model.CategoryShare{
 			CategoryID:   category.CategoryID,
-			CategoryName: category.CategoryName,
+			CategoryName: name,
 			Amount:       money(category.Amount),
+			Percentage:   model.Percentage(category.Amount.Amount, currentRevenue),
 		})
 	}
+
+	// Keep only categories that actually earned revenue (FR-024).
+	filtered := out[:0]
+	for _, share := range out {
+		if share.Amount.Amount > 0 {
+			filtered = append(filtered, share)
+		}
+	}
+	out = filtered
+
+	// Sort by amount desc, then name asc, then id (nil last) (FR-024).
+	// Use a stable sort so equal keys keep their input order.
+	// (import "sort")
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Amount.Amount != out[j].Amount.Amount {
+			return out[i].Amount.Amount > out[j].Amount.Amount
+		}
+		if out[i].CategoryName != out[j].CategoryName {
+			return out[i].CategoryName < out[j].CategoryName
+		}
+		// then id: nil sorts last
+		idI, idJ := out[i].CategoryID, out[j].CategoryID
+		if idI == nil && idJ == nil {
+			return false
+		}
+		if idI == nil {
+			return false
+		}
+		if idJ == nil {
+			return true
+		}
+		return idI.String() < idJ.String()
+	})
+
 	return out
 }
 
