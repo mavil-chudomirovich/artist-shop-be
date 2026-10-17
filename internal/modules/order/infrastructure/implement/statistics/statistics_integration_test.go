@@ -331,6 +331,7 @@ func TestRecentOrdersReturnsFiveNewestWithLineFacts(t *testing.T) {
 		t.Fatalf("customer id must be retained, got %s want %s", found.CustomerID, deletedCustomer)
 	}
 }
+
 // snapshot on the single line, so the category read can be exercised against a
 // real database (T047).
 func (f *orderStatsFixture) insertOrderWithCategory(t *testing.T, status constant.Status, currency string, createdAt time.Time, unitPrice, quantity int64, category *model.CategorySnapshot) uuid.UUID {
