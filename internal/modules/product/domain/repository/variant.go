@@ -37,6 +37,13 @@ type VariantFacts struct {
 	// operator-facing code and the product's link segment, so a consumer keeps the
 	// product's public link without resolving the product.
 	ProductCode string
+	// CategoryID is the category the product currently belongs to (FR-022). The
+	// facts read always populates it for a visible variant, so the order can
+	// snapshot it on the line at checkout/edit.
+	CategoryID uuid.UUID
+	// CategoryName is the category's current name (FR-022). It is snapshotted on
+	// the same order line, so a later rename cannot change a past sale's label.
+	CategoryName string
 	// VariantName is the variant's display name at read time (FR-019).
 	VariantName string
 	// SKU is the variant's SKU at read time (FR-019). It is stored on the order
@@ -106,4 +113,12 @@ type VariantRepository interface {
 	// so the caller can tell a removed variant from an available one. It joins the
 	// caller's transaction and never opens one itself.
 	FindFactsByIDs(ctx context.Context, ids []uuid.UUID) ([]VariantFacts, error)
+
+	// DiscontinuedIDs returns the subset of the given identifiers whose variant
+	// is DISCONTINUED, in a stable order. It is the read behind the cross-module
+	// ProductVariantStates contract: the admin dashboard drops these variants from
+	// its low-stock candidates without reading module 04's table (FR-018,
+	// research D9). An empty input answers an empty slice without touching the
+	// database. It joins the caller's transaction and never opens one itself.
+	DiscontinuedIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
 }

@@ -198,6 +198,7 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 			VariantName: summary.VariantName,
 			SKU:         summary.SKU,
 			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
+			Category:    categorySnapshot(summary),
 			Quantity:    line.Quantity,
 		})
 	}
@@ -287,4 +288,16 @@ func toAddress(address contracts.CustomerAddress) model.Address {
 		WardName:       address.WardName,
 		StreetAddress:  address.StreetAddress,
 	}
+}
+
+// categorySnapshot copies the category pair from the variant facts onto an order
+// line. A zero identifier means the provider did not resolve a category (a
+// misconfigured or test-only facts source; production facts always populate it for
+// a visible variant), and is recorded as no snapshot rather than as the nil UUID
+// (FR-022, data-model.md).
+func categorySnapshot(summary contracts.VariantSummary) *model.CategorySnapshot {
+	if summary.CategoryID == uuid.Nil {
+		return nil
+	}
+	return &model.CategorySnapshot{ID: summary.CategoryID, Name: summary.CategoryName}
 }

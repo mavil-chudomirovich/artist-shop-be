@@ -107,4 +107,26 @@ type OrderRepository interface {
 	// query, not by caller discipline — and an empty input answers an empty
 	// slice without touching the database. It joins the caller's transaction.
 	FindPendingOrdersByVariants(ctx context.Context, variantIDs []uuid.UUID) ([]uuid.UUID, error)
+
+	// KPIs answers the dashboard's revenue and order figures in one
+	// conditional-aggregate query (FR-010, FR-012, FR-013, FR-014, research D7).
+	// Current and last are half-open windows built by the application in the shop
+	// timezone. It joins the caller's transaction.
+	KPIs(ctx context.Context, current, last model.TimeWindow) (model.OrderKPIs, error)
+
+	// DailyRevenue answers the window's revenue grouped by shop-timezone day.
+	// timeZone is the IANA name the query buckets with; the application zero-fills
+	// the days the result does not carry (FR-019, research D7). It joins the
+	// caller's transaction.
+	DailyRevenue(ctx context.Context, window model.TimeWindow, timeZone string) ([]model.DailyRevenue, error)
+
+	// CategoryRevenue answers the window's revenue grouped by the category
+	// snapshotted on each order line, in the deterministic amount-desc/name-asc
+	// order (FR-021, research D7). It joins the caller's transaction.
+	CategoryRevenue(ctx context.Context, window model.TimeWindow) ([]model.CategoryRevenue, error)
+
+	// RecentOrders answers at most limit newest orders, newest first, with the
+	// first line by position and the line/quantity counts (FR-025, FR-026,
+	// research D10). It joins the caller's transaction.
+	RecentOrders(ctx context.Context, limit int) ([]model.RecentOrder, error)
 }

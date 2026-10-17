@@ -68,6 +68,8 @@ const variantFactsColumns = `
 	v.product_id,
 	p.name,
 	p.code,
+	p.category_id,
+	c.name,
 	v.name,
 	v.sku,
 	v.sell_state,
@@ -314,6 +316,8 @@ func (r *VariantRepository) FindFactsByIDs(ctx context.Context, ids []uuid.UUID)
 			&facts.ProductID,
 			&facts.ProductName,
 			&facts.ProductCode,
+			&facts.CategoryID,
+			&facts.CategoryName,
 			&facts.VariantName,
 			&facts.SKU,
 			&sellState,
@@ -324,6 +328,39 @@ func (r *VariantRepository) FindFactsByIDs(ctx context.Context, ids []uuid.UUID)
 		}
 		facts.OnSale = constant.SellState(sellState) == constant.SellStateActive
 		out = append(out, facts)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DiscontinuedIDs returns the subset of the given identifiers whose variant is
+// DISCONTINUED, in a stable order. It is the read behind the cross-module
+// ProductVariantStates contract (FR-018, research D9). An empty input answers an
+// empty slice without touching the database.
+func (r *VariantRepository) DiscontinuedIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error) {
+	if len(ids) == 0 {
+		return []uuid.UUID{}, nil
+	}
+	const query = `
+		SELECT id
+		FROM product_variants
+		WHERE id = ANY($1) AND sell_state = $2
+		ORDER BY id`
+	rows, err := r.querier(ctx).Query(ctx, query, ids, string(constant.SellStateDiscontinued))
+	if err != nil {
+		return nil, fmt.Errorf("find discontinued variant ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan discontinued variant id: %w", err)
+		}
+		out = append(out, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

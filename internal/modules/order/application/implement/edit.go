@@ -204,6 +204,7 @@ func (s *Service) editedLines(ctx context.Context, orderID uuid.UUID, inputs []d
 			VariantName: summary.VariantName,
 			SKU:         summary.SKU,
 			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
+			Category:    categorySnapshot(summary),
 			Quantity:    input.Quantity,
 			Position:    i,
 			CreatedAt:   now,

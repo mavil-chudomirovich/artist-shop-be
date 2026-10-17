@@ -130,14 +130,16 @@ func seedEditProduct(f *editFixture, name, variantName string, amount, available
 	id := uuid.New()
 	suffix := id.String()[:8]
 	f.catalog.products[id] = contracts.VariantSummary{
-		VariantID:   id,
-		ProductID:   uuid.New(),
-		ProductName: name,
-		ProductCode: "P-" + suffix,
-		VariantName: variantName,
-		SKU:         "SKU-" + suffix,
-		OnSale:      true,
-		Price:       contracts.ProductPrice{Amount: amount, Currency: "VND"},
+		VariantID:    id,
+		ProductID:    uuid.New(),
+		ProductName:  name,
+		ProductCode:  "P-" + suffix,
+		CategoryID:   uuid.New(),
+		CategoryName: "Category " + suffix,
+		VariantName:  variantName,
+		SKU:          "SKU-" + suffix,
+		OnSale:       true,
+		Price:        contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
 	return id
@@ -156,13 +158,17 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 
 	// The catalogue now prices the kept product differently and carries a second
 	// one — an edit re-takes the current price rather than refusing it.
+	keptCategory := uuid.New()
 	f.catalog.products[kept] = contracts.VariantSummary{
 		VariantID: kept, ProductID: uuid.New(), ProductName: "Tranh mới", VariantName: "tranh-moi", OnSale: true,
+		CategoryID: keptCategory, CategoryName: "Category kept",
 		Price: contracts.ProductPrice{Amount: 1500, Currency: "VND"},
 	}
 	f.availability.available[kept] = 10
+	addedCategory := uuid.New()
 	f.catalog.products[added] = contracts.VariantSummary{
 		VariantID: added, ProductID: uuid.New(), ProductName: "Sản phẩm B", VariantName: "san-pham-b", OnSale: true,
+		CategoryID: addedCategory, CategoryName: "Category added",
 		Price: contracts.ProductPrice{Amount: 2000, Currency: "VND"},
 	}
 	f.availability.available[added] = 10
@@ -194,6 +200,15 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 	}
 	if view.Lines[1].VariantID != added || view.Lines[1].ProductName != "Sản phẩm B" || view.Lines[1].UnitPrice.Amount != 2000 {
 		t.Fatalf("the added line must carry the product's snapshot, got %+v", view.Lines[1])
+	}
+	// FR-022: a replaced line re-snapshots the category from the variant facts,
+	// exactly as checkout does.
+	if order.Lines[0].Category == nil || order.Lines[0].Category.ID != keptCategory ||
+		order.Lines[0].Category.Name != "Category kept" {
+		t.Fatalf("the kept line must re-snapshot its category, got %+v", order.Lines[0].Category)
+	}
+	if order.Lines[1].Category == nil || order.Lines[1].Category.ID != addedCategory {
+		t.Fatalf("the added line must snapshot its category, got %+v", order.Lines[1].Category)
 	}
 	if view.Address.RecipientName != "Nguyễn Văn A" || view.Address.StreetAddress != "1 Đinh Tiên Hoàng" {
 		t.Fatalf("an edit with no addressId must keep the current address, got %+v", view.Address)

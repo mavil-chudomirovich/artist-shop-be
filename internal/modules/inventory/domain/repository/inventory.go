@@ -129,4 +129,12 @@ type InventoryRepository interface {
 	// instant, so the sweeper can release them (FR-015, research D6). The order is
 	// the expiry, then id, so a sweep is reproducible.
 	ExpiredHolds(ctx context.Context, now time.Time) ([]model.Hold, error)
+
+	// LowStock returns every variant that has a stock record whose available
+	// quantity is below the threshold, where available is the physical level
+	// minus the active, unexpired holds floored at zero. A variant with no stock
+	// record is absent (it was never stocked), and the instant is the caller's
+	// injected clock so an expired hold is already excluded (FR-017, FR-018,
+	// research D9). It joins the caller's transaction.
+	LowStock(ctx context.Context, threshold int64, now time.Time) ([]model.LowStockVariant, error)
 }

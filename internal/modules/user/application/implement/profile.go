@@ -42,6 +42,11 @@ type Service struct {
 	// either; the default-flag transition joins the one this layer opens through
 	// Tx (FR-010).
 	Addresses repository.AddressRepository
+	// Directory answers the admin dashboard's narrow customer read model: the two
+	// customer counts and a bulk display label. It is separate from the audited
+	// operator lookup, so a dashboard refresh writes no per-customer audit
+	// (specs/017-admin-dashboard research D8).
+	Directory repository.DirectoryRepository
 	// Divisions is the only way the application layer reaches the official
 	// administrative dataset. The domain may not import it at all, which is why
 	// province and ward existence is a use-case concern (Constitution I,

@@ -47,13 +47,15 @@ func (a *Adapter) Variants(ctx context.Context, variantIDs []uuid.UUID) ([]contr
 	out := make([]contracts.VariantSummary, 0, len(facts))
 	for _, fact := range facts {
 		out = append(out, contracts.VariantSummary{
-			VariantID:   fact.VariantID,
-			ProductID:   fact.ProductID,
-			ProductName: fact.ProductName,
-			ProductCode: fact.ProductCode,
-			VariantName: fact.VariantName,
-			SKU:         fact.SKU,
-			OnSale:      fact.OnSale,
+			VariantID:    fact.VariantID,
+			ProductID:    fact.ProductID,
+			ProductName:  fact.ProductName,
+			ProductCode:  fact.ProductCode,
+			CategoryID:   fact.CategoryID,
+			CategoryName: fact.CategoryName,
+			VariantName:  fact.VariantName,
+			SKU:          fact.SKU,
+			OnSale:       fact.OnSale,
 			Price: contracts.ProductPrice{
 				Amount:   fact.Price.Amount,
 				Currency: fact.Price.Currency,

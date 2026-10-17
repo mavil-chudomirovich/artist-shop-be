@@ -63,6 +63,8 @@ var lineColumns = []string{
 	"quantity",
 	"position",
 	"created_at",
+	"category_id",
+	"category_name",
 }
 
 // OrderRepository persists the order and its lines.
@@ -137,10 +139,11 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	for i := range order.Lines {
 		line := order.Lines[i]
+		categoryID, categoryName := categoryColumnValues(line.Category)
 		if _, err := r.querier(ctx).Exec(ctx, lineQuery,
 			line.ID,
 			line.OrderID,
@@ -155,6 +158,8 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 			line.Quantity,
 			line.Position,
 			line.CreatedAt,
+			categoryID,
+			categoryName,
 		); err != nil {
 			return fmt.Errorf("create order line: %w", err)
 		}
@@ -377,14 +382,15 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
 	for i := range order.Lines {
 		line := order.Lines[i]
 		lineID := line.ID
 		if lineID == uuid.Nil {
 			lineID = uuid.New()
 		}
+		categoryID, categoryName := categoryColumnValues(line.Category)
 		if _, err := r.querier(ctx).Exec(ctx, lineQuery,
 			lineID,
 			order.ID,
@@ -399,6 +405,8 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 			line.Quantity,
 			line.Position,
 			line.CreatedAt,
+			categoryID,
+			categoryName,
 		); err != nil {
 			return fmt.Errorf("insert order line: %w", err)
 		}
@@ -547,6 +555,184 @@ func (r *OrderRepository) FindPendingOrdersByVariants(ctx context.Context, varia
 	return out, nil
 }
 
+// KPIs answers the dashboard's revenue and order figures in one
+// conditional-aggregate query (FR-010, FR-012, FR-013, FR-014, research D7). The
+// two windows are supplied by the application in the shop timezone; revenue counts
+// only the three earned states and VND, while the order counts include every state.
+// The sums are cast to bigint so the adapter never reads a numeric.
+func (r *OrderRepository) KPIs(ctx context.Context, current, last model.TimeWindow) (model.OrderKPIs, error) {
+	const query = `
+		SELECT
+			COALESCE(sum(total_amount) FILTER (
+				WHERE status IN ('PAID', 'SHIPPED', 'COMPLETED')
+				  AND currency = 'VND'
+				  AND created_at >= $1 AND created_at < $2
+			), 0)::bigint,
+			COALESCE(sum(total_amount) FILTER (
+				WHERE status IN ('PAID', 'SHIPPED', 'COMPLETED')
+				  AND currency = 'VND'
+				  AND created_at >= $3 AND created_at < $4
+			), 0)::bigint,
+			count(*) FILTER (WHERE created_at >= $1 AND created_at < $2)::bigint,
+			count(*) FILTER (WHERE created_at >= $3 AND created_at < $4)::bigint,
+			count(*)::bigint,
+			count(*) FILTER (WHERE status = 'PENDING')::bigint
+		FROM orders`
+	var kpis model.OrderKPIs
+	if err := r.querier(ctx).QueryRow(ctx, query,
+		current.From, current.To,
+		last.From, last.To,
+	).Scan(
+		&kpis.CurrentRevenue.Amount,
+		&kpis.LastRevenue.Amount,
+		&kpis.CurrentOrders,
+		&kpis.LastOrders,
+		&kpis.TotalOrders,
+		&kpis.PendingConfirmation,
+	); err != nil {
+		return model.OrderKPIs{}, fmt.Errorf("read order kpis: %w", err)
+	}
+	return kpis, nil
+}
+
+// DailyRevenue answers the window's revenue grouped by shop-timezone day. The
+// database buckets with the IANA name the application supplied, so a late-evening
+// UTC instant lands on the operator's calendar day; the application zero-fills the
+// days the result does not carry (FR-019, research D7).
+func (r *OrderRepository) DailyRevenue(ctx context.Context, window model.TimeWindow, timeZone string) ([]model.DailyRevenue, error) {
+	const query = `
+		SELECT to_char(o.created_at AT TIME ZONE $3, 'YYYY-MM-DD') AS day,
+		       sum(o.total_amount)::bigint AS amount
+		FROM orders o
+		WHERE o.status IN ('PAID', 'SHIPPED', 'COMPLETED')
+		  AND o.currency = 'VND'
+		  AND o.created_at >= $1 AND o.created_at < $2
+		GROUP BY day
+		ORDER BY day`
+	rows, err := r.querier(ctx).Query(ctx, query, window.From, window.To, timeZone)
+	if err != nil {
+		return nil, fmt.Errorf("read daily revenue: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.DailyRevenue, 0)
+	for rows.Next() {
+		var day model.DailyRevenue
+		if err := rows.Scan(&day.Date, &day.Amount.Amount); err != nil {
+			return nil, fmt.Errorf("scan daily revenue: %w", err)
+		}
+		out = append(out, day)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CategoryRevenue answers the window's revenue grouped by the category snapshot on
+// each order line. Line totals are the same numbers that make up orders.total_amount,
+// so the breakdown (including the unresolved bucket) reconciles with the revenue KPI.
+// A null category_id is returned as a nil id; the application names that bucket
+// "Khác" (FR-021, FR-023, research D7).
+func (r *OrderRepository) CategoryRevenue(ctx context.Context, window model.TimeWindow) ([]model.CategoryRevenue, error) {
+	const query = `
+		SELECT oi.category_id,
+		       COALESCE(oi.category_name, '') AS category_name,
+		       sum(oi.quantity * oi.unit_price_amount)::bigint AS amount
+		FROM orders o
+		JOIN order_items oi ON oi.order_id = o.id
+		WHERE o.status IN ('PAID', 'SHIPPED', 'COMPLETED')
+		  AND o.currency = 'VND'
+		  AND o.created_at >= $1 AND o.created_at < $2
+		GROUP BY oi.category_id, oi.category_name
+		ORDER BY amount DESC, category_name ASC, oi.category_id ASC`
+	rows, err := r.querier(ctx).Query(ctx, query, window.From, window.To)
+	if err != nil {
+		return nil, fmt.Errorf("read category revenue: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.CategoryRevenue, 0)
+	for rows.Next() {
+		var revenue model.CategoryRevenue
+		if err := rows.Scan(&revenue.CategoryID, &revenue.CategoryName, &revenue.Amount.Amount); err != nil {
+			return nil, fmt.Errorf("scan category revenue: %w", err)
+		}
+		out = append(out, revenue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RecentOrders answers at most limit newest orders, newest first (created_at then
+// id). Two lateral projections keep the statement single and bounded: the first
+// line by position and the line/quantity counts. Any order state is included
+// (FR-025, FR-026, research D10).
+func (r *OrderRepository) RecentOrders(ctx context.Context, limit int) ([]model.RecentOrder, error) {
+	if limit <= 0 {
+		return []model.RecentOrder{}, nil
+	}
+	const query = `
+		SELECT o.id, o.user_id, o.total_amount, o.currency, o.status, o.created_at,
+		       COALESCE(first_line.name, '') AS first_line_name,
+		       COALESCE(first_line.variant_name, '') AS first_line_variant_name,
+		       COALESCE(first_line.quantity, 0)::bigint AS first_line_quantity,
+		       counts.line_count,
+		       counts.total_quantity
+		FROM orders o
+		LEFT JOIN LATERAL (
+			SELECT oi.name, oi.variant_name, oi.quantity
+			FROM order_items oi
+			WHERE oi.order_id = o.id
+			ORDER BY oi.position, oi.id
+			LIMIT 1
+		) first_line ON true
+		LEFT JOIN LATERAL (
+			SELECT count(*)::bigint AS line_count,
+			       COALESCE(sum(oi.quantity), 0)::bigint AS total_quantity
+			FROM order_items oi
+			WHERE oi.order_id = o.id
+		) counts ON true
+		ORDER BY o.created_at DESC, o.id DESC
+		LIMIT $1`
+	rows, err := r.querier(ctx).Query(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read recent orders: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.RecentOrder, 0, limit)
+	for rows.Next() {
+		var (
+			recent model.RecentOrder
+			status string
+		)
+		if err := rows.Scan(
+			&recent.ID,
+			&recent.CustomerID,
+			&recent.Total.Amount,
+			&recent.Total.Currency,
+			&status,
+			&recent.CreatedAt,
+			&recent.FirstLineName,
+			&recent.FirstLineVariantName,
+			&recent.FirstLineQuantity,
+			&recent.LineCount,
+			&recent.TotalQuantity,
+		); err != nil {
+			return nil, fmt.Errorf("scan recent order: %w", err)
+		}
+		recent.Status = constant.Status(status)
+		out = append(out, recent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // loadLines reads one order's lines in position order and attaches them, so a
 // detail read never depends on a product still existing (research D3).
 func (r *OrderRepository) loadLines(ctx context.Context, order *model.Order) error {
@@ -633,7 +819,11 @@ func scanOrder(row baserepo.Row) (*model.Order, error) {
 
 // scanLine reads one row of lineColumns.
 func scanLine(row baserepo.Row) (*model.OrderLine, error) {
-	var line model.OrderLine
+	var (
+		line         model.OrderLine
+		categoryID   *uuid.UUID
+		categoryName *string
+	)
 	if err := row.Scan(
 		&line.ID,
 		&line.OrderID,
@@ -648,10 +838,26 @@ func scanLine(row baserepo.Row) (*model.OrderLine, error) {
 		&line.Quantity,
 		&line.Position,
 		&line.CreatedAt,
+		&categoryID,
+		&categoryName,
 	); err != nil {
 		return nil, fmt.Errorf("scan order line: %w", err)
 	}
+	if categoryID != nil && categoryName != nil {
+		line.Category = &model.CategorySnapshot{ID: *categoryID, Name: *categoryName}
+	}
 	return &line, nil
+}
+
+// categoryColumnValues flattens an optional category snapshot into the two
+// nullable column values the line inserts write. A nil snapshot — or one whose
+// identifier is the nil UUID, which no real category carries — writes two NULLs,
+// the state order_items_category_ck accepts for a legacy line (T007).
+func categoryColumnValues(category *model.CategorySnapshot) (id, name any) {
+	if category == nil || category.ID == uuid.Nil {
+		return nil, nil
+	}
+	return category.ID, category.Name
 }
 
 // scanSummary reads one row of the list projection.

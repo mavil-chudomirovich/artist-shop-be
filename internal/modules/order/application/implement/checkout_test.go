@@ -252,14 +252,16 @@ func seedProduct(f *checkoutFixture, name, variantName string, amount, available
 	id := uuid.New()
 	suffix := id.String()[:8]
 	f.catalog.products[id] = contracts.VariantSummary{
-		VariantID:   id,
-		ProductID:   uuid.New(),
-		ProductName: name,
-		ProductCode: "P-" + suffix,
-		VariantName: variantName,
-		SKU:         "SKU-" + suffix,
-		OnSale:      true,
-		Price:       contracts.ProductPrice{Amount: amount, Currency: "VND"},
+		VariantID:    id,
+		ProductID:    uuid.New(),
+		ProductName:  name,
+		ProductCode:  "P-" + suffix,
+		CategoryID:   uuid.New(),
+		CategoryName: "Category " + suffix,
+		VariantName:  variantName,
+		SKU:          "SKU-" + suffix,
+		OnSale:       true,
+		Price:        contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
 	return id
@@ -365,6 +367,17 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsNothing(t *testing.T) {
 		if line.OrderID != created.ID {
 			t.Errorf("line %d is not linked to the order", i)
 		}
+	}
+	// FR-022: each line carries the category snapshot from the variant facts, so a
+	// later category change or rename cannot move historical revenue.
+	if firstCategory := f.catalog.products[first].CategoryID; created.Lines[0].Category == nil ||
+		created.Lines[0].Category.ID != firstCategory ||
+		created.Lines[0].Category.Name != f.catalog.products[first].CategoryName {
+		t.Fatalf("the first line must snapshot the variant's category, got %+v", created.Lines[0].Category)
+	}
+	if secondCategory := f.catalog.products[second].CategoryID; created.Lines[1].Category == nil ||
+		created.Lines[1].Category.ID != secondCategory {
+		t.Fatalf("the second line must snapshot its own variant's category, got %+v", created.Lines[1].Category)
 	}
 
 	// FR-001, FR-002: checkout holds nothing — the goods are set aside only when

@@ -31,26 +31,32 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 	onSaleID := uuid.New()
 	draftID := uuid.New()
 	productID := uuid.New()
+	onSaleCategory := uuid.New()
+	draftCategory := uuid.New()
 	repo := &fakeRepository{facts: []domainrepo.VariantFacts{
 		{
-			VariantID:   onSaleID,
-			ProductID:   productID,
-			ProductName: "Tranh sơn dầu",
-			ProductCode: "tranh-son-dau",
-			VariantName: "Khổ lớn",
-			SKU:         "SKU-1",
-			OnSale:      true,
-			Price:       model.Price{Amount: 120000, Currency: "VND"},
+			VariantID:    onSaleID,
+			ProductID:    productID,
+			ProductName:  "Tranh sơn dầu",
+			ProductCode:  "tranh-son-dau",
+			CategoryID:   onSaleCategory,
+			CategoryName: "Tranh",
+			VariantName:  "Khổ lớn",
+			SKU:          "SKU-1",
+			OnSale:       true,
+			Price:        model.Price{Amount: 120000, Currency: "VND"},
 		},
 		{
-			VariantID:   draftID,
-			ProductID:   productID,
-			ProductName: "Tranh sắp ra mắt",
-			ProductCode: "tranh-sap-ra-mat",
-			VariantName: "Khổ nhỏ",
-			SKU:         "SKU-2",
-			OnSale:      false,
-			Price:       model.Price{Amount: 90000, Currency: "VND"},
+			VariantID:    draftID,
+			ProductID:    productID,
+			ProductName:  "Tranh sắp ra mắt",
+			ProductCode:  "tranh-sap-ra-mat",
+			CategoryID:   draftCategory,
+			CategoryName: "Tranh mới",
+			VariantName:  "Khổ nhỏ",
+			SKU:          "SKU-2",
+			OnSale:       false,
+			Price:        model.Price{Amount: 90000, Currency: "VND"},
 		},
 	}}
 
@@ -64,6 +70,14 @@ func TestVariantsMapsTheDomainFactsToTheContract(t *testing.T) {
 
 	if got[0].VariantID != onSaleID || got[0].ProductName != "Tranh sơn dầu" || got[0].ProductCode != "tranh-son-dau" {
 		t.Errorf("first summary = %+v", got[0])
+	}
+	// FR-022: the category pair travels with the facts unchanged, so checkout can
+	// snapshot it on the order line.
+	if got[0].CategoryID != onSaleCategory || got[0].CategoryName != "Tranh" {
+		t.Errorf("first category = %s/%q, want %s/Tranh", got[0].CategoryID, got[0].CategoryName, onSaleCategory)
+	}
+	if got[1].CategoryID != draftCategory || got[1].CategoryName != "Tranh mới" {
+		t.Errorf("second category = %s/%q, want %s/Tranh mới", got[1].CategoryID, got[1].CategoryName, draftCategory)
 	}
 	if !got[0].OnSale {
 		t.Errorf("an ACTIVE variant must report OnSale=true")

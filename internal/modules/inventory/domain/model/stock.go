@@ -97,3 +97,13 @@ func (s Stock) Decrease(amount int64) (Stock, error) {
 	s.Quantity -= amount
 	return s, nil
 }
+
+// LowStockVariant is one variant the dashboard should warn about: it has a stock
+// record and its available quantity (physical minus active, unexpired holds) is
+// below the requested threshold (FR-017, FR-018, research D9).
+type LowStockVariant struct {
+	// VariantID identifies the variant.
+	VariantID uuid.UUID
+	// Available is the sellable quantity after active holds, floored at zero.
+	Available int64
+}

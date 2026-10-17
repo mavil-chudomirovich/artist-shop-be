@@ -344,6 +344,45 @@ func (r *InventoryRepository) Availability(ctx context.Context, variantIDs []uui
 	return out, nil
 }
 
+// LowStock returns every variant that has a stock record whose available quantity
+// is below the threshold. Available is the physical level minus the active,
+// unexpired holds, floored at zero; the comparison is against the instant the
+// caller passed, never the database clock, so an expired hold the sweeper has not
+// reached is already excluded. A variant with no stock row is absent, because it
+// was never stocked (FR-017, FR-018, research D9).
+func (r *InventoryRepository) LowStock(ctx context.Context, threshold int64, now time.Time) ([]model.LowStockVariant, error) {
+	const query = `
+		SELECT l.variant_id,
+		       GREATEST(l.quantity - COALESCE(h.held, 0), 0)::bigint AS available
+		FROM stock_levels l
+		LEFT JOIN (
+			SELECT variant_id, sum(quantity) AS held
+			FROM stock_holds
+			WHERE status = 'ACTIVE' AND expires_at > $2
+			GROUP BY variant_id
+		) h ON h.variant_id = l.variant_id
+		WHERE GREATEST(l.quantity - COALESCE(h.held, 0), 0) < $1
+		ORDER BY l.variant_id`
+	rows, err := r.querier(ctx).Query(ctx, query, threshold, now)
+	if err != nil {
+		return nil, fmt.Errorf("read low stock variants: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.LowStockVariant, 0)
+	for rows.Next() {
+		var variant model.LowStockVariant
+		if err := rows.Scan(&variant.VariantID, &variant.Available); err != nil {
+			return nil, fmt.Errorf("scan low stock variant: %w", err)
+		}
+		out = append(out, variant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FindActiveHold returns the active hold of one order and variant, reporting
 // whether one exists. An expired hold is not active even before it is swept, so a
 // payment arriving after expiry finds nothing to consume (FR-015, research D6).

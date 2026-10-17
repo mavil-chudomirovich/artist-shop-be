@@ -38,6 +38,17 @@ type Price struct {
 	Currency string
 }
 
+// CategorySnapshot is the category a line was sold under: its identity and the
+// name as it read at that instant. It is a snapshot rather than a reference, so a
+// later rename or deletion of the category cannot change a past sale's label
+// (FR-022, research D2).
+type CategorySnapshot struct {
+	// ID identifies the category the product belonged to at checkout.
+	ID uuid.UUID
+	// Name is the category name at the same instant.
+	Name string
+}
+
 // OrderLine is one item of an order. It holds a snapshot of the product and the
 // variant as they were at checkout, so nothing an order line shows depends on the
 // product or its variant still existing (FR-002, research D3, D8).
@@ -66,6 +77,10 @@ type OrderLine struct {
 	SKU string
 	// UnitPrice is the price at checkout, as an integer amount plus its currency.
 	UnitPrice Price
+	// Category is the category snapshot taken at checkout. It is nil only for a
+	// legacy line whose variant or category could not be resolved; new lines
+	// always carry it (FR-022, data-model.md).
+	Category *CategorySnapshot
 	// Quantity is how many, at least 1.
 	Quantity int64
 	// Position is the order the lines are listed in.
