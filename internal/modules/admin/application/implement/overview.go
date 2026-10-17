@@ -48,9 +48,9 @@ func New(deps Service) *Service { return &deps }
 // section — and assembles the four KPI groups, the trend, the category breakdown
 // and the newest orders. The windows are the fair shop-timezone ones from the
 // domain: month-to-date against the same previous-month period, a Monday week and
-// the trailing trend days. The category, customer and recent-order composition
-// rules remain owned by US4/US5 (T050, T056); US2 owns the windows, growth and the
-// trend zero-fill.
+// the trailing trend days. US2 owns the windows, growth and the trend zero-fill;
+// US3 owns the low-stock filter and the customer KPIs. The category and
+// recent-order composition rules remain owned by US4/US5 (T050, T056).
 func (s *Service) Overview(ctx context.Context, in dto.OverviewInput) (dto.Overview, error) {
 	days := in.Days
 	if days <= 0 {

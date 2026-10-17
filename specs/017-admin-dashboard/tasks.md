@@ -154,13 +154,13 @@ count and both customer counts.
 
 ### Tests for User Story 3
 
-- [ ] T040 [P] [US3] Add the low-stock integration cases to `internal/modules/inventory/infrastructure/implement/statistics/statistics_integration_test.go`: active hold lowers available, expired hold does not, no stock row is absent, threshold is exclusive
-- [ ] T041 [P] [US3] Add the customer KPI integration cases to `internal/modules/user/infrastructure/implement/postgres/directory_integration_test.go`: active only, Monday-to-now week, pending/disabled excluded
-- [ ] T042 [US3] Extend `internal/modules/admin/application/implement/overview_test.go`: the admin filters `DISCONTINUED` ids out of the low-stock candidates and maps both customer KPIs
+- [X] T040 [P] [US3] Add the low-stock integration cases to `internal/modules/inventory/infrastructure/implement/statistics/statistics_integration_test.go`: active hold lowers available, expired hold does not, no stock row is absent, threshold is exclusive
+- [X] T041 [P] [US3] Add the customer KPI integration cases to `internal/modules/user/infrastructure/implement/postgres/directory_integration_test.go`: active only, Monday-to-now week, pending/disabled excluded
+- [X] T042 [US3] Extend `internal/modules/admin/application/implement/overview_test.go`: the admin filters `DISCONTINUED` ids out of the low-stock candidates and maps both customer KPIs
 
 ### Implementation for User Story 3
 
-- [ ] T043 [US3] Update `internal/modules/admin/application/implement/overview.go` to call `CustomerStatistics.KPIs`, `InventoryStatistics.LowStockVariants` and `ProductVariantStates.DiscontinuedVariantIDs`, remove the discontinued ids, and set `lowStockCount`/customer KPIs
+- [X] T043 [US3] Update `internal/modules/admin/application/implement/overview.go` to call `CustomerStatistics.KPIs`, `InventoryStatistics.LowStockVariants` and `ProductVariantStates.DiscontinuedVariantIDs`, remove the discontinued ids, and set `lowStockCount`/customer KPIs
 
 **Checkpoint**: Inventory and customer sections are accurate independently.
 

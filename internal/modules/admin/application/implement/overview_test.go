@@ -602,3 +602,59 @@ func TestOverviewUsesTheShopTimezoneAtTheMonthBoundary(t *testing.T) {
 		t.Fatalf("the trend must end on the local day 2026-11-01, got %q", out.RevenueTrend[len(out.RevenueTrend)-1].Date)
 	}
 }
+
+// --- US3: accurate low-stock and customer KPIs ---------------------------
+
+// FR-015, FR-016, FR-018, research D9, T042/T043: the low-stock count removes the
+// DISCONTINUED variants from the inventory candidates before counting (inventory
+// already floored availability and dropped never-stocked variants), the requested
+// threshold reaches the inventory read unchanged and is echoed, both customer KPIs
+// come straight from the customer read, and the variant-state port is asked about
+// exactly the candidate ids — so the admin never reads the product table itself.
+func TestOverviewFiltersDiscontinuedCandidatesAndMapsCustomerKPIs(t *testing.T) {
+	h := newOverviewHarness(t)
+	low, discontinued, alsoLow := uuid.New(), uuid.New(), uuid.New()
+	h.inventory.variants = []contracts.LowStockVariant{
+		{VariantID: low, Available: 1},
+		{VariantID: discontinued, Available: 0},
+		{VariantID: alsoLow, Available: 4},
+	}
+	h.variants.discontinued = []uuid.UUID{discontinued}
+	h.customers.kpis = contracts.CustomerKPIs{TotalUsers: 128, NewUsersThisWeek: 7}
+
+	out := h.run(t)
+
+	if out.KPIs.Inventory.LowStockCount != 2 {
+		t.Fatalf("lowStockCount = %d, want the two non-discontinued candidates", out.KPIs.Inventory.LowStockCount)
+	}
+	if out.KPIs.Inventory.Threshold != constant.DefaultLowStockThreshold {
+		t.Fatalf("threshold = %d, want it echoed from the request", out.KPIs.Inventory.Threshold)
+	}
+	if h.inventory.threshold != constant.DefaultLowStockThreshold {
+		t.Fatalf("the inventory read was asked for threshold %d, want %d",
+			h.inventory.threshold, constant.DefaultLowStockThreshold)
+	}
+	if out.KPIs.Customers.TotalUsers != 128 || out.KPIs.Customers.NewUsersThisWeek != 7 {
+		t.Fatalf("customer KPIs did not map: %+v", out.KPIs.Customers)
+	}
+	wantAsked := []uuid.UUID{low, discontinued, alsoLow}
+	if !reflect.DeepEqual(h.variants.asked, wantAsked) {
+		t.Fatalf("the variant-state read must be asked about exactly the candidates: got %v want %v", h.variants.asked, wantAsked)
+	}
+}
+
+// FR-018: an empty candidate set still counts zero without asking the product
+// state about any id, so the read stays bounded by the low-stock set rather than
+// by the catalogue.
+func TestOverviewCountsZeroWhenNoLowStockCandidates(t *testing.T) {
+	h := newOverviewHarness(t)
+
+	out := h.run(t)
+
+	if out.KPIs.Inventory.LowStockCount != 0 {
+		t.Fatalf("lowStockCount = %d, want 0 for an empty candidate set", out.KPIs.Inventory.LowStockCount)
+	}
+	if len(h.variants.asked) != 0 {
+		t.Fatalf("an empty candidate set must ask about no ids, got %v", h.variants.asked)
+	}
+}

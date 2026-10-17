@@ -155,3 +155,29 @@ func TestLowStockQueryAgainstPostgres(t *testing.T) {
 		t.Fatalf("expected exactly the below and floored variants, got %+v", byID)
 	}
 }
+
+// FR-017, SC-005, spec edge case "Hai hold active cho cùng variant": two active
+// holds for the same variant accumulate, so available is the level minus the sum
+// of the live holds. The variant stays a candidate while that sum keeps it below
+// the threshold, and availability never goes negative.
+func TestLowStockAccumulatesActiveHolds(t *testing.T) {
+	f := newLowStockFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	accumulated := f.insertVariant(t)
+	f.setLevel(t, accumulated, 10)
+	f.insertHold(t, accumulated, 4, "ACTIVE", now.Add(time.Hour))
+	f.insertHold(t, accumulated, 3, "ACTIVE", now.Add(2*time.Hour))
+
+	got, err := New(f.repo, fakeClock{at: now}).LowStockVariants(ctx, 5)
+	if err != nil {
+		t.Fatalf("LowStockVariants: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly the held variant, got %+v", got)
+	}
+	if got[0].VariantID != accumulated || got[0].Available != 3 {
+		t.Fatalf("two active holds must accumulate: available 10-4-3=3, got %+v", got[0])
+	}
+}

@@ -132,4 +132,38 @@ func TestDirectorySummariesBulkRead(t *testing.T) {
 	}
 }
 
+// FR-009, FR-015, FR-016, US3 acceptance 4: the dashboard asks the directory for
+// the Monday-to-now shop week, so an active CUSTOMER created in that window is a
+// new user while a Sunday (the day before Monday) is not — even though it is less
+// than a week old. Pending, disabled and ADMIN accounts never count.
+func TestDirectoryKPIsUsesTheMondayToNowWeek(t *testing.T) {
+	f := newDirectoryFixture(t)
+	ctx := context.Background()
+
+	loc, err := time.LoadLocation("Asia/Ho_Chi_Minh")
+	if err != nil {
+		t.Fatalf("load the shop timezone: %v", err)
+	}
+	// 2026-10-17 is a Saturday; the shop week began Monday 2026-10-12.
+	now := time.Date(2026, time.October, 17, 10, 0, 0, 0, loc)
+	monday := time.Date(2026, time.October, 12, 0, 0, 0, 0, loc)
+
+	inWeek := f.insertUser(t, "CUSTOMER", "active", monday.Add(36*time.Hour), nil)
+	sundayBefore := f.insertUser(t, "CUSTOMER", "active", monday.Add(-time.Hour), nil)
+	f.insertUser(t, "CUSTOMER", "pending", monday.Add(48*time.Hour), nil)
+	f.insertUser(t, "CUSTOMER", "disabled", monday.Add(48*time.Hour), nil)
+	f.insertUser(t, "ADMIN", "active", monday.Add(48*time.Hour), nil)
+
+	kpis, err := f.repo.KPIs(ctx, model.TimeWindow{From: monday, To: now})
+	if err != nil {
+		t.Fatalf("KPIs: %v", err)
+	}
+	if kpis.TotalUsers != 2 {
+		t.Fatalf("totalUsers = %d, want the two active customers (%s, %s)", kpis.TotalUsers, inWeek, sundayBefore)
+	}
+	if kpis.NewUsersThisWeek != 1 {
+		t.Fatalf("newUsersThisWeek = %d, want only the active customer created in the Monday week", kpis.NewUsersThisWeek)
+	}
+}
+
 func ptrString(value string) *string { return &value }
