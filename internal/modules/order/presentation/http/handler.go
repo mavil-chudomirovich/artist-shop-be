@@ -61,6 +61,10 @@ type Service interface {
 	// zero to five optional evidence photos, and records the act (FR-005,
 	// FR-006, FR-019).
 	StartShippingByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error)
+	// DeliverByAdmin marks an in-transit order delivered, attaching zero to five
+	// optional evidence photos, stamps the delivery instant and records the act
+	// (FR-007, FR-008, FR-019).
+	DeliverByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error)
 	// CompleteByAdmin moves a delivered order to completed and records the act
 	// (FR-011, FR-014).
 	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
@@ -519,6 +523,60 @@ func (h *Handler) StartShippingByAdmin(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
 }
 
+// DeliverByAdmin marks an in-transit order delivered, attaching zero to five
+// optional delivery photos, and records the act and the delivery instant. A move
+// the current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID
+// naming the current state; more than five photos answer 409
+// ORDER_IMAGE_LIMIT_REACHED; an unsupported photo answers 400
+// ORDER_IMAGE_TYPE_UNSUPPORTED and one over the ceiling answers 413
+// ORDER_IMAGE_TOO_LARGE, both before anything is stored; a media provider refusal
+// answers 503 ORDER_MEDIA_UNAVAILABLE (FR-007, FR-008, FR-009,
+// contracts/error-codes.md).
+//
+//	@Summary		Mark an in-transit order delivered, attaching up to five photos (administrator)
+//	@Description	Moves an in-transit order to delivered, records the delivery instant and the act naming the order and the administrator, optionally attaching up to five delivery photos. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be in transit; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized one answers 413 ORDER_IMAGE_TOO_LARGE. Administrator role required.
+//	@Tags			Orders
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path		string	true	"Order identifier"
+//	@Param			photos	formData	file	false	"Delivery evidence photo (JPEG, PNG or WebP); send the part zero to five times"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
+//	@Router			/admin/orders/{orderId}/deliver [post]
+func (h *Handler) DeliverByAdmin(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	photos, appErr := h.readEvidencePhotos(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.DeliverByAdmin(ctx, appdto.EvidenceInput{OrderID: orderID, Photos: photos})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
 // readEvidencePhotos streams the "photos" parts of a multipart body, refusing to
 // buffer more than the image ceiling per part. Reading with a ceiling is what
 // makes the size rule enforceable: a post-hoc check on an already buffered body
@@ -847,21 +905,54 @@ func toAdminOrderSummaryResponses(summaries []appdto.AdminOrderSummaryView) []ht
 }
 
 // toAdminOrderResponse maps one administrator order view to its wire shape: the
-// customer detail plus the owner, so the two shapes cannot drift apart.
+// customer detail plus the owner, so the two shapes cannot drift apart. The
+// delivery facts travel with the embedded customer detail, because the
+// administrator reads the same evidence the customer does (FR-010, FR-017).
 func toAdminOrderResponse(view appdto.AdminOrderView) httpdto.AdminOrderResponse {
 	return httpdto.AdminOrderResponse{
 		OrderResponse: toOrderResponse(appdto.OrderView{
 			OrderSummaryView: view.OrderSummaryView,
 			Address:          view.Address,
 			Lines:            view.Lines,
+			DeliveredAt:      view.DeliveredAt,
+			CompletedAt:      view.CompletedAt,
+			DeliveryPhotos:   view.DeliveryPhotos,
+			Feedback:         view.Feedback,
 		}),
 		UserID: view.UserID,
 	}
 }
 
+// toDeliveryPhotoResponses maps an order's evidence, preserving the
+// stage-then-position order the use case applied. It always allocates, so an
+// order with no evidence serialises `deliveryPhotos: []` rather than null.
+func toDeliveryPhotoResponses(photos []appdto.DeliveryPhotoView) []httpdto.DeliveryPhotoResponse {
+	out := make([]httpdto.DeliveryPhotoResponse, 0, len(photos))
+	for _, photo := range photos {
+		out = append(out, httpdto.DeliveryPhotoResponse{
+			ID:       photo.ID,
+			Stage:    photo.Stage,
+			URL:      photo.URL,
+			Width:    photo.Width,
+			Height:   photo.Height,
+			Position: photo.Position,
+		})
+	}
+	return out
+}
+
+// toFeedbackResponse maps the order's feedback, or returns nil when it has none,
+// so a detail serialises `feedback: null` (FR-015, FR-017).
+func toFeedbackResponse(feedback *appdto.FeedbackView) *httpdto.FeedbackResponse {
+	if feedback == nil {
+		return nil
+	}
+	return &httpdto.FeedbackResponse{Content: feedback.Content, CreatedAt: feedback.CreatedAt}
+}
+
 // toOrderResponse maps one order view to its wire shape. It always returns a
-// non-nil slice of lines, so an order serialises `lines: []` rather than
-// `lines: null`.
+// non-nil slice of lines and delivery photos, so an order serialises `lines: []`
+// and `deliveryPhotos: []` rather than null.
 func toOrderResponse(view appdto.OrderView) httpdto.OrderResponse {
 	lines := make([]httpdto.OrderLineResponse, 0, len(view.Lines))
 	for _, line := range view.Lines {
@@ -892,5 +983,11 @@ func toOrderResponse(view appdto.OrderView) httpdto.OrderResponse {
 			StreetAddress:  view.Address.StreetAddress,
 		},
 		Lines: lines,
+		// The delivery facts are detail-only; a list row never carries them
+		// (research D11).
+		DeliveredAt:    view.DeliveredAt,
+		CompletedAt:    view.CompletedAt,
+		DeliveryPhotos: toDeliveryPhotoResponses(view.DeliveryPhotos),
+		Feedback:       toFeedbackResponse(view.Feedback),
 	}
 }

@@ -107,6 +107,24 @@ type moneyBody struct {
 	Currency string `json:"currency"`
 }
 
+// deliveryPhotoBody is one piece of delivery evidence as a detail answer shows it
+// (contracts/openapi.yaml, DeliveryPhoto).
+type deliveryPhotoBody struct {
+	ID       uuid.UUID `json:"id"`
+	Stage    string    `json:"stage"`
+	URL      string    `json:"url"`
+	Width    int       `json:"width"`
+	Height   int       `json:"height"`
+	Position int       `json:"position"`
+}
+
+// feedbackBody is the order's own feedback as a detail answer shows it
+// (contracts/openapi.yaml, Feedback).
+type feedbackBody struct {
+	Content   string `json:"content"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type orderBody struct {
 	Data struct {
 		ID        uuid.UUID `json:"id"`
@@ -133,6 +151,10 @@ type orderBody struct {
 			LineTotal   moneyBody `json:"lineTotal"`
 			Position    int       `json:"position"`
 		} `json:"lines"`
+		DeliveredAt    *string             `json:"deliveredAt"`
+		CompletedAt    *string             `json:"completedAt"`
+		DeliveryPhotos []deliveryPhotoBody `json:"deliveryPhotos"`
+		Feedback       *feedbackBody       `json:"feedback"`
 	} `json:"data"`
 }
 
@@ -182,6 +204,39 @@ func sampleView() appdto.OrderView {
 			LineTotal:   appdto.MoneyView{Amount: 240000, Currency: "VND"},
 		}},
 	}
+}
+
+// withDeliveryFacts decorates a sample view with the delivery facts a fulfilled
+// order carries: the two instants, one dispatch and one delivery photo, and the
+// customer's feedback (FR-010, FR-015, FR-017).
+func withDeliveryFacts(view appdto.OrderView) appdto.OrderView {
+	deliveredAt := view.CreatedAt.Add(48 * time.Hour)
+	completedAt := deliveredAt.Add(24 * time.Hour)
+	view.DeliveredAt = &deliveredAt
+	view.CompletedAt = &completedAt
+	view.DeliveryPhotos = []appdto.DeliveryPhotoView{
+		{
+			ID:       uuid.New(),
+			Stage:    "SHIPPING",
+			URL:      "https://cdn.example/1.jpg",
+			Width:    100,
+			Height:   80,
+			Position: 0,
+		},
+		{
+			ID:       uuid.New(),
+			Stage:    "DELIVERED",
+			URL:      "https://cdn.example/2.jpg",
+			Width:    100,
+			Height:   80,
+			Position: 0,
+		},
+	}
+	view.Feedback = &appdto.FeedbackView{
+		Content:   "Packed carefully",
+		CreatedAt: completedAt.Add(time.Hour),
+	}
+	return view
 }
 
 // contracts/openapi.yaml: a successful checkout answers 201 with the order

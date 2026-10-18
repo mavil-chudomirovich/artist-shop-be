@@ -1297,6 +1297,41 @@ func orderStatus(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) string {
 	return status
 }
 
+// orderTotalAmount reads one order's stored committed total, so a test can prove
+// a delivery step left the total unchanged (FR-020).
+func orderTotalAmount(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) int64 {
+	t.Helper()
+	var amount int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT total_amount FROM orders WHERE id = $1`, orderID).Scan(&amount); err != nil {
+		t.Fatalf("read order total: %v", err)
+	}
+	return amount
+}
+
+// inventoryTransactionCount reads how many inventory-transaction rows the whole
+// shop holds, so a test can prove a post-paid move wrote none (FR-020).
+func inventoryTransactionCount(t *testing.T, pool *pgxpool.Pool) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM inventory_transactions`).Scan(&count); err != nil {
+		t.Fatalf("read inventory transaction count: %v", err)
+	}
+	return count
+}
+
+// orderDeliveredAt reads one order's delivery instant, or nil when it has none.
+func orderDeliveredAt(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) *time.Time {
+	t.Helper()
+	var deliveredAt *time.Time
+	if err := pool.QueryRow(context.Background(),
+		`SELECT delivered_at FROM orders WHERE id = $1`, orderID).Scan(&deliveredAt); err != nil {
+		t.Fatalf("read order delivery instant: %v", err)
+	}
+	return deliveredAt
+}
+
 // SC-001, SC-004, FR-005, FR-006, FR-009 against real PostgreSQL: dispatching a
 // paid order with two photos moves it SHIPPING and persists two SHIPPING-stage
 // evidence rows with their provider references; a six-photo request is refused
@@ -1395,4 +1430,132 @@ func TestAdminDispatchesWithPhotosAgainstPostgres(t *testing.T) {
 	} else if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
 		t.Fatalf("the refusal must name SHIPPING, got %q", body.Error.Message)
 	}
+}
+
+// SC-001, FR-007, FR-008, FR-020 against real PostgreSQL: delivering an
+// in-transit order with two photos moves it DELIVERED, stamps delivered_at and
+// persists two DELIVERED-stage evidence rows with their provider references; the
+// delivery writes no inventory_transactions row and leaves the committed total
+// unchanged (the goods were sold at PAID, so a delivery touches neither stock nor
+// money).
+func TestAdminDeliversWithPhotosAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// Confirm then pay, so the order is PAID; dispatch it (no photos) so it is
+	// SHIPPING and ready to be delivered.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-deliver", 2); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ship: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// The delivery must not touch stock or money: capture both before it runs.
+	totalBefore := orderTotalAmount(t, f.pool, orderID)
+	transactionsBefore := inventoryTransactionCount(t, f.pool)
+
+	// FR-007, FR-008: deliver with two photos reaches DELIVERED, stamps the
+	// delivery instant and persists two DELIVERED-stage evidence rows.
+	body, contentType := multipartEvidence(t, [][]byte{evidenceJPEG(), evidenceJPEG()})
+	rec = performMultipart(f.root, adminOrdersPath+"/"+orderID.String()+"/deliver", body, contentType, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deliver: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var delivered adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &delivered); err != nil {
+		t.Fatalf("decode the delivered order %q: %v", rec.Body.String(), err)
+	}
+	if delivered.Data.Status != string(constant.StatusDelivered) {
+		t.Fatalf("the order must answer DELIVERED, got %s", delivered.Data.Status)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("the stored state must be DELIVERED, got %s", got)
+	}
+	if orderDeliveredAt(t, f.pool, orderID) == nil {
+		t.Fatal("a delivery must stamp delivered_at")
+	}
+	if got := deliveryPhotoCount(t, f.pool, orderID, string(model.StageDelivered)); got != 2 {
+		t.Fatalf("expected two DELIVERED-stage photos, got %d", got)
+	}
+	// FR-010, FR-017: the delivery answer itself carries the evidence and the
+	// delivery instant the application view holds.
+	if delivered.Data.DeliveredAt == nil {
+		t.Fatal("the delivery answer must carry deliveredAt")
+	}
+	if len(delivered.Data.DeliveryPhotos) != 2 {
+		t.Fatalf("the delivery answer must carry the two photos, got %d", len(delivered.Data.DeliveryPhotos))
+	}
+	for i, photo := range delivered.Data.DeliveryPhotos {
+		if photo.Stage != string(model.StageDelivered) || photo.URL == "" || photo.Width != 100 || photo.Height != 80 {
+			t.Fatalf("delivery photo %d is not the stored evidence: %+v", i, photo)
+		}
+	}
+	if delivered.Data.Feedback != nil {
+		t.Fatalf("an order with no feedback must answer null, got %+v", delivered.Data.Feedback)
+	}
+	var publicID, url string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT public_id, url FROM order_delivery_photos WHERE order_id = $1 AND stage = 'DELIVERED' ORDER BY position LIMIT 1`,
+		orderID).Scan(&publicID, &url); err != nil {
+		t.Fatalf("read a stored photo: %v", err)
+	}
+	if publicID == "" || url == "" {
+		t.Fatalf("a stored photo must carry the provider reference, got %q/%q", publicID, url)
+	}
+
+	// FR-020: the delivery wrote no inventory_transactions row and left the total
+	// unchanged.
+	if got := inventoryTransactionCount(t, f.pool); got != transactionsBefore {
+		t.Fatalf("a delivery must write no inventory transaction, got %d want %d", got, transactionsBefore)
+	}
+	if got := orderTotalAmount(t, f.pool, orderID); got != totalBefore {
+		t.Fatalf("a delivery must leave the total unchanged, got %d want %d", got, totalBefore)
+	}
+
+	// FR-010, FR-015, FR-017: the customer's own detail projects the same evidence
+	// the operator sees, with `feedback` present and null until the customer writes
+	// one. There is no feedback route yet, so the null shape is what this asserts.
+	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("customer detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var detail orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode the customer detail %q: %v", rec.Body.String(), err)
+	}
+	if detail.Data.DeliveredAt == nil {
+		t.Fatal("the customer detail must carry deliveredAt after a delivery")
+	}
+	if len(detail.Data.DeliveryPhotos) != 2 {
+		t.Fatalf("the customer detail must carry the two delivered photos, got %d", len(detail.Data.DeliveryPhotos))
+	}
+	var detailRaw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detailRaw); err != nil {
+		t.Fatalf("decode the raw customer detail %q: %v", rec.Body.String(), err)
+	}
+	if value, present := detailRaw.Data["feedback"]; !present || string(value) != "null" {
+		t.Fatalf("the customer detail must carry feedback: null before feedback is sent, got %s", value)
+	}
+
+	f.requireAudit(t, constant.AuditOrderDelivered, orderID, testAdminID)
 }

@@ -19,12 +19,14 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
-// This file is the use-case contract of US1: dispatching a paid order with
-// evidence. StartShippingByAdmin drives PAID -> SHIPPING, uploads zero to five
-// photos and persists their references; it refuses a non-PAID order naming the
-// current state and an over-ceiling or unsupported/oversized photo BEFORE the
-// media store is called, so nothing is uploaded on a request it will refuse
-// (FR-005, FR-006, FR-009). It runs the real use case over in-memory fakes of the
+// This file is the use-case contract of US1 and US2: dispatching a paid order
+// with evidence, and marking an in-transit order delivered with evidence.
+// StartShippingByAdmin drives PAID -> SHIPPING; DeliverByAdmin drives SHIPPING ->
+// DELIVERED and stamps the delivery instant. Each uploads zero to five photos and
+// persists their references; each refuses a wrong-state order naming the current
+// state and an over-ceiling or unsupported/oversized photo BEFORE the media store
+// is called, so nothing is uploaded on a request it will refuse (FR-005, FR-006,
+// FR-007, FR-008, FR-009). It runs the real use case over in-memory fakes of the
 // repository, the auditor and the media store, so the answers asserted are the
 // service's own.
 
@@ -35,9 +37,10 @@ import (
 // dispatch writes and the photo rows so a test can assert them.
 type deliveryOrders struct {
 	appinterface.OrderRepository
-	byID    map[uuid.UUID]*model.Order
-	photos  map[uuid.UUID][]model.DeliveryPhoto
-	shipped []uuid.UUID
+	byID      map[uuid.UUID]*model.Order
+	photos    map[uuid.UUID][]model.DeliveryPhoto
+	shipped   []uuid.UUID
+	delivered []uuid.UUID
 }
 
 func (r *deliveryOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Order, error) {
@@ -54,6 +57,15 @@ func (r *deliveryOrders) StartShipping(_ context.Context, order *model.Order, _ 
 		stored.Status = order.Status
 	}
 	r.shipped = append(r.shipped, order.ID)
+	return nil
+}
+
+func (r *deliveryOrders) SaveDelivered(_ context.Context, order *model.Order, _ time.Time) error {
+	if stored, ok := r.byID[order.ID]; ok {
+		stored.Status = order.Status
+		stored.DeliveredAt = order.DeliveredAt
+	}
+	r.delivered = append(r.delivered, order.ID)
 	return nil
 }
 
@@ -134,6 +146,13 @@ func jpeg() []byte { return []byte{0xFF, 0xD8, 0xFF, 0x00, 0x11, 0x22} }
 func dispatchableOrder() *model.Order {
 	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
 	order.Status = constant.StatusPaid
+	return order
+}
+
+// deliverableOrder builds a SHIPPING order ready to be marked delivered.
+func deliverableOrder() *model.Order {
+	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	order.Status = constant.StatusShipping
 	return order
 }
 
@@ -300,6 +319,189 @@ func TestStartShippingByAdminRefusesABadPhotoBeforeUpload(t *testing.T) {
 			}
 			if order.Status != constant.StatusPaid {
 				t.Fatalf("a refused photo must leave the order PAID, got %s", order.Status)
+			}
+		})
+	}
+}
+
+// FR-007, FR-008, FR-009, FR-019: delivering an in-transit order with photos
+// moves it DELIVERED, stamps the delivery instant, uploads each photo through the
+// media store, persists their references at the DELIVERED stage and records the
+// act naming the order and the administrator.
+func TestDeliverByAdminDrivesShippingToDeliveredWithPhotos(t *testing.T) {
+	admin := uuid.New()
+	order := deliverableOrder()
+	f := newDeliveryFixture(order)
+
+	view, err := f.svc.DeliverByAdmin(adminContext(admin), appdto.EvidenceInput{
+		OrderID: order.ID,
+		Photos:  []appdto.UploadedPhoto{{Content: jpeg()}, {Content: jpeg()}},
+	})
+	if err != nil {
+		t.Fatalf("DeliverByAdmin: %v", err)
+	}
+	if view.Status != constant.StatusDelivered {
+		t.Fatalf("the order must answer DELIVERED, got %s", view.Status)
+	}
+	if order.Status != constant.StatusDelivered {
+		t.Fatalf("the persisted state must be DELIVERED, got %s", order.Status)
+	}
+	// FR-008: the delivery instant is recorded and anchors the completion window.
+	if order.DeliveredAt == nil || !order.DeliveredAt.Equal(fixedNow) {
+		t.Fatalf("delivery must stamp DeliveredAt, got %v", order.DeliveredAt)
+	}
+	if view.DeliveredAt == nil || !view.DeliveredAt.Equal(fixedNow) {
+		t.Fatalf("the answer must carry the delivery instant, got %v", view.DeliveredAt)
+	}
+	if len(f.orders.delivered) != 1 {
+		t.Fatalf("the delivery must be persisted once, got %d", len(f.orders.delivered))
+	}
+
+	if len(f.media.uploaded) != 2 {
+		t.Fatalf("every photo must reach the media store, got %d uploads", len(f.media.uploaded))
+	}
+	stored := f.orders.photos[order.ID]
+	if len(stored) != 2 {
+		t.Fatalf("both photos must be persisted, got %d", len(stored))
+	}
+	for i, photo := range stored {
+		if photo.Stage != model.StageDelivered {
+			t.Fatalf("photo %d must be DELIVERED-stage evidence, got %s", i, photo.Stage)
+		}
+		if photo.Position != i {
+			t.Fatalf("photo %d must be positioned %d, got %d", i, i, photo.Position)
+		}
+		if photo.PublicID == "" || photo.URL == "" {
+			t.Fatalf("photo %d must carry the provider reference, got %+v", i, photo)
+		}
+	}
+
+	if len(f.audit.events) != 1 {
+		t.Fatalf("delivering must record one audit entry, got %+v", f.audit.events)
+	}
+	assertAudit(t, f.audit.events[0], constant.AuditOrderDelivered, admin, order.ID)
+}
+
+// FR-008: photos are optional; a delivery with no photo still moves the order,
+// stamps the instant and never calls the media store.
+func TestDeliverByAdminAcceptsNoPhotos(t *testing.T) {
+	order := deliverableOrder()
+	f := newDeliveryFixture(order)
+
+	view, err := f.svc.DeliverByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{OrderID: order.ID})
+	if err != nil {
+		t.Fatalf("DeliverByAdmin: %v", err)
+	}
+	if view.Status != constant.StatusDelivered || order.Status != constant.StatusDelivered {
+		t.Fatalf("a delivery with no photos must still move the order, got %s/%s", view.Status, order.Status)
+	}
+	if order.DeliveredAt == nil {
+		t.Fatal("a delivery with no photos must still stamp the delivery instant")
+	}
+	if len(f.media.uploaded) != 0 {
+		t.Fatalf("a delivery with no photos must not call the media store, got %d uploads", len(f.media.uploaded))
+	}
+	if len(f.orders.photos[order.ID]) != 0 {
+		t.Fatalf("a delivery with no photos must persist no evidence, got %+v", f.orders.photos[order.ID])
+	}
+	if len(f.audit.events) != 1 {
+		t.Fatalf("the delivery must still be audited, got %+v", f.audit.events)
+	}
+}
+
+// FR-007: delivering an order that is not SHIPPING is refused naming the current
+// state, and neither the order nor the media store is touched.
+func TestDeliverByAdminRefusesANondeliverableOrderBeforeUpload(t *testing.T) {
+	for _, status := range []constant.Status{
+		constant.StatusPending,
+		constant.StatusPaymentPending,
+		constant.StatusPaid,
+		constant.StatusDelivered,
+		constant.StatusCompleted,
+		constant.StatusCancelled,
+	} {
+		order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+		order.Status = status
+		f := newDeliveryFixture(order)
+
+		_, err := f.svc.DeliverByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{
+			OrderID: order.ID,
+			Photos:  []appdto.UploadedPhoto{{Content: jpeg()}},
+		})
+		var refusal *domainerr.StateTransitionError
+		if !errors.As(err, &refusal) {
+			t.Fatalf("status %s: expected a state transition refusal, got %v", status, err)
+		}
+		if refusal.From != status || refusal.To != constant.StatusDelivered {
+			t.Fatalf("status %s: the refusal must name the current state, got %+v", status, refusal)
+		}
+		if order.Status != status {
+			t.Fatalf("status %s: a refused delivery must leave the order untouched, got %s", status, order.Status)
+		}
+		if order.DeliveredAt != nil {
+			t.Fatalf("status %s: a refused delivery must not stamp the instant", status)
+		}
+		if len(f.media.uploaded) != 0 {
+			t.Fatalf("status %s: a refused delivery must not reach the media store", status)
+		}
+		if len(f.audit.events) != 0 {
+			t.Fatalf("status %s: a refused delivery must audit nothing, got %+v", status, f.audit.events)
+		}
+	}
+}
+
+// FR-008: more than five photos are refused before the media store is called and
+// leave the order exactly as it was.
+func TestDeliverByAdminRefusesMoreThanFivePhotosBeforeUpload(t *testing.T) {
+	order := deliverableOrder()
+	f := newDeliveryFixture(order)
+
+	photos := make([]appdto.UploadedPhoto, 6)
+	for i := range photos {
+		photos[i] = appdto.UploadedPhoto{Content: jpeg()}
+	}
+	_, err := f.svc.DeliverByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{OrderID: order.ID, Photos: photos})
+	if !errors.Is(err, domainerr.ErrImageLimitReached) {
+		t.Fatalf("six photos must be refused with ORDER_IMAGE_LIMIT_REACHED, got %v", err)
+	}
+	if len(f.media.uploaded) != 0 {
+		t.Fatalf("an over-ceiling request must not reach the media store, got %d uploads", len(f.media.uploaded))
+	}
+	if order.Status != constant.StatusShipping {
+		t.Fatalf("an over-ceiling request must leave the order SHIPPING, got %s", order.Status)
+	}
+}
+
+// FR-009: an unsupported or oversized photo is refused before anything is
+// uploaded, naming the refusal a client maps to ORDER_IMAGE_TYPE_UNSUPPORTED or
+// ORDER_IMAGE_TOO_LARGE.
+func TestDeliverByAdminRefusesABadPhotoBeforeUpload(t *testing.T) {
+	cases := []struct {
+		name    string
+		content []byte
+		want    error
+	}{
+		{"unsupported format", []byte("this is not an image"), domainerr.ErrImageTypeUnsupported},
+		{"over the ceiling", append(jpeg(), bytes.Repeat([]byte{0x00}, int(model.MaxDeliveryPhotoBytes))...), domainerr.ErrImageTooLarge},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			order := deliverableOrder()
+			f := newDeliveryFixture(order)
+
+			_, err := f.svc.DeliverByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{
+				OrderID: order.ID,
+				Photos:  []appdto.UploadedPhoto{{Content: tc.content}},
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+			if len(f.media.uploaded) != 0 {
+				t.Fatalf("a refused photo must not reach the media store, got %d uploads", len(f.media.uploaded))
+			}
+			if order.Status != constant.StatusShipping {
+				t.Fatalf("a refused photo must leave the order SHIPPING, got %s", order.Status)
 			}
 		})
 	}

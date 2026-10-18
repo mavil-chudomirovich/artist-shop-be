@@ -46,6 +46,8 @@ type fakeAdmin struct {
 
 	shipView     appdto.AdminOrderView
 	shipErr      error
+	deliverView  appdto.AdminOrderView
+	deliverErr   error
 	completeView appdto.AdminOrderView
 	completeErr  error
 	confirmView  appdto.AdminOrderView
@@ -59,6 +61,7 @@ type fakeAdmin struct {
 	gotRefActor   appinterface.Actor
 	gotEvidence   appdto.EvidenceInput
 	shipCalls     int
+	deliverCalls  int
 	completeCalls int
 	confirmCalls  int
 	rejectCalls   int
@@ -81,6 +84,13 @@ func (f *fakeAdmin) StartShippingByAdmin(ctx context.Context, in appdto.Evidence
 	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
 	f.shipCalls++
 	return f.shipView, f.shipErr
+}
+
+func (f *fakeAdmin) DeliverByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error) {
+	f.gotEvidence = in
+	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
+	f.deliverCalls++
+	return f.deliverView, f.deliverErr
 }
 
 func (f *fakeAdmin) CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
@@ -137,6 +147,10 @@ type adminDetailBody struct {
 			ProductID uuid.UUID `json:"productId"`
 			Quantity  int64     `json:"quantity"`
 		} `json:"lines"`
+		DeliveredAt    *string             `json:"deliveredAt"`
+		CompletedAt    *string             `json:"completedAt"`
+		DeliveryPhotos []deliveryPhotoBody `json:"deliveryPhotos"`
+		Feedback       *feedbackBody       `json:"feedback"`
 	} `json:"data"`
 }
 
@@ -158,6 +172,24 @@ func sampleAdminView() appdto.AdminOrderView {
 		},
 		Address: base.Address,
 		Lines:   base.Lines,
+	}
+}
+
+// fulfilledAdminView is one fulfilled order view as the administrator use case
+// answers it: the sample admin view plus the delivery facts (FR-010, FR-017).
+func fulfilledAdminView() appdto.AdminOrderView {
+	base := withDeliveryFacts(sampleView())
+	return appdto.AdminOrderView{
+		AdminOrderSummaryView: appdto.AdminOrderSummaryView{
+			OrderSummaryView: base.OrderSummaryView,
+			UserID:           testCustomerID,
+		},
+		Address:        base.Address,
+		Lines:          base.Lines,
+		DeliveredAt:    base.DeliveredAt,
+		CompletedAt:    base.CompletedAt,
+		DeliveryPhotos: base.DeliveryPhotos,
+		Feedback:       base.Feedback,
 	}
 }
 
@@ -256,6 +288,44 @@ func TestAdminListRejectsInvalidStatusAndSort(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FR-010, FR-015, FR-017, FR-021: the administrator detail carries the same
+// delivery facts the customer detail does — both instants, the evidence and the
+// feedback — alongside the owner.
+func TestAdminDetailReturnsTheDeliveryFacts(t *testing.T) {
+	view := fulfilledAdminView()
+	fake := &fakeAdmin{detail: view}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodGet, adminOrdersPath+"/"+view.ID.String(), "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the admin order body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.DeliveredAt == nil || body.Data.CompletedAt == nil {
+		t.Fatalf("the fulfilled order must answer both instants, got %+v", body.Data)
+	}
+	assertInstant(t, *body.Data.DeliveredAt, *view.DeliveredAt)
+	assertInstant(t, *body.Data.CompletedAt, *view.CompletedAt)
+
+	if len(body.Data.DeliveryPhotos) != len(view.DeliveryPhotos) {
+		t.Fatalf("expected %d delivery photos, got %d", len(view.DeliveryPhotos), len(body.Data.DeliveryPhotos))
+	}
+	for i, want := range view.DeliveryPhotos {
+		got := body.Data.DeliveryPhotos[i]
+		if got.ID != want.ID || got.Stage != want.Stage || got.URL != want.URL || got.Position != want.Position {
+			t.Fatalf("delivery photo %d: got %+v, want %+v", i, got, want)
+		}
+	}
+
+	if body.Data.Feedback == nil || body.Data.Feedback.Content != view.Feedback.Content {
+		t.Fatalf("expected feedback %q, got %+v", view.Feedback.Content, body.Data.Feedback)
+	}
+	assertInstant(t, body.Data.Feedback.CreatedAt, view.Feedback.CreatedAt)
 }
 
 // FR-021: the administrator reads any order in full, with the session's actor and
@@ -508,6 +578,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/confirm"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/reject"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/ship"},
+		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/deliver"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/complete"},
 	}
 
@@ -522,7 +593,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
 				t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 			}
-			if fake.shipCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.rejectCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.shipCalls != 0 || fake.deliverCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.rejectCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("a forbidden request must not reach the use case")
 			}
 		})
@@ -553,7 +624,7 @@ func TestAdminRoutesRejectAMalformedOrderIdentifier(t *testing.T) {
 	fake := &fakeAdmin{}
 	router := newOrderAdminRouter(fake)
 
-	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship", adminOrdersPath + "/not-a-uuid/confirm", adminOrdersPath + "/not-a-uuid/reject"} {
+	for _, path := range []string{adminOrdersPath + "/not-a-uuid", adminOrdersPath + "/not-a-uuid/ship", adminOrdersPath + "/not-a-uuid/deliver", adminOrdersPath + "/not-a-uuid/confirm", adminOrdersPath + "/not-a-uuid/reject"} {
 		method := http.MethodGet
 		if path != adminOrdersPath+"/not-a-uuid" {
 			method = http.MethodPost
@@ -592,6 +663,10 @@ func (f *fakeCheckout) RejectByAdmin(context.Context, appdto.OrderRefInput) (app
 }
 
 func (f *fakeCheckout) StartShippingByAdmin(context.Context, appdto.EvidenceInput) (appdto.AdminOrderView, error) {
+	return appdto.AdminOrderView{}, nil
+}
+
+func (f *fakeCheckout) DeliverByAdmin(context.Context, appdto.EvidenceInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
 }
 
@@ -789,6 +864,169 @@ func TestAdminShipRefusesAnOverCeilingBody(t *testing.T) {
 		t.Fatalf("expected ORDER_IMAGE_TOO_LARGE, got %s", body.Error.Code)
 	}
 	if fake.shipCalls != 0 {
+		t.Fatal("an over-ceiling body must not reach the use case")
+	}
+}
+
+// FR-007, FR-008, contracts/openapi.yaml: the delivery route accepts a
+// multipart/form-data body with zero to five `photos` parts and answers 200 with
+// the order delivered, handing every photo to the use case.
+func TestAdminDeliverAcceptsMultipartPhotos(t *testing.T) {
+	delivered := sampleAdminView()
+	delivered.Status = constant.StatusDelivered
+	fake := &fakeAdmin{deliverView: delivered}
+	router := newOrderAdminRouter(fake)
+
+	body, contentType := multipartPhotos(t, [][]byte{sampledJPEG(), sampledJPEG()})
+	rec := performBody(router, http.MethodPost, adminOrdersPath+"/"+delivered.ID.String()+"/deliver", body, contentType, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var decoded adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode the delivered order %q: %v", rec.Body.String(), err)
+	}
+	if decoded.Data.Status != "DELIVERED" {
+		t.Fatalf("the delivered order must answer DELIVERED, got %s", decoded.Data.Status)
+	}
+	if fake.gotEvidence.OrderID != delivered.ID {
+		t.Fatalf("the addressed identifier must be passed through, got %s", fake.gotEvidence.OrderID)
+	}
+	if len(fake.gotEvidence.Photos) != 2 {
+		t.Fatalf("both photo parts must reach the use case, got %d", len(fake.gotEvidence.Photos))
+	}
+	if fake.gotRefActor.ID != testAdminID {
+		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotRefActor.ID)
+	}
+}
+
+// FR-008: a delivery with no body is zero photos and still answers 200.
+func TestAdminDeliverAcceptsNoPhotos(t *testing.T) {
+	delivered := sampleAdminView()
+	delivered.Status = constant.StatusDelivered
+	fake := &fakeAdmin{deliverView: delivered}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+delivered.ID.String()+"/deliver", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.gotEvidence.Photos) != 0 {
+		t.Fatalf("an empty delivery must carry no photos, got %d", len(fake.gotEvidence.Photos))
+	}
+}
+
+// contracts/error-codes.md: the delivery route without a session answers 401
+// UNAUTHENTICATED before reaching the use case.
+func TestAdminDeliverRefusesWithoutASession(t *testing.T) {
+	fake := &fakeAdmin{}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/deliver", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "UNAUTHENTICATED" {
+		t.Fatalf("expected UNAUTHENTICATED, got %s", body.Error.Code)
+	}
+	if fake.deliverCalls != 0 {
+		t.Fatal("an unauthenticated request must not reach the use case")
+	}
+}
+
+// contracts/error-codes.md: delivering an unknown order answers 404
+// ORDER_NOT_FOUND.
+func TestAdminDeliverAnswersNotFoundForAnUnknownOrder(t *testing.T) {
+	fake := &fakeAdmin{deliverErr: domainerr.ErrNotFound}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/deliver", "", "admin-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// contracts/error-codes.md: the delivery route maps every refusal to its
+// documented code and status — a wrong state (naming the current state) and an
+// over-ceiling count are 409, an unsupported photo is 400, an oversized one is
+// 413 and a media provider failure is 503.
+func TestAdminDeliverMapsItsRefusals(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{
+			name:   "delivering a non-SHIPPING order",
+			err:    domainerr.StateTransitionInvalid(constant.StatusPaid, constant.StatusDelivered),
+			status: http.StatusConflict,
+			code:   constant.CodeStateTransitionInvalid,
+		},
+		{
+			name:   "more than five photos",
+			err:    domainerr.ErrImageLimitReached,
+			status: http.StatusConflict,
+			code:   constant.CodeImageLimitReached,
+		},
+		{
+			name:   "an unsupported photo",
+			err:    domainerr.ErrImageTypeUnsupported,
+			status: http.StatusBadRequest,
+			code:   constant.CodeImageTypeUnsupported,
+		},
+		{
+			name:   "an oversized photo",
+			err:    domainerr.ErrImageTooLarge,
+			status: http.StatusRequestEntityTooLarge,
+			code:   constant.CodeImageTooLarge,
+		},
+		{
+			name:   "a media provider failure",
+			err:    domainerr.ErrMediaUnavailable,
+			status: http.StatusServiceUnavailable,
+			code:   constant.CodeMediaUnavailable,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAdmin{deliverErr: tc.err}
+			router := newOrderAdminRouter(fake)
+			rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/deliver", "", "admin-token")
+			if rec.Code != tc.status {
+				t.Fatalf("expected %d, got %d (%s)", tc.status, rec.Code, rec.Body.String())
+			}
+			if body := decodeError(t, rec); body.Error.Code != tc.code {
+				t.Fatalf("expected %s, got %s", tc.code, body.Error.Code)
+			}
+		})
+	}
+}
+
+// contracts/error-codes.md, FR-009: a body whose declared size is already over the
+// delivery route's ceiling is refused 413 ORDER_IMAGE_TOO_LARGE before the use
+// case runs.
+func TestAdminDeliverRefusesAnOverCeilingBody(t *testing.T) {
+	fake := &fakeAdmin{}
+	router := newOrderAdminRouter(fake)
+
+	req := httptest.NewRequest(http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/deliver", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.ContentLength = DeliveryEvidenceUploadCeiling() + 1
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeImageTooLarge {
+		t.Fatalf("expected ORDER_IMAGE_TOO_LARGE, got %s", body.Error.Code)
+	}
+	if fake.deliverCalls != 0 {
 		t.Fatal("an over-ceiling body must not reach the use case")
 	}
 }

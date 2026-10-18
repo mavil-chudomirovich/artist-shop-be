@@ -175,6 +175,10 @@ type OrderService interface {
 	// attaching zero to five optional dispatch photos, and records the act
 	// (FR-005, FR-006, FR-019).
 	StartShippingByAdmin(ctx context.Context, in dto.EvidenceInput) (dto.AdminOrderView, error)
+	// DeliverByAdmin marks an in-transit order delivered, attaching zero to five
+	// optional delivery photos, stamps the delivery instant and records the act
+	// (FR-007, FR-008, FR-019).
+	DeliverByAdmin(ctx context.Context, in dto.EvidenceInput) (dto.AdminOrderView, error)
 	// CompleteByAdmin moves a shipped order to completed and records the act
 	// (FR-022, FR-023).
 	CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)

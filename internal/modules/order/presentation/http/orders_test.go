@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -131,6 +132,23 @@ func TestListMineReturnsTheCallersOrders(t *testing.T) {
 	if fake.gotListActor.ID != testCustomerID {
 		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotListActor.ID)
 	}
+
+	// The delivery facts are detail-only: a list row must not carry them
+	// (research D11).
+	var raw struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode the raw list body %q: %v", rec.Body.String(), err)
+	}
+	if len(raw.Data) != 1 {
+		t.Fatalf("expected one list row, got %d", len(raw.Data))
+	}
+	for _, member := range []string{"deliveredAt", "completedAt", "deliveryPhotos", "feedback"} {
+		if _, present := raw.Data[0][member]; present {
+			t.Fatalf("a list row must not carry %q", member)
+		}
+	}
 }
 
 // FR-018, FR-020: reading one's own order returns it in full, with the session's
@@ -156,6 +174,102 @@ func TestGetMineReturnsTheCallersOrder(t *testing.T) {
 	}
 	if fake.gotRefActor.ID != testCustomerID {
 		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotRefActor.ID)
+	}
+}
+
+// FR-010, FR-015, FR-017: the customer detail carries the delivery facts the
+// application view holds — both instants, the dispatch and delivery evidence, and
+// the feedback (contracts/openapi.yaml, OrderDetail).
+func TestGetMineReturnsTheDeliveryFacts(t *testing.T) {
+	view := withDeliveryFacts(sampleView())
+	fake := &fakeOrders{detail: view}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodGet, ordersPath+"/"+view.ID.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.DeliveredAt == nil || body.Data.CompletedAt == nil {
+		t.Fatalf("the fulfilled order must answer both instants, got %+v", body.Data)
+	}
+	assertInstant(t, *body.Data.DeliveredAt, *view.DeliveredAt)
+	assertInstant(t, *body.Data.CompletedAt, *view.CompletedAt)
+
+	if len(body.Data.DeliveryPhotos) != len(view.DeliveryPhotos) {
+		t.Fatalf("expected %d delivery photos, got %d", len(view.DeliveryPhotos), len(body.Data.DeliveryPhotos))
+	}
+	for i, want := range view.DeliveryPhotos {
+		got := body.Data.DeliveryPhotos[i]
+		if got.ID != want.ID || got.Stage != want.Stage || got.URL != want.URL ||
+			got.Width != want.Width || got.Height != want.Height || got.Position != want.Position {
+			t.Fatalf("delivery photo %d: got %+v, want %+v", i, got, want)
+		}
+	}
+
+	if body.Data.Feedback == nil {
+		t.Fatal("the fulfilled order must answer its feedback")
+	}
+	if body.Data.Feedback.Content != view.Feedback.Content {
+		t.Fatalf("expected feedback %q, got %q", view.Feedback.Content, body.Data.Feedback.Content)
+	}
+	assertInstant(t, body.Data.Feedback.CreatedAt, view.Feedback.CreatedAt)
+}
+
+// FR-017: an order with no delivery facts yet still serialises the members — the
+// instants and the feedback as null and the evidence as an empty array — so a
+// client can rely on the contract's shapes rather than on omitted members.
+func TestGetMineSerialisesAnUnfulfilledOrdersDeliveryFacts(t *testing.T) {
+	view := sampleView()
+	fake := &fakeOrders{detail: view}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodGet, ordersPath+"/"+view.ID.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode the raw order body %q: %v", rec.Body.String(), err)
+	}
+	for _, member := range []string{"deliveredAt", "completedAt", "feedback"} {
+		value, present := raw.Data[member]
+		if !present {
+			t.Fatalf("the detail must carry %q", member)
+		}
+		if string(value) != "null" {
+			t.Fatalf("%q must be null before the order is fulfilled, got %s", member, value)
+		}
+	}
+	photos, present := raw.Data["deliveryPhotos"]
+	if !present || string(photos) != "[]" {
+		t.Fatalf("deliveryPhotos must be an empty array, got %s", photos)
+	}
+
+	var body orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.DeliveryPhotos == nil || len(body.Data.DeliveryPhotos) != 0 {
+		t.Fatalf("expected an empty, non-null photo list, got %+v", body.Data.DeliveryPhotos)
+	}
+}
+
+// assertInstant proves an RFC3339 member names the same instant as the view's.
+func assertInstant(t *testing.T, got string, want time.Time) {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, got)
+	if err != nil {
+		t.Fatalf("parse the RFC3339 instant %q: %v", got, err)
+	}
+	if !parsed.Equal(want) {
+		t.Fatalf("expected instant %s, got %s", want.Format(time.RFC3339Nano), got)
 	}
 }
 

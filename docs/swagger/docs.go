@@ -1310,6 +1310,115 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/orders/{orderId}/deliver": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Moves an in-transit order to delivered, records the delivery instant and the act naming the order and the administrator, optionally attaching up to five delivery photos. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be in transit; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized one answers 413 ORDER_IMAGE_TOO_LARGE. Administrator role required.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Mark an in-transit order delivered, attaching up to five photos (administrator)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Delivery evidence photo (JPEG, PNG or WebP); send the part zero to five times",
+                        "name": "photos",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.AdminOrderResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/orders/{orderId}/reject": {
             "post": {
                 "security": [
@@ -6304,9 +6413,32 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "completedAt": {
+                    "description": "CompletedAt is when the order completed; null before then (FR-014,\nresearch D11).",
+                    "type": "string"
+                },
                 "createdAt": {
                     "description": "CreatedAt is when the order was placed.",
                     "type": "string"
+                },
+                "deliveredAt": {
+                    "description": "DeliveredAt is when the operator marked the order delivered; null before\ndelivery (FR-010, research D11).",
+                    "type": "string"
+                },
+                "deliveryPhotos": {
+                    "description": "DeliveryPhotos is the dispatch and delivery evidence, ordered by stage then\nposition; an order with none serialises ` + "`" + `deliveryPhotos: []` + "`" + ` (FR-010,\nresearch D11).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.DeliveryPhotoResponse"
+                    }
+                },
+                "feedback": {
+                    "description": "Feedback is the customer's order-level feedback, or null (FR-015, FR-017,\nresearch D11).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackResponse"
+                        }
+                    ]
                 },
                 "id": {
                     "description": "ID identifies the order.",
@@ -6383,6 +6515,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.DeliveryPhotoResponse": {
+            "type": "object",
+            "properties": {
+                "height": {
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "ID identifies the photo.",
+                    "type": "string"
+                },
+                "position": {
+                    "description": "Position is the order within its stage.",
+                    "type": "integer"
+                },
+                "stage": {
+                    "description": "Stage is the delivery step the photo is evidence for (SHIPPING or\nDELIVERED).",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL is the displayable link to the stored image.",
+                    "type": "string"
+                },
+                "width": {
+                    "description": "Width and Height are the stored pixel dimensions.",
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest": {
             "type": "object",
             "properties": {
@@ -6409,6 +6569,19 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest"
                     }
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackResponse": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content is the feedback text.",
+                    "type": "string"
+                },
+                "createdAt": {
+                    "description": "CreatedAt is when it was written.",
+                    "type": "string"
                 }
             }
         },
@@ -6512,9 +6685,32 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "completedAt": {
+                    "description": "CompletedAt is when the order completed; null before then (FR-014,\nresearch D11).",
+                    "type": "string"
+                },
                 "createdAt": {
                     "description": "CreatedAt is when the order was placed.",
                     "type": "string"
+                },
+                "deliveredAt": {
+                    "description": "DeliveredAt is when the operator marked the order delivered; null before\ndelivery (FR-010, research D11).",
+                    "type": "string"
+                },
+                "deliveryPhotos": {
+                    "description": "DeliveryPhotos is the dispatch and delivery evidence, ordered by stage then\nposition; an order with none serialises ` + "`" + `deliveryPhotos: []` + "`" + ` (FR-010,\nresearch D11).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.DeliveryPhotoResponse"
+                    }
+                },
+                "feedback": {
+                    "description": "Feedback is the customer's order-level feedback, or null (FR-015, FR-017,\nresearch D11).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackResponse"
+                        }
+                    ]
                 },
                 "id": {
                     "description": "ID identifies the order.",

@@ -107,6 +107,12 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.With(middleware.BodyLimitWithRefusal(
 		DeliveryEvidenceUploadCeiling(), photosTooLarge(),
 	)).Post("/{orderId}/ship", h.StartShippingByAdmin)
+	// The delivery route takes the same up-to-five evidence photos, so it raises
+	// the same body limit and accepts multipart/form-data; the handler caps each
+	// photo again while it reads (FR-008, FR-009).
+	r.With(middleware.BodyLimitWithRefusal(
+		DeliveryEvidenceUploadCeiling(), photosTooLarge(),
+	)).Post("/{orderId}/deliver", h.DeliverByAdmin)
 	r.Post("/{orderId}/complete", h.CompleteByAdmin)
 	r.Post("/{orderId}/transfer", h.Transfer)
 	return r

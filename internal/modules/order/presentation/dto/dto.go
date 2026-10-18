@@ -110,6 +110,34 @@ type OrderAddressResponse struct {
 	StreetAddress string `json:"streetAddress"`
 }
 
+// DeliveryPhotoResponse is one piece of delivery evidence as a client reads it
+// (contracts/openapi.yaml, DeliveryPhoto). `stage` is the delivery step the photo
+// is evidence for, and `position` orders it within that stage (FR-010).
+type DeliveryPhotoResponse struct {
+	// ID identifies the photo.
+	ID uuid.UUID `json:"id"`
+	// Stage is the delivery step the photo is evidence for (SHIPPING or
+	// DELIVERED).
+	Stage string `json:"stage"`
+	// URL is the displayable link to the stored image.
+	URL string `json:"url"`
+	// Width and Height are the stored pixel dimensions.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	// Position is the order within its stage.
+	Position int `json:"position"`
+}
+
+// FeedbackResponse is the customer's order-level feedback as a client reads it
+// (contracts/openapi.yaml, Feedback). It is present only on a detail answer and
+// only once the order carries one (FR-015, FR-017).
+type FeedbackResponse struct {
+	// Content is the feedback text.
+	Content string `json:"content"`
+	// CreatedAt is when it was written.
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 // OrderSummaryResponse is one row of the signed-in customer's order list
 // (contracts/openapi.yaml, OrderSummary). Money is integer minor units plus the
 // currency (FR-008).
@@ -127,9 +155,10 @@ type OrderSummaryResponse struct {
 }
 
 // OrderResponse is one order as a customer reads it in full
-// (contracts/openapi.yaml, OrderDetail). The list summary plus the address and the
-// lines; money is integer minor units plus the currency and the total carries no
-// shipping fee (FR-008, ADR 015 §5).
+// (contracts/openapi.yaml, OrderDetail). The list summary plus the address, the
+// lines and the delivery facts; money is integer minor units plus the currency
+// and the total carries no shipping fee (FR-008, ADR 015 A5). The delivery facts
+// are detail-only: a list row never carries them (research D11).
 type OrderResponse struct {
 	// ID identifies the order.
 	ID uuid.UUID `json:"id"`
@@ -145,6 +174,19 @@ type OrderResponse struct {
 	Address OrderAddressResponse `json:"address"`
 	// Lines are the order's snapshot lines, in position order.
 	Lines []OrderLineResponse `json:"lines"`
+	// DeliveredAt is when the operator marked the order delivered; null before
+	// delivery (FR-010, research D11).
+	DeliveredAt *time.Time `json:"deliveredAt"`
+	// CompletedAt is when the order completed; null before then (FR-014,
+	// research D11).
+	CompletedAt *time.Time `json:"completedAt"`
+	// DeliveryPhotos is the dispatch and delivery evidence, ordered by stage then
+	// position; an order with none serialises `deliveryPhotos: []` (FR-010,
+	// research D11).
+	DeliveryPhotos []DeliveryPhotoResponse `json:"deliveryPhotos"`
+	// Feedback is the customer's order-level feedback, or null (FR-015, FR-017,
+	// research D11).
+	Feedback *FeedbackResponse `json:"feedback"`
 }
 
 // AdminOrderSummaryResponse is one row of the administrator's order list

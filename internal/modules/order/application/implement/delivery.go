@@ -12,14 +12,15 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
-// This file is US1: dispatching a paid order, with photographic evidence. The
-// operator marks a PAID order in transit (SHIPPING) and may attach up to five
-// dispatch photos. The evidence is validated on its own bytes before anything is
-// sent anywhere, uploaded through the shared media store OUTSIDE any
+// This file is the operator's two delivery moves, each with photographic
+// evidence: US1 dispatches a paid order (PAID -> SHIPPING) and US2 marks an
+// in-transit one delivered (SHIPPING -> DELIVERED). Each may attach up to five
+// photos for its step. The evidence is validated on its own bytes before anything
+// is sent anywhere, uploaded through the shared media store OUTSIDE any
 // transaction, and its rows written inside a second transaction that re-checks
 // the per-stage ceiling under the order's row lock — so no database lock is held
 // across the network and two concurrent uploads cannot exceed five (FR-005,
-// FR-006, FR-009; research D5).
+// FR-006, FR-007, FR-008, FR-009; research D5).
 
 // StartShippingByAdmin moves a paid order in transit (dispatches it), attaches up
 // to five optional dispatch photos and records the act (FR-005, FR-006, FR-019).
@@ -120,6 +121,111 @@ func (s *Service) StartShippingByAdmin(ctx context.Context, in dto.EvidenceInput
 	}
 	// The customer is told the order is on its way. Sent after commit,
 	// best-effort (FR-021, research D12).
+	s.notifyCustomerStatusChange(ctx, moved)
+	return view, nil
+}
+
+// DeliverByAdmin marks an in-transit order delivered: it attaches up to five
+// optional delivery photos and records the act and the delivery instant, which
+// anchors the five-day automatic completion window (FR-007, FR-008, FR-019).
+//
+// It is the same shape as StartShippingByAdmin, for the same reasons:
+//
+//  1. Every uploaded payload is decided on its own bytes — the format sniffed
+//     from the leading signature and the size ceiling — and a request carrying
+//     more than five photos is refused before the provider is called, so a
+//     refused upload leaves no orphaned asset (FR-008, FR-009).
+//  2. A first transaction locks the order, drives the domain SHIPPING ->
+//     DELIVERED transition (which refuses a non-SHIPPING order naming its
+//     current state) and checks the per-stage ceiling, so a wrong-state or
+//     over-ceiling request is refused before a byte is uploaded (FR-007,
+//     research D5).
+//  3. The bytes go to the media provider outside any transaction (research D5).
+//  4. A second transaction re-locks the order, re-checks the ceiling, drives
+//     MarkDelivered, persists the new state and the delivery instant, inserts
+//     the DELIVERED-stage photo rows, touches updated_at and audits, so two
+//     concurrent uploads cannot both observe room for five (FR-010, research
+//     D5). A failure in this transaction releases the just-stored assets; the
+//     worst case of a failed release is an orphaned asset, never an order that
+//     references a missing one (research D5).
+//
+// Neither step touches stock or money: the goods were sold at PAID, so the
+// delivery moves nothing and leaves the total as it was (FR-020). The acting
+// administrator is the session's, never an input (FR-019, FR-020).
+func (s *Service) DeliverByAdmin(ctx context.Context, in dto.EvidenceInput) (dto.AdminOrderView, error) {
+	actor, err := s.actor(ctx)
+	if err != nil {
+		return dto.AdminOrderView{}, err
+	}
+	if err := s.validateEvidence(model.StageDelivered, in.Photos); err != nil {
+		return dto.AdminOrderView{}, err
+	}
+
+	// First transaction: refuse a wrong-state or over-ceiling request before a
+	// byte is uploaded. The domain transition is the state check, so the refusal
+	// names the current state exactly as the domain does.
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		order, err := s.Orders.LockByID(txCtx, in.OrderID)
+		if err != nil {
+			return err
+		}
+		if err := order.MarkDelivered(s.now()); err != nil {
+			return err
+		}
+		if _, err := s.ensureEvidenceCapacity(txCtx, in.OrderID, model.StageDelivered, len(in.Photos)); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		return dto.AdminOrderView{}, err
+	}
+
+	// The provider call sits outside the transaction (research D5).
+	photos, err := s.uploadEvidence(ctx, in.OrderID, model.StageDelivered, in.Photos)
+	if err != nil {
+		return dto.AdminOrderView{}, err
+	}
+
+	var view dto.AdminOrderView
+	var moved *model.Order
+	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		order, err := s.Orders.LockByID(txCtx, in.OrderID)
+		if err != nil {
+			return err
+		}
+		now := s.now()
+		if err := order.MarkDelivered(now); err != nil {
+			return err
+		}
+		count, err := s.ensureEvidenceCapacity(txCtx, in.OrderID, model.StageDelivered, len(photos))
+		if err != nil {
+			return err
+		}
+		if err := s.Orders.SaveDelivered(txCtx, order, now); err != nil {
+			return err
+		}
+		if len(photos) > 0 {
+			for i := range photos {
+				photos[i].Position = count + i
+			}
+			if err := s.Orders.AddDeliveryPhotos(txCtx, order.ID, photos, now); err != nil {
+				return err
+			}
+		}
+		order.DeliveryPhotos = photos
+		s.record(txCtx, constant.AuditOrderDelivered, actor, order.ID)
+		moved = order
+		view = s.Mapper.AdminOrder(*order)
+		return nil
+	}); err != nil {
+		// The rows never went in, so the just-stored assets are ours to release.
+		// Releasing is best-effort: the worst case is an orphaned asset
+		// (research D5).
+		s.releaseEvidence(ctx, photos)
+		return dto.AdminOrderView{}, err
+	}
+	// The customer is told the order has arrived. Sent after commit, best-effort
+	// (FR-021, research D12).
 	s.notifyCustomerStatusChange(ctx, moved)
 	return view, nil
 }
