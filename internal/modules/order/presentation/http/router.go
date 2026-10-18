@@ -83,6 +83,9 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/{orderId}", h.GetMine)
 	r.Put("/{orderId}", h.EditMine)
 	r.Post("/{orderId}/cancel", h.CancelMine)
+	// The owner confirms receipt of a delivered order; the owner is the session's,
+	// so a client can only complete its own order (FR-011, FR-018).
+	r.Post("/{orderId}/complete", h.ConfirmReceived)
 	return r
 }
 
@@ -113,7 +116,9 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.With(middleware.BodyLimitWithRefusal(
 		DeliveryEvidenceUploadCeiling(), photosTooLarge(),
 	)).Post("/{orderId}/deliver", h.DeliverByAdmin)
-	r.Post("/{orderId}/complete", h.CompleteByAdmin)
+	// Completion is no longer the operator's act: the customer confirms receipt
+	// (POST /orders/{orderId}/complete) or the five-day sweep completes the
+	// order, so there is no admin complete route (FR-011, FR-014).
 	r.Post("/{orderId}/transfer", h.Transfer)
 	return r
 }

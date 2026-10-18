@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,13 +39,19 @@ type fakeOrders struct {
 
 	cancelResponses []cancelResponse
 
-	gotListInput   appdto.ListInput
-	gotListActor   appinterface.Actor
-	gotRefInput    appdto.OrderRefInput
-	gotRefActor    appinterface.Actor
-	gotCancelInput appdto.OrderRefInput
-	gotCancelActor appinterface.Actor
-	cancelCalls    int
+	completeView appdto.OrderView
+	completeErr  error
+
+	gotListInput     appdto.ListInput
+	gotListActor     appinterface.Actor
+	gotRefInput      appdto.OrderRefInput
+	gotRefActor      appinterface.Actor
+	gotCancelInput   appdto.OrderRefInput
+	gotCancelActor   appinterface.Actor
+	gotCompleteInput appdto.OrderRefInput
+	gotCompleteActor appinterface.Actor
+	cancelCalls      int
+	completeCalls    int
 }
 
 type cancelResponse struct {
@@ -73,6 +80,13 @@ func (f *fakeOrders) CancelMine(ctx context.Context, in appdto.OrderRefInput) (a
 		return f.cancelResponses[call].view, f.cancelResponses[call].err
 	}
 	return appdto.OrderView{}, nil
+}
+
+func (f *fakeOrders) ConfirmReceived(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error) {
+	f.gotCompleteInput = in
+	f.gotCompleteActor, _ = appinterface.ActorFromContext(ctx)
+	f.completeCalls++
+	return f.completeView, f.completeErr
 }
 
 // orderListBody decodes the paginated list answer.
@@ -326,6 +340,72 @@ func TestCancelMineReturnsTheCancelledOrderThenRefusesTheSecondAttempt(t *testin
 	}
 }
 
+// FR-011, FR-014: confirming receipt of a delivered order answers 200 with the
+// completed order, and the session's actor and the addressed identifier are
+// passed through.
+func TestConfirmReceivedReturnsTheCompletedOrder(t *testing.T) {
+	completed := sampleView()
+	completed.Status = constant.StatusCompleted
+	completedAt := completed.CreatedAt.Add(72 * time.Hour)
+	completed.CompletedAt = &completedAt
+	fake := &fakeOrders{completeView: completed}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+completed.ID.String()+"/complete", "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.Status != "COMPLETED" {
+		t.Fatalf("the completed order must answer COMPLETED, got %s", body.Data.Status)
+	}
+	if body.Data.CompletedAt == nil {
+		t.Fatal("the completed order must answer completedAt")
+	}
+	assertInstant(t, *body.Data.CompletedAt, completedAt)
+	if fake.gotCompleteActor.ID != testCustomerID || fake.gotCompleteInput.OrderID != completed.ID {
+		t.Fatalf("the session's actor and the addressed id must be passed through, got %+v / %+v",
+			fake.gotCompleteActor, fake.gotCompleteInput)
+	}
+}
+
+// contracts/error-codes.md: another customer's (or an unknown) order answers the
+// same 404 ORDER_NOT_FOUND, so the route never confirms the order exists.
+func TestConfirmReceivedAnswersNotFoundForAnotherCustomersOrder(t *testing.T) {
+	fake := &fakeOrders{completeErr: domainerr.ErrNotFound}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/complete", "", "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// contracts/error-codes.md: confirming an order that is not delivered answers 409
+// ORDER_STATE_TRANSITION_INVALID naming the current state.
+func TestConfirmReceivedRefusesANonDeliveredOrder(t *testing.T) {
+	fake := &fakeOrders{completeErr: domainerr.StateTransitionInvalid(constant.StatusShipping, constant.StatusCompleted)}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/complete", "", "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != constant.CodeStateTransitionInvalid {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	}
+	if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
+		t.Fatalf("the refusal must name the current state SHIPPING, got %q", body.Error.Message)
+	}
+}
+
 // contracts/error-codes.md: every customer-order route refuses a request with no
 // session with 401 UNAUTHENTICATED, before reaching the use case.
 func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
@@ -336,6 +416,7 @@ func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
 		{http.MethodGet, ordersPath},
 		{http.MethodGet, ordersPath + "/" + uuid.New().String()},
 		{http.MethodPost, ordersPath + "/" + uuid.New().String() + "/cancel"},
+		{http.MethodPost, ordersPath + "/" + uuid.New().String() + "/complete"},
 	}
 
 	for _, tc := range cases {
@@ -349,7 +430,7 @@ func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "UNAUTHENTICATED" {
 				t.Fatalf("expected UNAUTHENTICATED, got %s", body.Error.Code)
 			}
-			if fake.calls != 0 || fake.cancelCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.calls != 0 || fake.cancelCalls != 0 || fake.completeCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("an unauthenticated request must not reach the use case")
 			}
 		})
@@ -362,7 +443,7 @@ func TestOrderRoutesRejectAMalformedOrderIdentifier(t *testing.T) {
 	fake := &fakeOrders{}
 	router := newOrderRouter(fake)
 
-	for _, path := range []string{ordersPath + "/not-a-uuid", ordersPath + "/not-a-uuid/cancel"} {
+	for _, path := range []string{ordersPath + "/not-a-uuid", ordersPath + "/not-a-uuid/cancel", ordersPath + "/not-a-uuid/complete"} {
 		method := http.MethodGet
 		if path != ordersPath+"/not-a-uuid" {
 			method = http.MethodPost
@@ -411,5 +492,9 @@ func (f *fakeCheckout) GetMine(context.Context, appdto.OrderRefInput) (appdto.Or
 }
 
 func (f *fakeCheckout) CancelMine(context.Context, appdto.OrderRefInput) (appdto.OrderView, error) {
+	return appdto.OrderView{}, nil
+}
+
+func (f *fakeCheckout) ConfirmReceived(context.Context, appdto.OrderRefInput) (appdto.OrderView, error) {
 	return appdto.OrderView{}, nil
 }

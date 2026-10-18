@@ -178,9 +178,9 @@ func TestMarkPaidEmailsTheCustomer(t *testing.T) {
 	assertEmailNames(t, toCustomer[0], order.ID.String(), string(constant.StatusPaid))
 }
 
-// FR-021: dispatching then completing a paid order emails the customer each new
-// state.
-func TestShipAndCompleteEmailTheCustomer(t *testing.T) {
+// FR-021: dispatching then confirming receipt of a delivered order emails the
+// customer each new state.
+func TestShipThenConfirmEmailTheCustomer(t *testing.T) {
 	owner := uuid.New()
 	order := orderAt(owner, fixedNow, line(uuid.New(), 1000, 1))
 	order.Status = constant.StatusPaid
@@ -192,10 +192,10 @@ func TestShipAndCompleteEmailTheCustomer(t *testing.T) {
 		t.Fatalf("StartShippingByAdmin: %v", err)
 	}
 	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
-	// it directly so the completed edge can be exercised.
+	// it directly so the customer's confirmation can be exercised.
 	order.Status = constant.StatusDelivered
-	if _, err := f.svc.CompleteByAdmin(adminContext(uuid.New()), appdto.OrderRefInput{OrderID: order.ID}); err != nil {
-		t.Fatalf("CompleteByAdmin: %v", err)
+	if _, err := f.svc.ConfirmReceived(actorContext(owner), appdto.OrderRefInput{OrderID: order.ID}); err != nil {
+		t.Fatalf("ConfirmReceived: %v", err)
 	}
 
 	toCustomer := messagesTo(notifier, customerEmail)

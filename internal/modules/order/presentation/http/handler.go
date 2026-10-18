@@ -45,6 +45,10 @@ type Service interface {
 	// its delivery address while it awaits the artist or payment (FR-012 to
 	// FR-017).
 	EditMine(ctx context.Context, in appdto.EditInput) (appdto.OrderView, error)
+	// ConfirmReceived completes one of the caller's own delivered orders by
+	// confirming receipt; another customer's order answers not-found (FR-011,
+	// FR-014, FR-018).
+	ConfirmReceived(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).
@@ -65,9 +69,6 @@ type Service interface {
 	// optional evidence photos, stamps the delivery instant and records the act
 	// (FR-007, FR-008, FR-019).
 	DeliverByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error)
-	// CompleteByAdmin moves a delivered order to completed and records the act
-	// (FR-011, FR-014).
-	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
 	// Transfer hands a paid order to another existing account, named by email,
 	// changing only the owner, and records the act (FR-024).
 	Transfer(ctx context.Context, in appdto.TransferInput) (appdto.AdminOrderView, error)
@@ -329,6 +330,48 @@ func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
 
 	ctx := appinterface.WithActor(r.Context(), actor)
 	view, err := h.svc.EditMine(ctx, appdto.EditInput{OrderID: orderID, AddressID: addressID, Lines: lines})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
+// ConfirmReceived completes one of the signed-in customer's own delivered orders:
+// the owner confirms receipt and the order moves to COMPLETED, recording when and
+// who confirmed. An unknown order, or one that belongs to another customer,
+// answers the same 404 ORDER_NOT_FOUND, so the route never confirms another
+// customer's order exists; an order that is not delivered answers 409
+// ORDER_STATE_TRANSITION_INVALID naming its current state (FR-011, FR-014,
+// FR-018, contracts/error-codes.md).
+//
+//	@Summary		Confirm receipt of a delivered order and complete it
+//	@Description	Completes one of the caller's own delivered orders by confirming receipt. The order must be delivered; an order that is not delivered answers 409 ORDER_STATE_TRANSITION_INVALID naming its current state, and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.
+//	@Tags			Orders
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string	true	"Order identifier"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/orders/{orderId}/complete [post]
+func (h *Handler) ConfirmReceived(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.ConfirmReceived(ctx, appdto.OrderRefInput{OrderID: orderID})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -630,29 +673,6 @@ func (h *Handler) readEvidencePhotos(r *http.Request) ([]appdto.UploadedPhoto, *
 		photos = append(photos, appdto.UploadedPhoto{Content: content})
 	}
 	return photos, nil
-}
-
-// CompleteByAdmin moves a delivered order to completed and records the act. A move
-// the current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID
-// naming the current state (FR-011, FR-014).
-//
-//	@Summary		Mark a delivered order completed (administrator)
-//	@Description	Moves a delivered order to completed and records the act naming the order and the administrator. The order must be delivered; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
-//	@Tags			Orders
-//	@Produce		json
-//	@Security		BearerAuth
-//	@Param			orderId	path	string	true	"Order identifier"
-//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
-//	@Failure		400		{object}	httpx.SwaggerError
-//	@Failure		401		{object}	httpx.SwaggerError
-//	@Failure		403		{object}	httpx.SwaggerError
-//	@Failure		404		{object}	httpx.SwaggerError
-//	@Failure		409		{object}	httpx.SwaggerError
-//	@Failure		429		{object}	httpx.SwaggerError
-//	@Failure		500		{object}	httpx.SwaggerError
-//	@Router			/admin/orders/{orderId}/complete [post]
-func (h *Handler) CompleteByAdmin(w http.ResponseWriter, r *http.Request) {
-	h.adminMove(w, r, h.svc.CompleteByAdmin)
 }
 
 // Transfer hands a paid order to the account whose email is given, changing only

@@ -86,8 +86,9 @@ type Clock interface {
 	Now() time.Time
 }
 
-// Auditor records the module's administrative mutations: ship, complete and
-// transfer, each naming the acting administrator and the order (FR-023,
+// Auditor records the module's mutations: the operator's confirmation,
+// rejection, dispatch, delivery and transfer, and the customer's confirmation of
+// receipt, each naming the acting account and the order (FR-019, FR-023,
 // Constitution VI).
 type Auditor interface {
 	// Record emits one audit event. Emission never blocks the business operation
@@ -114,9 +115,9 @@ type Notifier interface {
 // Every method that reads or changes a customer's order takes the acting account
 // from the context the session filled, never from its input, so the order a
 // customer reaches is always their own (FR-020). The lifecycle methods are the
-// module's own transitions, driven by module 08 (paid), the customer (cancel) and
-// an administrator (ship, complete). The paid transition has no HTTP surface:
-// module 08 drives it (research D13).
+// module's own transitions, driven by module 08 (paid), the customer (cancel and
+// the confirmation of receipt) and an administrator (dispatch and delivery). The
+// paid transition has no HTTP surface: module 08 drives it (research D13).
 type OrderService interface {
 	// Checkout turns the caller's cart into an order: it re-checks every line,
 	// snapshots the lines and the delivery address, creates the order and empties
@@ -135,8 +136,6 @@ type OrderService interface {
 	// confirmation or payment — and returns any held goods exactly once (FR-015,
 	// FR-019).
 	Cancel(ctx context.Context, orderID uuid.UUID) error
-	// Complete moves a delivered order to completed (FR-022).
-	Complete(ctx context.Context, orderID uuid.UUID) error
 
 	// ExpireOrders cancels every awaiting-payment order whose window has passed
 	// and returns its goods, exactly once, so an unpaid order cannot hold stock
@@ -158,6 +157,12 @@ type OrderService interface {
 	// awaiting-payment order releases its goods and returns it to awaiting
 	// confirmation (FR-012 to FR-017).
 	EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView, error)
+	// ConfirmReceived completes one of the caller's own delivered orders: the
+	// owner confirms receipt, the order moves DELIVERED -> COMPLETED and the
+	// completion instant and acting customer are recorded. Another customer's
+	// order answers the same not-found an unknown one does (FR-011, FR-014,
+	// FR-018).
+	ConfirmReceived(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).
@@ -179,9 +184,6 @@ type OrderService interface {
 	// optional delivery photos, stamps the delivery instant and records the act
 	// (FR-007, FR-008, FR-019).
 	DeliverByAdmin(ctx context.Context, in dto.EvidenceInput) (dto.AdminOrderView, error)
-	// CompleteByAdmin moves a shipped order to completed and records the act
-	// (FR-022, FR-023).
-	CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
 
 	// Transfer hands a paid order to another existing account, named by email,
 	// changing only the owner, and records the act (FR-024).

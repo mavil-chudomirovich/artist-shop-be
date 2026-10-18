@@ -93,6 +93,19 @@ func (r *adminOrders) StartShipping(_ context.Context, order *model.Order, _ tim
 	return nil
 }
 
+// SaveCompleted persists a completed order's new state and completion facts the
+// way the postgres adapter does, so a test can run the customer's confirmation
+// over this fixture (FR-014).
+func (r *adminOrders) SaveCompleted(_ context.Context, order *model.Order, _ time.Time) error {
+	r.updates = append(r.updates, statusWrite{id: order.ID, status: order.Status})
+	if stored, ok := r.byID[order.ID]; ok {
+		stored.Status = order.Status
+		stored.CompletedAt = order.CompletedAt
+		stored.CompletedBy = order.CompletedBy
+	}
+	return nil
+}
+
 // CountDeliveryPhotos answers how many photos the order already carries at the
 // stage, which the fakes here keep empty: the use-case dispatch tests that
 // exercise the ceiling live in delivery_test.go over a store that records them.
@@ -233,9 +246,10 @@ func TestGetByIDAdminReturnsAnyOrderInFull(t *testing.T) {
 	}
 }
 
-// FR-005, FR-011, FR-019: dispatching a paid order then completing a delivered one
-// advances the state and records each act, naming the order and the administrator.
-func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
+// FR-005, FR-019: dispatching a paid order advances it in transit and records the
+// act naming the order and the administrator. Completion is no longer an operator
+// action; the customer's confirmation is covered by completion_test.go.
+func TestShipByAdminAdvancesTheOrderAndAudits(t *testing.T) {
 	admin := uuid.New()
 	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 120000, 1))
 	order.Status = constant.StatusPaid
@@ -256,24 +270,8 @@ func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
 	}
 	assertAudit(t, f.audit.events[0], constant.AuditOrderShipped, admin, order.ID)
 
-	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
-	// it directly so the completed edge can be exercised.
-	order.Status = constant.StatusDelivered
-	completed, err := f.svc.CompleteByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
-	if err != nil {
-		t.Fatalf("CompleteByAdmin: %v", err)
-	}
-	if completed.Status != constant.StatusCompleted {
-		t.Fatalf("the order must answer COMPLETED, got %s", completed.Status)
-	}
-	if len(f.audit.events) != 2 {
-		t.Fatalf("completing must record a second audit entry, got %+v", f.audit.events)
-	}
-	assertAudit(t, f.audit.events[1], constant.AuditOrderCompleted, admin, order.ID)
-
-	if len(f.orders.updates) != 2 || f.orders.updates[0].status != constant.StatusShipping ||
-		f.orders.updates[1].status != constant.StatusCompleted {
-		t.Fatalf("each move must persist its new state, got %+v", f.orders.updates)
+	if len(f.orders.updates) != 1 || f.orders.updates[0].status != constant.StatusShipping {
+		t.Fatalf("the move must persist its new state, got %+v", f.orders.updates)
 	}
 }
 

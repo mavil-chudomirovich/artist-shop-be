@@ -19,11 +19,12 @@ import (
 
 // This file is the use-case contract of US2: the order's selling life. MarkPaid
 // turns the hold into a sale, once per line and keyed by the payment event's
-// per-line source reference; Cancel returns the hold; Complete drives the
-// completion transition; and every move the current state does not allow is
-// refused naming that state and leaves the order untouched (FR-009 to FR-015,
-// research D5, D13). Dispatch (PAID -> SHIPPING) is an operator use case with
-// evidence and is covered by delivery_test.go. It runs the real transitions over
+// per-line source reference; Cancel returns the hold; and every move the current
+// state does not allow is refused naming that state and leaves the order
+// untouched (FR-009 to FR-015, research D5, D13). Dispatch (PAID -> SHIPPING) is
+// an operator use case with evidence and is covered by delivery_test.go;
+// completion is the customer's confirmation and is covered by completion_test.go.
+// It runs the real transitions over
 // in-memory fakes of the repository and the inventory reservation contract, so the
 // answers asserted are the service's own.
 
@@ -372,53 +373,6 @@ func TestCancelReturnsTheHoldExactlyOnce(t *testing.T) {
 	}
 	if len(f.reservations.releases) != 2 {
 		t.Fatalf("a replayed cancel must not release again, got %+v", f.reservations.releases)
-	}
-}
-
-// FR-003, FR-011, FR-012: the single completion edge drives its transition, and a
-// move the current state does not allow is refused naming that state and leaves
-// the order exactly as it was. Dispatch (PAID -> SHIPPING) is an operator use case
-// with evidence and is covered by delivery_test.go.
-func TestCompleteDrivesTheTransitionAndRefusesAnIllegalMove(t *testing.T) {
-	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
-	f := newLifecycleFixture(order)
-	ctx := context.Background()
-
-	// Completing an order that is not DELIVERED is refused, naming its state.
-	err := f.svc.Complete(ctx, order.ID)
-	var refusal *domainerr.StateTransitionError
-	if !errors.As(err, &refusal) {
-		t.Fatalf("completing an undelivered order must be refused with a state transition error, got %v", err)
-	}
-	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusCompleted {
-		t.Fatalf("the refusal must name PAYMENT_PENDING, got %+v", refusal)
-	}
-	if order.Status != constant.StatusPaymentPending {
-		t.Fatalf("a refused move must leave the order untouched, got %s", order.Status)
-	}
-	if len(f.orders.updates) != 0 {
-		t.Fatalf("a refused move must persist nothing, got %+v", f.orders.updates)
-	}
-
-	// A delivered order can be completed.
-	order.Status = constant.StatusDelivered
-	if err := f.svc.Complete(ctx, order.ID); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if order.Status != constant.StatusCompleted {
-		t.Fatalf("status = %s, want COMPLETED", order.Status)
-	}
-
-	// Completing a completed order is refused, naming COMPLETED.
-	err = f.svc.Complete(ctx, order.ID)
-	if !errors.As(err, &refusal) {
-		t.Fatalf("completing a completed order must be refused, got %v", err)
-	}
-	if refusal.From != constant.StatusCompleted {
-		t.Fatalf("the refusal must name COMPLETED, got %+v", refusal)
-	}
-	if order.Status != constant.StatusCompleted {
-		t.Fatalf("a refused move must leave the order untouched, got %s", order.Status)
 	}
 }
 

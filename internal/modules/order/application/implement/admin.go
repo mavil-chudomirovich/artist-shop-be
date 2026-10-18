@@ -13,9 +13,11 @@ import (
 )
 
 // This file is US4: the operator's order desk. An administrator lists every order
-// and reads one in full; the ship and complete moves drive the US2 transitions
-// (the domain's allowed edges) and record each act in the audit trail, naming the
-// order and the administrator (FR-021 to FR-023). The role guard is presentation's
+// and reads one in full; the confirm and reject moves drive the domain's allowed
+// edges and record each act in the audit trail, naming the order and the
+// administrator (FR-021 to FR-023). Completion is no longer the operator's act:
+// the customer confirms receipt (completion.go) or the five-day sweep completes
+// the order. The role guard is presentation's
 // — every route requires the administrator role — while this layer names the actor
 // the session filled, never an input.
 
@@ -52,12 +54,6 @@ func (s *Service) GetByIDAdmin(ctx context.Context, in dto.OrderRefInput) (dto.A
 	return s.Mapper.AdminOrder(*order), nil
 }
 
-// CompleteByAdmin moves a shipped order to completed and records the act (FR-022,
-// FR-023).
-func (s *Service) CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error) {
-	return s.adminMove(ctx, in, constant.AuditOrderCompleted, (*model.Order).Complete)
-}
-
 // RejectByAdmin declines an order awaiting the artist (FR-018). The order moves
 // to CANCELLED; no goods were held, so nothing is returned. The act is recorded
 // naming the order and the administrator, and the customer is notified of the
@@ -68,8 +64,8 @@ func (s *Service) RejectByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.
 }
 
 // adminMove locks one order, applies the administrator's allowed edge — the same
-// domain transition US2 exposes as Ship and Complete — persists the new state and
-// records the act, all in one UnitOfWork. A move the current state does not allow
+// domain transition the use case exposes — persists the new state and records the
+// act, all in one UnitOfWork. A move the current state does not allow
 // is refused by the domain with the current state named and leaves the order
 // exactly as it was, writing no state and no audit entry (FR-010, FR-011, FR-022,
 // FR-023).
@@ -107,8 +103,9 @@ func (s *Service) adminMove(ctx context.Context, in dto.OrderRefInput, action st
 	}); err != nil {
 		return dto.AdminOrderView{}, err
 	}
-	// The customer is told the order changed state (rejected, shipped or
-	// completed). Sent after commit, best-effort (FR-020, FR-021, research D9).
+	// The customer is told the order changed state (rejected, awaiting payment
+	// or cancelled). Sent after commit, best-effort (FR-020, FR-021, research
+	// D9).
 	s.notifyCustomerStatusChange(ctx, moved)
 	return view, nil
 }

@@ -20,6 +20,10 @@ import (
 // sale, and a cancel returns it. A move the current state does not allow is
 // refused by the domain with the current state named and leaves the order — and
 // the stock — exactly as it was (FR-009 to FR-015, research D5, D6, D13).
+//
+// Completion is not here any more: the customer's confirmation and the five-day
+// sweep drive it through completion.go, so both routes share the single
+// DELIVERED -> COMPLETED domain edge.
 
 // MarkPaid turns an awaiting-payment order into a paid one and consumes its hold
 // into a sale, exactly once. It is the edge module 08's confirmed payment drives;
@@ -193,42 +197,6 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	// best-effort (FR-020, FR-021, research D9).
 	s.notifyCustomerStatusChange(ctx, confirmed)
 	return view, nil
-}
-
-// Complete moves a delivered order to completed (FR-011, FR-012). It is the single
-// completion edge: the customer's confirmation and the sweep both reach it. It is
-// driven by an administrator in this phase; the customer and the sweep reach it
-// through their own use cases in later phases.
-func (s *Service) Complete(ctx context.Context, orderID uuid.UUID) error {
-	return s.transition(ctx, orderID, (*model.Order).Complete)
-}
-
-// transition locks one order, applies one allowed edge and persists the new
-// state, all in one UnitOfWork transaction. The domain transition is the only
-// writer of the state, so an illegal move is refused with the current state named
-// and never reaches storage (FR-009, FR-010, FR-011).
-func (s *Service) transition(ctx context.Context, orderID uuid.UUID, move func(*model.Order) error) error {
-	var moved *model.Order
-	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		order, err := s.Orders.LockByID(txCtx, orderID)
-		if err != nil {
-			return err
-		}
-		if err := move(order); err != nil {
-			return err
-		}
-		if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
-			return err
-		}
-		moved = order
-		return nil
-	}); err != nil {
-		return err
-	}
-	// The customer is told the order advanced to its new state. Sent after
-	// commit, best-effort (FR-020, FR-021, research D9).
-	s.notifyCustomerStatusChange(ctx, moved)
-	return nil
 }
 
 // ExpireOrders cancels every awaiting-payment order (PAYMENT_PENDING) whose

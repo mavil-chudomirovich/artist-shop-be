@@ -60,8 +60,9 @@ type Service struct {
 	// Clock stamps the order's creation and expiry. Only "what time is it" is
 	// injected, never a rule.
 	Clock appinterface.Clock
-	// Audit records the module's administrative mutations — ship, complete and
-	// transfer — naming the acting administrator and the order (FR-023,
+	// Audit records the module's mutations — the operator's confirmation,
+	// rejection, dispatch, delivery and transfer, and the customer's confirmation
+	// of receipt — naming the acting account and the order (FR-019, FR-023,
 	// Constitution VI). A nil auditor is tolerated so a read-only construction
 	// cannot panic on a mutation it never serves.
 	Audit appinterface.Auditor

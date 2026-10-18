@@ -21,11 +21,13 @@ import (
 )
 
 // This file is the transport contract of US4: `GET /admin/orders`,
-// `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship` and
-// `POST /admin/orders/{id}/complete` are all guarded by the administrator role,
-// a customer's session is refused `403 FORBIDDEN`, an unknown identifier answers
-// `404 ORDER_NOT_FOUND`, and an illegal move answers
-// `409 ORDER_STATE_TRANSITION_INVALID`. It mounts the routes the way the
+// `GET /admin/orders/{id}`, `POST /admin/orders/{id}/ship`,
+// `POST /admin/orders/{id}/deliver` and `POST /admin/orders/{id}/transfer` are
+// all guarded by the administrator role, a customer's session is refused
+// `403 FORBIDDEN`, an unknown identifier answers `404 ORDER_NOT_FOUND`, and an
+// illegal move answers `409 ORDER_STATE_TRANSITION_INVALID`. The old
+// `POST /admin/orders/{id}/complete` route is gone: completion is the customer's
+// act (orders_test.go) or the five-day sweep. It mounts the routes the way the
 // composition root mounts them, over a fake of the use case, so the answers
 // asserted are the handler's own (contracts/openapi.yaml, contracts/error-codes.md).
 
@@ -44,27 +46,24 @@ type fakeAdmin struct {
 	detail    appdto.AdminOrderView
 	detailErr error
 
-	shipView     appdto.AdminOrderView
-	shipErr      error
-	deliverView  appdto.AdminOrderView
-	deliverErr   error
-	completeView appdto.AdminOrderView
-	completeErr  error
-	confirmView  appdto.AdminOrderView
-	confirmErr   error
-	rejectView   appdto.AdminOrderView
-	rejectErr    error
+	shipView    appdto.AdminOrderView
+	shipErr     error
+	deliverView appdto.AdminOrderView
+	deliverErr  error
+	confirmView appdto.AdminOrderView
+	confirmErr  error
+	rejectView  appdto.AdminOrderView
+	rejectErr   error
 
-	gotListInput  appdto.ListInput
-	gotListActor  appinterface.Actor
-	gotRefInput   appdto.OrderRefInput
-	gotRefActor   appinterface.Actor
-	gotEvidence   appdto.EvidenceInput
-	shipCalls     int
-	deliverCalls  int
-	completeCalls int
-	confirmCalls  int
-	rejectCalls   int
+	gotListInput appdto.ListInput
+	gotListActor appinterface.Actor
+	gotRefInput  appdto.OrderRefInput
+	gotRefActor  appinterface.Actor
+	gotEvidence  appdto.EvidenceInput
+	shipCalls    int
+	deliverCalls int
+	confirmCalls int
+	rejectCalls  int
 }
 
 func (f *fakeAdmin) ListAll(ctx context.Context, in appdto.ListInput) (appdto.AdminOrderPage, error) {
@@ -91,13 +90,6 @@ func (f *fakeAdmin) DeliverByAdmin(ctx context.Context, in appdto.EvidenceInput)
 	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
 	f.deliverCalls++
 	return f.deliverView, f.deliverErr
-}
-
-func (f *fakeAdmin) CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
-	f.gotRefInput = in
-	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
-	f.completeCalls++
-	return f.completeView, f.completeErr
 }
 
 func (f *fakeAdmin) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
@@ -354,13 +346,11 @@ func TestAdminDetailReturnsAnyOrderInFull(t *testing.T) {
 	}
 }
 
-// FR-022: ship then complete answer 200 with the advanced order.
-func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
+// FR-005: dispatching a paid order answers 200 with the advanced order.
+func TestAdminShipReturnsTheAdvancedOrder(t *testing.T) {
 	shipped := sampleAdminView()
 	shipped.Status = constant.StatusShipping
-	completed := sampleAdminView()
-	completed.Status = constant.StatusCompleted
-	fake := &fakeAdmin{shipView: shipped, completeView: completed}
+	fake := &fakeAdmin{shipView: shipped}
 	router := newOrderAdminRouter(fake)
 
 	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+shipped.ID.String()+"/ship", "", "admin-token")
@@ -374,20 +364,8 @@ func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
 	if shipBody.Data.Status != "SHIPPING" {
 		t.Fatalf("the dispatched order must answer SHIPPING, got %s", shipBody.Data.Status)
 	}
-
-	rec = perform(router, http.MethodPost, adminOrdersPath+"/"+completed.ID.String()+"/complete", "", "admin-token")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("complete: expected 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var completeBody adminDetailBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &completeBody); err != nil {
-		t.Fatalf("decode the completed order %q: %v", rec.Body.String(), err)
-	}
-	if completeBody.Data.Status != "COMPLETED" {
-		t.Fatalf("the completed order must answer COMPLETED, got %s", completeBody.Data.Status)
-	}
-	if fake.gotRefActor.ID != testAdminID || fake.gotRefInput.OrderID != completed.ID {
-		t.Fatalf("the session's actor and the addressed id must be passed through, got %+v / %+v", fake.gotRefActor, fake.gotRefInput)
+	if fake.gotRefActor.ID != testAdminID || fake.gotEvidence.OrderID != shipped.ID {
+		t.Fatalf("the session's actor and the addressed id must be passed through, got %+v / %+v", fake.gotRefActor, fake.gotEvidence)
 	}
 }
 
@@ -579,7 +557,6 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/reject"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/ship"},
 		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/deliver"},
-		{http.MethodPost, adminOrdersPath + "/" + uuid.New().String() + "/complete"},
 	}
 
 	for _, tc := range cases {
@@ -593,7 +570,7 @@ func TestAdminRoutesRefuseACustomerSession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "FORBIDDEN" {
 				t.Fatalf("expected FORBIDDEN, got %s", body.Error.Code)
 			}
-			if fake.shipCalls != 0 || fake.deliverCalls != 0 || fake.completeCalls != 0 || fake.confirmCalls != 0 || fake.rejectCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.shipCalls != 0 || fake.deliverCalls != 0 || fake.confirmCalls != 0 || fake.rejectCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("a forbidden request must not reach the use case")
 			}
 		})
@@ -667,10 +644,6 @@ func (f *fakeCheckout) StartShippingByAdmin(context.Context, appdto.EvidenceInpu
 }
 
 func (f *fakeCheckout) DeliverByAdmin(context.Context, appdto.EvidenceInput) (appdto.AdminOrderView, error) {
-	return appdto.AdminOrderView{}, nil
-}
-
-func (f *fakeCheckout) CompleteByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
 }
 

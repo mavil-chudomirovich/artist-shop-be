@@ -764,9 +764,10 @@ func (f *orderIntegrationFixture) requireAudit(t *testing.T, action string, orde
 
 // SC-005, quickstart scenarios 5b/5c/5d and 6e against real PostgreSQL: the
 // operator lists every order with its owner, reads one in full, is refused an
-// illegal move naming the state, ships then completes a paid order — each act
-// leaving an audit row naming the order and the administrator — and a customer's
-// session is refused every administrator route (FR-021 to FR-023).
+// illegal move naming the state, ships a paid order — leaving an audit row naming
+// the order and the administrator — and a customer's session is refused every
+// administrator route (FR-021 to FR-023). Completion is the customer's act and is
+// covered by TestCustomerConfirmsReceiptAgainstPostgres.
 func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 	f := newOrderIntegrationFixture(t)
 	seedOrderCustomer(t, f.pool, testCustomerID)
@@ -824,20 +825,7 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 		t.Fatalf("the admin read must return the order in full, got %+v", detail.Data)
 	}
 
-	// FR-022 (quickstart 5b/5d): completing a paid order is an illegal move; it is
-	// refused naming the current state and writes nothing.
-	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("complete before ship: expected 409, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
-		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
-	}
-	if rows := f.auditRows(t, constant.AuditOrderCompleted); len(rows) != 0 {
-		t.Fatalf("a refused move must audit nothing, got %+v", rows)
-	}
-
-	// FR-022, FR-023 (quickstart 5c): ship then complete succeed, and each leaves
+	// FR-005, FR-019 (quickstart 5c): dispatching a paid order succeeds and leaves
 	// an audit row naming the order and the administrator.
 	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
 	if rec.Code != http.StatusOK {
@@ -851,26 +839,6 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 		t.Fatalf("the order must answer SHIPPING, got %s", shipped.Data.Status)
 	}
 	f.requireAudit(t, constant.AuditOrderShipped, orderID, testAdminID)
-
-	// The delivery step (US2) has no route yet; move the order to DELIVERED
-	// directly so the completion edge can be driven through the admin route.
-	if _, err := f.pool.Exec(context.Background(),
-		`UPDATE orders SET status = 'DELIVERED', delivered_at = now() WHERE id = $1`, orderID); err != nil {
-		t.Fatalf("seed the delivered state: %v", err)
-	}
-
-	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("complete: expected 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var completed adminDetailBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &completed); err != nil {
-		t.Fatalf("decode the completed order %q: %v", rec.Body.String(), err)
-	}
-	if completed.Data.Status != "COMPLETED" {
-		t.Fatalf("the order must answer COMPLETED, got %s", completed.Data.Status)
-	}
-	f.requireAudit(t, constant.AuditOrderCompleted, orderID, testAdminID)
 
 	// FR-023 (quickstart 6e): a customer's session is refused every administrator
 	// route.
@@ -1558,4 +1526,175 @@ func TestAdminDeliversWithPhotosAgainstPostgres(t *testing.T) {
 	}
 
 	f.requireAudit(t, constant.AuditOrderDelivered, orderID, testAdminID)
+}
+
+// orderCompletionFacts reads one order's completion instant and the account that
+// completed it, so a test can prove the confirmation recorded who and when
+// (FR-014).
+func orderCompletionFacts(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) (*time.Time, *uuid.UUID) {
+	t.Helper()
+	var completedAt *time.Time
+	var completedBy *uuid.UUID
+	if err := pool.QueryRow(context.Background(),
+		`SELECT completed_at, completed_by FROM orders WHERE id = $1`, orderID).Scan(&completedAt, &completedBy); err != nil {
+		t.Fatalf("read order completion facts: %v", err)
+	}
+	return completedAt, completedBy
+}
+
+// requireCustomerAudit asserts the one row of an action names the acting customer,
+// the order and a SUCCESS outcome.
+func (f *orderIntegrationFixture) requireCustomerAudit(t *testing.T, action string, orderID, customerID uuid.UUID) {
+	t.Helper()
+	rows := f.waitForAuditRows(t, action, 1)
+	row := rows[0]
+	if row.actorID == nil || *row.actorID != customerID {
+		t.Fatalf("%s: expected the customer actor %s, got %v", action, customerID, row.actorID)
+	}
+	if row.actorRole != string(access.RoleCustomer) {
+		t.Fatalf("%s: expected the CUSTOMER role, got %q", action, row.actorRole)
+	}
+	if row.targetType != "order" || row.targetID != orderID.String() {
+		t.Fatalf("%s: expected the order as the target, got %q/%q", action, row.targetType, row.targetID)
+	}
+	if row.outcome != string(audit.OutcomeSuccess) {
+		t.Fatalf("%s: expected a SUCCESS outcome, got %q", action, row.outcome)
+	}
+}
+
+// SC-002, SC-006, FR-011, FR-014, FR-018, FR-020 against real PostgreSQL: after a
+// delivery the owner confirms receipt and the order reaches COMPLETED with
+// completed_at and completed_by set; another customer is refused the same
+// ORDER_NOT_FOUND; a non-delivered order is refused naming its state; the removed
+// admin complete route is gone; and the completion writes no inventory_transactions
+// row and leaves the committed total unchanged (the goods were sold at PAID, so a
+// completion touches neither stock nor money).
+func TestCustomerConfirmsReceiptAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// Confirm, pay and dispatch, so the order is SHIPPING and ready to be
+	// delivered.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-complete", 2); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ship: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// FR-003, SC-003: confirming receipt of an order that is not delivered is
+	// refused naming the current state SHIPPING, and the order stays as it was.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/complete", "", "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("complete before delivery: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	} else if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
+		t.Fatalf("the refusal must name SHIPPING, got %q", body.Error.Message)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusShipping) {
+		t.Fatalf("a refused confirmation must leave the order SHIPPING, got %s", got)
+	}
+
+	// Deliver it, so the order is DELIVERED and awaits the customer's confirmation.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/deliver", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deliver: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("the delivered order must be DELIVERED, got %s", got)
+	}
+
+	// FR-018, SC-006: another customer's order answers the same ORDER_NOT_FOUND,
+	// and the order is left DELIVERED.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/complete", "", "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("another customer: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_NOT_FOUND" {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("a foreign confirmation must leave the order DELIVERED, got %s", got)
+	}
+
+	// FR-011: the old admin complete route is gone — it answers not-found or
+	// method-not-allowed, not a completed order.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("the removed admin complete route must answer 404 or 405, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("the removed admin route must not complete the order, got %s", got)
+	}
+
+	// The completion must not touch stock or money: capture both before it runs.
+	totalBefore := orderTotalAmount(t, f.pool, orderID)
+	transactionsBefore := inventoryTransactionCount(t, f.pool)
+
+	// FR-011, FR-014: the owner confirms receipt and the order reaches COMPLETED
+	// with the completion instant and the acting customer recorded.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/complete", "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("complete: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var completed orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &completed); err != nil {
+		t.Fatalf("decode the completed order %q: %v", rec.Body.String(), err)
+	}
+	if completed.Data.Status != string(constant.StatusCompleted) {
+		t.Fatalf("the order must answer COMPLETED, got %s", completed.Data.Status)
+	}
+	if completed.Data.CompletedAt == nil {
+		t.Fatal("the completed order must answer completedAt")
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusCompleted) {
+		t.Fatalf("the stored state must be COMPLETED, got %s", got)
+	}
+	completedAt, completedBy := orderCompletionFacts(t, f.pool, orderID)
+	if completedAt == nil {
+		t.Fatal("a confirmation must stamp completed_at")
+	}
+	if completedBy == nil || *completedBy != testCustomerID {
+		t.Fatalf("completion must record the acting customer %s, got %v", testCustomerID, completedBy)
+	}
+	f.requireCustomerAudit(t, constant.AuditOrderCompleted, orderID, testCustomerID)
+
+	// FR-020: the completion wrote no inventory_transactions row and left the
+	// total unchanged.
+	if got := inventoryTransactionCount(t, f.pool); got != transactionsBefore {
+		t.Fatalf("a completion must write no inventory transaction, got %d want %d", got, transactionsBefore)
+	}
+	if got := orderTotalAmount(t, f.pool, orderID); got != totalBefore {
+		t.Fatalf("a completion must leave the total unchanged, got %d want %d", got, totalBefore)
+	}
+
+	// FR-004: COMPLETED is terminal; a second confirmation is refused naming it.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/complete", "", "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second confirmation: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	} else if !strings.Contains(body.Error.Message, string(constant.StatusCompleted)) {
+		t.Fatalf("the refusal must name COMPLETED, got %q", body.Error.Message)
+	}
 }
