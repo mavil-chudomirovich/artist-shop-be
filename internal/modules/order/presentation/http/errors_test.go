@@ -12,6 +12,7 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // This file covers the mapping of every code the order module can answer with
@@ -225,6 +226,18 @@ func TestMapErrorCoversTheDeliveryPhotoAndFeedbackCodes(t *testing.T) {
 			err:    domainerr.ErrFeedbackAlreadySent,
 			code:   constant.CodeFeedbackAlreadySent,
 			status: http.StatusConflict,
+		},
+		{
+			name:   "an unavailable media provider is a retryable 503",
+			err:    media.ErrUnavailable,
+			code:   constant.CodeMediaUnavailable,
+			status: http.StatusServiceUnavailable,
+		},
+		{
+			name:   "the domain media sentinel maps to the same 503",
+			err:    domainerr.ErrMediaUnavailable,
+			code:   constant.CodeMediaUnavailable,
+			status: http.StatusServiceUnavailable,
 		},
 	}
 

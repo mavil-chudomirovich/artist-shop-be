@@ -88,6 +88,13 @@ var (
 	// to one delivery step (FR-006, FR-008). It maps to
 	// ORDER_IMAGE_LIMIT_REACHED (409).
 	ErrImageLimitReached = errors.New("order image limit reached")
+	// ErrMediaUnavailable is returned when the media provider refuses a delivery
+	// photo or cannot be reached while one is being stored, including the case
+	// where the composition wired no store at all. It is a retryable outage, not
+	// a client mistake: the order is left unchanged (FR-009). It mirrors module
+	// 02's ErrMediaUnavailable and module 04's ErrProductMediaUnavailable, and it
+	// maps to ORDER_MEDIA_UNAVAILABLE (503).
+	ErrMediaUnavailable = errors.New("media service unavailable")
 	// ErrFeedbackNotAllowed is returned when feedback is submitted while the
 	// order's state does not allow it — it is not DELIVERED or COMPLETED
 	// (FR-015). It is the single sentinel for the typed refusals built by

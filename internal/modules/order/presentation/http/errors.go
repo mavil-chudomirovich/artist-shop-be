@@ -8,6 +8,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // Field names used in error details. They are the JSON member names of the
@@ -46,6 +47,18 @@ func fieldError(field, issue string) *httpx.AppError {
 	return httpx.NewWithDetails(httpx.CodeValidation, httpx.Detail{Field: field, Issue: issue})
 }
 
+// photosTooLarge is the one refusal for a dispatch or delivery upload over the
+// ceiling, wherever the ceiling was reached: while reading one photo part, or by
+// the route's own body limit. Naming the photos in the detail is what lets a
+// client point at the right input. It mirrors module 04's PRODUCT_IMAGE_TOO_LARGE
+// (FR-009, contracts/error-codes.md).
+func photosTooLarge() *httpx.AppError {
+	return withField(
+		coded(constant.CodeImageTooLarge, http.StatusRequestEntityTooLarge, "A delivery photo exceeds the size limit"),
+		fieldPhotos, "compress the photo or send fewer",
+	)
+}
+
 // mapError translates the module's sentinel errors into the codes and statuses of
 // specs/010-order-confirmation/contracts/error-codes.md and
 // specs/019-order-delivery/contracts/error-codes.md.
@@ -60,9 +73,10 @@ func fieldError(field, issue string) *httpx.AppError {
 // ORDER_FEEDBACK_ALREADY_SENT. An order that may not be edited or an edit that
 // would empty it answers ORDER_NOT_EDITABLE or ORDER_EMPTY (both 409). A malformed
 // or foreign `addressId` stays on the shared VALIDATION_ERROR and names the field.
-// A shared AppError the transport produced (a malformed request, an authentication
-// failure) passes through unchanged; anything else is hidden behind INTERNAL_ERROR
-// so storage detail is never leaked.
+// A media provider refusal answers ORDER_MEDIA_UNAVAILABLE (503) and leaves the
+// order unchanged. A shared AppError the transport produced (a malformed request,
+// an authentication failure) passes through unchanged; anything else is hidden
+// behind INTERNAL_ERROR so storage detail is never leaked.
 func mapError(err error) *httpx.AppError {
 	var notPurchasable *domainerr.ItemNotPurchasableError
 	var priceChanged *domainerr.ItemPriceChangedError
@@ -143,6 +157,14 @@ func mapError(err error) *httpx.AppError {
 			coded(constant.CodeImageLimitReached, http.StatusConflict, "Too many delivery photos for this step"),
 			fieldPhotos, "send at most five",
 		)
+	case errors.Is(err, media.ErrUnavailable), errors.Is(err, domainerr.ErrMediaUnavailable):
+		// Retryable: the provider could not store a photo, so the order is left
+		// unchanged and the operator can dispatch again (FR-009,
+		// contracts/error-codes.md). The use case flattens every provider failure
+		// to media.ErrUnavailable with no provider prose attached, so nothing
+		// sensitive is echoed here (Constitution V, VI).
+		return coded(constant.CodeMediaUnavailable, http.StatusServiceUnavailable,
+			"The media service is unavailable; the order was not changed")
 	case errors.As(err, &feedbackNotAllowed):
 		return coded(constant.CodeFeedbackNotAllowed, http.StatusConflict,
 			fmt.Sprintf("Order is %s and does not accept feedback", feedbackNotAllowed.From))

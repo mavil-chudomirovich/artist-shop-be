@@ -125,6 +125,13 @@ const (
 	// CodeImageLimitReached reports that more than five photos were attached to
 	// one delivery step (FR-006, FR-008). It maps to 409 (research D9).
 	CodeImageLimitReached = "ORDER_IMAGE_LIMIT_REACHED"
+	// CodeMediaUnavailable reports that the media provider rejected a delivery
+	// photo or could not be reached while one was being stored, including the
+	// case where the composition wired no store at all (FR-009). It is a
+	// retryable outage — the order is left unchanged — and mirrors module 04's
+	// PRODUCT_MEDIA_UNAVAILABLE. It maps to 503 (research D9,
+	// contracts/error-codes.md).
+	CodeMediaUnavailable = "ORDER_MEDIA_UNAVAILABLE"
 	// CodeFeedbackNotAllowed reports that feedback was submitted while the order
 	// is not DELIVERED or COMPLETED. The message names the current state
 	// (FR-015). It maps to 409 (research D9).

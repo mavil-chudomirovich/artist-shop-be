@@ -17,6 +17,7 @@ import (
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
@@ -56,9 +57,10 @@ type Service interface {
 	// RejectByAdmin declines an order awaiting the artist, moving it to
 	// cancelled; no goods were held, so nothing is returned (FR-018).
 	RejectByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
-	// ShipByAdmin moves a paid order in transit (dispatch) and records the act
-	// (FR-005, FR-019).
-	ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
+	// StartShippingByAdmin moves a paid order in transit (dispatch), attaching
+	// zero to five optional evidence photos, and records the act (FR-005,
+	// FR-006, FR-019).
+	StartShippingByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error)
 	// CompleteByAdmin moves a delivered order to completed and records the act
 	// (FR-011, FR-014).
 	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
@@ -465,27 +467,111 @@ func (h *Handler) RejectByAdmin(w http.ResponseWriter, r *http.Request) {
 	h.adminMove(w, r, h.svc.RejectByAdmin)
 }
 
-// ShipByAdmin moves a paid order in transit (dispatch) and records the act. A
-// move the current state does not allow answers 409
-// ORDER_STATE_TRANSITION_INVALID naming the current state (FR-005, FR-019).
+// StartShippingByAdmin dispatches a paid order, attaching zero to five optional
+// dispatch photos, and records the act. A move the current state does not allow
+// answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state; more than
+// five photos answer 409 ORDER_IMAGE_LIMIT_REACHED; an unsupported photo answers
+// 400 ORDER_IMAGE_TYPE_UNSUPPORTED and one over the ceiling answers 413
+// ORDER_IMAGE_TOO_LARGE, both before anything is stored (FR-005, FR-006, FR-009,
+// contracts/error-codes.md).
 //
-//	@Summary		Mark a paid order in transit (administrator)
-//	@Description	Moves a paid order in transit and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Summary		Mark a paid order in transit, attaching up to five photos (administrator)
+//	@Description	Moves a paid order in transit and records the act naming the order and the administrator, optionally attaching up to five dispatch photos. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized one answers 413 ORDER_IMAGE_TOO_LARGE. Administrator role required.
 //	@Tags			Orders
+//	@Accept			multipart/form-data
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			orderId	path	string	true	"Order identifier"
+//	@Param			orderId	path		string	true	"Order identifier"
+//	@Param			photos	formData	file	false	"Dispatch evidence photo (JPEG, PNG or WebP); send the part zero to five times"
 //	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.AdminOrderResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError
 //	@Failure		403		{object}	httpx.SwaggerError
 //	@Failure		404		{object}	httpx.SwaggerError
 //	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
 //	@Failure		500		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
 //	@Router			/admin/orders/{orderId}/ship [post]
-func (h *Handler) ShipByAdmin(w http.ResponseWriter, r *http.Request) {
-	h.adminMove(w, r, h.svc.ShipByAdmin)
+func (h *Handler) StartShippingByAdmin(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	photos, appErr := h.readEvidencePhotos(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.StartShippingByAdmin(ctx, appdto.EvidenceInput{OrderID: orderID, Photos: photos})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toAdminOrderResponse(view))
+}
+
+// readEvidencePhotos streams the "photos" parts of a multipart body, refusing to
+// buffer more than the image ceiling per part. Reading with a ceiling is what
+// makes the size rule enforceable: a post-hoc check on an already buffered body
+// cannot stop a memory-exhaustion upload. The client-declared file name and media
+// type are deliberately not trusted — the use case decides the image type from the
+// leading signature (FR-009).
+//
+// An absent body is zero photos, so a dispatch with no evidence is the empty
+// request it is (FR-006). The route's own body ceiling refuses a body whose size
+// is already over the limit before this runs, and the reader maps a stream cut by
+// that ceiling to the same ORDER_IMAGE_TOO_LARGE refusal.
+func (h *Handler) readEvidencePhotos(r *http.Request) ([]appdto.UploadedPhoto, *httpx.AppError) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil, nil
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, fieldError(fieldPhotos, "a multipart/form-data body with photo parts is required")
+	}
+	ceiling := int64(model.MaxDeliveryPhotoBytes)
+	photos := make([]appdto.UploadedPhoto, 0)
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return nil, photosTooLarge()
+			}
+			return nil, httpx.New(httpx.CodeMalformedRequest)
+		}
+		if part.FormName() != fieldPhotos {
+			_ = part.Close()
+			continue
+		}
+		// One extra byte distinguishes "at the ceiling" from "over it".
+		content, err := io.ReadAll(io.LimitReader(part, ceiling+1))
+		_ = part.Close()
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return nil, photosTooLarge()
+			}
+			return nil, httpx.New(httpx.CodeMalformedRequest)
+		}
+		if int64(len(content)) > ceiling {
+			return nil, photosTooLarge()
+		}
+		photos = append(photos, appdto.UploadedPhoto{Content: content})
+	}
+	return photos, nil
 }
 
 // CompleteByAdmin moves a delivered order to completed and records the act. A move

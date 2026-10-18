@@ -1,13 +1,71 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/middleware"
 )
+
+// deliveryEvidenceUploadOverhead is the room the evidence routes leave for the
+// multipart envelope — part headers, boundaries and the form field name — on top
+// of the photo ceiling. Each photo is capped again while it is read, so this only
+// has to be generous, never exact (the product module's rule).
+const deliveryEvidenceUploadOverhead = 64 << 10
+
+// DeliveryEvidenceUploadCeiling is the body ceiling the dispatch and delivery
+// routes install: five photos at the documented image ceiling plus the room the
+// multipart envelope needs. The routes and the handler read the same domain
+// constants, so the limit a route applies cannot drift from the rule the use case
+// enforces (FR-006, FR-008, FR-009).
+//
+// It is exported because the composition root has to compare the shared pipeline
+// ceiling against it before it wires anything, and the two must be the same
+// number. The route below and RequireDeliveryEvidenceUploadCeiling both read this
+// function, so the check cannot drift away from the limit the route really
+// installs (research D4, mirroring userhttp.AvatarUploadCeiling).
+func DeliveryEvidenceUploadCeiling() int64 {
+	return int64(model.MaxDeliveryPhotoBytes)*int64(model.MaxDeliveryPhotos) + deliveryEvidenceUploadOverhead
+}
+
+// RequireDeliveryEvidenceUploadCeiling refuses a startup whose shared pipeline
+// ceiling is below the ceiling the dispatch and delivery routes install, and
+// returns nil otherwise.
+//
+// The shared wrapper runs before routing, so a ceiling under these routes' own
+// means every five-photo dispatch is refused by the pipeline first, with a reason
+// that does not point at the setting an operator has to change. Refusing to start
+// turns that into one message that does (FR-006, FR-009; mirroring
+// userhttp.RequireAvatarUploadCeiling, research D2).
+//
+// The boundary is deliberate: strictly below refuses, equal starts. Equal is safe
+// because the route's own ceiling is the binding constraint at that point, and
+// refusing it would block a configuration that works.
+//
+// mediaConfigured reports whether the provider credentials are present. Without
+// them no evidence photo can be stored at all, so the ceiling is irrelevant and
+// the startup is allowed: the composition decides how to report that consequence.
+//
+// The function is pure — it reads no configuration and touches no infrastructure —
+// so the composition root can call it before it opens anything and a unit test can
+// cover every branch without a database.
+func RequireDeliveryEvidenceUploadCeiling(sharedBodyCeilingBytes, deliveryCeilingBytes int64, mediaConfigured bool) error {
+	if !mediaConfigured || sharedBodyCeilingBytes >= deliveryCeilingBytes {
+		return nil
+	}
+	// The message carries no credential: it receives only two byte counts and a
+	// boolean, so there is nothing secret for it to leak (Constitution V, VI).
+	return fmt.Errorf(
+		"MAX_BODY_BYTES is %d bytes but a delivery-evidence upload needs at least %d bytes: "+
+			"the shared request-size ceiling wraps the body before routing, so every five-photo dispatch would be "+
+			"refused before the ship route could apply its own limit. "+
+			"Raise MAX_BODY_BYTES to at least %d bytes, or start without media credentials",
+		sharedBodyCeilingBytes, deliveryCeilingBytes, deliveryCeilingBytes)
+}
 
 // Router builds the `/orders` group. Mount it under `/api/v1`.
 //
@@ -43,7 +101,12 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Get("/{orderId}", h.GetByIDAdmin)
 	r.Post("/{orderId}/confirm", h.ConfirmByAdmin)
 	r.Post("/{orderId}/reject", h.RejectByAdmin)
-	r.Post("/{orderId}/ship", h.ShipByAdmin)
+	// The dispatch route takes up to five evidence photos, so it raises the body
+	// limit for its own handler and accepts multipart/form-data; the handler caps
+	// each photo again while it reads (FR-006, FR-009).
+	r.With(middleware.BodyLimitWithRefusal(
+		DeliveryEvidenceUploadCeiling(), photosTooLarge(),
+	)).Post("/{orderId}/ship", h.StartShippingByAdmin)
 	r.Post("/{orderId}/complete", h.CompleteByAdmin)
 	r.Post("/{orderId}/transfer", h.Transfer)
 	return r

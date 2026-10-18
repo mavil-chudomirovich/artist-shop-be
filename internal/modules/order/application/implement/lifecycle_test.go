@@ -19,12 +19,13 @@ import (
 
 // This file is the use-case contract of US2: the order's selling life. MarkPaid
 // turns the hold into a sale, once per line and keyed by the payment event's
-// per-line source reference; Cancel returns the hold; Ship and Complete drive
-// their transitions; and every move the current state does not allow is refused
-// naming that state and leaves the order untouched (FR-009 to FR-015, research
-// D5, D13). It runs the real transitions over in-memory fakes of the repository
-// and the inventory reservation contract, so the answers asserted are the
-// service's own.
+// per-line source reference; Cancel returns the hold; Complete drives the
+// completion transition; and every move the current state does not allow is
+// refused naming that state and leaves the order untouched (FR-009 to FR-015,
+// research D5, D13). Dispatch (PAID -> SHIPPING) is an operator use case with
+// evidence and is covered by delivery_test.go. It runs the real transitions over
+// in-memory fakes of the repository and the inventory reservation contract, so the
+// answers asserted are the service's own.
 
 // statusWrite records one persisted state change.
 type statusWrite struct {
@@ -374,21 +375,22 @@ func TestCancelReturnsTheHoldExactlyOnce(t *testing.T) {
 	}
 }
 
-// FR-003, FR-005, FR-011: ship and complete drive their transitions, and a move
-// the current state does not allow is refused naming that state and leaves the
-// order exactly as it was.
-func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) {
+// FR-003, FR-011, FR-012: the single completion edge drives its transition, and a
+// move the current state does not allow is refused naming that state and leaves
+// the order exactly as it was. Dispatch (PAID -> SHIPPING) is an operator use case
+// with evidence and is covered by delivery_test.go.
+func TestCompleteDrivesTheTransitionAndRefusesAnIllegalMove(t *testing.T) {
 	order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 	f := newLifecycleFixture(order)
 	ctx := context.Background()
 
-	// Shipping an awaiting-payment order is refused, naming PAYMENT_PENDING.
-	err := f.svc.Ship(ctx, order.ID)
+	// Completing an order that is not DELIVERED is refused, naming its state.
+	err := f.svc.Complete(ctx, order.ID)
 	var refusal *domainerr.StateTransitionError
 	if !errors.As(err, &refusal) {
-		t.Fatalf("shipping an unpaid order must be refused with a state transition error, got %v", err)
+		t.Fatalf("completing an undelivered order must be refused with a state transition error, got %v", err)
 	}
-	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusShipping {
+	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusCompleted {
 		t.Fatalf("the refusal must name PAYMENT_PENDING, got %+v", refusal)
 	}
 	if order.Status != constant.StatusPaymentPending {
@@ -398,16 +400,7 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 		t.Fatalf("a refused move must persist nothing, got %+v", f.orders.updates)
 	}
 
-	// A paid order can be dispatched and, once delivered, completed.
-	order.Status = constant.StatusPaid
-	if err := f.svc.Ship(ctx, order.ID); err != nil {
-		t.Fatalf("Ship: %v", err)
-	}
-	if order.Status != constant.StatusShipping {
-		t.Fatalf("status = %s, want SHIPPING", order.Status)
-	}
-	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
-	// it directly so the completed edge can be exercised.
+	// A delivered order can be completed.
 	order.Status = constant.StatusDelivered
 	if err := f.svc.Complete(ctx, order.ID); err != nil {
 		t.Fatalf("Complete: %v", err)

@@ -2391,16 +2391,26 @@ paths:
       - Orders
   /admin/orders/{orderId}/ship:
     post:
+      consumes:
+      - multipart/form-data
       description: Moves a paid order in transit and records the act naming the order
-        and the administrator. The order must be paid; an illegal move answers 409
-        ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role
-        required.
+        and the administrator, optionally attaching up to five dispatch photos. Each
+        photo is validated by signature (JPEG, PNG or WebP) and size before it is
+        stored. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID
+        naming the current state, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED,
+        an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized
+        one answers 413 ORDER_IMAGE_TOO_LARGE. Administrator role required.
       parameters:
       - description: Order identifier
         in: path
         name: orderId
         required: true
         type: string
+      - description: Dispatch evidence photo (JPEG, PNG or WebP); send the part zero
+          to five times
+        in: formData
+        name: photos
+        type: file
       produces:
       - application/json
       responses:
@@ -2433,6 +2443,10 @@ paths:
           description: Conflict
           schema:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
         "429":
           description: Too Many Requests
           schema:
@@ -2441,9 +2455,13 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
       security:
       - BearerAuth: []
-      summary: Mark a paid order in transit (administrator)
+      summary: Mark a paid order in transit, attaching up to five photos (administrator)
       tags:
       - Orders
   /admin/orders/{orderId}/transfer:

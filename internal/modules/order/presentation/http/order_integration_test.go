@@ -3,10 +3,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +33,7 @@ import (
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
 	productcatalog "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/infrastructure/implement/catalog"
@@ -37,6 +42,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
 
@@ -172,6 +178,43 @@ func (n *recordingNotifier) setFail(fail bool) {
 	n.fail = fail
 }
 
+// recordingMedia is the integration run's in-memory MediaStore. It records every
+// uploaded payload and every released reference, so a test can prove evidence was
+// stored through the port and that a refused request never reached it. It stands
+// in for Cloudinary so the dispatch path runs without a real provider (FR-009,
+// FR-010).
+type recordingMedia struct {
+	mu       sync.Mutex
+	uploaded [][]byte
+	removed  []media.Reference
+}
+
+func (m *recordingMedia) Upload(_ context.Context, content []byte, _ int) (media.Reference, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.uploaded = append(m.uploaded, content)
+	n := len(m.uploaded)
+	return media.Reference{
+		PublicID: fmt.Sprintf("public-%d", n),
+		URL:      fmt.Sprintf("https://cdn.example/%d.jpg", n),
+		Width:    100,
+		Height:   80,
+	}, nil
+}
+
+func (m *recordingMedia) Remove(_ context.Context, ref media.Reference) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.removed = append(m.removed, ref)
+	return nil
+}
+
+func (m *recordingMedia) uploadCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.uploaded)
+}
+
 // orderIntegrationFixture is one migrated PostgreSQL container plus the real HTTP
 // surface, so checkout can be driven through the route a customer reaches and the
 // operator's desk through the route an administrator reaches.
@@ -181,6 +224,7 @@ type orderIntegrationFixture struct {
 	svc      *orderimplement.Service
 	writer   *audit.Writer
 	notifier *recordingNotifier
+	media    *recordingMedia
 }
 
 func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
@@ -227,6 +271,11 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 	// to FR-021).
 	notifier := &recordingNotifier{}
 
+	// A recording media store, wired exactly as the composition root wires the
+	// shared Cloudinary adapter, so the dispatch/delivery evidence path runs
+	// without a real provider (FR-009, FR-010).
+	mediaStore := &recordingMedia{}
+
 	svc := orderimplement.New(orderimplement.Service{
 		Orders:       orderpostgres.NewOrderRepository(pool),
 		Carts:        cartcheckout.New(cartpostgres.NewCartRepository(pool)),
@@ -239,6 +288,7 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Clock:        orderIntegrationClock{},
 		Audit:        orderauditor.New(writer),
 		Notifier:     notifier,
+		Media:        mediaStore,
 		ArtistEmail:  integrationArtistEmail,
 		Mapper:       ordermapper.New(),
 	})
@@ -246,7 +296,7 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 	root := chi.NewRouter()
 	root.Mount(ordersPath, handler.Router(orderHooks()))
 	root.Mount(adminOrdersPath, handler.AdminRouter(orderHooks()))
-	return &orderIntegrationFixture{pool: pool, root: root, svc: svc, writer: writer, notifier: notifier}
+	return &orderIntegrationFixture{pool: pool, root: root, svc: svc, writer: writer, notifier: notifier, media: mediaStore}
 }
 
 // seedOrderCustomer writes the signed-in account the test hooks resolve, plus one
@@ -1183,5 +1233,166 @@ func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
 	}
 	if status != string(constant.StatusCancelled) {
 		t.Fatalf("the order must still be CANCELLED, got %s", status)
+	}
+}
+
+// evidenceJPEG is a minimal payload whose leading bytes are a JPEG signature, so
+// the domain sniff accepts it. The trailing bytes stand in for image content.
+func evidenceJPEG() []byte { return []byte{0xFF, 0xD8, 0xFF, 0x00, 0x11, 0x22} }
+
+// multipartEvidence builds a multipart/form-data body carrying one "photos" file
+// part per payload, and returns the body and its content type, so a test can drive
+// the dispatch route's multipart contract.
+func multipartEvidence(t *testing.T, payloads [][]byte) (string, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	for i, payload := range payloads {
+		part, err := writer.CreateFormFile("photos", fmt.Sprintf("photo-%d.jpg", i))
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(payload); err != nil {
+			t.Fatalf("write the photo part: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close the multipart writer: %v", err)
+	}
+	return buf.String(), writer.FormDataContentType()
+}
+
+// performMultipart sends a multipart/form-data request with a bearer token.
+func performMultipart(handler http.Handler, path, body, contentType, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// deliveryPhotoCount reads how many evidence photos one order carries at a stage.
+func deliveryPhotoCount(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID, stage string) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM order_delivery_photos WHERE order_id = $1 AND stage = $2`,
+		orderID, stage).Scan(&count); err != nil {
+		t.Fatalf("read delivery photo count: %v", err)
+	}
+	return count
+}
+
+// orderStatus reads one order's stored status.
+func orderStatus(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) string {
+	t.Helper()
+	var status string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT status FROM orders WHERE id = $1`, orderID).Scan(&status); err != nil {
+		t.Fatalf("read order status: %v", err)
+	}
+	return status
+}
+
+// SC-001, SC-004, FR-005, FR-006, FR-009 against real PostgreSQL: dispatching a
+// paid order with two photos moves it SHIPPING and persists two SHIPPING-stage
+// evidence rows with their provider references; a six-photo request is refused
+// ORDER_IMAGE_LIMIT_REACHED before the media store is called (the dispatch edge
+// fires once, so the counter is not a concurrency guard); and a second dispatch of
+// the same order is refused ORDER_STATE_TRANSITION_INVALID naming SHIPPING.
+func TestAdminDispatchesWithPhotosAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	// Confirm then pay, so the order is PAID and ready to dispatch.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-dispatch", 2); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+
+	// FR-005, FR-006: dispatch with two photos reaches SHIPPING and persists two
+	// SHIPPING-stage evidence rows through the media store.
+	body, contentType := multipartEvidence(t, [][]byte{evidenceJPEG(), evidenceJPEG()})
+	rec = performMultipart(f.root, adminOrdersPath+"/"+orderID.String()+"/ship", body, contentType, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ship: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var shipped adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &shipped); err != nil {
+		t.Fatalf("decode the shipped order %q: %v", rec.Body.String(), err)
+	}
+	if shipped.Data.Status != string(constant.StatusShipping) {
+		t.Fatalf("the order must answer SHIPPING, got %s", shipped.Data.Status)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusShipping) {
+		t.Fatalf("the stored state must be SHIPPING, got %s", got)
+	}
+	if got := deliveryPhotoCount(t, f.pool, orderID, string(model.StageShipping)); got != 2 {
+		t.Fatalf("expected two SHIPPING-stage photos, got %d", got)
+	}
+	var publicID, url string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT public_id, url FROM order_delivery_photos WHERE order_id = $1 ORDER BY position LIMIT 1`,
+		orderID).Scan(&publicID, &url); err != nil {
+		t.Fatalf("read a stored photo: %v", err)
+	}
+	if publicID == "" || url == "" {
+		t.Fatalf("a stored photo must carry the provider reference, got %q/%q", publicID, url)
+	}
+	if got := f.media.uploadCount(); got != 2 {
+		t.Fatalf("two photos must reach the media store, got %d uploads", got)
+	}
+	f.requireAudit(t, constant.AuditOrderShipped, orderID, testAdminID)
+
+	// FR-006, SC-004: a six-photo request is refused before the media store is
+	// called and leaves the order SHIPPING.
+	uploadsBefore := f.media.uploadCount()
+	six := make([][]byte, 6)
+	for i := range six {
+		six[i] = evidenceJPEG()
+	}
+	body, contentType = multipartEvidence(t, six)
+	rec = performMultipart(f.root, adminOrdersPath+"/"+orderID.String()+"/ship", body, contentType, "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("six photos: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeError(t, rec).Error.Code; got != "ORDER_IMAGE_LIMIT_REACHED" {
+		t.Fatalf("expected ORDER_IMAGE_LIMIT_REACHED, got %s", got)
+	}
+	if got := f.media.uploadCount(); got != uploadsBefore {
+		t.Fatalf("an over-ceiling request must not reach the media store, got %d uploads", got)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusShipping) {
+		t.Fatalf("an over-ceiling request must leave the order SHIPPING, got %s", got)
+	}
+
+	// FR-003, SC-001: a second dispatch of the same order is refused naming the
+	// current state SHIPPING; the dispatch edge fires once.
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second dispatch: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "ORDER_STATE_TRANSITION_INVALID" {
+		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
+	} else if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
+		t.Fatalf("the refusal must name SHIPPING, got %q", body.Error.Message)
 	}
 }

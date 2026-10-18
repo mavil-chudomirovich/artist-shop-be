@@ -135,9 +135,7 @@ type OrderService interface {
 	// confirmation or payment — and returns any held goods exactly once (FR-015,
 	// FR-019).
 	Cancel(ctx context.Context, orderID uuid.UUID) error
-	// Ship moves a paid order to shipped (FR-022).
-	Ship(ctx context.Context, orderID uuid.UUID) error
-	// Complete moves a shipped order to completed (FR-022).
+	// Complete moves a delivered order to completed (FR-022).
 	Complete(ctx context.Context, orderID uuid.UUID) error
 
 	// ExpireOrders cancels every awaiting-payment order whose window has passed
@@ -173,9 +171,10 @@ type OrderService interface {
 	// RejectByAdmin declines an order awaiting the artist, moving it to
 	// cancelled; no goods were held, so nothing is returned (FR-018).
 	RejectByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
-	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
-	// FR-023).
-	ShipByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)
+	// StartShippingByAdmin moves a paid order in transit (dispatches it),
+	// attaching zero to five optional dispatch photos, and records the act
+	// (FR-005, FR-006, FR-019).
+	StartShippingByAdmin(ctx context.Context, in dto.EvidenceInput) (dto.AdminOrderView, error)
 	// CompleteByAdmin moves a shipped order to completed and records the act
 	// (FR-022, FR-023).
 	CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error)

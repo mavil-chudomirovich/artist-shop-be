@@ -188,8 +188,8 @@ func TestShipAndCompleteEmailTheCustomer(t *testing.T) {
 	notifier := &fakeNotifier{}
 	enableNotifications(f.svc, notifier, owner)
 
-	if _, err := f.svc.ShipByAdmin(adminContext(uuid.New()), appdto.OrderRefInput{OrderID: order.ID}); err != nil {
-		t.Fatalf("ShipByAdmin: %v", err)
+	if _, err := f.svc.StartShippingByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{OrderID: order.ID}); err != nil {
+		t.Fatalf("StartShippingByAdmin: %v", err)
 	}
 	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
 	// it directly so the completed edge can be exercised.

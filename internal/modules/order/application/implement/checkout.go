@@ -78,11 +78,6 @@ type Service struct {
 	// their rows inserted inside, so no database lock is held across a provider
 	// call (research D5).
 	Media appinterface.MediaStore
-	// PhotoMaxBytes is the configured ceiling on one delivery-evidence photo,
-	// enforced before the payload reaches the media store. Zero means the
-	// documented ceiling (model.MaxDeliveryPhotoBytes, the shared 2 MB image
-	// limit) (FR-009, research D4).
-	PhotoMaxBytes int64
 	// Cancellations tells the payment module (08) that an order was cancelled, so
 	// the provider payment request it created is cancelled too. It is the
 	// contract module 08 provides at the composition root (research D9). The call

@@ -35,6 +35,7 @@ type adminOrders struct {
 	byID      map[uuid.UUID]*model.Order
 	ordered   []model.OrderSummary
 	updates   []statusWrite
+	photos    []model.DeliveryPhoto
 	gotStatus *constant.Status
 	gotSort   constant.OrderListSort
 }
@@ -67,7 +68,11 @@ func (r *adminOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Order, e
 	if !ok {
 		return nil, domainerr.ErrNotFound
 	}
-	return order, nil
+	// A copy, so the domain transition a use case drives during its pre-upload
+	// check never mutates what the repository holds before the write transaction
+	// commits.
+	clone := *order
+	return &clone, nil
 }
 
 func (r *adminOrders) UpdateStatus(_ context.Context, id uuid.UUID, status constant.Status, _ time.Time) error {
@@ -75,6 +80,29 @@ func (r *adminOrders) UpdateStatus(_ context.Context, id uuid.UUID, status const
 	if order, ok := r.byID[id]; ok {
 		order.Status = status
 	}
+	return nil
+}
+
+// StartShipping persists a dispatched order's new state, the way the postgres
+// adapter does, so a test can assert the state the dispatch wrote.
+func (r *adminOrders) StartShipping(_ context.Context, order *model.Order, _ time.Time) error {
+	r.updates = append(r.updates, statusWrite{id: order.ID, status: order.Status})
+	if stored, ok := r.byID[order.ID]; ok {
+		stored.Status = order.Status
+	}
+	return nil
+}
+
+// CountDeliveryPhotos answers how many photos the order already carries at the
+// stage, which the fakes here keep empty: the use-case dispatch tests that
+// exercise the ceiling live in delivery_test.go over a store that records them.
+func (r *adminOrders) CountDeliveryPhotos(_ context.Context, _ uuid.UUID, _ model.Stage) (int, error) {
+	return 0, nil
+}
+
+// AddDeliveryPhotos records the photo rows a dispatch or delivery wrote.
+func (r *adminOrders) AddDeliveryPhotos(_ context.Context, _ uuid.UUID, photos []model.DeliveryPhoto, _ time.Time) error {
+	r.photos = append(r.photos, photos...)
 	return nil
 }
 
@@ -213,9 +241,9 @@ func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
 	order.Status = constant.StatusPaid
 	f := newAdminFixture(order)
 
-	shipped, err := f.svc.ShipByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
+	shipped, err := f.svc.StartShippingByAdmin(adminContext(admin), appdto.EvidenceInput{OrderID: order.ID})
 	if err != nil {
-		t.Fatalf("ShipByAdmin: %v", err)
+		t.Fatalf("StartShippingByAdmin: %v", err)
 	}
 	if shipped.Status != constant.StatusShipping {
 		t.Fatalf("the order must answer SHIPPING, got %s", shipped.Status)
@@ -256,7 +284,7 @@ func TestAdminMoveRefusesAnIllegalMoveAndRecordsNothing(t *testing.T) {
 	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
 	f := newAdminFixture(order)
 
-	_, err := f.svc.ShipByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
+	_, err := f.svc.StartShippingByAdmin(adminContext(admin), appdto.EvidenceInput{OrderID: order.ID})
 	var refusal *domainerr.StateTransitionError
 	if !errors.As(err, &refusal) {
 		t.Fatalf("dispatching an unpaid order must be refused with a state transition error, got %v", err)
@@ -283,8 +311,8 @@ func TestAdminMoveRequiresASession(t *testing.T) {
 	order.Status = constant.StatusPaid
 	f := newAdminFixture(order)
 
-	if _, err := f.svc.ShipByAdmin(context.Background(), appdto.OrderRefInput{OrderID: order.ID}); !errors.Is(err, errNoActor) {
-		t.Fatalf("ShipByAdmin without a session must fail with errNoActor, got %v", err)
+	if _, err := f.svc.StartShippingByAdmin(context.Background(), appdto.EvidenceInput{OrderID: order.ID}); !errors.Is(err, errNoActor) {
+		t.Fatalf("StartShippingByAdmin without a session must fail with errNoActor, got %v", err)
 	}
 }
 

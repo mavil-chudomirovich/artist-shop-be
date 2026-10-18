@@ -54,6 +54,29 @@ func TestTheDefaultBodyCeilingLeavesRoomForAnUploadRoute(t *testing.T) {
 	}
 }
 
+// The default must also leave room for the wider route: dispatching a paid order
+// accepts up to five 2 MiB evidence photos, so its route ceiling is 5 x 2 MiB plus
+// the multipart envelope (specs/019-order-delivery FR-006, FR-009). A default
+// below that would have the pipeline refuse a legitimate five-photo dispatch
+// before the ship route could apply its own rule.
+func TestTheDefaultBodyCeilingLeavesRoomForTheDeliveryUploadRoute(t *testing.T) {
+	setValidEnv(t)
+	t.Setenv("MAX_BODY_BYTES", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected the defaults to resolve, got %v", err)
+	}
+	const (
+		deliveryPhotoCeiling = int64(5 * (2 << 20))
+		multipartOverhead    = int64(64 << 10)
+	)
+	if cfg.MaxBodyBytes <= deliveryPhotoCeiling+multipartOverhead {
+		t.Fatalf("the default body ceiling %d must stay above the delivery route limit %d",
+			cfg.MaxBodyBytes, deliveryPhotoCeiling+multipartOverhead)
+	}
+}
+
 func TestLoadMissingDatabaseURL(t *testing.T) {
 	setValidEnv(t)
 	t.Setenv("DATABASE_URL", "")

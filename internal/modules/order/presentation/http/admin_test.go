@@ -1,9 +1,14 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +57,7 @@ type fakeAdmin struct {
 	gotListActor  appinterface.Actor
 	gotRefInput   appdto.OrderRefInput
 	gotRefActor   appinterface.Actor
+	gotEvidence   appdto.EvidenceInput
 	shipCalls     int
 	completeCalls int
 	confirmCalls  int
@@ -70,8 +76,8 @@ func (f *fakeAdmin) GetByIDAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	return f.detail, f.detailErr
 }
 
-func (f *fakeAdmin) ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error) {
-	f.gotRefInput = in
+func (f *fakeAdmin) StartShippingByAdmin(ctx context.Context, in appdto.EvidenceInput) (appdto.AdminOrderView, error) {
+	f.gotEvidence = in
 	f.gotRefActor, _ = appinterface.ActorFromContext(ctx)
 	f.shipCalls++
 	return f.shipView, f.shipErr
@@ -585,10 +591,204 @@ func (f *fakeCheckout) RejectByAdmin(context.Context, appdto.OrderRefInput) (app
 	return appdto.AdminOrderView{}, nil
 }
 
-func (f *fakeCheckout) ShipByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
+func (f *fakeCheckout) StartShippingByAdmin(context.Context, appdto.EvidenceInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
 }
 
 func (f *fakeCheckout) CompleteByAdmin(context.Context, appdto.OrderRefInput) (appdto.AdminOrderView, error) {
 	return appdto.AdminOrderView{}, nil
+}
+
+// multipartPhotos builds a multipart/form-data body carrying one "photos" file
+// part per payload, and returns the body and its content type. It is how a test
+// drives the dispatch route's multipart contract.
+func multipartPhotos(t *testing.T, payloads [][]byte) (string, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	for i, payload := range payloads {
+		part, err := writer.CreateFormFile("photos", fmt.Sprintf("photo-%d.jpg", i))
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(payload); err != nil {
+			t.Fatalf("write the photo part: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close the multipart writer: %v", err)
+	}
+	return buf.String(), writer.FormDataContentType()
+}
+
+// performBody sends a request with an explicit body and content type.
+func performBody(handler http.Handler, method, path, body, contentType, token string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// sampledJPEG is a minimal payload whose leading bytes are a JPEG signature, so
+// the handler forwards it and the use case's sniff accepts it. The trailing bytes
+// stand in for image content.
+func sampledJPEG() []byte { return []byte{0xFF, 0xD8, 0xFF, 0x00, 0x11} }
+
+// FR-005, FR-006, contracts/openapi.yaml: the dispatch route accepts a
+// multipart/form-data body with zero to five `photos` parts and answers 200 with
+// the order in transit, handing every photo to the use case.
+func TestAdminShipAcceptsMultipartPhotos(t *testing.T) {
+	shipped := sampleAdminView()
+	shipped.Status = constant.StatusShipping
+	fake := &fakeAdmin{shipView: shipped}
+	router := newOrderAdminRouter(fake)
+
+	body, contentType := multipartPhotos(t, [][]byte{sampledJPEG(), sampledJPEG()})
+	rec := performBody(router, http.MethodPost, adminOrdersPath+"/"+shipped.ID.String()+"/ship", body, contentType, "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var decoded adminDetailBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode the dispatched order %q: %v", rec.Body.String(), err)
+	}
+	if decoded.Data.Status != "SHIPPING" {
+		t.Fatalf("the dispatched order must answer SHIPPING, got %s", decoded.Data.Status)
+	}
+	if fake.gotEvidence.OrderID != shipped.ID {
+		t.Fatalf("the addressed identifier must be passed through, got %s", fake.gotEvidence.OrderID)
+	}
+	if len(fake.gotEvidence.Photos) != 2 {
+		t.Fatalf("both photo parts must reach the use case, got %d", len(fake.gotEvidence.Photos))
+	}
+	if fake.gotRefActor.ID != testAdminID {
+		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotRefActor.ID)
+	}
+}
+
+// FR-006: a dispatch with no body is zero photos and still answers 200.
+func TestAdminShipAcceptsNoPhotos(t *testing.T) {
+	shipped := sampleAdminView()
+	shipped.Status = constant.StatusShipping
+	fake := &fakeAdmin{shipView: shipped}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+shipped.ID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.gotEvidence.Photos) != 0 {
+		t.Fatalf("an empty dispatch must carry no photos, got %d", len(fake.gotEvidence.Photos))
+	}
+}
+
+// contracts/error-codes.md: the dispatch route without a session answers 401
+// UNAUTHENTICATED before reaching the use case.
+func TestAdminShipRefusesWithoutASession(t *testing.T) {
+	fake := &fakeAdmin{}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", "", "")
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != "UNAUTHENTICATED" {
+		t.Fatalf("expected UNAUTHENTICATED, got %s", body.Error.Code)
+	}
+	if fake.shipCalls != 0 {
+		t.Fatal("an unauthenticated request must not reach the use case")
+	}
+}
+
+// contracts/error-codes.md: dispatching an unknown order answers 404
+// ORDER_NOT_FOUND.
+func TestAdminShipAnswersNotFoundForAnUnknownOrder(t *testing.T) {
+	fake := &fakeAdmin{shipErr: domainerr.ErrNotFound}
+	router := newOrderAdminRouter(fake)
+
+	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
+// contracts/error-codes.md: the dispatch route maps every refusal to its
+// documented code and status — a wrong state and an over-ceiling count are 409, an
+// unsupported photo is 400 and an oversized one is 413.
+func TestAdminShipMapsItsRefusals(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{
+			name:   "dispatching a non-PAID order",
+			err:    domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusShipping),
+			status: http.StatusConflict,
+			code:   constant.CodeStateTransitionInvalid,
+		},
+		{
+			name:   "more than five photos",
+			err:    domainerr.ErrImageLimitReached,
+			status: http.StatusConflict,
+			code:   constant.CodeImageLimitReached,
+		},
+		{
+			name:   "an unsupported photo",
+			err:    domainerr.ErrImageTypeUnsupported,
+			status: http.StatusBadRequest,
+			code:   constant.CodeImageTypeUnsupported,
+		},
+		{
+			name:   "an oversized photo",
+			err:    domainerr.ErrImageTooLarge,
+			status: http.StatusRequestEntityTooLarge,
+			code:   constant.CodeImageTooLarge,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeAdmin{shipErr: tc.err}
+			router := newOrderAdminRouter(fake)
+			rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", "", "admin-token")
+			if rec.Code != tc.status {
+				t.Fatalf("expected %d, got %d (%s)", tc.status, rec.Code, rec.Body.String())
+			}
+			if body := decodeError(t, rec); body.Error.Code != tc.code {
+				t.Fatalf("expected %s, got %s", tc.code, body.Error.Code)
+			}
+		})
+	}
+}
+
+// contracts/error-codes.md, FR-009: a body whose declared size is already over the
+// route's ceiling is refused 413 ORDER_IMAGE_TOO_LARGE before the use case runs.
+func TestAdminShipRefusesAnOverCeilingBody(t *testing.T) {
+	fake := &fakeAdmin{}
+	router := newOrderAdminRouter(fake)
+
+	req := httptest.NewRequest(http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.ContentLength = DeliveryEvidenceUploadCeiling() + 1
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeImageTooLarge {
+		t.Fatalf("expected ORDER_IMAGE_TOO_LARGE, got %s", body.Error.Code)
+	}
+	if fake.shipCalls != 0 {
+		t.Fatal("an over-ceiling body must not reach the use case")
+	}
 }

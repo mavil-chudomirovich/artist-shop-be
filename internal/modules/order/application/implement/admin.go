@@ -52,12 +52,6 @@ func (s *Service) GetByIDAdmin(ctx context.Context, in dto.OrderRefInput) (dto.A
 	return s.Mapper.AdminOrder(*order), nil
 }
 
-// ShipByAdmin moves a paid order in transit (dispatches it) and records the act
-// (FR-005, FR-019).
-func (s *Service) ShipByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error) {
-	return s.adminMove(ctx, in, constant.AuditOrderShipped, (*model.Order).StartShipping)
-}
-
 // CompleteByAdmin moves a shipped order to completed and records the act (FR-022,
 // FR-023).
 func (s *Service) CompleteByAdmin(ctx context.Context, in dto.OrderRefInput) (dto.AdminOrderView, error) {

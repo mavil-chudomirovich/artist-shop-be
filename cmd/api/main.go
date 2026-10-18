@@ -150,6 +150,22 @@ func run() error {
 		return err
 	}
 
+	// The same coupling for the order delivery routes (specs/019-order-delivery):
+	// dispatching a paid order accepts up to five 2 MiB evidence photos, so its
+	// route ceiling is far above the avatar's and the shared pipeline ceiling has to
+	// leave room for it too. The figure comes from the order module that owns the
+	// route, so the guard cannot drift from the limit the route really installs
+	// (FR-006, FR-009; research D4). Like the avatar guard, it runs before the
+	// composition opens anything, and it stays silent when media is unconfigured,
+	// because no evidence photo can be stored then anyway.
+	if err := orderhttp.RequireDeliveryEvidenceUploadCeiling(
+		cfg.MaxBodyBytes,
+		orderhttp.DeliveryEvidenceUploadCeiling(),
+		cfg.Media.IsConfigured(),
+	); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

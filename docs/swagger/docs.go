@@ -1405,14 +1405,17 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Moves a paid order in transit and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
+                "description": "Moves a paid order in transit and records the act naming the order and the administrator, optionally attaching up to five dispatch photos. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized one answers 413 ORDER_IMAGE_TOO_LARGE. Administrator role required.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Orders"
                 ],
-                "summary": "Mark a paid order in transit (administrator)",
+                "summary": "Mark a paid order in transit, attaching up to five photos (administrator)",
                 "parameters": [
                     {
                         "type": "string",
@@ -1420,6 +1423,12 @@ const docTemplate = `{
                         "name": "orderId",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Dispatch evidence photo (JPEG, PNG or WebP); send the part zero to five times",
+                        "name": "photos",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -1471,6 +1480,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
                     },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
                     "429": {
                         "description": "Too Many Requests",
                         "schema": {
@@ -1479,6 +1494,12 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }

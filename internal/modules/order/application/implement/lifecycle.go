@@ -195,13 +195,6 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	return view, nil
 }
 
-// Ship moves a paid order in transit — the dispatch edge (FR-005). It is driven
-// by an administrator; the role guard and the audit entry live on the operator use
-// case that wraps it.
-func (s *Service) Ship(ctx context.Context, orderID uuid.UUID) error {
-	return s.transition(ctx, orderID, (*model.Order).StartShipping)
-}
-
 // Complete moves a delivered order to completed (FR-011, FR-012). It is the single
 // completion edge: the customer's confirmation and the sweep both reach it. It is
 // driven by an administrator in this phase; the customer and the sweep reach it
