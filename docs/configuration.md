@@ -105,30 +105,39 @@ dịch vụ media bị tấn công, và lặp lại ghi địa chỉ là bảng 
 ### Request & audit
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `MAX_BODY_BYTES` | `4194304` | ✅ > 0 | Trần thô cho mọi body, chạy **trước routing** nên route không nâng được. Phải ≥ trần mà route avatar áp (**2 162 688** = 2 MB ảnh + 64 KB đệm `multipart`), và ≥ mọi trần riêng khác. Giá trị này chỉ chặn sớm một body quá lớn, không phải trần nghiệp vụ. **Ràng buộc này được kiểm tra lúc khởi động** — xem khối *Ràng buộc với trần avatar* ngay dưới |
+| `MAX_BODY_BYTES` | `12582912` | ✅ > 0 | Trần thô cho mọi body, chạy **trước routing** nên route không nâng được. Phải ≥ trần mà **route avatar** áp (**2 162 688** = 2 MB ảnh + 64 KB đệm `multipart`) **và** trần mà **route tải ảnh bằng chứng giao hàng** áp (**10 551 296** = 5 × 2 MB ảnh + 64 KB đệm `multipart`), và ≥ mọi trần riêng khác. Mặc định **12 MiB** (`12582912`) để chừa chỗ cho một lần gửi 5 ảnh (feature 019). Giá trị này chỉ chặn sớm một body quá lớn, không phải trần nghiệp vụ. **Ràng buộc này được kiểm tra lúc khởi động** — xem khối *Ràng buộc với trần upload* ngay dưới |
 | `AUDIT_QUEUE_SIZE` | `1024` | ✅ > 0 | Hàng đợi ghi `audit_logs` |
 | `AUDIT_MAX_RETRIES` | `5` | | Số lần thử lại khi ghi audit thất bại |
 
 > Hàng đợi audit chạy bất đồng bộ trong process. Nếu sập giữa lúc ghi, event có
 > thể mất; thiết kế hiện tại ghi log cảnh báo khi phải reconcile thủ công.
 
-#### Ràng buộc với trần avatar
+#### Ràng buộc với trần upload (avatar và ảnh bằng chứng giao hàng)
 
-`MAX_BODY_BYTES` không độc lập với trần của route avatar. Pipeline bọc body **trước
-routing**, nên một route **không thể nâng** trần này; và route avatar cần một trần
-riêng lớn hơn (ảnh 2 MB cộng 64 KB đệm `multipart` = **2 162 688 byte**). Nếu
-`MAX_BODY_BYTES` thấp hơn con số đó, **mọi** upload avatar bị chặn ở tầng pipeline
-trước khi route kịp áp luật của nó, và lý do trả về không chỉ ra biến nào cần sửa.
+`MAX_BODY_BYTES` không độc lập với trần của các route upload. Pipeline bọc body **trước
+routing**, nên một route **không thể nâng** trần này; và mỗi route upload cần một trần
+riêng lớn hơn kích thước file nó nhận:
 
-Vì vậy mối ràng buộc này **được thực thi, không chỉ được mô tả**: composition root
-(`cmd/api/main.go`) gọi `RequireAvatarUploadCeiling` **trước khi** mở database, chạy
-migration hay mở cổng. Con số `2 162 688` được đọc từ chính hàm mà route dùng
-(`AvatarUploadCeiling`), nên kiểm tra không thể trôi khỏi giới hạn thật.
+- **Route avatar**: ảnh 2 MB cộng 64 KB đệm `multipart` = **2 162 688 byte**.
+- **Route tải ảnh bằng chứng giao hàng** (`POST /admin/orders/{orderId}/ship` và
+  `POST /admin/orders/{orderId}/deliver`, feature 019): tối đa **5 ảnh** 2 MB cộng
+  64 KB đệm `multipart` = **10 551 296 byte**.
+
+Nếu `MAX_BODY_BYTES` thấp hơn một trong hai con số đó, **mọi** upload của route tương
+ứng bị chặn ở tầng pipeline trước khi route kịp áp luật của nó, và lý do trả về không
+chỉ ra biến nào cần sửa. Vì vậy mặc định của `MAX_BODY_BYTES` là **12 MiB**
+(`12582912`), chừa chỗ cho một lần gửi 5 ảnh.
+
+Mối ràng buộc này **được thực thi, không chỉ được mô tả**: composition root
+(`cmd/api/main.go`) gọi **hai** hàm kiểm tra **trước khi** mở database, chạy migration
+hay mở cổng — `RequireAvatarUploadCeiling` và `RequireDeliveryEvidenceUploadCeiling`.
+Mỗi con số được đọc từ chính hàm mà route dùng (`AvatarUploadCeiling`,
+`DeliveryEvidenceUploadCeiling`), nên kiểm tra không thể trôi khỏi giới hạn thật.
 
 | Cấu hình | Kết quả lúc khởi động |
 |---|---|
-| Có media **và** `MAX_BODY_BYTES` **thấp hơn** 2 162 688 | **Từ chối khởi động**, exit code khác 0, in ra `fatal:` kèm tên biến và cả hai giá trị |
-| Có media **và** `MAX_BODY_BYTES` **bằng** 2 162 688 | Khởi động bình thường — trần của route là ràng buộc thật sự tại điểm đó |
+| Có media **và** `MAX_BODY_BYTES` **thấp hơn** một trong hai trần | **Từ chối khởi động**, exit code khác 0, in ra `fatal:` kèm tên biến, trần và giá trị |
+| Có media **và** `MAX_BODY_BYTES` **bằng** trần lớn nhất cần thiết (10 551 296) | Khởi động bình thường — trần của route là ràng buộc thật sự tại điểm đó |
 | Có media **và** `MAX_BODY_BYTES` **lớn hơn** | Khởi động bình thường |
 | **Không** có media, bất kỳ giá trị nào | Khởi động bình thường, kèm một dòng cảnh báo |
 
@@ -286,7 +295,7 @@ này** — ví dụ `the provider refused the request (status 401)` khi tên clo
 | `MEDIA_CLOUD_NAME` | *(rỗng)* | | **Tên cloud** trên Cloudinary — lấy ở Settings → Account details. **Không phải tên folder** |
 | `MEDIA_API_KEY` | *(rỗng)* | | API key của cloud |
 | `MEDIA_API_SECRET` | *(rỗng)* | | API secret |
-| `MEDIA_FOLDER` | `artist-shop` | | Folder **bên trong** cloud nhận avatar tải lên. Tự đặt, không lấy từ provider |
+| `MEDIA_FOLDER` | `artist-shop` | | Folder **bên trong** cloud nhận ảnh tải lên (avatar, ảnh sản phẩm, ảnh bằng chứng giao hàng của đơn). Tự đặt, không lấy từ provider |
 
 `MEDIA_CLOUD_NAME` và `MEDIA_FOLDER` là hai giá trị **khác nhau, dễ nhầm**: cloud name
 định danh tài khoản, còn folder chỉ là nơi lưu ảnh bên trong tài khoản đó. Đặt cloud
@@ -307,15 +316,16 @@ không phải lỗi khởi động:
 
 | Tình huống | Kết quả |
 |---|---|
-| Đủ cả ba khoá (`CLOUD_NAME` + `API_KEY` + `API_SECRET`) | Avatar tải lên và xoá bình thường |
-| Thiếu bất kỳ khoá nào | `POST /api/v1/users/me/avatar` trả `503 USER_MEDIA_UNAVAILABLE`, **hồ sơ không bị đổi** nên khách thử lại được |
+| Đủ cả ba khoá (`CLOUD_NAME` + `API_KEY` + `API_SECRET`) | Avatar, ảnh sản phẩm và ảnh bằng chứng giao hàng tải lên/xoá bình thường |
+| Thiếu bất kỳ khoá nào | `POST /api/v1/users/me/avatar` trả `503 USER_MEDIA_UNAVAILABLE` (**hồ sơ không bị đổi**), và `POST /admin/orders/{orderId}/ship`/`deliver` **có kèm ảnh** trả `503 ORDER_MEDIA_UNAVAILABLE` (**đơn không bị đổi**) — cả hai đều thử lại được |
 
-**Một cấu hình media thiếu chỉ tắt đúng việc upload avatar.** Đọc hồ sơ
+**Một cấu hình media thiếu chỉ tắt các bề mặt upload ảnh.** Đọc hồ sơ
 (`GET /users/me`) không bao giờ gọi nhà cung cấp media, nên vẫn trả `200` với tham chiếu
 ảnh đã lưu; `PATCH /users/me`, `DELETE /users/me/avatar` và toàn bộ nhóm
-`/users/me/addresses` cũng không gọi, nên tất cả vẫn hoạt động. Service cũng ghi một
+`/users/me/addresses` cũng không gọi, nên tất cả vẫn hoạt động; và một đơn vẫn `ship`/`deliver`
+**không kèm ảnh** được khi provider vắng mặt (feature 019). Service cũng ghi một
 dòng cảnh báo lúc khởi động, chỉ nêu **tên biến** chứ không nêu giá trị. Xem
-[api-reference.md](api-reference.md) mục `POST /users/me/avatar`.
+[api-reference.md](api-reference.md) mục `POST /users/me/avatar` và `9.12`/`9.13`.
 
 ### Swagger — tiền tố `SWAGGER_`
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |

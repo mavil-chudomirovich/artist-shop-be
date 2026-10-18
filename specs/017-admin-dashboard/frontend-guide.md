@@ -154,9 +154,9 @@ Ví dụ một đơn có 2 dòng (`x2` và `x1`): `itemCount = 2`, `itemQuantity
   `amount > 0`; có thể **rỗng** (`[]`, không phải `null`).
 - Tổng các `amount` khớp `kpis.revenue.currentMonthAmount`.
 
-## 4. Trạng thái đơn — 6 giá trị thô và nhãn FE
+## 4. Trạng thái đơn — 7 giá trị thô và nhãn FE
 
-`recentOrders[].status` là **một trong sáu** giá trị thô của backend. API **không** dịch sang nhãn hiển
+`recentOrders[].status` là **một trong bảy** giá trị thô của backend. API **không** dịch sang nhãn hiển
 thị — frontend tự ánh xạ. Gợi ý nhãn tiếng Việt:
 
 | `status` (BE) | Nhãn FE gợi ý | Nghĩa |
@@ -164,12 +164,17 @@ thị — frontend tự ánh xạ. Gợi ý nhãn tiếng Việt:
 | `PENDING` | Chờ xác nhận | Đơn mới, chờ artist xác nhận |
 | `PAYMENT_PENDING` | Chờ thanh toán | Artist đã xác nhận, khách đang trong hạn thanh toán |
 | `PAID` | Đã thanh toán | Đã nhận tiền |
-| `SHIPPED` | Đã giao | Artist đánh dấu đã giao |
-| `COMPLETED` | Hoàn tất | Đơn hoàn tất (cuối) |
+| `SHIPPING` | Đang giao | Artist đã giao cho bên vận chuyển (**đổi tên từ `SHIPPED`** ở feature 019) |
+| `DELIVERED` | Đã giao | Hàng đã tới tay khách (**mới** ở feature 019) |
+| `COMPLETED` | Hoàn tất | Khách xác nhận hoặc hệ thống tự hoàn tất (cuối) |
 | `CANCELLED` | Đã huỷ | Khách huỷ / artist từ chối / hết hạn (cuối) |
 
 Client rẽ nhánh theo **giá trị thô**; nhãn là do FE quyết định. Không có trạng thái nào khác được trả
 ra (ràng buộc ở tầng lưu trữ).
+
+> **Cập nhật bởi feature 019:** giá trị `SHIPPED` **đổi tên** thành `SHIPPING` (đang giao) và thêm
+> `DELIVERED` (giao thành công) — xem [`specs/019-order-delivery/frontend-guide.md`](../019-order-delivery/frontend-guide.md)
+> và ADR 023. FE phải xử lý **bảy** giá trị; `SHIPPED` không còn được trả ra.
 
 ## 5. `dayLabel` — 7 ngày so với 30 ngày
 
@@ -223,11 +228,12 @@ Nguồn: `internal/modules/admin/presentation/dto/overview.go`.
 Tổng: 4+4+3+5+2+2+3+4+8+3+2 = **40** thẻ `json` trên **11** DTO. Ví dụ response ở mục 3 và danh sách
 member ở mục 3 khớp **đủ 40** tên field (qua các object lồng nhau).
 
-### 7.2 Enum (1 enum, 6 giá trị)
+### 7.2 Enum (1 enum, 7 giá trị)
 
-- `recentOrders[].status` — **6** giá trị: `PENDING`, `PAYMENT_PENDING`, `PAID`, `SHIPPED`, `COMPLETED`,
-  `CANCELLED`. Nguồn: `internal/modules/order/domain/constant/codes.go` (`StatusPending` …
-  `StatusCancelled`) và check constraint `orders_status_ck`. Mục 4 liệt kê **đủ 6**.
+- `recentOrders[].status` — **7** giá trị: `PENDING`, `PAYMENT_PENDING`, `PAID`, `SHIPPING`, `DELIVERED`,
+  `COMPLETED`, `CANCELLED` (feature 019 **đổi tên** `SHIPPED` → `SHIPPING` và thêm `DELIVERED`). Nguồn:
+  `internal/modules/order/domain/constant/codes.go` (`StatusPending` … `StatusCancelled`) và check
+  constraint `orders_status_ck` (`migrations/00018_order_delivery.sql`). Mục 4 liệt kê **đủ 7**.
 
 ### 7.3 Route (1 route, 1 thêm / 0 gỡ / 0 đổi)
 

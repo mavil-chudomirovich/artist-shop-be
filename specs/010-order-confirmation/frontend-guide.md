@@ -1,5 +1,12 @@
 # Frontend Integration Guide — Order Confirmation & Editing
 
+> **⚠️ ĐÃ BỊ THAY THẾ bởi feature 019.** [`specs/019-order-delivery/frontend-guide.md`](../019-order-delivery/frontend-guide.md)
+> thay thế guide này: enum `OrderStatus` nay có **bảy** giá trị (`SHIPPED` **đổi tên** thành `SHIPPING`,
+> thêm `DELIVERED`), `POST /admin/orders/{orderId}/ship` đổi sang **`multipart/form-data`**,
+> `POST /admin/orders/{orderId}/complete` **bị xoá**, và có thêm `POST /orders/{orderId}/complete`,
+> `POST /orders/{orderId}/feedback`, `POST /admin/orders/{orderId}/deliver`. Nội dung dưới đây chỉ còn
+> giá trị lịch sử của feature 010; **đọc guide 019** cho hợp đồng hiện hành.
+
 **Feature**: `010-order-confirmation` (mở rộng module 07 Order, thay thế `009-order`)
 **Trạng thái**: **Mười hai** endpoint của module 07 đã được ghi vào `docs/api-reference.md` §9.
 **Đối tượng đọc**: Lập trình viên frontend (đơn hàng của khách đã đăng nhập, và bàn quản trị đơn của operator).

@@ -5,6 +5,14 @@
 - **Ưu tiên / Giai đoạn**: V1.2
 - **Phụ thuộc**: order
 
+> **Ảnh bằng chứng giao hàng đã được giao bởi feature 019 (module 07), không phải module 09.**
+> [`specs/019-order-delivery`](../../specs/019-order-delivery/) thêm hai bước giao có **ảnh bằng chứng**
+> (`PAID → SHIPPING` "đang giao" và `SHIPPING → DELIVERED` "giao thành công", mỗi bước **0–5 ảnh**) cùng
+> hoàn tất do khách xác nhận hoặc sweeper sau 120 giờ. Đó là **một phần nhỏ** của luồng giao hàng, nằm
+> **trong module 07 Order** — **không** phải phí vận chuyển, mã vận đơn hay tích hợp hãng vận chuyển.
+> Module 09 **đầy đủ** (phí ship theo khu vực, `shipments`, tracking) vẫn **chưa specify**; xem
+> `specs/019-order-delivery/deferred.md` (D3).
+
 ## Mục đích
 
 Tính phí vận chuyển và theo dõi thông tin giao hàng cho đơn sản phẩm vật lý.

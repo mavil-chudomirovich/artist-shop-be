@@ -42,7 +42,7 @@ Hệ quả trực tiếp:
 
 | Điều kiện vi phạm | HTTP | Error code |
 |---|------|-----------|
-| Body vượt `MAX_BODY_BYTES` (mặc định 4 MiB) | 413 | `PAYLOAD_TOO_LARGE` |
+| Body vượt `MAX_BODY_BYTES` (mặc định 12 MiB) | 413 | `PAYLOAD_TOO_LARGE` |
 | Body vượt **trần riêng của route**, ở route nào cần trần riêng | 413 | Mã của **route đó**, không phải `PAYLOAD_TOO_LARGE` — xem `4.3` |
 | `Content-Type` không khớp với loại body mà route khai báo (route JSON nhận `multipart/form-data`, route avatar nhận `text/plain`) | 415 | `UNSUPPORTED_MEDIA_TYPE` |
 | Vượt rate limit | 429 + header `Retry-After: 1` | `RATE_LIMITED` |
@@ -314,34 +314,44 @@ hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR
 | `ORDER_ITEM_PRICE_CHANGED` | 409 | Giá của variant trong một dòng khác giá khách đã thấy lúc thêm vào giỏ. `details[].field = "variantId"`, không có gì bị tạo; khách xem lại giỏ |
 | `ORDER_QUANTITY_EXCEEDS_AVAILABLE` | 409 | Một dòng đòi nhiều hơn tồn khả dụng của variant, **hoặc** không giữ được hàng. `details[].field = "variantId"`, `issue` nêu số khả dụng; không có gì bị tạo |
 | `ORDER_NO_ADDRESS` | 409 | Khách không có địa chỉ giao, nên đơn không có nơi đi. Không có gì bị tạo |
-| `ORDER_STATE_TRANSITION_INVALID` | 409 | Bước chuyển không được trạng thái hiện tại của đơn cho phép — huỷ đơn đã trả tiền, giao đơn chưa trả tiền. Message nêu trạng thái hiện tại |
+| `ORDER_STATE_TRANSITION_INVALID` | 409 | Bước chuyển không được trạng thái hiện tại của đơn cho phép — huỷ đơn đã trả tiền, giao đơn chưa trả tiền, xác nhận đơn chưa giao. Message nêu trạng thái hiện tại |
 | `ORDER_NOT_TRANSFERABLE` | 409 | Đơn chưa trả tiền nên không chuyển nhượng được. Chuyển nhượng thay cho huỷ đơn đã trả tiền, chỉ áp dụng cho đơn đã trả tiền |
 | `ORDER_TRANSFER_TARGET_NOT_FOUND` | 404 | Không có tài khoản nào mang email mà lệnh chuyển nhượng nêu. Không có gì bị đổi |
 | `ORDER_NOT_EDITABLE` | 409 | Đơn không ở trạng thái khách được sửa — đã trả tiền hoặc xa hơn. Chỉ sửa được khi đơn **chờ artist xác nhận** hoặc **chờ thanh toán**. Không có gì bị đổi |
 | `ORDER_EMPTY` | 409 | Một lần sửa để đơn **còn 0 dòng**. Một đơn luôn có **≥1 dòng**; khách muốn bỏ hết thì **huỷ đơn**. Không có gì bị đổi |
+| `ORDER_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte ảnh bằng chứng giao hàng không phải JPEG, PNG hoặc WebP — quyết định theo **chữ ký nội dung**, không theo tên tệp hay kiểu client khai (feature 019). `details[].field = "photos"` |
+| `ORDER_IMAGE_TOO_LARGE` | 413 | Ảnh bằng chứng vượt trần kích thước (2 MB), **hoặc** request chạm trần body riêng của route upload và bị từ chối trước khi đếm (feature 019). `details[].field = "photos"` |
+| `ORDER_IMAGE_LIMIT_REACHED` | 409 | Một bước giao kèm **hơn 5 ảnh** (feature 019). `details[].field = "photos"`; không gì bị đổi |
+| `ORDER_MEDIA_UNAVAILABLE` | 503 | Nhà cung cấp media từ chối hoặc không tới được khi lưu ảnh bằng chứng, kể cả khi chưa cấu hình credential (feature 019). **Đơn không đổi** nên thử lại được |
+| `ORDER_FEEDBACK_NOT_ALLOWED` | 409 | Gửi feedback khi đơn **không** ở `DELIVERED`/`COMPLETED` (feature 019). Message nêu trạng thái hiện tại |
+| `ORDER_FEEDBACK_ALREADY_SENT` | 409 | Gửi feedback lần thứ hai cho cùng một đơn (feature 019). Mỗi đơn nhận **tối đa một** |
 
-Mười một mã trên đều là **conflict** (409) hoặc **not-found** (404) chứ không phải validation: request
-hợp lệ nhưng trạng thái hiện tại của giỏ/đơn/kệ khiến nó bất khả thi, và bước tiếp theo của khách
-khác hẳn — thêm hàng, xoá món, xem lại giỏ, giảm số lượng, thêm địa chỉ, sửa đơn, hoặc đưa đơn qua
-một trạng thái hợp lệ (cùng lý luận của module 03–06).
+Mười bảy mã trên chủ yếu là **conflict** (409) hoặc **not-found** (404) chứ không phải validation:
+request hợp lệ nhưng trạng thái hiện tại của giỏ/đơn/kệ khiến nó bất khả thi, và bước tiếp theo của
+khách khác hẳn — thêm hàng, xoá món, xem lại giỏ, giảm số lượng, thêm địa chỉ, sửa đơn, chờ đơn được
+giao, hoặc đưa đơn qua một trạng thái hợp lệ (cùng lý luận của module 03–06). Ba mã ảnh bằng chứng
+(feature 019) thay vào đó phản ánh chính **request tải ảnh** — định dạng 400, kích thước 413, số lượng
+409 — và được kiểm **trước khi** gọi nhà cung cấp media.
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module order (xem
-`specs/010-order-confirmation/contracts/error-codes.md`): `addressId` không phải UUID hoặc không phải
+`specs/010-order-confirmation/contracts/error-codes.md` và
+`specs/019-order-delivery/contracts/error-codes.md`): `addressId` không phải UUID hoặc không phải
 địa chỉ của khách, `email` chuyển nhượng thiếu hoặc không phải email, một dòng sửa thiếu `variantId`
-hoặc `quantity < 1` → `VALIDATION_ERROR` 400 với `error.details[].field`; định danh đường dẫn không
-phải UUID → `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400;
-thiếu hoặc sai phiên → `UNAUTHENTICATED` 401; `CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi
-`AUTH_PRIVILEGE_DENIED`); `page`/`pageSize` ngoài khoảng, `status` không thuộc sáu trạng thái hoặc
-`sort` khác `newest`/`oldest` → `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự
-kiến → `INTERNAL_ERROR` 500.
+hoặc `quantity < 1`, `content` feedback rỗng hoặc quá 2000 ký tự, một `photos` sai kiểu → `VALIDATION_ERROR`
+400 với `error.details[].field`; định danh đường dẫn không phải UUID → `VALIDATION_ERROR` 400; body
+không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400; thiếu hoặc sai phiên → `UNAUTHENTICATED`
+401; `CUSTOMER` gọi endpoint quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`);
+`page`/`pageSize` ngoài khoảng, `status` không thuộc bảy trạng thái hoặc `sort` khác `newest`/`oldest`
+→ `VALIDATION_ERROR` 400; quá hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR` 500.
 
 > Action `audit_logs` của module dùng tiền tố `ORDER_` nhưng **không** phải mã lỗi:
-> `ORDER_CONFIRMED`, `ORDER_REJECTED`, `ORDER_SHIPPED`, `ORDER_COMPLETED`, `ORDER_TRANSFERRED` — xem
-> `internal/modules/order/domain/constant/codes.go`. Metadata của mỗi dòng chỉ nêu định danh đơn,
-> **không** mang dữ liệu giao hàng hay dữ liệu cá nhân của khách. Thao tác của khách (checkout, sửa,
-> huỷ) và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`: chúng được phản ánh trên
-> trạng thái, phiên bản và mốc thời gian của đơn (mỗi lần sửa để lại một dòng `order_edit_history`);
-> audit ghi các mutation quản trị (Constitution VI).
+> `ORDER_CONFIRMED`, `ORDER_REJECTED`, `ORDER_SHIPPED`, `ORDER_DELIVERED`, `ORDER_COMPLETED`,
+> `ORDER_TRANSFERRED` — xem `internal/modules/order/domain/constant/codes.go`. Metadata của mỗi dòng chỉ
+> nêu định danh đơn, **không** mang dữ liệu giao hàng hay dữ liệu cá nhân của khách. Thao tác của khách
+> (checkout, sửa, huỷ, feedback) và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`:
+> chúng được phản ánh trên trạng thái, phiên bản và mốc thời gian của đơn (mỗi lần sửa để lại một dòng
+> `order_edit_history`); audit ghi các mutation quản trị, cộng việc **hoàn tất** (`ORDER_COMPLETED`, tác
+> nhân là khách hoặc không tác nhân khi sweeper tự hoàn tất) (Constitution VI).
 
 **Riêng module payment** (`internal/modules/payment/domain/constant/codes.go`):
 
@@ -1089,7 +1099,7 @@ Ghi chú:
     hay không đều cho cùng một câu trả lời;
   - handler còn chặn lần nữa khi đọc part bằng `LimitReader`, vì một `Content-Length`
     không đáng tin. Cả hai đường đều trả cùng một lỗi `413 USER_AVATAR_TOO_LARGE`;
-  - `MAX_BODY_BYTES` (mặc định 4 MiB) chỉ là **chặn sớm thô** của cả pipeline, chạy
+  - `MAX_BODY_BYTES` (mặc định 12 MiB) chỉ là **chặn sớm thô** của cả pipeline, chạy
     trước routing nên route không nâng được; nó phải lớn hơn mọi trần riêng của route,
     nếu không một upload hợp lệ sẽ bị chặn trước khi route kịp áp luật thật. Ràng buộc
     đó **được kiểm tra lúc khởi động**: media có cấu hình mà `MAX_BODY_BYTES` thấp hơn
@@ -2832,7 +2842,7 @@ Ghi chú:
 ## 9. Module 07 — Order (`/api/v1`)
 
 Đơn hàng của shop: biến giỏ thành đơn, artist xác nhận đơn, vòng đời đơn, và **bàn quản trị đơn** của
-operator. **Mười hai endpoint**: **năm** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là
+operator. **Mười bốn endpoint**: **bảy** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là
 **session**, nên không route nào nêu định danh chủ — và **bảy** của quản trị dưới `/admin/orders`, vai
 trò `ADMIN`, định địa chỉ theo **định danh đơn**.
 
@@ -2858,9 +2868,19 @@ Tám điều dễ đọc sai, nói ngay:
 - **Khách sửa được đơn trước khi trả tiền** (`PUT /orders/{orderId}`, `9.4`) khi đơn đang `PENDING` hoặc
   `PAYMENT_PENDING`. Sửa đơn đang `PAYMENT_PENDING` **trả hàng** và đưa đơn **quay lại `PENDING`**
   (artist phải xác nhận lại); sửa đơn `PENDING` giữ nguyên `PENDING`.
-- **Trạng thái đơn đi qua endpoint riêng** (`confirm`, `reject`, `cancel`, `ship`, `complete`), **không**
-  qua một trường `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu từ chối nêu trạng thái
-  hiện tại (`409 ORDER_STATE_TRANSITION_INVALID`).
+- **Trạng thái đơn đi qua endpoint riêng** (`confirm`, `reject`, `cancel`, `ship`, `deliver`, `complete`,
+  `feedback`), **không** qua một trường `status` trên `PATCH`. Một bước chuyển có thể bị từ chối và câu
+  từ chối nêu trạng thái hiện tại (`409 ORDER_STATE_TRANSITION_INVALID`).
+- **Đơn sau khi trả tiền đi qua hai bước giao**: operator `ship` (`PAID → SHIPPING`, **đang giao**) rồi
+  `deliver` (`SHIPPING → DELIVERED`, **giao thành công**); mỗi bước **tuỳ chọn** kèm **0–5 ảnh** bằng
+  chứng (`photos`). Ảnh sai định dạng/quá cỡ, hoặc quá 5, bị từ chối **trước khi** gọi nhà cung cấp
+  media (feature 019).
+- **Hoàn tất thuộc về khách hoặc đồng hồ, không phải operator**: khách `complete` một đơn `DELIVERED`
+  (`9.6`), hoặc đơn **tự hoàn tất sau 120 giờ (5 × 24h)** kể từ mốc giao thành công bởi **sweeper nền**
+  (`COMPLETED` đúng **một lần**). Operator **không** còn đánh dấu hoàn tất thay khách — route
+  `POST /admin/orders/{orderId}/complete` đã **bị xoá**.
+- **Khách gửi được một feedback cấp đơn** cho artist (`9.7`) khi đơn `DELIVERED`/`COMPLETED`, nội dung
+  1–2000 ký tự, **tối đa một lần** mỗi đơn; artist được báo qua email.
 - **Không có endpoint `pay`.** Bước chuyển `PAYMENT_PENDING → PAID` **không** có route HTTP trên đơn; nó do
   **module 08 Payment** điều khiển — nay đã có: webhook PayOS (`10.4`) gọi bước đã trả sau khi xác minh và
   đối chiếu. Khách trả tiền qua `POST /orders/{orderId}/payment` (`10.1`).
@@ -2868,19 +2888,26 @@ Tám điều dễ đọc sai, nói ngay:
   tồn tại (nêu bằng **email**), giữ nguyên dòng, trạng thái và tổng tiền, và **không** đổi tồn kho.
   Một đơn chưa trả tiền **không** chuyển nhượng được.
 - Module **không** có hạn mức riêng, chỉ chịu hạn mức toàn cục (§1.5). Thao tác của khách (checkout,
-  sửa, huỷ) và của hệ thống (đã trả tiền, hết hạn) **không** ghi `audit_logs`; chỉ
-  `confirm`/`reject`/`ship`/`complete`/`transfer` của admin mới ghi (§1.4).
+  sửa, huỷ, xác nhận đã nhận, feedback) và của hệ thống (đã trả tiền, hết hạn, tự hoàn tất) **không** ghi
+  `audit_logs`; các bước chuyển của operator (`confirm`/`reject`/`ship`/`deliver`/`transfer`) **có** ghi,
+  và việc **hoàn tất** ghi `ORDER_COMPLETED` với khách là tác nhân (hoặc không tác nhân khi sweeper tự
+  hoàn tất) (§1.4).
 
 Hai danh sách (`GET /orders`, `GET /admin/orders`) phân trang theo quy ước chung: `page` mặc định `1`,
 `pageSize` mặc định `20`, khoảng `1..100`, **mới nhất trước** (`createdAt`, rồi `id`). Danh sách quản
-trị nhận thêm hai tham số **tuỳ chọn**: `status` (lọc theo một trong sáu trạng thái) và `sort`
+trị nhận thêm hai tham số **tuỳ chọn**: `status` (lọc theo một trong **bảy** trạng thái) và `sort`
 (`newest` mặc định, hoặc `oldest`) — `status=PENDING&sort=oldest` là **hàng đợi xác nhận FIFO** của
-artist (`GET /admin/orders`, `9.6`).
+artist (`GET /admin/orders`, `9.8`).
 
-**Hình dạng khách** — `OrderSummaryResponse` (danh sách, 5 member) và `OrderResponse` (chi tiết, 7
-member = summary + `address` + `lines`). Mỗi phần tử `lines` là `OrderLineResponse` (8 member:
-`productId`, `productName`, `variantId`, `variantName`, `quantity`, `unitPrice`, `lineTotal`,
-`position`); `productId`/`variantId` là **bản ghi**, không phải tham chiếu sống.
+**Hình dạng khách** — `OrderSummaryResponse` (danh sách, 5 member) và `OrderResponse` (chi tiết, **11**
+member = summary + `address` + `lines` + bốn sự kiện giao hàng `deliveredAt`, `completedAt`,
+`deliveryPhotos`, `feedback`). Mỗi phần tử `lines` là `OrderLineResponse` (8 member: `productId`,
+`productName`, `variantId`, `variantName`, `quantity`, `unitPrice`, `lineTotal`, `position`);
+`productId`/`variantId` là **bản ghi**, không phải tham chiếu sống. Bốn member giao hàng chỉ có trên
+**chi tiết**, không có trên danh sách (feature 019): `deliveredAt`/`completedAt` là mốc ISO 8601 hoặc
+`null`; `deliveryPhotos` là mảng ảnh bằng chứng, mỗi phần tử 6 member (`id`, `stage`, `url`, `width`,
+`height`, `position`), luôn là mảng (đơn chưa có ảnh trả `[]`); `feedback` là object 2 member
+(`content`, `createdAt`) hoặc `null`.
 
 ```json
 {
@@ -2909,28 +2936,35 @@ member = summary + `address` + `lines`). Mỗi phần tử `lines` là `OrderLin
       "lineTotal": { "amount": 300000, "currency": "VND" },
       "position": 0
     }
-  ]
+  ],
+  "deliveredAt": null,
+  "completedAt": null,
+  "deliveryPhotos": [],
+  "feedback": null
 }
 ```
 
 **Hình dạng quản trị** — `AdminOrderSummaryResponse` (danh sách, 6 member = summary + `userId`) và
-`AdminOrderResponse` (chi tiết, 8 member = `OrderResponse` + `userId`). **Khác khách đúng một member
-`userId`** (chủ sở hữu đơn).
+`AdminOrderResponse` (chi tiết, **12** member = `OrderResponse` + `userId`). **Khác khách đúng một member
+`userId`** (chủ sở hữu đơn); admin đọc cùng bộ sự kiện giao hàng như khách.
 
-**Sáu trạng thái đơn** — `status` là một trong sáu giá trị:
+**Bảy trạng thái đơn** — `status` là một trong bảy giá trị:
 
 | Giá trị | Nghĩa | Vào bằng |
 |---|---|---|
 | `PENDING` | Chờ artist xác nhận; **chưa** giữ hàng | Checkout tạo đơn |
 | `PAYMENT_PENDING` | Chờ thanh toán; hàng đang **giữ** | Artist `confirm` |
 | `PAID` | Đã trả tiền; giữ chỗ thành **bán** | Module 08 xác nhận thanh toán (không có HTTP) |
-| `SHIPPED` | Đã giao | Admin `ship` |
-| `COMPLETED` | Hoàn tất (cuối) | Admin `complete` |
+| `SHIPPING` | **Đang giao** — đã giao cho bên vận chuyển | Operator `ship` |
+| `DELIVERED` | **Giao thành công** — khách đã nhận | Operator `deliver` |
+| `COMPLETED` | Hoàn tất (cuối) | Khách `complete`, hoặc sweeper tự hoàn tất sau 120 giờ |
 | `CANCELLED` | Đã huỷ/từ chối/hết hạn (cuối) | Khách `cancel`, admin `reject`, hoặc sweeper |
 
-> `PENDING_PAYMENT` của feature 009 **đã được đổi tên** thành `PAYMENT_PENDING`; không còn giá trị enum
-> nào tên `PENDING_PAYMENT`. Đơn vẫn **không** có trường trạng thái thanh toán riêng; `PAID` chính là
-> đã xác nhận thanh toán.
+> **`SHIPPED` của feature 009/010 đã bị đổi tên thành `SHIPPING`** (đang giao) và **`DELIVERED`** (giao
+> thành công) là giá trị **mới** — đây là thay đổi **phá vỡ hợp đồng công khai** với client (feature
+> 019; xem `specs/019-order-delivery/frontend-guide.md` và ADR 023). `PENDING_PAYMENT` của feature 009
+> **đã được đổi tên** thành `PAYMENT_PENDING`; không còn giá trị enum nào tên `PENDING_PAYMENT`. Đơn vẫn
+> **không** có trường trạng thái thanh toán riêng; `PAID` chính là đã xác nhận thanh toán.
 
 ### 9.1 `POST /orders`
 
@@ -2938,7 +2972,7 @@ Checkout: biến giỏ của khách đang đăng nhập thành đơn **chờ art
 được **đối chiếu lại** với trạng thái bán và giá hiệu lực hiện tại của **variant** và với tồn khả
 dụng; cả lần checkout bị từ chối nếu bất kỳ dòng nào không đạt. Thành công thì giỏ được **làm rỗng**
 và đơn trả về ở trạng thái `PENDING`; **không** có hàng nào bị giữ (tồn khả dụng **không đổi**) — hàng
-chỉ được giữ khi artist **xác nhận** (`9.8`), tất cả trong **một transaction**.
+chỉ được giữ khi artist **xác nhận** (`9.10`), tất cả trong **một transaction**.
 
 | | |
 |---|---|
@@ -2970,7 +3004,7 @@ Ghi chú:
 - Ba mã `ORDER_ITEM_NOT_PURCHASABLE`, `ORDER_ITEM_PRICE_CHANGED`, `ORDER_QUANTITY_EXCEEDS_AVAILABLE`
   nêu món gây lỗi ở `details[].field = "variantId"`; riêng mã số lượng, `issue` nêu số còn khả dụng.
 - **Không** giữ hàng ở bước này: số **vật lý** và số **khả dụng** đều **không đổi**. Việc giữ hàng là
-  của module 05 và xảy ra ở bước artist xác nhận (`9.8`); đơn `PENDING` mang **không** hạn thanh toán.
+  của module 05 và xảy ra ở bước artist xác nhận (`9.10`); đơn `PENDING` mang **không** hạn thanh toán.
 - Checkout là **một** thao tác: nếu bất kỳ bước nào hỏng, **không** có đơn, giỏ nguyên vẹn. Hai lần
   checkout **đồng thời** một giỏ chỉ sinh **đúng một** đơn; lần thứ hai nhận `409 ORDER_CART_EMPTY` vì
   giỏ đã rỗng.
@@ -3073,7 +3107,7 @@ Ghi chú:
 
 Huỷ một đơn của chính khách **chưa trả tiền** — cả **chờ artist xác nhận** (`PENDING`) và **chờ thanh
 toán** (`PAYMENT_PENDING`) — và trả hàng đã giữ về khả dụng. Đơn **đã trả tiền không huỷ được** — nó
-được **chuyển nhượng** (`9.12`).
+được **chuyển nhượng** (`9.14`).
 
 | | |
 |---|---|
@@ -3097,10 +3131,78 @@ Ghi chú:
   `409`, cùng câu trả lời như huỷ hai lần.
 - Khách được **thông báo** (email) khi đơn đổi trạng thái (gửi best-effort).
 
-### 9.6 `GET /admin/orders`
+### 9.6 `POST /orders/{orderId}/complete`
+
+Khách **xác nhận đã nhận hàng** cho một đơn `DELIVERED` **của chính mình**: đơn chuyển sang **hoàn tất**
+(`COMPLETED`, trạng thái cuối) và ghi lại **thời điểm** lẫn **người** hoàn tất. Đây là đường hoàn tất
+**do khách**; đường còn lại là sweeper **tự hoàn tất sau 120 giờ** kể từ mốc giao (feature 019).
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn ở trạng thái mới |
+
+Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `OrderResponse` với
+`status: "COMPLETED"` và `completedAt` được đặt.
+
+Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
+`ORDER_NOT_FOUND` 404 (đơn không tồn tại **hoặc** của khách khác) ·
+`ORDER_STATE_TRANSITION_INVALID` 409 (đơn không ở `DELIVERED`; message nêu trạng thái hiện tại) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Chỉ **chủ đơn** xác nhận được: tác nhân lấy từ **session**, và đơn của khách khác trả **cùng** `404
+  ORDER_NOT_FOUND`.
+- Ghi `audit_logs` với action `ORDER_COMPLETED`, tác nhân là khách; thông báo cho khách (email).
+- Nếu khách xác nhận **đúng lúc** sweeper tự hoàn tất, cả hai chạy cùng bước chuyển dưới khóa dòng, nên
+  đơn `COMPLETED` **đúng một lần** — bên commit sau thấy đơn không còn `DELIVERED` và bị từ chối. Route
+  `POST /admin/orders/{orderId}/complete` cũ **đã bị xoá**: operator không còn đánh dấu hoàn tất.
+
+### 9.7 `POST /orders/{orderId}/feedback`
+
+Khách gửi **feedback cấp đơn** (nội dung văn bản) cho artist về một đơn **của chính mình** đang
+`DELIVERED` hoặc `COMPLETED`. Mỗi đơn nhận **tối đa một** feedback (feature 019).
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn kèm feedback vừa ghi |
+
+Path: `orderId` (UUID).
+
+Request (`FeedbackRequest`, `additionalProperties: false`)
+
+```json
+{ "content": "Cảm ơn artist, tranh rất đẹp!" }
+```
+
+`content` **bắt buộc**, **1–2000 ký tự** sau khi cắt khoảng trắng; rỗng hoặc quá dài → `400
+VALIDATION_ERROR` (`details[].field = "content"`). Tác nhân lấy từ **session**, không bao giờ từ body.
+
+Response `200`: `data` = `OrderResponse` với `feedback` là object (`content`, `createdAt`).
+
+Lỗi: `VALIDATION_ERROR` 400 (`content` rỗng hoặc quá 2000 ký tự) · `MALFORMED_REQUEST` 400 ·
+`UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 · `ORDER_FEEDBACK_NOT_ALLOWED` 409 (đơn không ở
+`DELIVERED`/`COMPLETED`; message nêu trạng thái) · `ORDER_FEEDBACK_ALREADY_SENT` 409 ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+
+Ghi chú:
+
+- Feedback là **cấp đơn**, chỉ nội dung văn bản (không điểm số, không kiểm duyệt) — đánh giá sản phẩm là
+  **module 13**.
+- **Một feedback mỗi đơn** được bảo đảm ở tầng lưu trữ (unique index `order_feedback_order_key`); một
+  lần gửi thứ hai trả `409 ORDER_FEEDBACK_ALREADY_SENT`.
+- Artist được **thông báo** (email) khi feedback lưu xong; gửi best-effort, lỗi gửi **không** làm hỏng
+  feedback.
+- Feedback **không** ghi `audit_logs` (là hành động của khách), chỉ được phản ánh trên chi tiết đơn.
+
+### 9.8 `GET /admin/orders`
 
 Danh sách **mọi** đơn, kèm chủ sở hữu, trạng thái và tổng tiền, phân trang. **Mới nhất trước** theo mặc
-định; hai tham số **tuỳ chọn** `status` (lọc một trong sáu trạng thái) và `sort` (`newest` mặc định,
+định; hai tham số **tuỳ chọn** `status` (lọc một trong **bảy** trạng thái) và `sort` (`newest` mặc định,
 hoặc `oldest`) khiến `status=PENDING&sort=oldest` thành **hàng đợi xác nhận FIFO** của artist.
 
 | | |
@@ -3112,12 +3214,12 @@ hoặc `oldest`) khiến `status=PENDING&sort=oldest` thành **hàng đợi xác
 Query: `page`/`pageSize` như `9.2`, cộng `status` và `sort` (cả hai **tuỳ chọn**). Response `200`: `data`
 là mảng `AdminOrderSummaryResponse`; `meta` là khối phân trang chung.
 
-Lỗi: `VALIDATION_ERROR` 400 (`page`/`pageSize` ngoài khoảng; `status` không thuộc sáu trạng thái; `sort`
+Lỗi: `VALIDATION_ERROR` 400 (`page`/`pageSize` ngoài khoảng; `status` không thuộc **bảy** trạng thái; `sort`
 khác `newest`/`oldest` — `details[].field` là `"page"`, `"pageSize"`, `"status"` hoặc `"sort"`) ·
 `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) ·
 `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
-### 9.7 `GET /admin/orders/{orderId}`
+### 9.9 `GET /admin/orders/{orderId}`
 
 Đọc một đơn bất kỳ, đầy đủ, kèm chủ sở hữu.
 
@@ -3132,7 +3234,7 @@ Path: `orderId` (UUID). Response `200`: `data` = `AdminOrderResponse`.
 Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
 `ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
-### 9.8 `POST /admin/orders/{orderId}/confirm`
+### 9.10 `POST /admin/orders/{orderId}/confirm`
 
 Artist **xác nhận** một đơn đang **chờ artist xác nhận** (`PENDING`): hệ thống **giữ toàn bộ** các dòng
 trong **một bước all-or-nothing** (nếu bất kỳ dòng nào không giữ được, cả lần xác nhận bị từ chối, đơn
@@ -3162,7 +3264,7 @@ Ghi chú:
 - Xác nhận một đơn **không** ở `PENDING` (đã xác nhận, đã huỷ, đã trả tiền) → `409
   ORDER_STATE_TRANSITION_INVALID` nêu trạng thái hiện tại; đơn **nguyên vẹn**.
 
-### 9.9 `POST /admin/orders/{orderId}/reject`
+### 9.11 `POST /admin/orders/{orderId}/reject`
 
 Artist **từ chối** một đơn đang **chờ artist xác nhận** (`PENDING`); đơn chuyển sang **đã huỷ**
 (`CANCELLED`). Không có hàng nào đã bị giữ nên **không** cần trả. Ghi `audit_logs` action
@@ -3184,28 +3286,11 @@ thái hiện tại) · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 Ghi chú: từ chối một đơn không ở `PENDING` → `409 ORDER_STATE_TRANSITION_INVALID` nêu trạng thái hiện
 tại; đơn **nguyên vẹn**, tồn kho **không đổi**.
 
-### 9.10 `POST /admin/orders/{orderId}/ship`
+### 9.12 `POST /admin/orders/{orderId}/ship`
 
-Đưa một đơn **đã trả tiền** sang **đã giao** và ghi lại thao tác.
-
-| | |
-|---|---|
-| Auth | Bearer access token, role `ADMIN` |
-| Rate limit | Toàn cục (module không có hạn mức riêng) |
-| Trả về | `200 OK` — đơn ở trạng thái mới |
-
-Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
-`status: "SHIPPED"`.
-
-Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
-`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
-`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
-
-Ghi chú: một bước chuyển bị từ chối **không đổi gì**; ghi `audit_logs` với action `ORDER_SHIPPED`.
-
-### 9.11 `POST /admin/orders/{orderId}/complete`
-
-Đưa một đơn **đã giao** sang **hoàn tất** (`COMPLETED`, trạng thái cuối) và ghi lại thao tác.
+Đưa một đơn **đã trả tiền** (`PAID`) sang **đang giao** (`SHIPPING`) và ghi lại thao tác. Route **đổi
+sang `multipart/form-data`** (feature 019): gửi kèm **0–5 ảnh** bằng chứng bàn giao. Ảnh là **tuỳ
+chọn** — một lần `ship` không ảnh vẫn thành công.
 
 | | |
 |---|---|
@@ -3213,16 +3298,53 @@ Ghi chú: một bước chuyển bị từ chối **không đổi gì**; ghi `au
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` — đơn ở trạng thái mới |
 
-Path: `orderId` (UUID). Request: không có body. Response `200`: `data` = `AdminOrderResponse` với
-`status: "COMPLETED"`.
+Path: `orderId` (UUID). Body: `multipart/form-data` với trường `photos` lặp **0–5** lần (mỗi phần một
+ảnh JPEG/PNG/WebP ≤ 2 MB). **Không** có body JSON.
 
-Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
-`ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (message nêu trạng thái hiện tại) ·
-`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+Response `200`: `data` = `AdminOrderResponse` với `status: "SHIPPING"`; `deliveryPhotos` mang các ảnh
+`stage: "SHIPPING"`.
 
-Ghi chú: `COMPLETED` là **cuối** và không có đường ra; ghi `audit_logs` với action `ORDER_COMPLETED`.
+Lỗi: `VALIDATION_ERROR` 400 (một `photos` sai kiểu; `orderId` không phải UUID) · `MALFORMED_REQUEST` 400 ·
+`ORDER_IMAGE_TYPE_UNSUPPORTED` 400 (byte không phải JPEG/PNG/WebP) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 · `ORDER_NOT_FOUND` 404 · `ORDER_STATE_TRANSITION_INVALID` 409 (đơn không ở `PAID`;
+message nêu trạng thái hiện tại) · `ORDER_IMAGE_LIMIT_REACHED` 409 (hơn 5 ảnh) ·
+`ORDER_IMAGE_TOO_LARGE` 413 (một ảnh quá 2 MB, hoặc request chạm trần body của route) ·
+`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500 · `ORDER_MEDIA_UNAVAILABLE` 503 (media từ chối/không tới được;
+đơn không đổi).
 
-### 9.12 `POST /admin/orders/{orderId}/transfer`
+Ghi chú:
+
+- Vị trí đường dẫn **giữ nguyên** (`/ship`) dù payload đổi sang multipart.
+- Một bước chuyển bị từ chối **không đổi gì**; ghi `audit_logs` với action `ORDER_SHIPPED`.
+- Ảnh được kiểm định dạng/kích thước/số lượng **trước khi** gọi nhà cung cấp media, nên một yêu cầu bị
+  từ chối **không** để lại ảnh mồ côi.
+- Khách được **thông báo** (email) khi đơn chuyển `SHIPPING`.
+
+### 9.13 `POST /admin/orders/{orderId}/deliver`
+
+Đưa một đơn **đang giao** (`SHIPPING`) sang **giao thành công** (`DELIVERED`) và ghi lại **mốc thời
+điểm giao** (feature 019). Route mới, nhận **0–5 ảnh** bằng chứng giao hàng như `ship`.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — đơn ở trạng thái mới |
+
+Path: `orderId` (UUID). Body: `multipart/form-data` với trường `photos` lặp **0–5** lần (như `9.12`).
+
+Response `200`: `data` = `AdminOrderResponse` với `status: "DELIVERED"`, `deliveredAt` được đặt, và
+`deliveryPhotos` mang thêm các ảnh `stage: "DELIVERED"`.
+
+Lỗi: như `9.12`, với `409 ORDER_STATE_TRANSITION_INVALID` khi đơn không ở `SHIPPING`.
+
+Ghi chú:
+
+- `deliveredAt` mở **cửa sổ 120 giờ** để khách xác nhận hoặc sweeper tự hoàn tất (`9.6`, `9.1`).
+- Ghi `audit_logs` với action `ORDER_DELIVERED`; thông báo khách (email).
+- Ảnh kiểm **trước khi** lưu trữ, y như `ship`.
+
+### 9.14 `POST /admin/orders/{orderId}/transfer`
 
 Chuyển một đơn **đã trả tiền** cho một tài khoản khác **đã tồn tại**, nêu bằng **email**. Chỉ **chủ
 sở hữu** đổi; dòng, trạng thái và tổng tiền giữ nguyên, và **không** đổi tồn kho.
@@ -3445,8 +3567,10 @@ cơ cấu doanh số theo danh mục và các đơn mới nhất mà client **kh
 
 Ba điều dễ đọc sai, nói ngay:
 
-- **Doanh thu quy theo `orders.created_at`** (chưa có `paid_at`), chỉ gồm đơn `PAID`/`SHIPPED`/
-  `COMPLETED`, currency `VND`; đơn `PENDING`/`PAYMENT_PENDING`/`CANCELLED` **không** được cộng (FR-010).
+- **Doanh thu quy theo `orders.created_at`** (chưa có `paid_at`), chỉ gồm đơn
+  `PAID`/`SHIPPING`/`DELIVERED`/`COMPLETED`, currency `VND`; đơn `PENDING`/`PAYMENT_PENDING`/`CANCELLED`
+  **không** được cộng (FR-010). Tập **trạng thái đã kiếm tiền** này mở rộng ở feature 019 khi `SHIPPED`
+  đổi tên `SHIPPING` và tách thêm `DELIVERED` (ADR 023, thay thế tập three-giá-trị nêu ở ADR 022 §2.5).
 - **Mọi giá trị tiền là object `{ amount, currency }`** — số nguyên đơn vị nhỏ nhất, **không** float —
   kể cả trong `revenueTrend` và `categoryBreakdown` (FR-005).
 - **Ranh giới ngày/tháng theo timezone cửa hàng** (`SHOP_TIMEZONE`, mặc định `Asia/Ho_Chi_Minh`); dữ
@@ -3529,8 +3653,8 @@ Các field **nullable** (có thể là `null`):
 được zero-fill.
 
 `recentOrders` trả tối đa **5** đơn mới nhất (mới nhất trước, tie-break `id` giảm dần). `status` là một
-trong **sáu** trạng thái thô của đơn, **không** dịch sang nhãn hiển thị: `PENDING`, `PAYMENT_PENDING`,
-`PAID`, `SHIPPED`, `COMPLETED`, `CANCELLED`. `itemCount` là **số dòng hàng**; `itemQuantity` là **tổng số
+trong **bảy** trạng thái thô của đơn, **không** dịch sang nhãn hiển thị: `PENDING`, `PAYMENT_PENDING`,
+`PAID`, `SHIPPING`, `DELIVERED`, `COMPLETED`, `CANCELLED`. `itemCount` là **số dòng hàng**; `itemQuantity` là **tổng số
 lượng**. `itemSummary` lấy dòng đầu theo `position` dạng `<name> <variantName> (x<quantity>)` và nối
 ` +N` nếu còn N dòng khác.
 
@@ -3668,12 +3792,14 @@ huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTr
 | GET | `/api/v1/orders/{orderId}` | Bearer | Chi tiết một đơn của chính mình |
 | PUT | `/api/v1/orders/{orderId}` | Bearer | Sửa đơn chưa trả tiền (thay dòng + địa chỉ) |
 | POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn chưa trả tiền, trả hàng đã giữ |
+| POST | `/api/v1/orders/{orderId}/complete` | Bearer | Khách xác nhận đã nhận: đơn `DELIVERED` → `COMPLETED` (feature 019) |
+| POST | `/api/v1/orders/{orderId}/feedback` | Bearer | Gửi feedback cấp đơn cho artist — tối đa một lần mỗi đơn (feature 019) |
 | GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang, lọc `status`, sắp xếp `sort`) |
 | GET | `/api/v1/admin/orders/{orderId}` | ADMIN | Chi tiết một đơn bất kỳ, kèm chủ sở hữu |
 | POST | `/api/v1/admin/orders/{orderId}/confirm` | ADMIN | Artist xác nhận: giữ toàn bộ hàng, mở hạn thanh toán |
 | POST | `/api/v1/admin/orders/{orderId}/reject` | ADMIN | Artist từ chối đơn chờ xác nhận |
-| POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đánh dấu đơn đã trả tiền là đã giao |
-| POST | `/api/v1/admin/orders/{orderId}/complete` | ADMIN | Đánh dấu đơn đã giao là hoàn tất |
+| POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đưa đơn `PAID` sang `SHIPPING` — **multipart**, 0–5 ảnh bằng chứng (feature 019) |
+| POST | `/api/v1/admin/orders/{orderId}/deliver` | ADMIN | Đưa đơn `SHIPPING` sang `DELIVERED` — **multipart**, 0–5 ảnh (feature 019) |
 | POST | `/api/v1/admin/orders/{orderId}/transfer` | ADMIN | Chuyển đơn đã trả tiền cho tài khoản khác |
 | POST | `/api/v1/orders/{orderId}/payment` | Bearer | Bắt đầu (hoặc dùng lại) thanh toán online cho đơn chờ thanh toán |
 | GET | `/api/v1/orders/{orderId}/payment` | Bearer | Đọc thanh toán của chính mình (đường đọc riêng) |
@@ -3703,6 +3829,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-18 | **Giao hàng & hoàn tất đơn (module 07 Order, feature 019) — thay đổi enum phá vỡ hợp đồng công khai.** **Đổi tên** `SHIPPED` → **`SHIPPING`** (đang giao) và **thêm** `DELIVERED` (giao thành công); bộ trạng thái đơn còn **bảy** giá trị. **Thêm hai** endpoint khách: `POST /api/v1/orders/{orderId}/complete` (khách xác nhận đã nhận `DELIVERED → COMPLETED`, không body) và `POST /api/v1/orders/{orderId}/feedback` (body `{ "content": string }`, 1–2000 ký tự, một lần mỗi đơn). **Thêm một** endpoint admin: `POST /api/v1/admin/orders/{orderId}/deliver` (`SHIPPING → DELIVERED`, ghi mốc giao). **Đổi** `POST /api/v1/admin/orders/{orderId}/ship`: payload **đổi sang `multipart/form-data`** nhận 0–5 ảnh `photos` (`PAID → SHIPPING`). **Xoá** `POST /api/v1/admin/orders/{orderId}/complete` — hoàn tất nay do khách xác nhận (`9.6`) hoặc **sweeper tự hoàn tất sau 120 giờ** kể từ `delivered_at`. Detail đơn (khách và admin) mang thêm `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback`. **Thêm sáu** mã vào mục 1.4 — `ORDER_IMAGE_TYPE_UNSUPPORTED` 400, `ORDER_IMAGE_TOO_LARGE` 413, `ORDER_IMAGE_LIMIT_REACHED` 409, `ORDER_MEDIA_UNAVAILABLE` 503, `ORDER_FEEDBACK_NOT_ALLOWED` 409, `ORDER_FEEDBACK_ALREADY_SENT` 409; thêm action audit `ORDER_DELIVERED` (`ORDER_SHIPPED`/`ORDER_COMPLETED` **giữ nguyên**). Migration `00018_order_delivery.sql` backfill `SHIPPED → SHIPPING` trước khi siết check bảy giá trị, thêm `delivered_at`/`completed_at`/`completed_by`, bảng `order_delivery_photos`/`order_feedback`. Mục 9 đánh số lại (`9.6`/`9.7` mới của khách; admin dời thành `9.8`–`9.14`); §11 đổi tập trạng thái doanh thu và `recentOrders[].status` thành bảy giá trị; §12 cập nhật. Xem ADR 023, `specs/019-order-delivery/`. | `internal/modules/order/presentation/http/router.go`, `migrations/00018_order_delivery.sql` |
 | 2026-10-18 | **Kéo-thả sắp xếp danh mục, sản phẩm và variant (modules 03 Category, 04 Product, feature 018).** **Thêm ba** endpoint reorder: `PUT /api/v1/admin/categories/reorder` (body `{ "categoryIds": [...] }`), `PUT /api/v1/admin/products/reorder` (body `{ "productIds": [...] }`) và `PUT /api/v1/admin/products/{id}/variants/reorder` (body `{ "variantIds": [...] }`); mỗi mảng phải là **toàn bộ** các sibling, đúng **một lần**, và được áp bằng **một** câu `UPDATE ... FROM UNNEST(...)` (all-or-nothing, last-write-wins). Response `200` với `data = { "updatedCount": <số nguyên> }`. **Đổi** `GET /admin/categories` và `GET /admin/products`: thêm `all` (boolean) trả trọn danh sách đã sắp xếp, giới hạn ngưỡng an toàn **1000** bản ghi; vượt ngưỡng → `400 VALIDATION_ERROR` với `details[].field` là `"all"`. **Đổi** `POST /admin/categories`, `POST /admin/products`, `POST /admin/products/{id}/variants`: `position` trở thành **tuỳ chọn** — bỏ trống đặt bản ghi mới **lên đầu** (variant bỏ trống trong một lần tạo hàng loạt nhận thứ tự trong mảng `variants`, variant đầu tiên là **mặc định**); giá trị cụ thể vẫn được tôn trọng. **Thêm bốn** mã vào mục 1.4 — `CATEGORY_REORDER_DUPLICATE_ID`, `PRODUCT_REORDER_DUPLICATE_ID`, `VARIANT_REORDER_DUPLICATE_ID`, `VARIANT_BELONGS_TO_OTHER_PRODUCT` (cả bốn `400`); mảng rỗng/thiếu sibling dùng `VALIDATION_ERROR` 400, id không tồn tại dùng `CATEGORY_NOT_FOUND`/`PRODUCT_NOT_FOUND` 404. Không có mã `PRODUCT_BELONGS_TO_OTHER_CATEGORY` (thứ tự sản phẩm toàn catalogue, FR-016). **Không** migration: dùng lại cột `position` và các index sắp xếp hiện có. Mục 5 thêm `5.8`; mục 6 thêm `6.17`, `6.18`; bảng tổng hợp §12 cập nhật. Xem `specs/018-catalog-reorder/`. | `internal/modules/category/presentation/http/router.go`, `internal/modules/product/presentation/http/router.go`, `docs/modules.md` |
 | 2026-10-17 | **Thêm nhóm `/api/v1/admin/dashboard` (module 16 Admin, feature 017).** **Một** endpoint `GET /admin/dashboard/overview` trả toàn bộ dashboard vận hành trong một request **read-only**: bốn nhóm KPI (`revenue`/`orders`/`customers`/`inventory`), `revenueTrend` (`days` = 7 hoặc 30), `categoryBreakdown` (group theo snapshot danh mục trên dòng đơn, bucket "Khác") và `recentOrders` (tối đa 5 đơn mới nhất). Auth `ADMIN` (guest 401, CUSTOMER 403); query `days` (mặc định 7, ∈ {7,30}) và `lowStockThreshold` (mặc định 5, 0..10000). Mọi giá trị tiền là object `{amount, currency}` (VND, số nguyên minor unit). Doanh thu quy theo `orders.created_at`, chỉ `PAID`/`SHIPPED`/`COMPLETED`; cửa sổ tháng hiện tại là MTD so với **cùng kỳ tháng trước**; ranh giới theo `SHOP_TIMEZONE`. Snapshot danh mục thêm vào dòng đơn (migration `00017`). **Không** thêm mã lỗi mới. Xem ADR-022. | `internal/modules/admin/presentation/http/router.go`, `migrations/00017_order_item_category_snapshot.sql` |
 | 2026-10-17 | **Ảnh card của danh mục ưu tiên gallery sản phẩm (module 04 Product, feature 015).** Ảnh của entry trong `GET /products` và `imageUrl` tóm tắt trong `GET /products/{code}` nay là **ảnh chính của gallery** sản phẩm, **fallback về ảnh của variant mặc định** (`position` nhỏ nhất), rồi `null` khi không có ảnh nào. Không đổi route/hình dạng DTO. | `internal/modules/product/infrastructure/implement/postgres/product.go` |
