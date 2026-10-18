@@ -1,0 +1,359 @@
+openapi: 3.0.3
+info:
+  title: Artist Shop — Order delivery & completion (module 07)
+  version: 3.0.0
+  description: >
+    Extends feature 010-order-confirmation. After payment an order is dispatched (PAID -> SHIPPING)
+    with up to five evidence photos, then delivered (SHIPPING -> DELIVERED) with up to five more; the
+    customer confirms receipt (DELIVERED -> COMPLETED) or the order completes itself five days after
+    delivery. The customer may leave one order-level feedback to the artist once the order is
+    delivered. This file supersedes specs/010-order-confirmation/contracts/openapi.yaml. Changes:
+    the status enum renames SHIPPED -> SHIPPING and adds DELIVERED; POST /admin/orders/{orderId}/ship
+    becomes multipart; POST /admin/orders/{orderId}/complete is REMOVED (the customer route and the
+    sweep replace it); POST /orders/{orderId}/complete and POST /orders/{orderId}/feedback are new;
+    POST /admin/orders/{orderId}/deliver is new.
+
+servers:
+  - url: /api/v1
+
+tags:
+  - name: orders
+    description: The signed-in customer's own orders (owner from the session).
+  - name: admin
+    description: The operator's order desk (ADMIN role required).
+
+paths:
+  /admin/orders/{orderId}/ship:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Mark a paid order in transit (dispatch), attaching up to five photos
+      operationId: startShipping
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/EvidenceUpload' }
+      responses:
+        '200':
+          description: The order, now in transit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '400':
+          description: >
+            VALIDATION_ERROR (a wrong part), ORDER_IMAGE_TYPE_UNSUPPORTED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID or ORDER_IMAGE_LIMIT_REACHED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /admin/orders/{orderId}/deliver:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [admin]
+      summary: Mark an in-transit order delivered, attaching up to five photos
+      operationId: markDelivered
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/EvidenceUpload' }
+      responses:
+        '200':
+          description: The order, now delivered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderEnvelope' }
+        '400':
+          description: VALIDATION_ERROR or ORDER_IMAGE_TYPE_UNSUPPORTED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID or ORDER_IMAGE_LIMIT_REACHED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /orders/{orderId}/complete:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [orders]
+      summary: Confirm receipt of a delivered order and complete it
+      operationId: confirmReceipt
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The completed order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_STATE_TRANSITION_INVALID (the order is not DELIVERED)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /orders/{orderId}/feedback:
+    parameters:
+      - { $ref: '#/components/parameters/OrderId' }
+    post:
+      tags: [orders]
+      summary: Send order-level feedback to the artist
+      operationId: submitFeedback
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackRequest' }
+      responses:
+        '200':
+          description: The order with its feedback recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: ORDER_FEEDBACK_NOT_ALLOWED or ORDER_FEEDBACK_ALREADY_SENT
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  # REMOVED: POST /admin/orders/{orderId}/complete — completion is now the customer's act or automatic.
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthenticated:
+      description: UNAUTHENTICATED
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: FORBIDDEN — the session is not an administrator
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    OrderNotFound:
+      description: ORDER_NOT_FOUND — no order carries the identifier, or it is another customer's
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: >
+        VALIDATION_ERROR — a malformed body, or an unknown/foreign orderId, with details[].field
+        naming the member
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PayloadTooLarge:
+      description: ORDER_IMAGE_TOO_LARGE — an uploaded photo exceeds the size ceiling
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: RATE_LIMITED with a Retry-After header
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: INTERNAL_ERROR
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    OrderStatus:
+      type: string
+      description: >
+        PENDING — awaiting the artist's confirmation (no goods held). PAYMENT_PENDING — confirmed,
+        goods held, awaiting payment. PAID — paid. SHIPPING — in transit (formerly SHIPPED). DELIVERED
+        — received by the customer. COMPLETED — the customer confirmed receipt, or the order completed
+        itself five days after delivery. CANCELLED — declined, cancelled or expired.
+      enum: [PENDING, PAYMENT_PENDING, PAID, SHIPPING, DELIVERED, COMPLETED, CANCELLED]
+
+    EvidenceUpload:
+      type: object
+      description: >
+        Optional delivery evidence. Zero to five photos may be attached; each is validated (JPEG, PNG
+        or WebP, within the size ceiling) before it is sent to the media store. Sending the part more
+        than five times is refused with ORDER_IMAGE_LIMIT_REACHED.
+      properties:
+        photos:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary }
+
+    DeliveryPhoto:
+      type: object
+      required: [id, stage, url, width, height, position]
+      properties:
+        id: { type: string, format: uuid }
+        stage:
+          type: string
+          enum: [SHIPPING, DELIVERED]
+          description: The delivery step the photo is evidence for.
+        url: { type: string, format: uri }
+        width: { type: integer }
+        height: { type: integer }
+        position: { type: integer }
+
+    Feedback:
+      type: object
+      required: [content, createdAt]
+      properties:
+        content: { type: string, minLength: 1, maxLength: 2000 }
+        createdAt: { type: string, format: date-time }
+
+    FeedbackRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: The feedback text sent to the artist.
+
+    OrderDetail:
+      type: object
+      required: [id, status, total, itemCount, createdAt, address, lines]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        total: { $ref: '#/components/schemas/Money' }
+        itemCount: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        address: { $ref: '#/components/schemas/OrderAddress' }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/OrderLine' }
+        deliveredAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the operator marked the order delivered; null before then.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the order completed (by the customer or the sweep); null before then.
+        deliveryPhotos:
+          type: array
+          description: Evidence for both delivery steps, ordered by stage then position.
+          items: { $ref: '#/components/schemas/DeliveryPhoto' }
+        feedback:
+          allOf:
+            - $ref: '#/components/schemas/Feedback'
+          nullable: true
+          description: The customer's order-level feedback, or null.
+
+    Money:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount: { type: integer, format: int64 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+
+    OrderLine:
+      type: object
+      required: [productId, name, slug, quantity, unitPrice, lineTotal]
+      properties:
+        productId: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        quantity: { type: integer, format: int64, minimum: 1 }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        lineTotal: { $ref: '#/components/schemas/Money' }
+
+    OrderAddress:
+      type: object
+      required:
+        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress]
+      properties:
+        recipientName: { type: string }
+        recipientPhone: { type: string }
+        provinceCode: { type: string }
+        provinceName: { type: string }
+        wardCode: { type: string }
+        wardName: { type: string }
+        streetAddress: { type: string }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  issue: { type: string }
+
+    OrderEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/OrderDetail' }
+
+    AdminOrderEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: '#/components/schemas/OrderDetail'
+            - type: object
+              required: [userId]
+              properties:
+                userId: { type: string, format: uuid }
