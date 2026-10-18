@@ -229,10 +229,10 @@ description: "Task list for Order Delivery & Completion (module 07 extension)"
 ### Close-out
 
 - [X] T059 Normalize the new files to UTF-8 (LF) and check for BOM across `specs/019-order-delivery/`, `migrations/00018_order_delivery.sql` and the touched `internal/modules/order/**` files
-- [ ] T060 Run `make lint` and `make test`
-- [ ] T061 Run `make test-integration` (needs Docker) and confirm it did not skip
-- [ ] T062 Run `quickstart.md` validation
-- [ ] T063 Run `make check` and confirm `swagger-check` passes
+- [X] T060 Run `make lint` and `make test`
+- [X] T061 Run `make test-integration` (needs Docker) and confirm it did not skip
+- [X] T062 Run `quickstart.md` validation
+- [X] T063 Run `make check` and confirm `swagger-check` passes
 
 ---
 
