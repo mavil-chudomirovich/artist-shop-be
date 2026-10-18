@@ -151,13 +151,13 @@ description: "Task list for Order Delivery & Completion (module 07 extension)"
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T038 [P] [US4] Use-case and sweeper tests `internal/modules/order/application/implement/completion_test.go` and `internal/modules/order/presentation/worker/sweeper_test.go` (injected clock): a `DELIVERED` order past `delivered_at + 5 days` is completed with no actor, exactly once across repeats; an order not `DELIVERED` is never selected; a customer confirm racing the sweep yields `COMPLETED` once (FR-012, FR-013, FR-014)
+- [X] T038 [P] [US4] Use-case and sweeper tests `internal/modules/order/application/implement/completion_test.go` and `internal/modules/order/presentation/worker/sweeper_test.go` (injected clock): a `DELIVERED` order past `delivered_at + 5 days` is completed with no actor, exactly once across repeats; an order not `DELIVERED` is never selected; a customer confirm racing the sweep yields `COMPLETED` once (FR-012, FR-013, FR-014)
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] In `internal/modules/order/application/implement/completion.go`: add `AutoCompleteDelivered(ctx)` — select `DELIVERED` orders with `delivered_at <= now − DeliveryCompletionWindow` (oldest first) through `ListAwaitingCompletion`, and for each run the same domain `Complete` path with no actor, skipping an order already completed (idempotent); add `AutoCompleteDelivered` to the `OrderService` interface (research D6)
-- [ ] T040 [US4] Generalize `internal/modules/order/presentation/worker/sweeper.go` so one tick runs **two** idempotent sweeps — expiry and completion — via an application capability exposing both (`ExpireOrders`, `AutoCompleteDelivered`); update `sweeper_test.go` to prove both are invoked per tick and a failure of one does not stop the other; wire it in `cmd/api/main.go` (research D6)
-- [ ] T041 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go` (or `completion` integration test): a `DELIVERED` order past the window completes exactly once on real PostgreSQL; a customer confirmation and the sweep racing produce a single `COMPLETED` (SC-002)
+- [X] T039 [US4] In `internal/modules/order/application/implement/completion.go`: add `AutoCompleteDelivered(ctx)` — select `DELIVERED` orders with `delivered_at <= now − DeliveryCompletionWindow` (oldest first) through `ListAwaitingCompletion`, and for each run the same domain `Complete` path with no actor, skipping an order already completed (idempotent); add `AutoCompleteDelivered` to the `OrderService` interface (research D6)
+- [X] T040 [US4] Generalize `internal/modules/order/presentation/worker/sweeper.go` so one tick runs **two** idempotent sweeps — expiry and completion — via an application capability exposing both (`ExpireOrders`, `AutoCompleteDelivered`); update `sweeper_test.go` to prove both are invoked per tick and a failure of one does not stop the other; wire it in `cmd/api/main.go` (research D6)
+- [X] T041 [US4] Extend `internal/modules/order/presentation/http/order_integration_test.go` (or `completion` integration test): a `DELIVERED` order past the window completes exactly once on real PostgreSQL; a customer confirmation and the sweep racing produce a single `COMPLETED` (SC-002)
 
 **Checkpoint**: Delivered orders complete themselves after five days, never twice.
 

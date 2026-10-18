@@ -142,6 +142,13 @@ type OrderService interface {
 	// forever. It is the use case the expiry sweeper calls (FR-012, research D6).
 	ExpireOrders(ctx context.Context) error
 
+	// AutoCompleteDelivered completes every delivered order whose five-day
+	// window has passed, exactly once and with no acting account, so a delivered
+	// order the customer never confirms cannot rest forever. An order that is not
+	// DELIVERED is never selected. It is the use case the completion sweeper
+	// calls, on the same tick as the expiry sweep (FR-012, FR-013, research D6).
+	AutoCompleteDelivered(ctx context.Context) error
+
 	// ListMine returns one page of the caller's own orders, newest first
 	// (FR-018).
 	ListMine(ctx context.Context, in dto.ListInput) (dto.OrderPage, error)

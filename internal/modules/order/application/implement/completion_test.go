@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -34,6 +35,15 @@ type completionOrders struct {
 	appinterface.OrderRepository
 	byID      map[uuid.UUID]*model.Order
 	completed []*model.Order
+	// lastCutoff is the instant the completion sweep handed the repository, so a
+	// test can prove the window is derived from the injected clock and passed to
+	// the query rather than computed by the database (research D6).
+	lastCutoff time.Time
+	// stale is reported on top of the live selection, the way a concurrent sweep
+	// that read before another committed still carries identifiers it can no
+	// longer move. It lets a test prove the row lock and the state check — not the
+	// selection alone — make completion happen once (FR-012).
+	stale []uuid.UUID
 }
 
 func (r *completionOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Order, error) {
@@ -43,6 +53,27 @@ func (r *completionOrders) LockByID(_ context.Context, id uuid.UUID) (*model.Ord
 	}
 	clone := *order
 	return &clone, nil
+}
+
+// ListAwaitingCompletion mirrors the adapter's selection: only DELIVERED orders
+// whose delivered_at is at or before the cutoff, oldest delivered first, plus the
+// deliberately stale identifiers a test injects (FR-012, FR-013).
+func (r *completionOrders) ListAwaitingCompletion(_ context.Context, cutoff time.Time) ([]uuid.UUID, error) {
+	r.lastCutoff = cutoff
+	out := make([]uuid.UUID, 0)
+	for _, order := range r.byID {
+		if order.Status == constant.StatusDelivered && order.DeliveredAt != nil && !order.DeliveredAt.After(cutoff) {
+			out = append(out, order.ID)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		left, right := r.byID[out[i]], r.byID[out[j]]
+		if !left.DeliveredAt.Equal(*right.DeliveredAt) {
+			return left.DeliveredAt.Before(*right.DeliveredAt)
+		}
+		return left.ID.String() < right.ID.String()
+	})
+	return append(out, r.stale...), nil
 }
 
 func (r *completionOrders) SaveCompleted(_ context.Context, order *model.Order, _ time.Time) error {
@@ -226,4 +257,235 @@ func TestConfirmReceivedRequiresASession(t *testing.T) {
 	if _, err := f.svc.ConfirmReceived(context.Background(), appdto.OrderRefInput{OrderID: order.ID}); !errors.Is(err, errNoActor) {
 		t.Fatalf("ConfirmReceived without a session must fail with errNoActor, got %v", err)
 	}
+}
+
+// expiredDeliveryOrder builds a DELIVERED order whose delivery instant lies at the
+// given instant, so a test can place it before or after the completion window.
+func expiredDeliveryOrder(owner uuid.UUID, deliveredAt time.Time) *model.Order {
+	order := orderAt(owner, fixedNow, line(uuid.New(), 1000, 1))
+	order.Status = constant.StatusDelivered
+	stamp := deliveredAt
+	order.DeliveredAt = &stamp
+	return order
+}
+
+// assertSystemAudit asserts one audit event names the action, a SUCCESS outcome,
+// the order, and no acting account — the shape the completion sweep writes when it
+// completes an order on its own (FR-012, FR-014, research D10).
+func assertSystemAudit(t *testing.T, event recordedAudit, action string, orderID uuid.UUID) {
+	t.Helper()
+	if event.action != action {
+		t.Fatalf("expected action %s, got %s", action, event.action)
+	}
+	if event.outcome != string(audit.OutcomeSuccess) {
+		t.Fatalf("%s: expected a SUCCESS outcome, got %q", action, event.outcome)
+	}
+	if event.actorID != nil {
+		t.Fatalf("%s: the sweep completes with no actor, got %v", action, event.actorID)
+	}
+	if event.actorRole != "" {
+		t.Fatalf("%s: the sweep passes no role, got %q", action, event.actorRole)
+	}
+	if event.targetType != "order" || event.targetID != orderID.String() {
+		t.Fatalf("%s: expected the order as the target, got %q/%q", action, event.targetType, event.targetID)
+	}
+}
+
+// FR-012, FR-014: a DELIVERED order past delivered_at + 5 days is completed by the
+// sweep with no acting account, stamping the completion instant, and the cutoff the
+// sweep hands the repository is the injected clock minus the domain window. A
+// repeat — even one that is still handed the identifier — finds the order no longer
+// DELIVERED and completes nothing a second time, so the sweep is idempotent.
+func TestAutoCompleteDeliveredCompletesAnOrderPastTheWindowExactlyOnce(t *testing.T) {
+	owner := uuid.New()
+	order := expiredDeliveryOrder(owner, fixedNow.Add(-model.DeliveryCompletionWindow-time.Minute))
+	f := newCompletionFixture(order)
+	// A concurrent sweep that read before this one committed still reports the
+	// identifier; the row lock and the state check make the second attempt skip.
+	f.orders.stale = []uuid.UUID{order.ID}
+
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+
+	wantCutoff := fixedNow.Add(-model.DeliveryCompletionWindow)
+	if !f.orders.lastCutoff.Equal(wantCutoff) {
+		t.Fatalf("the sweep must pass now - DeliveryCompletionWindow as the cutoff, got %v want %v",
+			f.orders.lastCutoff, wantCutoff)
+	}
+
+	stored := f.orders.byID[order.ID]
+	if stored.Status != constant.StatusCompleted {
+		t.Fatalf("a delivered order past its window must reach COMPLETED, got %s", stored.Status)
+	}
+	if stored.CompletedAt == nil || !stored.CompletedAt.Equal(fixedNow) {
+		t.Fatalf("the sweep must stamp the completion instant, got %v", stored.CompletedAt)
+	}
+	if stored.CompletedBy != nil {
+		t.Fatalf("the sweep completes with no acting customer, got %v", stored.CompletedBy)
+	}
+	if len(f.orders.completed) != 1 {
+		t.Fatalf("the completion must be persisted once, got %d", len(f.orders.completed))
+	}
+	if len(f.audit.events) != 1 {
+		t.Fatalf("the sweep must record one audit entry, got %+v", f.audit.events)
+	}
+	assertSystemAudit(t, f.audit.events[0], constant.AuditOrderCompleted, order.ID)
+
+	// A repeated sweep — with the same stale selection — changes nothing and
+	// audits nothing further (FR-012: exactly once, even across repeats).
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("a repeated AutoCompleteDelivered must not fail: %v", err)
+	}
+	if len(f.orders.completed) != 1 {
+		t.Fatalf("a repeated sweep must not complete again, got %d completions", len(f.orders.completed))
+	}
+	if len(f.audit.events) != 1 {
+		t.Fatalf("a repeated sweep must not audit again, got %+v", f.audit.events)
+	}
+	if stored.Status != constant.StatusCompleted {
+		t.Fatalf("a repeated sweep must leave the order COMPLETED, got %s", stored.Status)
+	}
+}
+
+// FR-013: only a DELIVERED order is selected. An order in any other state — even
+// one that somehow carries a delivery instant — is never completed by time, and
+// an order delivered inside the window is not selected either.
+func TestAutoCompleteDeliveredNeverSelectsANonDeliveredOrder(t *testing.T) {
+	oldDelivery := fixedNow.Add(-3 * model.DeliveryCompletionWindow)
+	besidesDelivered := []constant.Status{
+		constant.StatusPending,
+		constant.StatusPaymentPending,
+		constant.StatusPaid,
+		constant.StatusShipping,
+		constant.StatusCompleted,
+		constant.StatusCancelled,
+	}
+	orders := make([]*model.Order, 0, len(besidesDelivered)+2)
+	for _, status := range besidesDelivered {
+		order := expiredDeliveryOrder(uuid.New(), oldDelivery)
+		order.Status = status
+		orders = append(orders, order)
+	}
+	// Delivered, but not yet past the window: the customer still has time to
+	// confirm, so the sweep must leave it alone (FR-012).
+	insideWindow := expiredDeliveryOrder(uuid.New(), fixedNow.Add(-model.DeliveryCompletionWindow+time.Minute))
+	orders = append(orders, insideWindow)
+	expired := expiredDeliveryOrder(uuid.New(), oldDelivery)
+	orders = append(orders, expired)
+
+	f := newCompletionFixture(orders...)
+
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+
+	for _, order := range orders {
+		if order.ID == expired.ID {
+			continue
+		}
+		if stored := f.orders.byID[order.ID]; stored.Status != order.Status {
+			t.Fatalf("status %s must never be completed by time, got %s", order.Status, stored.Status)
+		}
+	}
+	if stored := f.orders.byID[insideWindow.ID]; stored.CompletedAt != nil {
+		t.Fatalf("an order inside the window must not complete, got %v", stored.CompletedAt)
+	}
+	if stored := f.orders.byID[expired.ID]; stored.Status != constant.StatusCompleted {
+		t.Fatalf("the expired delivered order must complete, got %s", stored.Status)
+	}
+	if len(f.orders.completed) != 1 {
+		t.Fatalf("only the expired delivered order may complete, got %d completions", len(f.orders.completed))
+	}
+	if len(f.audit.events) != 1 {
+		t.Fatalf("only the expired delivered order may audit, got %+v", f.audit.events)
+	}
+}
+
+// FR-012, research D6: the sweep walks the awaiting orders oldest-delivered first,
+// so a backlog drains in the order it accumulated.
+func TestAutoCompleteDeliveredCompletesOldestFirst(t *testing.T) {
+	oldest := expiredDeliveryOrder(uuid.New(), fixedNow.Add(-4*model.DeliveryCompletionWindow))
+	middle := expiredDeliveryOrder(uuid.New(), fixedNow.Add(-3*model.DeliveryCompletionWindow))
+	newest := expiredDeliveryOrder(uuid.New(), fixedNow.Add(-2*model.DeliveryCompletionWindow))
+	f := newCompletionFixture(newest, oldest, middle)
+
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+
+	got := make([]uuid.UUID, 0, len(f.orders.completed))
+	for _, order := range f.orders.completed {
+		got = append(got, order.ID)
+	}
+	want := []uuid.UUID{oldest.ID, middle.ID, newest.ID}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d completions, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("the sweep must complete oldest delivered first, got %v want %v", got, want)
+		}
+	}
+}
+
+// FR-012, edge case: the customer's confirmation and the sweep race. Whichever
+// runs second finds the order no longer DELIVERED and does nothing, so the order
+// completes exactly once and only one audit entry is written. Both interleavings
+// are asserted, because either side can win the row lock.
+func TestAutoCompleteDeliveredAndCustomerConfirmationCompleteOnce(t *testing.T) {
+	t.Run("the sweep completes first", func(t *testing.T) {
+		owner := uuid.New()
+		order := expiredDeliveryOrder(owner, fixedNow.Add(-model.DeliveryCompletionWindow-time.Hour))
+		f := newCompletionFixture(order)
+
+		if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+			t.Fatalf("AutoCompleteDelivered: %v", err)
+		}
+		_, err := f.svc.ConfirmReceived(actorContext(owner), appdto.OrderRefInput{OrderID: order.ID})
+		var refusal *domainerr.StateTransitionError
+		if !errors.As(err, &refusal) {
+			t.Fatalf("a confirmation after the sweep must be refused, got %v", err)
+		}
+		if refusal.From != constant.StatusCompleted || refusal.To != constant.StatusCompleted {
+			t.Fatalf("the refusal must name the current state COMPLETED, got %+v", refusal)
+		}
+		if len(f.orders.completed) != 1 {
+			t.Fatalf("the order must complete once, got %d completions", len(f.orders.completed))
+		}
+		if len(f.audit.events) != 1 {
+			t.Fatalf("the order must audit one completion, got %+v", f.audit.events)
+		}
+		assertSystemAudit(t, f.audit.events[0], constant.AuditOrderCompleted, order.ID)
+		if stored := f.orders.byID[order.ID]; stored.CompletedBy != nil {
+			t.Fatalf("the sweep's completion records no actor, got %v", stored.CompletedBy)
+		}
+	})
+
+	t.Run("the customer confirms first", func(t *testing.T) {
+		owner := uuid.New()
+		order := expiredDeliveryOrder(owner, fixedNow.Add(-model.DeliveryCompletionWindow-time.Hour))
+		f := newCompletionFixture(order)
+
+		if _, err := f.svc.ConfirmReceived(actorContext(owner), appdto.OrderRefInput{OrderID: order.ID}); err != nil {
+			t.Fatalf("ConfirmReceived: %v", err)
+		}
+		// The sweep still carries the identifier the way a concurrent selection
+		// would, and skips it rather than failing or writing a second completion.
+		f.orders.stale = []uuid.UUID{order.ID}
+		if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+			t.Fatalf("a sweep racing a confirmation must not fail: %v", err)
+		}
+
+		if len(f.orders.completed) != 1 {
+			t.Fatalf("the order must complete once, got %d completions", len(f.orders.completed))
+		}
+		if len(f.audit.events) != 1 {
+			t.Fatalf("the order must audit one completion, got %+v", f.audit.events)
+		}
+		assertCustomerAudit(t, f.audit.events[0], constant.AuditOrderCompleted, owner, order.ID)
+		if stored := f.orders.byID[order.ID]; stored.CompletedBy == nil || *stored.CompletedBy != owner {
+			t.Fatalf("the customer's completion must keep the acting customer, got %v", stored.CompletedBy)
+		}
+	})
 }

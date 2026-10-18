@@ -30,9 +30,12 @@ import (
 	inventoryavailability "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/availability"
 	inventorypostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/postgres"
 	inventoryreservation "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/inventory/infrastructure/implement/reservation"
+	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	orderimplement "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/implement"
+	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
 	ordermapper "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 	orderauditor "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/auditor"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
@@ -1696,5 +1699,200 @@ func TestCustomerConfirmsReceiptAgainstPostgres(t *testing.T) {
 		t.Fatalf("expected ORDER_STATE_TRANSITION_INVALID, got %s", body.Error.Code)
 	} else if !strings.Contains(body.Error.Message, string(constant.StatusCompleted)) {
 		t.Fatalf("the refusal must name COMPLETED, got %q", body.Error.Message)
+	}
+}
+
+// checkoutDeliveredOrder drives the real HTTP surface to a DELIVERED order:
+// checkout, the artist's confirmation, the paid transition module 08 drives, the
+// dispatch and the delivery. It returns the order identifier, so a test can then
+// age the delivery and exercise the five-day sweep against real PostgreSQL.
+func checkoutDeliveredOrder(t *testing.T, f *orderIntegrationFixture) uuid.UUID {
+	t.Helper()
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	orderID := created.Data.ID
+
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/confirm", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("confirm: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if err := f.svc.MarkPaid(context.Background(), orderID, "payment-event-auto-"+orderID.String(), 2); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/ship", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ship: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/deliver", "", "admin-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deliver: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("the order must be DELIVERED before the sweep, got %s", got)
+	}
+	return orderID
+}
+
+// backdateDelivery moves an order's delivery instant into the past, so a test can
+// place the order past the five-day window the sweep reads. The window itself is
+// computed by the application from the injected clock, never by the database, so
+// aging the stored instant is the only thing a test has to move (research D6).
+func backdateDelivery(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID, age time.Duration) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`UPDATE orders SET delivered_at = $2 WHERE id = $1`,
+		orderID, time.Now().UTC().Add(-age)); err != nil {
+		t.Fatalf("backdate the delivery: %v", err)
+	}
+}
+
+// SC-002, FR-012, FR-013, FR-014 against real PostgreSQL: a DELIVERED order past
+// delivered_at + 5 days is completed by the sweep with no acting account, exactly
+// once across repeats, and the completion is audited naming the order and no
+// actor; an order still inside the window is never completed by time, and a
+// repeated sweep neither completes nor audits a second time.
+func TestAutoCompletesADeliveredOrderPastTheWindowAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+	orderID := checkoutDeliveredOrder(t, f)
+
+	// FR-012, FR-013: delivered inside the window, the sweep leaves the order for
+	// the customer to confirm.
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered inside the window: %v", err)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("an order inside the window must stay DELIVERED, got %s", got)
+	}
+
+	// Age the delivery past the window; the same sweep now completes it.
+	backdateDelivery(t, f.pool, orderID, model.DeliveryCompletionWindow+time.Hour)
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusCompleted) {
+		t.Fatalf("a delivered order past its window must complete, got %s", got)
+	}
+	completedAt, completedBy := orderCompletionFacts(t, f.pool, orderID)
+	if completedAt == nil {
+		t.Fatal("the sweep must stamp completed_at")
+	}
+	if completedBy != nil {
+		t.Fatalf("the sweep completes with no acting customer, got %v", completedBy)
+	}
+	rows := f.waitForAuditRows(t, constant.AuditOrderCompleted, 1)
+	row := rows[0]
+	if row.actorID != nil {
+		t.Fatalf("the automatic completion must record no actor, got %v", row.actorID)
+	}
+	if row.actorRole != "" {
+		t.Fatalf("the automatic completion must record no role, got %q", row.actorRole)
+	}
+	if row.targetType != "order" || row.targetID != orderID.String() {
+		t.Fatalf("the automatic completion must name the order, got %q/%q", row.targetType, row.targetID)
+	}
+	if row.outcome != string(audit.OutcomeSuccess) {
+		t.Fatalf("expected a SUCCESS outcome, got %q", row.outcome)
+	}
+
+	// FR-012: a repeated sweep completes nothing a second time — the order is no
+	// longer DELIVERED, so nothing is written and no second audit row appears.
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("a repeated sweep must not fail: %v", err)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusCompleted) {
+		t.Fatalf("a repeated sweep must leave the order COMPLETED, got %s", got)
+	}
+	completedAtAgain, completedByAgain := orderCompletionFacts(t, f.pool, orderID)
+	if !completedAtAgain.Equal(*completedAt) || completedByAgain != nil {
+		t.Fatalf("a repeated sweep must not rewrite the completion facts, got %v/%v", completedAtAgain, completedByAgain)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if again := f.auditRows(t, constant.AuditOrderCompleted); len(again) != 1 {
+		t.Fatalf("a repeated sweep must not audit again, got %d rows", len(again))
+	}
+}
+
+// SC-002, FR-012, FR-014 against real PostgreSQL: the customer's confirmation and
+// the completion sweep race on the same delivered order past its window. Whichever
+// commits second finds the order no longer DELIVERED, so the order reaches
+// COMPLETED exactly once: one completion, one ORDER_COMPLETED audit row, and the
+// completing side recorded (the customer when the confirmation won, nobody when
+// the sweep did).
+func TestCustomerConfirmationRacesTheCompletionSweepAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+	orderID := checkoutDeliveredOrder(t, f)
+	backdateDelivery(t, f.pool, orderID, model.DeliveryCompletionWindow+time.Hour)
+
+	actorCtx := appinterface.WithActor(context.Background(),
+		appinterface.Actor{ID: testCustomerID, Role: access.RoleCustomer})
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var sweepErr, confirmErr error
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		sweepErr = f.svc.AutoCompleteDelivered(context.Background())
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_, confirmErr = f.svc.ConfirmReceived(actorCtx, appdto.OrderRefInput{OrderID: orderID})
+	}()
+	close(start)
+	wg.Wait()
+
+	if sweepErr != nil {
+		t.Fatalf("the sweep must not fail when it loses the race: %v", sweepErr)
+	}
+	// The confirmation either wins or is refused naming the completed state;
+	// anything else is a real failure.
+	if confirmErr != nil && !errors.Is(confirmErr, domainerr.ErrStateTransitionInvalid) {
+		t.Fatalf("the confirmation must win or be refused by the state, got %v", confirmErr)
+	}
+
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusCompleted) {
+		t.Fatalf("the raced order must be COMPLETED exactly once, got %s", got)
+	}
+	completedAt, completedBy := orderCompletionFacts(t, f.pool, orderID)
+	if completedAt == nil {
+		t.Fatal("the raced completion must stamp completed_at")
+	}
+	rows := f.waitForAuditRows(t, constant.AuditOrderCompleted, 1)
+	if confirmErr == nil {
+		// The customer's confirmation won: it records the customer as the actor.
+		if completedBy == nil || *completedBy != testCustomerID {
+			t.Fatalf("the customer's completion must record the acting customer, got %v", completedBy)
+		}
+		if rows[0].actorID == nil || *rows[0].actorID != testCustomerID {
+			t.Fatalf("the customer's completion must audit the actor, got %v", rows[0].actorID)
+		}
+	} else {
+		// The sweep won: it records no actor.
+		if completedBy != nil {
+			t.Fatalf("the sweep's completion records no actor, got %v", completedBy)
+		}
+		if rows[0].actorID != nil {
+			t.Fatalf("the sweep's completion must audit no actor, got %v", rows[0].actorID)
+		}
+	}
+
+	// Exactly one completion survives the race.
+	time.Sleep(200 * time.Millisecond)
+	if again := f.auditRows(t, constant.AuditOrderCompleted); len(again) != 1 {
+		t.Fatalf("the race must produce a single completion, got %d audit rows", len(again))
 	}
 }

@@ -504,12 +504,16 @@ func run() error {
 	orderService.Cancellations = paymentcancel.New(paymentService)
 	paymentHandler := paymenthttp.New(paymentService, logger)
 
-	// The order expiry sweeper cancels every awaiting-payment order whose
-	// 60-minute hold window has passed and returns its goods, so an unpaid
-	// order cannot hold stock forever. It is the project's second sweeper,
-	// mirroring module 05's: it carries no business rule, calls the expire use
-	// case every interval, and stops on the same context the rest of the
-	// composition shares (FR-012, research D6).
+	// The order sweeper runs the module's two background sweeps on one tick,
+	// both idempotent: it cancels every awaiting-payment order whose 60-minute
+	// hold window has passed and returns its goods, so an unpaid order cannot
+	// hold stock forever, and it completes every delivered order past its
+	// five-day confirmation window with no acting account, so a delivered order
+	// the customer never confirms cannot rest forever. It is the project's second
+	// sweeper, mirroring module 05's: it carries no business rule, calls each use
+	// case every interval independently so one failing sweep cannot stop the
+	// other, and stops on the same context the rest of the composition shares
+	// (FR-012, FR-013, research D6).
 	orderSweeper := orderworker.New(orderService, logger)
 
 	// Module 16 (admin). The dashboard is a read-only orchestrator: it owns no
