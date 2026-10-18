@@ -393,8 +393,9 @@ definitions:
         type: string
       position:
         description: |-
-          Position is optional and defaults to zero. Any whole number, including
-          zero and negative, is valid.
+          Position is optional. An omitted or null position places the new
+          category at the front of its list (FR-011); a supplied value is
+          honoured. Any whole number, including zero and negative, is valid.
         type: integer
       slug:
         description: Slug is required; it must be URL-safe and is never derived from
@@ -415,6 +416,20 @@ definitions:
       slug:
         description: Slug is the segment a customer-facing link is built from.
         type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.ReorderCategoriesRequest:
+    properties:
+      categoryIds:
+        description: CategoryIDs is every category's identifier, in the desired order.
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.ReorderResponse:
+    properties:
+      updatedCount:
+        description: UpdatedCount is the number of records' positions that were written.
+        type: integer
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.UpdateCategoryRequest:
     properties:
@@ -974,7 +989,10 @@ definitions:
         description: Name is the product name.
         type: string
       position:
-        description: Position is the ordering preference.
+        description: |-
+          Position is optional. An omitted or null position places the new
+          product at the front of the catalogue (FR-011); a supplied value is
+          honoured.
         type: integer
       variants:
         description: |-
@@ -990,7 +1008,10 @@ definitions:
         description: Name is the variant's display name.
         type: string
       position:
-        description: Position is the ordering preference.
+        description: |-
+          Position is optional. An omitted or null position takes the variant's
+          index in a create payload, or the front of the product for an added
+          variant (FR-011); a supplied value is honoured.
         type: integer
       price:
         allOf:
@@ -1126,6 +1147,29 @@ definitions:
       sellState:
         description: SellState is where the variant is in its selling life.
         type: string
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderProductsRequest:
+    properties:
+      productIds:
+        description: ProductIDs is every product's identifier, in the desired order.
+        items:
+          type: string
+        type: array
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderResponse:
+    properties:
+      updatedCount:
+        description: UpdatedCount is the number of records' positions that were written.
+        type: integer
+    type: object
+  github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderVariantsRequest:
+    properties:
+      variantIds:
+        description: VariantIDs is every variant of the addressed product, in the
+          desired order.
+        items:
+          type: string
+        type: array
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.UpdateProductRequest:
     properties:
@@ -1463,7 +1507,8 @@ paths:
   /admin/categories:
     get:
       description: Returns a page of every category, including the ones not on display,
-        with the position and display state a customer never sees.
+        with the position and display state a customer never sees. With all=true the
+        complete ordered list is returned instead, bounded by the safety maximum.
       parameters:
       - description: Page number (default 1)
         in: query
@@ -1473,6 +1518,11 @@ paths:
         in: query
         name: pageSize
         type: integer
+      - description: Return the complete ordered list instead of one page (bounded
+          by the safety maximum)
+        in: query
+        name: all
+        type: boolean
       produces:
       - application/json
       responses:
@@ -1683,6 +1733,54 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a category (ADMIN)
+      tags:
+      - Category
+  /admin/categories/reorder:
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the catalogue-wide category order with the submitted
+        order. The array must contain every category exactly once; the first id becomes
+        the first category. Atomic: on any refusal nothing changes. The acting administrator
+        comes from the session, never the body.'
+      parameters:
+      - description: Complete, ordered category ids
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.ReorderCategoriesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_category_presentation_dto.ReorderResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Reorder every category (ADMIN)
       tags:
       - Category
   /admin/dashboard/overview:
@@ -2474,7 +2572,8 @@ paths:
     get:
       description: Returns a page of every product, including the ones withheld from
         customers, with the code, the default price, the position, the variant count
-        and the picture summary a customer never sees.
+        and the picture summary a customer never sees. With all=true the complete
+        ordered list is returned instead, bounded by the safety maximum.
       parameters:
       - description: Page number (default 1)
         in: query
@@ -2484,6 +2583,11 @@ paths:
         in: query
         name: pageSize
         type: integer
+      - description: Return the complete ordered list instead of one page (bounded
+          by the safety maximum)
+        in: query
+        name: all
+        type: boolean
       produces:
       - application/json
       responses:
@@ -3167,6 +3271,108 @@ paths:
       security:
       - BearerAuth: []
       summary: Move a variant through its selling life (ADMIN)
+      tags:
+      - Product
+  /admin/products/{id}/variants/reorder:
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the order of the product''s variants with the submitted
+        order. The array must contain every variant of that product exactly once;
+        the first id becomes the default variant. Atomic: on any refusal nothing changes.
+        A variant that belongs to another product is refused. The acting administrator
+        comes from the session, never the body.'
+      parameters:
+      - description: Product identifier
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Complete, ordered variant ids
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderVariantsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Reorder a product's variants (ADMIN)
+      tags:
+      - Product
+  /admin/products/reorder:
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the catalogue-wide product order with the submitted order.
+        The array must contain every product exactly once; the first id becomes the
+        first product. Atomic: on any refusal nothing changes. The acting administrator
+        comes from the session, never the body.'
+      parameters:
+      - description: Complete, ordered product ids
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderProductsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_product_presentation_dto.ReorderResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Reorder every product (ADMIN)
       tags:
       - Product
   /auth/admin/probe:

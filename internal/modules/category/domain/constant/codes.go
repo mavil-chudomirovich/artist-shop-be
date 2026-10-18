@@ -31,4 +31,9 @@ const (
 	// variants. The refusal names the blocking orders so an operator can act on
 	// them (specs/016-hide-guard).
 	CodeCategoryHasPendingOrders = "CATEGORY_HAS_PENDING_ORDERS"
+	// CodeCategoryReorderDuplicateID reports that the submitted reorder names
+	// the same category more than once (specs/018-catalog-reorder). It is a
+	// request-shape failure, so the answer is 400 with a code distinct from the
+	// completeness refusal; the detail names the offending member.
+	CodeCategoryReorderDuplicateID = "CATEGORY_REORDER_DUPLICATE_ID"
 )

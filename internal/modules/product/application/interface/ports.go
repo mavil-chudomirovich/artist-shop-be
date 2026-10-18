@@ -163,6 +163,10 @@ type ProductService interface {
 	// DeleteProduct removes a product and its variants and audits the removal
 	// (FR-010, FR-014).
 	DeleteProduct(ctx context.Context, in dto.AdminProductRefInput) error
+	// ReorderProducts replaces the catalogue-wide product order with the
+	// complete, ordered set the request carries and audits the reorder
+	// (specs/018-catalog-reorder FR-002, FR-004, FR-010).
+	ReorderProducts(ctx context.Context, in dto.ReorderProductsInput) (dto.ReorderResult, error)
 
 	// AddVariant adds a variant to a product and audits the change (FR-014).
 	AddVariant(ctx context.Context, in dto.AddVariantInput) (dto.AdminProductDetailOutput, error)
@@ -174,6 +178,10 @@ type ProductService interface {
 	// ChangeVariantState routes a requested variant state through the domain's
 	// transition table and audits the change (FR-015).
 	ChangeVariantState(ctx context.Context, in dto.ChangeVariantStateInput) (dto.AdminProductDetailOutput, error)
+	// ReorderVariants replaces the order of one product's variants with the
+	// complete, ordered set the request carries and audits the reorder
+	// (specs/018-catalog-reorder FR-003, FR-004, FR-010, FR-014).
+	ReorderVariants(ctx context.Context, in dto.ReorderVariantsInput) (dto.ReorderResult, error)
 
 	// MarkVariantOutOfStock is the system-facing signal the inventory module sends
 	// when a variant's availability reaches zero. It moves ACTIVE → OUT_OF_STOCK

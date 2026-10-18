@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -933,5 +934,164 @@ func TestRemovingACategoryWithProductsIsRefusedByTheForeignKeyAgainstPostgres(t 
 	}
 	if f.categoryRowCount(t, created.ID) != 0 {
 		t.Fatal("the category must be gone once nothing references it")
+	}
+}
+
+// reorderUUIDList renders a UUID slice as the JSON array a reorder body carries,
+// so a test can build the body without hand-writing each identifier.
+func reorderUUIDList(ids []uuid.UUID) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf("%q", id.String()))
+	}
+	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// Spec 018 US1 (T009) against real PostgreSQL: the category reorder stores the
+// complete submitted order with the adapter's single bulk UNNEST statement
+// (research D1), the customer-facing catalogue reflects it, and every refusal
+// (duplicate, incomplete, unknown) leaves the stored order unchanged.
+func TestCategoryReorderAgainstPostgres(t *testing.T) {
+	f := newMaintenanceFixture(t)
+	base := time.Now().UTC().Add(-time.Hour)
+	alpha := seed(t, f.repo, model.CategoryDraft{Name: "Alpha", Slug: "alpha", Position: 1}, base)
+	beta := seed(t, f.repo, model.CategoryDraft{Name: "Beta", Slug: "beta", Position: 2}, base.Add(time.Minute))
+	gamma := seed(t, f.repo, model.CategoryDraft{Name: "Gamma", Slug: "gamma", Position: 3}, base.Add(2*time.Minute))
+
+	seeded := []string{"alpha", "beta", "gamma"}
+	if got := f.publicList(t); !reflect.DeepEqual(got, seeded) {
+		t.Fatalf("the seeded order must be the stored one, got %v", got)
+	}
+
+	// Every refusal leaves the stored order untouched (FR-004, SC-001).
+	refusals := []struct {
+		name string
+		body string
+		want int
+		code string
+	}{
+		{"duplicate", `{"categoryIds":` + reorderUUIDList([]uuid.UUID{gamma.ID, alpha.ID, gamma.ID}) + `}`,
+			http.StatusBadRequest, constant.CodeCategoryReorderDuplicateID},
+		{"incomplete", `{"categoryIds":` + reorderUUIDList([]uuid.UUID{alpha.ID, beta.ID}) + `}`,
+			http.StatusBadRequest, "VALIDATION_ERROR"},
+		{"unknown", `{"categoryIds":` + reorderUUIDList([]uuid.UUID{alpha.ID, beta.ID, uuid.New()}) + `}`,
+			http.StatusNotFound, "CATEGORY_NOT_FOUND"},
+	}
+	for _, refusal := range refusals {
+		t.Run(refusal.name, func(t *testing.T) {
+			rec := f.call(http.MethodPut, adminCategoriesPath+"/reorder", refusal.body, f.adminToken)
+			if rec.Code != refusal.want {
+				t.Fatalf("expected %d, got %d (%s)", refusal.want, rec.Code, rec.Body.String())
+			}
+			if body := decodeAdminError(t, rec); body.Error.Code != refusal.code {
+				t.Fatalf("expected %s, got %s", refusal.code, body.Error.Code)
+			}
+			if got := f.publicList(t); !reflect.DeepEqual(got, seeded) {
+				t.Fatalf("a refused reorder must leave the order unchanged, got %v", got)
+			}
+		})
+	}
+
+	// The successful reorder stores the submitted order in one bulk write: the
+	// affected-row count equals the submitted size (research D1).
+	order := []uuid.UUID{gamma.ID, alpha.ID, beta.ID}
+	rec := f.call(http.MethodPut, adminCategoriesPath+"/reorder",
+		`{"categoryIds":`+reorderUUIDList(order)+`}`, f.adminToken)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reorder: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			UpdatedCount int64 `json:"updatedCount"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the reorder answer %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.UpdatedCount != 3 {
+		t.Fatalf("expected the bulk write to touch 3 rows, got %d", body.Data.UpdatedCount)
+	}
+
+	for wantPosition, id := range order {
+		stored, err := f.repo.FindByID(context.Background(), id)
+		if err != nil {
+			t.Fatalf("read category %s: %v", id, err)
+		}
+		if stored.Position != wantPosition {
+			t.Fatalf("stored position of %s = %d, want %d", id, stored.Position, wantPosition)
+		}
+	}
+	if got := f.publicList(t); !reflect.DeepEqual(got, []string{"gamma", "alpha", "beta"}) {
+		t.Fatalf("the customer-facing order must reflect the reorder, got %v", got)
+	}
+
+	rows := f.waitForAuditRows(t, constant.AuditCategoryReordered, 1)
+	if rows[0].actorID == nil || *rows[0].actorID != f.adminID {
+		t.Fatalf("the reorder must name the administrator, got %v", rows[0].actorID)
+	}
+	if rows[0].targetType != "category" || rows[0].targetID != "" {
+		t.Fatalf("a bulk reorder targets the scope with no single row, got %q/%q", rows[0].targetType, rows[0].targetID)
+	}
+	if rows[0].outcome != string(audit.OutcomeSuccess) {
+		t.Fatalf("expected a SUCCESS outcome, got %q", rows[0].outcome)
+	}
+}
+
+// adminCategoriesListBody is the members of one administrator list answer this
+// test inspects.
+type adminCategoriesListBody struct {
+	Data []struct {
+		Slug string `json:"slug"`
+	} `json:"data"`
+	Meta struct {
+		Total int64 `json:"total"`
+	} `json:"meta"`
+}
+
+func decodeAdminCategoriesList(t *testing.T, rec *httptest.ResponseRecorder) adminCategoriesListBody {
+	t.Helper()
+	var body adminCategoriesListBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the administrator list %q: %v", rec.Body.String(), err)
+	}
+	return body
+}
+
+// Spec 018 US3 (T017) against real PostgreSQL: `all=true` returns the complete
+// ordered list beyond one page, while the ordinary request still pages.
+func TestCategoryListAllSelectorAgainstPostgres(t *testing.T) {
+	f := newMaintenanceFixture(t)
+	base := time.Now().UTC().Add(-time.Hour)
+	const total = defaultPageSize + 5
+	for i := 0; i < total; i++ {
+		seed(t, f.repo, model.CategoryDraft{
+			Name:     fmt.Sprintf("Mục %02d", i),
+			Slug:     fmt.Sprintf("muc-%02d", i),
+			Position: i,
+		}, base.Add(time.Duration(i)*time.Second))
+	}
+
+	// The ordinary request is paged: it cannot return everything.
+	paged := f.call(http.MethodGet, adminCategoriesPath, "", f.adminToken)
+	if paged.Code != http.StatusOK {
+		t.Fatalf("admin list: expected 200, got %d (%s)", paged.Code, paged.Body.String())
+	}
+	if body := decodeAdminCategoriesList(t, paged); len(body.Data) != defaultPageSize || body.Meta.Total != total {
+		t.Fatalf("a paged request must return one page, got %d of %d", len(body.Data), body.Meta.Total)
+	}
+
+	// `all=true` returns the whole ordered list.
+	all := f.call(http.MethodGet, adminCategoriesPath+"?all=true", "", f.adminToken)
+	if all.Code != http.StatusOK {
+		t.Fatalf("all list: expected 200, got %d (%s)", all.Code, all.Body.String())
+	}
+	body := decodeAdminCategoriesList(t, all)
+	if len(body.Data) != total || body.Meta.Total != total {
+		t.Fatalf("all=true must return the whole list, got %d of %d", len(body.Data), body.Meta.Total)
+	}
+	for i, entry := range body.Data {
+		if want := fmt.Sprintf("muc-%02d", i); entry.Slug != want {
+			t.Fatalf("all=true must preserve the stored order: entry %d = %q, want %q", i, entry.Slug, want)
+		}
 	}
 }

@@ -1,0 +1,358 @@
+openapi: 3.1.0
+info:
+  title: Artist Shop Backend - Catalog Reorder (feature 018)
+  version: 1.0.0
+  description: >
+    Adds drag-and-drop reordering for categories (one catalogue-wide order), products (one
+    catalogue-wide order) and a product's variants (ordered within the product). Each reorder
+    submits the complete, ordered set of identifiers and is applied in one action. `position`
+    becomes optional on the create bodies: omitting it places the new record at the front of
+    its list (an edit keeps the record's current order). The two administrator lists gain an `all` selector so the whole list can be fetched
+    for reordering. This file is the machine-readable contract for the feature; when it disagrees
+    with `docs/api-reference.md`, the reference wins (Constitution VIII). Every response uses the
+    foundation envelope and the X-Request-Id correlation header.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: admin
+    description: Maintenance. Administrator role required.
+paths:
+  /api/v1/admin/categories:
+    get:
+      tags: [admin]
+      summary: List every category (ADMIN)
+      description: >
+        A page of every category, including hidden ones. With `all=true` the complete ordered list
+        is returned (bounded by the safety maximum) so it can be reordered as a whole.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: all, in: query, schema: { type: boolean, default: false }, description: "Return the whole ordered list instead of one page (bounded by the safety maximum)." }
+      responses:
+        "200":
+          description: A page (or the whole list, with `all=true`) of categories.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/AdminCategory" } }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a category (ADMIN)
+      description: >
+        Creates a category on display. `position` is optional; when omitted the category is placed
+        at the front of the list.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCategoryRequest" }
+      responses:
+        "201":
+          description: The created category.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminCategory" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/categories/reorder:
+    put:
+      tags: [admin]
+      summary: Reorder every category (ADMIN)
+      description: >
+        Replaces the catalogue-wide category order with the submitted order. The array must contain
+        every category exactly once; the first id becomes the first category. Atomic: on any refusal
+        nothing changes.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReorderCategoriesRequest" }
+      responses:
+        "200":
+          description: The number of categories reordered.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/ReorderResponse" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products:
+    get:
+      tags: [admin]
+      summary: List every product (ADMIN)
+      description: >
+        A page of every product, including ones withheld from customers. With `all=true` the
+        complete ordered list is returned (bounded by the safety maximum).
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: all, in: query, schema: { type: boolean, default: false }, description: "Return the whole ordered list instead of one page (bounded by the safety maximum)." }
+      responses:
+        "200":
+          description: A page (or the whole list, with `all=true`) of products.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/AdminProduct" } }
+                  meta: { $ref: "#/components/schemas/Meta" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [admin]
+      summary: Create a product with at least one variant (ADMIN)
+      description: >
+        Creates a product with one or more variants. `position` is optional on the product and on
+        each variant; an omitted product position places the product at the front of the catalogue,
+        and an omitted variant position follows the payload order (the first variant is the default).
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateProductRequest" }
+      responses:
+        "201":
+          description: The created product.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/reorder:
+    put:
+      tags: [admin]
+      summary: Reorder every product (ADMIN)
+      description: >
+        Replaces the catalogue-wide product order with the submitted order. The array must contain
+        every product exactly once; the first id becomes the first product. Atomic: on any refusal
+        nothing changes.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReorderProductsRequest" }
+      responses:
+        "200":
+          description: The number of products reordered.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/ReorderResponse" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/products/{id}/variants:
+    post:
+      tags: [admin]
+      summary: Add a variant to a product (ADMIN)
+      description: >
+        Adds a variant. `position` is optional; when omitted the variant is placed at the front of
+        the product's variants (it becomes the default variant).
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateVariantRequest" }
+      responses:
+        "201":
+          description: The product with its variants.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/AdminProductDetail" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/products/{id}/variants/reorder:
+    put:
+      tags: [admin]
+      summary: Reorder a product's variants (ADMIN)
+      description: >
+        Replaces the order of the product's variants with the submitted order. The array must contain
+        every variant of that product exactly once; the first id becomes the default variant. Atomic:
+        on any refusal nothing changes. A variant that belongs to another product is refused.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: "The parent product." }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReorderVariantsRequest" }
+      responses:
+        "200":
+          description: The number of variants reordered.
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: "#/components/schemas/ReorderResponse" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    BearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  responses:
+    ValidationError:
+      description: "A request-shape problem (empty/incomplete array, duplicate id, malformed value)."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: "The addressed record does not exist."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: "The current data does not allow the request."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthenticated:
+      description: "No valid session."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: "The caller lacks the required role."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  schemas:
+    Meta: { type: object, properties: { requestId: { type: string }, timestamp: { type: string, format: date-time } } }
+    ErrorEnvelope:
+      type: object
+      properties:
+        error: { type: object, properties: { code: { type: string }, message: { type: string }, details: { type: array, items: { type: object, properties: { field: { type: string }, issue: { type: string } } } } } }
+    ReorderResponse:
+      type: object
+      required: [updatedCount]
+      properties:
+        updatedCount: { type: integer, format: int64, minimum: 0, description: "How many records' positions were written." }
+    ReorderCategoriesRequest:
+      type: object
+      additionalProperties: false
+      required: [categoryIds]
+      properties:
+        categoryIds:
+          type: array
+          minItems: 1
+          description: "Every category id, in the desired order. Must be the complete set with no repeats."
+          items: { type: string, format: uuid }
+    ReorderProductsRequest:
+      type: object
+      additionalProperties: false
+      required: [productIds]
+      properties:
+        productIds:
+          type: array
+          minItems: 1
+          description: "Every product id, in the desired order. Must be the complete set with no repeats."
+          items: { type: string, format: uuid }
+    ReorderVariantsRequest:
+      type: object
+      additionalProperties: false
+      required: [variantIds]
+      properties:
+        variantIds:
+          type: array
+          minItems: 1
+          description: "Every variant id of the addressed product, in the desired order. The first is the default variant."
+          items: { type: string, format: uuid }
+    AdminCategory:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        description: { type: string }
+        position: { type: integer }
+        isVisible: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateCategoryRequest:
+      type: object
+      additionalProperties: false
+      required: [name, slug]
+      properties:
+        name: { type: string, maxLength: 120 }
+        slug: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 2000 }
+        position: { type: integer, description: "Optional. Omit to place the category at the front of the list." }
+    AdminProduct:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        code: { type: string }
+        description: { type: string }
+        defaultPrice: { type: object, properties: { amount: { type: integer, format: int64 }, currency: { type: string } } }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer }
+        isVisible: { type: boolean }
+        variantCount: { type: integer }
+        imageUrl: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminProductDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminProduct"
+        - type: object
+          properties:
+            images: { type: array, items: { type: object } }
+            variants: { type: array, items: { type: object } }
+    CreateProductRequest:
+      type: object
+      additionalProperties: false
+      required: [name, code, description, defaultPrice, categoryId, variants]
+      properties:
+        name: { type: string, maxLength: 120 }
+        code: { type: string, maxLength: 140, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        description: { type: string, maxLength: 5000 }
+        defaultPrice: { type: object, required: [amount, currency], properties: { amount: { type: integer, format: int64, minimum: 1 }, currency: { type: string, minLength: 3, maxLength: 3 } } }
+        categoryId: { type: string, format: uuid }
+        position: { type: integer, description: "Optional. Omit to place the product at the front of the catalogue." }
+        variants:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CreateVariantRequest" }
+    CreateVariantRequest:
+      type: object
+      additionalProperties: false
+      required: [name, sku]
+      properties:
+        name: { type: string, maxLength: 120 }
+        sku: { type: string }
+        price: { type: [object, "null"], properties: { amount: { type: integer, format: int64, minimum: 1 } } }
+        position: { type: integer, description: "Optional. In a create, omitted variants follow the payload order; in a single add, an omitted position places the variant first." }

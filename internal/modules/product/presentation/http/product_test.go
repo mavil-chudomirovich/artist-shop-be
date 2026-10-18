@@ -42,14 +42,18 @@ type productServiceStub struct {
 	listAdmin    appdto.AdminProductPage
 	err          error
 
-	seenActor  appinterface.Actor
-	seenCreate appdto.CreateProductInput
-	seenState  appdto.ChangeVariantStateInput
+	seenActor     appinterface.Actor
+	seenCreate    appdto.CreateProductInput
+	seenState     appdto.ChangeVariantStateInput
+	seenListAdmin appdto.ListAdminInput
 
 	seenAddVariant    appdto.AddVariantInput
 	seenUpdateVariant appdto.UpdateVariantInput
 	seenVariantRef    appdto.VariantRefInput
 	seenImage         appdto.AddVariantImageInput
+
+	seenReorderProducts appdto.ReorderProductsInput
+	seenReorderVariants appdto.ReorderVariantsInput
 }
 
 var _ appinterface.ProductService = (*productServiceStub)(nil)
@@ -62,7 +66,8 @@ func (s *productServiceStub) GetPublicByCode(context.Context, appdto.PublicProdu
 	return s.publicDetail, s.err
 }
 
-func (s *productServiceStub) ListAdmin(context.Context, appdto.ListAdminInput) (appdto.AdminProductPage, error) {
+func (s *productServiceStub) ListAdmin(_ context.Context, in appdto.ListAdminInput) (appdto.AdminProductPage, error) {
+	s.seenListAdmin = in
 	return s.listAdmin, s.err
 }
 
@@ -82,6 +87,16 @@ func (s *productServiceStub) UpdateProduct(context.Context, appdto.UpdateProduct
 
 func (s *productServiceStub) DeleteProduct(context.Context, appdto.AdminProductRefInput) error {
 	return s.err
+}
+
+func (s *productServiceStub) ReorderProducts(_ context.Context, in appdto.ReorderProductsInput) (appdto.ReorderResult, error) {
+	s.seenReorderProducts = in
+	return appdto.ReorderResult{}, s.err
+}
+
+func (s *productServiceStub) ReorderVariants(_ context.Context, in appdto.ReorderVariantsInput) (appdto.ReorderResult, error) {
+	s.seenReorderVariants = in
+	return appdto.ReorderResult{}, s.err
 }
 
 func (s *productServiceStub) AddVariant(_ context.Context, in appdto.AddVariantInput) (appdto.AdminProductDetailOutput, error) {
@@ -433,4 +448,95 @@ func TestACustomerSessionIsRefusedOnTheVariantRoutes(t *testing.T) {
 	if got := decodeError(t, rec).Error.Code; got != "FORBIDDEN" {
 		t.Fatalf("expected FORBIDDEN, got %s", got)
 	}
+}
+
+// Spec 018 US1, Constitution §IV: the product and variant reorder routes sit
+// behind the administrator guard too, so each answers 401 with no token, 403
+// with a customer token, and the role denial is recorded.
+func TestTheReorderRoutesRefuseNoTokenAndCustomerToken(t *testing.T) {
+	productID := uuid.New()
+	routes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPut, productAdminPath + "/reorder", `{"productIds":["` + productID.String() + `"]}`},
+		{http.MethodPut, productAdminPath + "/" + productID.String() + "/variants/reorder",
+			`{"variantIds":["` + uuid.New().String() + `"]}`},
+	}
+
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			var denied bool
+			router := newRouter(&productServiceStub{adminDetail: sampleAdminDetail()}, productHooks(&denied))
+
+			noToken := performJSON(router, route.method, route.path, route.body, "")
+			if noToken.Code != http.StatusUnauthorized {
+				t.Fatalf("no token: expected 401, got %d (%s)", noToken.Code, noToken.Body.String())
+			}
+			if got := decodeError(t, noToken).Error.Code; got != "UNAUTHENTICATED" {
+				t.Fatalf("no token: expected UNAUTHENTICATED, got %s", got)
+			}
+
+			customer := performJSON(router, route.method, route.path, route.body, "customer-token")
+			if customer.Code != http.StatusForbidden {
+				t.Fatalf("customer token: expected 403, got %d (%s)", customer.Code, customer.Body.String())
+			}
+			if got := decodeError(t, customer).Error.Code; got != "FORBIDDEN" {
+				t.Fatalf("customer token: expected FORBIDDEN, got %s", got)
+			}
+			if !denied {
+				t.Fatal("the role denial must be recorded through OnDenied")
+			}
+		})
+	}
+}
+
+// Spec 018 US3 (T017): `all=true` reaches the list use case with All set, a
+// service refusal of an over-cap list answers 400 VALIDATION_ERROR naming the
+// `all` member, and a non-boolean value is refused at the edge.
+func TestTheAdminProductListAllSelector(t *testing.T) {
+	t.Run("all=true reaches the use case with All set", func(t *testing.T) {
+		stub := &productServiceStub{listAdmin: appdto.AdminProductPage{Page: 1, PageSize: 1, Total: 1}}
+
+		rec := performJSON(newRouter(stub, productHooks(nil)), http.MethodGet,
+			productAdminPath+"?all=true", "", "admin-token")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		if !stub.seenListAdmin.All {
+			t.Fatalf("all=true must reach the use case with All set, got %+v", stub.seenListAdmin)
+		}
+	})
+
+	t.Run("a service refusal of an over-cap list answers 400 naming all", func(t *testing.T) {
+		stub := &productServiceStub{err: domainerr.InvalidProductField("all", "the list is too large to fetch in full")}
+
+		rec := performJSON(newRouter(stub, productHooks(nil)), http.MethodGet,
+			productAdminPath+"?all=true", "", "admin-token")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		body := decodeError(t, rec)
+		if body.Error.Code != "VALIDATION_ERROR" {
+			t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+		}
+		if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "all" {
+			t.Fatalf("expected the detail to name all, got %+v", body.Error.Details)
+		}
+	})
+
+	t.Run("a non-boolean all value is refused at the edge", func(t *testing.T) {
+		stub := &productServiceStub{}
+
+		rec := performJSON(newRouter(stub, productHooks(nil)), http.MethodGet,
+			productAdminPath+"?all=maybe", "", "admin-token")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		body := decodeError(t, rec)
+		if body.Error.Code != "VALIDATION_ERROR" || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "all" {
+			t.Fatalf("expected a VALIDATION_ERROR naming all, got %+v", body.Error)
+		}
+	})
 }

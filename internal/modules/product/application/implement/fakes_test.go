@@ -369,6 +369,16 @@ func (m *memoryProducts) FindByID(_ context.Context, id uuid.UUID) (*domainrepo.
 	return m.viewLocked(product, false), nil
 }
 
+// Exists mirrors the adapter's identifier lookup without reading the row. It is
+// the parent check a variant reorder runs before scoping the submitted set to the
+// product's own variants (specs/018-catalog-reorder research D2).
+func (m *memoryProducts) Exists(_ context.Context, id uuid.UUID) (bool, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	_, ok := m.state.products[id]
+	return ok, nil
+}
+
 // viewLocked assembles a detail view. The caller holds the lock.
 func (m *memoryProducts) viewLocked(product model.Product, visibleOnly bool) *domainrepo.ProductView {
 	variants := m.state.listVariantsLocked(product.ID)
@@ -468,6 +478,59 @@ func (m *memoryProducts) SetPrimaryPicture(_ context.Context, productID, picture
 	return nil
 }
 
+// Reorder applies the submitted order in one step, mirroring the adapter's bulk
+// UNNEST write (specs/018-catalog-reorder research D1): each identifier that
+// exists takes its 0-based index as position. The count is the number of rows
+// written, so a foreign identifier is a no-op rather than an error.
+func (m *memoryProducts) Reorder(_ context.Context, ids []uuid.UUID) (int64, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	var written int64
+	for position, id := range ids {
+		product, ok := m.state.products[id]
+		if !ok {
+			continue
+		}
+		product.Position = position
+		m.state.products[id] = product
+		written++
+	}
+	return written, nil
+}
+
+// ListIDs mirrors the adapter's sibling-id read (research D2, D5). The order is
+// not part of the contract, so the fake sorts by identifier to stay
+// deterministic across map iteration.
+func (m *memoryProducts) ListIDs(_ context.Context) ([]uuid.UUID, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(m.state.products))
+	for id := range m.state.products {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}
+
+// NextFrontPosition mirrors the adapter's auto-front read (research D3): one
+// less than the smallest position, or zero when no product exists.
+func (m *memoryProducts) NextFrontPosition(_ context.Context) (int, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	lowest := 0
+	found := false
+	for _, product := range m.state.products {
+		if !found || product.Position < lowest {
+			lowest = product.Position
+			found = true
+		}
+	}
+	if !found {
+		return 0, nil
+	}
+	return lowest - 1, nil
+}
+
 // memoryVariants is an in-memory VariantRepository over the shared state.
 type memoryVariants struct {
 	domainrepo.VariantRepository
@@ -563,6 +626,65 @@ func (m *memoryVariants) FindFactsByIDs(_ context.Context, ids []uuid.UUID) ([]d
 	return out, nil
 }
 
+// Reorder applies the submitted order in one step, scoped to the parent product,
+// mirroring the adapter's bulk UNNEST write (specs/018-catalog-reorder research
+// D1, D4): each identifier that belongs to productID takes its 0-based index as
+// position. An identifier of another product is a no-op, so the count is only
+// ever the rows written.
+func (m *memoryVariants) Reorder(_ context.Context, productID uuid.UUID, ids []uuid.UUID) (int64, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	var written int64
+	for position, id := range ids {
+		variant, ok := m.state.variants[id]
+		if !ok || variant.ProductID != productID {
+			continue
+		}
+		variant.Position = position
+		m.state.variants[id] = variant
+		written++
+	}
+	return written, nil
+}
+
+// ListIDsByProduct mirrors the adapter's sibling-id read (research D2, D5). The
+// order is not part of the contract, so the fake sorts by identifier to stay
+// deterministic across map iteration.
+func (m *memoryVariants) ListIDsByProduct(_ context.Context, productID uuid.UUID) ([]uuid.UUID, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	out := make([]uuid.UUID, 0)
+	for id, variant := range m.state.variants {
+		if variant.ProductID == productID {
+			out = append(out, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}
+
+// NextFrontPosition mirrors the adapter's auto-front read (research D3): one
+// less than the product's smallest position, or zero when it has no variant.
+func (m *memoryVariants) NextFrontPosition(_ context.Context, productID uuid.UUID) (int, error) {
+	m.state.mu.Lock()
+	defer m.state.mu.Unlock()
+	lowest := 0
+	found := false
+	for _, variant := range m.state.variants {
+		if variant.ProductID != productID {
+			continue
+		}
+		if !found || variant.Position < lowest {
+			lowest = variant.Position
+			found = true
+		}
+	}
+	if !found {
+		return 0, nil
+	}
+	return lowest - 1, nil
+}
+
 func (m *memoryVariants) skuTakenLocked(variant *model.Variant) bool {
 	key := model.FoldKey(variant.SKU)
 	for _, existing := range m.state.variants {
@@ -643,6 +765,100 @@ func (u *fauxUnitOfWork) WithinTx(ctx context.Context, fn func(context.Context) 
 	u.active--
 	u.mu.Unlock()
 	return err
+}
+
+// rollingBackUnitOfWork is a UnitOfWork over the shared in-memory store: it
+// snapshots the product and variant rows and restores them when the function
+// returns an error, which is the observable effect of a real transaction's
+// ROLLBACK. It counts entries, so a reorder test can prove the write ran through
+// the port and was rolled back on a defensive refusal (specs/018-catalog-reorder
+// FR-004, T029).
+type rollingBackUnitOfWork struct {
+	mu    sync.Mutex
+	calls int
+	state *memoryState
+}
+
+func (u *rollingBackUnitOfWork) WithinTx(ctx context.Context, fn func(context.Context) error) error {
+	u.mu.Lock()
+	u.calls++
+	u.mu.Unlock()
+
+	products, variants := u.state.snapshotRows()
+	if err := fn(context.WithValue(ctx, txKey{}, true)); err != nil {
+		u.state.restoreRows(products, variants)
+		return err
+	}
+	return nil
+}
+
+func (u *rollingBackUnitOfWork) callCount() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.calls
+}
+
+var _ appinterface.UnitOfWork = (*rollingBackUnitOfWork)(nil)
+
+// snapshotRows copies the store's product and variant rows so a fake UnitOfWork
+// can restore them on rollback.
+func (s *memoryState) snapshotRows() (map[uuid.UUID]model.Product, map[uuid.UUID]model.Variant) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	products := make(map[uuid.UUID]model.Product, len(s.products))
+	for id, product := range s.products {
+		products[id] = product
+	}
+	variants := make(map[uuid.UUID]model.Variant, len(s.variants))
+	for id, variant := range s.variants {
+		variants[id] = variant
+	}
+	return products, variants
+}
+
+// restoreRows restores the rows captured by snapshotRows.
+func (s *memoryState) restoreRows(products map[uuid.UUID]model.Product, variants map[uuid.UUID]model.Variant) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.products = products
+	s.variants = variants
+}
+
+// shortWriteProducts wraps the in-memory repository and answers one row short of
+// what it wrote, reproducing the race the RowsAffected guard defends against
+// (research D2). It records whether the bulk write ran inside the transaction.
+type shortWriteProducts struct {
+	*memoryProducts
+	wroteInTx bool
+}
+
+func (s *shortWriteProducts) Reorder(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	s.wroteInTx = inTx(ctx)
+	written, err := s.memoryProducts.Reorder(ctx, ids)
+	if err != nil || written == 0 {
+		return written, err
+	}
+	// One row short of what was written: the guard must refuse and the
+	// transaction must roll the write back.
+	return written - 1, nil
+}
+
+// shortWriteVariants wraps the in-memory variant repository and answers one row
+// short of what it wrote, reproducing the race the RowsAffected guard defends
+// against (research D2, D4). It records whether the bulk write ran inside the
+// transaction.
+type shortWriteVariants struct {
+	*memoryVariants
+	wroteInTx bool
+}
+
+func (s *shortWriteVariants) Reorder(ctx context.Context, productID uuid.UUID, ids []uuid.UUID) (int64, error) {
+	s.wroteInTx = inTx(ctx)
+	written, err := s.memoryVariants.Reorder(ctx, productID, ids)
+	if err != nil || written == 0 {
+		return written, err
+	}
+	return written - 1, nil
 }
 
 // fakeMedia answers the MediaStore port without a provider. It records whether

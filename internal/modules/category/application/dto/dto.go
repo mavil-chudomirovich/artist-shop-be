@@ -94,6 +94,11 @@ type ListAdminInput struct {
 	Page int
 	// PageSize is the number of categories per page.
 	PageSize int
+	// All asks for the complete ordered list instead of one page, so a whole
+	// catalogue can be reordered across pages (specs/018-catalog-reorder
+	// FR-015). It is bounded by a documented safety maximum; Page and PageSize
+	// are ignored when it is set.
+	All bool
 }
 
 // AdminCategoryRefInput addresses one category of the administrator surface by
@@ -112,8 +117,28 @@ type CreateCategoryInput struct {
 	Slug string
 	// Description is the text shown to customers; empty is valid.
 	Description string
-	// Position is the ordering preference.
-	Position int
+	// Position is the ordering preference. A nil value places the category at
+	// the front of its list; a supplied value is honoured (FR-011, FR-012).
+	Position *int
+}
+
+// ReorderCategoriesInput replaces the catalogue-wide category order with the
+// submitted order (specs/018-catalog-reorder FR-001). CategoryIDs is the
+// complete, ordered set: every category exactly once. The acting administrator
+// is taken from the session, never from this input (FR-014).
+type ReorderCategoriesInput struct {
+	// CategoryIDs is every category's identifier, in the desired order. The
+	// array must not be empty, must not repeat an identifier, and must name
+	// every existing category (FR-005–FR-008).
+	CategoryIDs []uuid.UUID
+}
+
+// ReorderResult reports the outcome of a reorder. UpdatedCount is how many
+// records' positions the bulk statement wrote, so a client can confirm the whole
+// submitted set was applied (specs/018-catalog-reorder research D1).
+type ReorderResult struct {
+	// UpdatedCount is the number of rows whose position was written.
+	UpdatedCount int64
 }
 
 // UpdateCategoryInput edits a category. Every member keeps its current value

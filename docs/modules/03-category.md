@@ -22,7 +22,9 @@ Phân loại sản phẩm để khách duyệt và tìm kiếm.
 Có:
 - Admin tạo/sửa/xóa danh mục.
 - Khách xem danh sách danh mục và sản phẩm theo danh mục.
-- Thứ tự hiển thị danh mục.
+- Thứ tự hiển thị danh mục: **kéo-thả sắp xếp** — gửi trọn danh sách định danh theo thứ tự mới trong
+  một lần lưu (`PUT /admin/categories/reorder`, feature `018-catalog-reorder`); tạo danh mục mà bỏ
+  trống `position` đặt nó **lên đầu** danh sách. Thứ tự là **một thứ tự chung toàn catalogue**.
 
 Không (hoãn):
 - Danh mục đa cấp lồng nhau (trừ khi chốt cần).

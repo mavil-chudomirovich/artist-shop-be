@@ -53,4 +53,17 @@ const (
 	// CodeVariantHasPendingOrders reports that moving a variant away from its
 	// on-sale state was refused for the same reason (specs/016-hide-guard).
 	CodeVariantHasPendingOrders = "VARIANT_HAS_PENDING_ORDERS"
+	// CodeProductReorderDuplicateID reports that the submitted product reorder
+	// names the same product more than once (specs/018-catalog-reorder). It is a
+	// request-shape failure, so the answer is 400 with a code distinct from the
+	// completeness refusal.
+	CodeProductReorderDuplicateID = "PRODUCT_REORDER_DUPLICATE_ID"
+	// CodeVariantReorderDuplicateID reports that the submitted variant reorder
+	// names the same variant more than once (specs/018-catalog-reorder).
+	CodeVariantReorderDuplicateID = "VARIANT_REORDER_DUPLICATE_ID"
+	// CodeVariantBelongsToOtherProduct reports that a variant reorder names a
+	// variant that does not belong to the product on the path
+	// (specs/018-catalog-reorder). It is a request-shape failure, so the answer
+	// is 400 and the detail names the offending member.
+	CodeVariantBelongsToOtherProduct = "VARIANT_BELONGS_TO_OTHER_PRODUCT"
 )

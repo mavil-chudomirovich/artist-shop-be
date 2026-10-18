@@ -304,6 +304,82 @@ func (r *ProductRepository) VariantIDsByCategories(ctx context.Context, category
 	return out, nil
 }
 
+// Reorder rewrites the position of every named product in one statement.
+//
+// The statement is the bulk UNNEST form of specs/018-catalog-reorder research
+// D1: $1 carries the submitted identifiers and $2 the 0-based index of each in
+// that order, so the stored order equals the submitted order and no loop issues
+// one UPDATE per row. The caller has already refused an empty or duplicate
+// request and checked completeness against ListIDs (research D2, D5), so an
+// identifier no row carries simply matches nothing rather than being an error.
+// It returns the affected-row count and joins the caller's transaction without
+// ever opening one itself (Constitution I).
+func (r *ProductRepository) Reorder(ctx context.Context, ids []uuid.UUID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	positions := make([]int32, len(ids))
+	for i := range positions {
+		positions[i] = int32(i)
+	}
+	const query = `
+		UPDATE products AS p
+		SET position = pos.new_pos, updated_at = now()
+		FROM UNNEST($1::uuid[], $2::int[]) AS pos(id, new_pos)
+		WHERE p.id = pos.id`
+	tag, err := r.querier(ctx).Exec(ctx, query, ids, positions)
+	if err != nil {
+		return 0, fmt.Errorf("reorder products: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ListIDs returns the identifier of every product, whatever its display state
+// and category, as the sibling set a reorder request must address completely
+// (specs/018-catalog-reorder research D2, D5).
+//
+// It is one statement and is deliberately unordered: the caller uses the values
+// as a set, never as a display order, so no ORDER BY is needed to make the
+// answer correct.
+func (r *ProductRepository) ListIDs(ctx context.Context) ([]uuid.UUID, error) {
+	const query = `SELECT id FROM products`
+	rows, err := r.querier(ctx).Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list product ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan product id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// NextFrontPosition returns the position that places a new product at the front
+// of the catalogue: one less than the current smallest position, or zero when
+// the catalogue is empty (specs/018-catalog-reorder research D3).
+//
+// It is one bounded read served by products_ordering_idx, whose leading column
+// is position; a create therefore never shifts every sibling to make room. The
+// caller runs it inside its transaction, so two concurrent creates cannot read
+// the same value.
+func (r *ProductRepository) NextFrontPosition(ctx context.Context) (int, error) {
+	const query = `SELECT COALESCE(MIN(position) - 1, 0) FROM products`
+	var position int
+	if err := r.querier(ctx).QueryRow(ctx, query).Scan(&position); err != nil {
+		return 0, fmt.Errorf("read next front product position: %w", err)
+	}
+	return position, nil
+}
+
 // catalogueCTE is the one-statement public catalogue read: exactly one row per
 // product, with the product's variants collapsed into it (FR-001).
 //

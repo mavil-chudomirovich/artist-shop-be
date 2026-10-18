@@ -138,8 +138,10 @@ type CreateVariantRequest struct {
 	// Price is the variant's own price; null or omitted uses the product's
 	// default (FR-017).
 	Price *VariantPriceRequest `json:"price"`
-	// Position is the ordering preference.
-	Position int `json:"position"`
+	// Position is optional. An omitted or null position takes the variant's
+	// index in a create payload, or the front of the product for an added
+	// variant (FR-011); a supplied value is honoured.
+	Position *int `json:"position"`
 }
 
 // CreateProductRequest is the administrator create body (contracts/openapi.yaml,
@@ -157,8 +159,10 @@ type CreateProductRequest struct {
 	DefaultPrice PriceRequest `json:"defaultPrice"`
 	// CategoryID is the one category the product belongs to.
 	CategoryID uuid.UUID `json:"categoryId"`
-	// Position is the ordering preference.
-	Position int `json:"position"`
+	// Position is optional. An omitted or null position places the new
+	// product at the front of the catalogue (FR-011); a supplied value is
+	// honoured.
+	Position *int `json:"position"`
 	// Variants is the variants the product is created with; it must hold at least
 	// one (FR-012).
 	Variants []CreateVariantRequest `json:"variants"`
@@ -210,6 +214,30 @@ type ChangeVariantStateRequest struct {
 	// the use case validates it and reports an unknown value against this member,
 	// which is why it is a string here rather than the domain enum.
 	To string `json:"to"`
+}
+
+// ReorderProductsRequest is the body of a product reorder
+// (contracts/openapi.yaml, ReorderProductsRequest). ProductIDs is the complete,
+// ordered set: every product exactly once.
+type ReorderProductsRequest struct {
+	// ProductIDs is every product's identifier, in the desired order.
+	ProductIDs []uuid.UUID `json:"productIds"`
+}
+
+// ReorderVariantsRequest is the body of a variant reorder
+// (contracts/openapi.yaml, ReorderVariantsRequest). VariantIDs is the complete,
+// ordered set of the addressed product's variants; its first id becomes the
+// default variant.
+type ReorderVariantsRequest struct {
+	// VariantIDs is every variant of the addressed product, in the desired order.
+	VariantIDs []uuid.UUID `json:"variantIds"`
+}
+
+// ReorderResponse is the answer of every reorder action: how many records'
+// positions the bulk write touched (contracts/openapi.yaml, ReorderResponse).
+type ReorderResponse struct {
+	// UpdatedCount is the number of records' positions that were written.
+	UpdatedCount int64 `json:"updatedCount"`
 }
 
 // AdminVariantPriceResponse is a variant's own price as the administrator reads

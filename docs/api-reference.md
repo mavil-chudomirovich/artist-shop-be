@@ -172,6 +172,7 @@ phân trang sai → `VALIDATION_ERROR` 400; một member của địa chỉ sai 
 | `CATEGORY_SLUG_TAKEN` | 409 | Một danh mục khác đã dùng slug đó |
 | `CATEGORY_IN_USE` | 409 | Danh mục còn sản phẩm tham chiếu nên không xoá được. **Mới trở nên khả thi ở feature 006**: module 04 Product thêm `products.category_id` với `ON DELETE RESTRICT`, nên tầng lưu trữ từ chối thay vì xoá thành công |
 | `CATEGORY_HAS_PENDING_ORDERS` | 409 | Ẩn danh mục bị từ chối: còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ một variant của danh mục (feature 016). Thân từ chối nêu từng đơn chặn trong `error.details` — mỗi đơn một phần tử `{"field": "orderId", "issue": "<định danh đơn>"}`; không gì bị đổi |
+| `CATEGORY_REORDER_DUPLICATE_ID` | 400 | Một mảng reorder (`PUT /admin/categories/reorder`) nêu **cùng một danh mục hai lần** (feature 018). Đây là vấn đề hình dạng request client tự sửa, nên trả `400` với mã riêng để phân biệt "trùng id" với "thiếu danh mục" mà không phải đọc message; `details[].field` là `"categoryIds"`; không gì bị đổi |
 
 Những tình huống dưới đây cố ý **không** sinh mã riêng của module (xem
 `specs/005-category-catalog/contracts/error-codes.md`): slug không an toàn URL hoặc một
@@ -181,9 +182,15 @@ dẫn không phải UUID → `VALIDATION_ERROR` 400; thiếu hoặc sai phiên �
 `page`/`pageSize` ngoài khoảng → `VALIDATION_ERROR` 400; body không parse được hoặc có
 member lạ → `MALFORMED_REQUEST` 400.
 
+Với reorder (feature 018), hai tình huống cố ý dùng `VALIDATION_ERROR` 400 chứ **không** thêm
+mã riêng: mảng `categoryIds` **rỗng**, và mảng **thiếu** một danh mục đang có (kể cả khi client chỉ
+gửi các dòng của một trang). Lấy đủ id bằng `GET /admin/categories?all=true`. Danh sách vượt
+ngưỡng an toàn khi `all=true` cũng là `VALIDATION_ERROR` 400 với `details[].field` là `"all"`.
+
 > Action `audit_logs` của module dùng tiền tố `CATEGORY_` nhưng **không** phải mã lỗi:
 > `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_HIDDEN`, `CATEGORY_SHOWN`,
-> `CATEGORY_DELETED` — xem `internal/modules/category/domain/constant/audit.go`. Metadata
+> `CATEGORY_DELETED`, `CATEGORY_REORDERED` (feature 018, target `category` với định danh rỗng và
+> `{count, ids}` trong metadata) — xem `internal/modules/category/domain/constant/audit.go`. Metadata
 > của mỗi dòng chỉ mang `name` và `slug` do operator gõ, **không** mang hai cột khoá chuẩn
 > hoá `normalized_name` / `normalized_slug` — hai cột đó không bao giờ xuất hiện trong
 > response, audit hay log (`specs/005-category-catalog/data-model.md`).
@@ -200,6 +207,9 @@ member lạ → `MALFORMED_REQUEST` 400.
 | `VARIANT_STATE_TRANSITION_INVALID` | 409 | Bước chuyển trạng thái bán không được trạng thái hiện tại của variant cho phép; message nêu trạng thái hiện tại |
 | `PRODUCT_HAS_PENDING_ORDERS` | 409 | Tắt cờ hiển thị của sản phẩm (`isVisible: false`) bị từ chối vì còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ một variant của sản phẩm (feature 016). Thân từ chối nêu từng đơn chặn như mã danh mục trên; không gì bị đổi |
 | `VARIANT_HAS_PENDING_ORDERS` | 409 | Chuyển variant khỏi trạng thái đang bán bị từ chối vì còn đơn `PENDING` hoặc `PAYMENT_PENDING` giữ variant đó (feature 016). Thân từ chối nêu từng đơn chặn như trên; không gì bị đổi |
+| `PRODUCT_REORDER_DUPLICATE_ID` | 400 | Một mảng reorder (`PUT /admin/products/reorder`) nêu **cùng một sản phẩm hai lần** (feature 018). `400` với mã riêng để phân biệt "trùng id" với "thiếu sản phẩm"; `details[].field` là `"productIds"`; không gì bị đổi |
+| `VARIANT_REORDER_DUPLICATE_ID` | 400 | Một mảng reorder (`PUT /admin/products/{id}/variants/reorder`) nêu **cùng một variant hai lần** (feature 018); `details[].field` là `"variantIds"`; không gì bị đổi |
+| `VARIANT_BELONGS_TO_OTHER_PRODUCT` | 400 | Một mảng reorder variant nêu một variant **không thuộc** sản phẩm trên đường dẫn (feature 018), nên sắp xếp nó sẽ ghi chéo sang sản phẩm khác. `details[].field` là `"variantIds"`; không gì bị đổi |
 | `PRODUCT_IMAGE_LIMIT_REACHED` | 409 | Sản phẩm đã có đủ 10 ảnh |
 | `PRODUCT_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte tải lên không phải JPEG, PNG hoặc WebP (nhận theo chữ ký nội dung) |
 | `PRODUCT_IMAGE_TOO_LARGE` | 413 | Ảnh vượt trần 2 MB |
@@ -214,6 +224,13 @@ variant thiếu tên/SKU hoặc `to` không thuộc bốn trạng thái bán, `p
 quản trị → `FORBIDDEN` 403 (ghi `AUTH_PRIVILEGE_DENIED`); `page`/`pageSize` ngoài khoảng →
 `VALIDATION_ERROR` 400; body không parse được hoặc có member lạ → `MALFORMED_REQUEST` 400.
 
+Với reorder (feature 018), ba tình huống cố ý dùng `VALIDATION_ERROR` 400 chứ **không** thêm mã
+riêng: mảng id **rỗng**; mảng **thiếu** một sibling đang có (kể cả khi client chỉ gửi các dòng của
+một trang); và danh sách vượt ngưỡng an toàn khi `all=true` (`details[].field` là `"all"`). Một
+`productId` không tồn tại trả `404 PRODUCT_NOT_FOUND`; một `variantId` không thuộc sản phẩm trên
+đường dẫn — **kể cả một định danh chưa từng tồn tại** — trả `400 VARIANT_BELONGS_TO_OTHER_PRODUCT`
+(không phải `404`), vì route reorder variant chỉ biết tập variant của sản phẩm đó.
+
 Giá của variant là **tuỳ chọn**: bỏ trống (hoặc `null`) nghĩa là dùng giá mặc định của sản phẩm,
 nên **không** có mã lỗi cho "variant thiếu giá". Và vì tạo sản phẩm **bắt buộc** có ≥1 variant
 còn gỡ variant cuối bị từ chối, tình huống "sản phẩm không có variant" không thể phát sinh nên
@@ -222,8 +239,11 @@ cũng không có mã riêng.
 > Action `audit_logs` của module dùng tiền tố `PRODUCT_` nhưng **không** phải mã lỗi:
 > `PRODUCT_CREATED`, `PRODUCT_UPDATED`, `PRODUCT_IMAGE_ADDED`, `PRODUCT_IMAGE_REMOVED`,
 > `PRODUCT_IMAGE_PRIMARY_SET`, `PRODUCT_DELETED`, và ba action của variant
-> `PRODUCT_VARIANT_ADDED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_REMOVED` — xem
-> `internal/modules/product/domain/constant/audit.go`. Metadata của mỗi dòng chỉ mang giá trị
+> `PRODUCT_VARIANT_ADDED`, `PRODUCT_VARIANT_UPDATED`, `PRODUCT_VARIANT_REMOVED`, cộng hai action của
+> feature 018: `PRODUCT_REORDERED` (target `product` với định danh rỗng) và
+> `PRODUCT_VARIANTS_REORDERED` (target `product` với `targetId` là sản phẩm cha), cả hai mang
+> `{count, ids}` trong metadata — xem `internal/modules/product/domain/constant/audit.go`. Metadata
+> của mỗi dòng chỉ mang giá trị
 > do operator gõ (`code` ở create/update sản phẩm, `imageId` ở thao tác ảnh, `sku` ở thao tác
 > variant), **không** mang dữ liệu cá nhân hay giá trị nội bộ nào — sản phẩm **không** còn cột
 > khoá chuẩn hoá `normalized_slug` (bị migration `00015` gỡ), và `code` là đoạn link công khai nên
@@ -1561,7 +1581,13 @@ Danh sách **toàn bộ** danh mục, kể cả danh mục không hiển thị.
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Query: như `5.1`.
+Query: như `5.1`, cộng `all` (boolean, mặc định `false`).
+
+Với `all=true`, trả **trọn** danh sách danh mục đã sắp xếp, **bỏ qua phân trang**, giới hạn bởi
+ngưỡng an toàn **1000** bản ghi. Khi đó `meta.page` = `1`, `meta.pageSize` = số bản ghi trả về và
+`meta.total` = tổng thật. Một danh mục vượt 1000 bản ghi bị từ chối `400 VALIDATION_ERROR` với
+`error.details[].field` là `"all"`; danh sách **không** bị đổi. Dùng `all=true` cho màn kéo-thả để
+có đủ id phục vụ `PUT /admin/categories/reorder` (`5.8`).
 
 Response `200`
 
@@ -1583,7 +1609,8 @@ Response `200`
 }
 ```
 
-Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng) ·
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize` sai định dạng hoặc ngoài khoảng; `all` không phải
+boolean; hoặc danh sách vượt ngưỡng 1000 khi `all=true` — `details[].field` chỉ đúng member) ·
 `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (ghi `audit_logs` với action
 `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
 
@@ -1601,12 +1628,13 @@ Tạo danh mục. Danh mục mới **luôn đang hiển thị**; muốn ẩn th�
 Request
 
 ```json
-{ "name": "Điêu khắc", "slug": "diau-khac", "description": "Tác phẩm điêu khắc", "position": 1 }
+{ "name": "Điêu khắc", "slug": "diau-khac", "description": "Tác phẩm điêu khắc" }
 ```
 
-`name` và `slug` bắt buộc; `description` và `position` tuỳ chọn (`position` mặc định `0` và
-có thể âm). `slug` do operator viết, **không** bao giờ sinh từ `name`; giá trị lưu là giá
-trị operator gõ, đã trim.
+`name` và `slug` bắt buộc; `description` và `position` tuỳ chọn. **`position` có thể bỏ trống**
+(feature 018): bỏ trống hoặc `null` đặt danh mục mới **lên đầu** danh sách; gửi một số cụ thể —
+kể cả `0` hay số âm — vẫn được tôn trọng như trước. `slug` do operator viết, **không** bao giờ sinh
+từ `name`; giá trị lưu là giá trị operator gõ, đã trim.
 
 Response `201` giống `data` của `5.3`.
 
@@ -1707,6 +1735,50 @@ Ghi chú:
   sau khi bị từ chối; xoá danh mục không còn sản phẩm vẫn `204` như trước.
   Xem `specs/006-product-catalog/deferred.md` (D8) và
   [decisions/013](decisions/013-product-visibility-media-and-hard-delete.md).
+
+### 5.8 `PUT /admin/categories/reorder`
+
+Thay **toàn bộ** thứ tự danh mục — một thứ tự chung cho cả catalogue — bằng đúng thứ tự gửi lên,
+áp dụng trong **một** câu ghi (feature 018). Id đầu tiên trở thành danh mục đầu tiên. Đây là thao
+tác **all-or-nothing**: mọi từ chối để nguyên thứ tự đã lưu.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Request (`ReorderCategoriesRequest`, `additionalProperties: false`)
+
+```json
+{ "categoryIds": ["<uuid>", "<uuid>", "<uuid>"] }
+```
+
+`categoryIds` phải là **toàn bộ** danh mục, mỗi định danh đúng **một lần**, **≥1** phần tử. Tác
+nhân lấy từ **session**, không bao giờ từ body. Mỗi lần reorder ghi **một** dòng `audit_logs`
+(action `CATEGORY_REORDERED`, target `category` với định danh rỗng, metadata `{count, ids}`).
+
+Response `200`
+
+```json
+{
+  "data": { "updatedCount": 3 },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+`updatedCount` là số bản ghi đã ghi vị trí (bằng với số phần tử của mảng khi thành công).
+
+Lỗi: `VALIDATION_ERROR` 400 (mảng `categoryIds` rỗng, hoặc thiếu một danh mục đang có;
+`details[].field` là `"categoryIds"`) · `CATEGORY_REORDER_DUPLICATE_ID` 400 (một định danh lặp;
+`details[].field` là `"categoryIds"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có
+member lạ) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `CATEGORY_NOT_FOUND` 404 (một định danh
+không tồn tại) · `RATE_LIMITED` 429
+
+> **Một trang không phải cả danh sách.** Gửi mảng chỉ gồm các dòng của một trang là mảng **thiếu**
+> → `400 VALIDATION_ERROR`, nên kéo-thả trên một trang không thể vô tình làm hỏng thứ tự toàn cục.
+> Lấy đủ id bằng `GET /admin/categories?all=true` (`5.3`). Thứ tự áp dụng **last-write-wins**: hai
+> lần lưu gần nhau đều nguyên tử và lần ghi sau định thứ tự đã lưu (không có token phiên bản).
 
 ---
 
@@ -1852,13 +1924,20 @@ Danh sách **toàn bộ** sản phẩm, kể cả sản phẩm không hiển th�
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Query: như `6.1` (không có `category`).
+Query: như `6.1` (không có `category`), cộng `all` (boolean, mặc định `false`).
+
+Với `all=true`, trả **trọn** danh sách sản phẩm đã sắp xếp, **bỏ qua phân trang**, giới hạn bởi
+ngưỡng an toàn **1000** bản ghi. Khi đó `meta.page` = `1`, `meta.pageSize` = số bản ghi trả về và
+`meta.total` = tổng thật. Một catalogue vượt 1000 bản ghi bị từ chối `400 VALIDATION_ERROR` với
+`error.details[].field` là `"all"`; danh sách **không** bị đổi. Dùng `all=true` cho màn kéo-thả để
+có đủ id phục vụ `PUT /admin/products/reorder` (`6.17`).
 
 Response `200`: `data` là mảng `AdminProduct` (12 member, gồm `code`, `defaultPrice`,
 `isVisible`, `variantCount` và `imageUrl` là ảnh chính của gallery); `meta` là khối phân trang chung.
 
-Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
-(ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
+Lỗi: `VALIDATION_ERROR` 400 (`page` / `pageSize`; `all` không phải boolean; hoặc danh sách vượt
+ngưỡng 1000 khi `all=true` — `details[].field` chỉ đúng member) · `UNAUTHENTICATED` 401 ·
+`FORBIDDEN` 403 (ghi `audit_logs` với action `AUTH_PRIVILEGE_DENIED`) · `RATE_LIMITED` 429
 
 ### 6.4 `POST /admin/products`
 
@@ -1880,20 +1959,22 @@ Request (`CreateProductRequest`, `additionalProperties: false`)
   "description": "Acrylic stand 15cm",
   "defaultPrice": { "amount": 120000, "currency": "VND" },
   "categoryId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
-  "position": 10,
   "variants": [
-    { "name": "Aki", "sku": "AKI-STAND-AKI", "price": { "amount": 130000 }, "position": 0 },
-    { "name": "Dottore", "sku": "AKI-STAND-DOT", "price": null, "position": 1 }
+    { "name": "Aki", "sku": "AKI-STAND-AKI", "price": { "amount": 130000 } },
+    { "name": "Dottore", "sku": "AKI-STAND-DOT", "price": null }
   ]
 }
 ```
 
-`name`, `code`, `description`, `defaultPrice`, `categoryId`, `variants` **bắt buộc**;
-`position` mặc định `0`. `variants` phải có **≥1** phần tử; mỗi phần tử cần `name`, `sku`,
-`position`, còn `price` là **tuỳ chọn** (`{ "amount": … }`; bỏ trống hoặc `null` nghĩa là dùng giá
-mặc định của sản phẩm — currency luôn là currency của sản phẩm, nên variant **không** nhận
-currency). `code` do operator viết (**cũng là đoạn link công khai**, URL-safe), **không** sinh từ
-`name`.
+`name`, `code`, `description`, `defaultPrice`, `categoryId`, `variants` **bắt buộc**. **`position`
+của sản phẩm có thể bỏ trống** (feature 018): bỏ trống hoặc `null` đặt sản phẩm **lên đầu**
+catalogue; gửi số cụ thể vẫn được tôn trọng. `variants` phải có **≥1** phần tử; mỗi phần tử cần
+`name`, `sku`. **`position` của variant cũng có thể bỏ trống**: trong một lần tạo hàng loạt, variant
+bỏ trống `position` nhận thứ tự của nó trong mảng `variants` (variant đầu tiên là **variant mặc
+định**), nên "variant đầu = mặc định" là xác định; gửi số cụ thể vẫn được tôn trọng. `price` là
+**tuỳ chọn** (`{ "amount": … }`; bỏ trống hoặc `null` nghĩa là dùng giá mặc định của sản phẩm —
+currency luôn là currency của sản phẩm, nên variant **không** nhận currency). `code` do operator
+viết (**cũng là đoạn link công khai**, URL-safe), **không** sinh từ `name`.
 
 Response `201`: `data` = `AdminProductDetail` (14 member = `AdminProduct` + `images` + `variants`);
 mỗi phần tử `variants` là `AdminVariant` (8 member: `id`, `name`, `sku`, `price`,
@@ -2019,11 +2100,13 @@ Thêm một variant vào sản phẩm. Variant mới **luôn ở `COMING_SOON`**
 Request (`CreateVariantRequest`, `additionalProperties: false`)
 
 ```json
-{ "name": "Flins", "sku": "CARD-GENSHIN-FLINS", "price": { "amount": 50000 }, "position": 2 }
+{ "name": "Flins", "sku": "CARD-GENSHIN-FLINS", "price": { "amount": 50000 } }
 ```
 
-`name`, `sku`, `position` **bắt buộc**; `price` **tuỳ chọn** (bỏ trống hoặc `null` → dùng giá mặc
-định của sản phẩm; không nhận currency). Tác nhân lấy từ **session**, không bao giờ từ body.
+`name` và `sku` **bắt buộc**. **`position` tuỳ chọn** (feature 018): bỏ trống hoặc `null` đặt
+variant mới **lên đầu** danh sách variant của sản phẩm (nó trở thành **variant mặc định**); gửi số
+cụ thể vẫn được tôn trọng. `price` **tuỳ chọn** (bỏ trống hoặc `null` → dùng giá mặc định của sản
+phẩm; không nhận currency). Tác nhân lấy từ **session**, không bao giờ từ body.
 
 Response `201`: `data` = `AdminProductDetail`.
 
@@ -2274,6 +2357,94 @@ Ghi chú:
   thể để lại hai ảnh chính; partial unique index trên `(product_id) WHERE is_primary` là bảo
   đảm ở tầng lưu trữ (research D7).
 - Ghi `audit_logs` với action `PRODUCT_IMAGE_PRIMARY_SET`, metadata `{"imageId": ...}`.
+
+### 6.17 `PUT /admin/products/reorder`
+
+Thay **toàn bộ** thứ tự sản phẩm — một thứ tự chung cho cả catalogue, **không** theo từng danh mục
+— bằng đúng thứ tự gửi lên, áp dụng trong **một** câu ghi (feature 018). Id đầu tiên trở thành sản
+phẩm đầu tiên. **All-or-nothing**: mọi từ chối để nguyên thứ tự đã lưu.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Request (`ReorderProductsRequest`, `additionalProperties: false`)
+
+```json
+{ "productIds": ["<uuid>", "<uuid>", "<uuid>"] }
+```
+
+`productIds` phải là **toàn bộ** sản phẩm, mỗi định danh đúng **một lần**, **≥1** phần tử. Body
+**không** nhận `categoryId`: thứ tự sản phẩm là toàn catalogue, nên không có mã
+`PRODUCT_BELONGS_TO_OTHER_CATEGORY`. Tác nhân lấy từ **session**, không bao giờ từ body. Mỗi lần
+reorder ghi **một** dòng `audit_logs` (action `PRODUCT_REORDERED`, target `product` với định danh
+rỗng, metadata `{count, ids}`).
+
+Response `200`
+
+```json
+{
+  "data": { "updatedCount": 3 },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (mảng `productIds` rỗng, hoặc thiếu một sản phẩm đang có;
+`details[].field` là `"productIds"`) · `PRODUCT_REORDER_DUPLICATE_ID` 400 (một định danh lặp;
+`details[].field` là `"productIds"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member
+lạ) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 · `PRODUCT_NOT_FOUND` 404 (một định danh không tồn
+tại) · `RATE_LIMITED` 429
+
+> Lấy đủ id bằng `GET /admin/products?all=true` (`6.3`). Một mảng chỉ gồm các dòng của một trang là
+> mảng **thiếu** → `400 VALIDATION_ERROR`. Thứ tự áp dụng **last-write-wins** (không có token phiên
+> bản).
+
+### 6.18 `PUT /admin/products/{id}/variants/reorder`
+
+Thay thứ tự các variant **trong một sản phẩm** bằng đúng thứ tự gửi lên, áp dụng trong **một** câu
+ghi (feature 018). Id đầu tiên trở thành **variant mặc định** (dùng làm ảnh fallback khi sản phẩm
+không có ảnh chính). **All-or-nothing**: mọi từ chối để nguyên thứ tự đã lưu.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` |
+
+Request (`ReorderVariantsRequest`, `additionalProperties: false`)
+
+```json
+{ "variantIds": ["<uuid>", "<uuid>", "<uuid>"] }
+```
+
+`variantIds` phải là **toàn bộ** variant **của sản phẩm trên đường dẫn**, mỗi định danh đúng **một
+lần**, **≥1** phần tử. Một variant thuộc sản phẩm khác trả `400 VARIANT_BELONGS_TO_OTHER_PRODUCT`
+(ít nhất một variant như thế sẽ khiến câu ghi không chạm tới nó, nên request bị từ chối thay vì ghi
+chéo). Tác nhân lấy từ **session**. Mỗi lần reorder ghi **một** dòng `audit_logs` (action
+`PRODUCT_VARIANTS_REORDERED`, target `product` với `targetId` là **sản phẩm cha**, metadata
+`{count, ids}`).
+
+Response `200`
+
+```json
+{
+  "data": { "updatedCount": 3 },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+```
+
+Lỗi: `VALIDATION_ERROR` 400 (mảng `variantIds` rỗng, hoặc thiếu một variant đang có;
+`details[].field` là `"variantIds"`) · `VARIANT_REORDER_DUPLICATE_ID` 400 (một định danh lặp;
+`details[].field` là `"variantIds"`) · `VARIANT_BELONGS_TO_OTHER_PRODUCT` 400 (một variant **không
+thuộc** sản phẩm trên đường dẫn, kể cả một định danh chưa từng tồn tại — không có `404
+VARIANT_NOT_FOUND` ở route này) · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
+`PRODUCT_NOT_FOUND` 404 (không thấy sản phẩm cha) · `RATE_LIMITED` 429
+
+> **Thứ tự quyết định variant mặc định, không quyết định giá.** Đổi variant lên đầu đổi **thứ tự
+> hiển thị** và **ảnh fallback**, nhưng giá của card catalogue vẫn là giá **thấp nhất** trong các
+> variant đang bán (`6.1`), nên đổi thứ tự **không** đổi giá trừ khi chính tập variant đang bán đổi.
 
 ---
 
@@ -3459,19 +3630,22 @@ huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTr
 | GET | `/api/v1/divisions/provinces/{provinceCode}/wards` | Bearer | Danh sách phường/xã của một tỉnh |
 | GET | `/api/v1/categories` | — | Danh mục đang hiển thị (có phân trang) |
 | GET | `/api/v1/categories/{slug}` | — | Chi tiết danh mục theo slug |
-| GET | `/api/v1/admin/categories` | ADMIN | Toàn bộ danh mục, kể cả ẩn (có phân trang) |
-| POST | `/api/v1/admin/categories` | ADMIN | Tạo danh mục (201) |
+| GET | `/api/v1/admin/categories` | ADMIN | Toàn bộ danh mục, kể cả ẩn (có phân trang; `?all=true` trả trọn danh sách, tối đa 1000 — feature 018) |
+| POST | `/api/v1/admin/categories` | ADMIN | Tạo danh mục (201; `position` tuỳ chọn — bỏ trống thì lên đầu — feature 018) |
 | GET | `/api/v1/admin/categories/{categoryId}` | ADMIN | Chi tiết danh mục, kể cả ẩn |
 | PATCH | `/api/v1/admin/categories/{categoryId}` | ADMIN | Sửa một phần danh mục (`409 CATEGORY_HAS_PENDING_ORDERS` khi ẩn mà còn đơn chờ — feature 016) |
 | DELETE | `/api/v1/admin/categories/{categoryId}` | ADMIN | Xoá danh mục (204; `409 CATEGORY_IN_USE` nếu còn sản phẩm — feature 006) |
+| PUT | `/api/v1/admin/categories/reorder` | ADMIN | Đặt lại toàn bộ thứ tự danh mục trong một câu ghi (`200`; `400 CATEGORY_REORDER_DUPLICATE_ID` khi trùng id — feature 018) |
 | GET | `/api/v1/products` | — | Catalogue: **một mục mỗi sản phẩm** khách thấy được, giá thấp nhất trong variant đang bán (có phân trang, lọc `?category=`) |
 | GET | `/api/v1/products/{code}` | — | Chi tiết sản phẩm theo `code` (đoạn link công khai; kèm danh sách variant hiển thị + trạng thái còn hàng) |
-| GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang) |
-| POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm **kèm ≥1 variant** (`201`) |
+| GET | `/api/v1/admin/products` | ADMIN | Toàn bộ sản phẩm, kể cả không hiển thị (có phân trang; `?all=true` trả trọn danh sách, tối đa 1000 — feature 018) |
+| POST | `/api/v1/admin/products` | ADMIN | Tạo sản phẩm **kèm ≥1 variant** (`201`; `position` sản phẩm/variant tuỳ chọn — feature 018) |
+| PUT | `/api/v1/admin/products/reorder` | ADMIN | Đặt lại toàn bộ thứ tự sản phẩm (toàn catalogue) trong một câu ghi (`200`; `400 PRODUCT_REORDER_DUPLICATE_ID` khi trùng id — feature 018) |
 | GET | `/api/v1/admin/products/{id}` | ADMIN | Chi tiết sản phẩm, kể cả không hiển thị, kèm ảnh + mọi variant |
 | PATCH | `/api/v1/admin/products/{id}` | ADMIN | Sửa một phần sản phẩm (không đụng variant; `409 PRODUCT_HAS_PENDING_ORDERS` khi tắt hiển thị mà còn đơn chờ — feature 016) |
 | DELETE | `/api/v1/admin/products/{id}` | ADMIN | Xoá cứng sản phẩm và các variant (`204`) |
-| POST | `/api/v1/admin/products/{id}/variants` | ADMIN | Thêm variant (`201`) |
+| POST | `/api/v1/admin/products/{id}/variants` | ADMIN | Thêm variant (`201`; `position` tuỳ chọn — bỏ trống thì lên đầu — feature 018) |
+| PUT | `/api/v1/admin/products/{id}/variants/reorder` | ADMIN | Đặt lại thứ tự các variant của một sản phẩm (`200`; id đầu là mặc định; `400 VARIANT_REORDER_DUPLICATE_ID` / `400 VARIANT_BELONGS_TO_OTHER_PRODUCT` — feature 018) |
 | PATCH | `/api/v1/admin/products/{id}/variants/{variantId}` | ADMIN | Sửa một phần variant (`price` ba trạng thái) |
 | DELETE | `/api/v1/admin/products/{id}/variants/{variantId}` | ADMIN | Gỡ variant (`204`; `409 VARIANT_LAST_REMOVAL` nếu là cái cuối) |
 | POST | `/api/v1/admin/products/{id}/variants/{variantId}/image` | ADMIN | Tải ảnh variant (multipart, ≤ 2 MB) (`201`) |
@@ -3529,6 +3703,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-18 | **Kéo-thả sắp xếp danh mục, sản phẩm và variant (modules 03 Category, 04 Product, feature 018).** **Thêm ba** endpoint reorder: `PUT /api/v1/admin/categories/reorder` (body `{ "categoryIds": [...] }`), `PUT /api/v1/admin/products/reorder` (body `{ "productIds": [...] }`) và `PUT /api/v1/admin/products/{id}/variants/reorder` (body `{ "variantIds": [...] }`); mỗi mảng phải là **toàn bộ** các sibling, đúng **một lần**, và được áp bằng **một** câu `UPDATE ... FROM UNNEST(...)` (all-or-nothing, last-write-wins). Response `200` với `data = { "updatedCount": <số nguyên> }`. **Đổi** `GET /admin/categories` và `GET /admin/products`: thêm `all` (boolean) trả trọn danh sách đã sắp xếp, giới hạn ngưỡng an toàn **1000** bản ghi; vượt ngưỡng → `400 VALIDATION_ERROR` với `details[].field` là `"all"`. **Đổi** `POST /admin/categories`, `POST /admin/products`, `POST /admin/products/{id}/variants`: `position` trở thành **tuỳ chọn** — bỏ trống đặt bản ghi mới **lên đầu** (variant bỏ trống trong một lần tạo hàng loạt nhận thứ tự trong mảng `variants`, variant đầu tiên là **mặc định**); giá trị cụ thể vẫn được tôn trọng. **Thêm bốn** mã vào mục 1.4 — `CATEGORY_REORDER_DUPLICATE_ID`, `PRODUCT_REORDER_DUPLICATE_ID`, `VARIANT_REORDER_DUPLICATE_ID`, `VARIANT_BELONGS_TO_OTHER_PRODUCT` (cả bốn `400`); mảng rỗng/thiếu sibling dùng `VALIDATION_ERROR` 400, id không tồn tại dùng `CATEGORY_NOT_FOUND`/`PRODUCT_NOT_FOUND` 404. Không có mã `PRODUCT_BELONGS_TO_OTHER_CATEGORY` (thứ tự sản phẩm toàn catalogue, FR-016). **Không** migration: dùng lại cột `position` và các index sắp xếp hiện có. Mục 5 thêm `5.8`; mục 6 thêm `6.17`, `6.18`; bảng tổng hợp §12 cập nhật. Xem `specs/018-catalog-reorder/`. | `internal/modules/category/presentation/http/router.go`, `internal/modules/product/presentation/http/router.go`, `docs/modules.md` |
 | 2026-10-17 | **Thêm nhóm `/api/v1/admin/dashboard` (module 16 Admin, feature 017).** **Một** endpoint `GET /admin/dashboard/overview` trả toàn bộ dashboard vận hành trong một request **read-only**: bốn nhóm KPI (`revenue`/`orders`/`customers`/`inventory`), `revenueTrend` (`days` = 7 hoặc 30), `categoryBreakdown` (group theo snapshot danh mục trên dòng đơn, bucket "Khác") và `recentOrders` (tối đa 5 đơn mới nhất). Auth `ADMIN` (guest 401, CUSTOMER 403); query `days` (mặc định 7, ∈ {7,30}) và `lowStockThreshold` (mặc định 5, 0..10000). Mọi giá trị tiền là object `{amount, currency}` (VND, số nguyên minor unit). Doanh thu quy theo `orders.created_at`, chỉ `PAID`/`SHIPPED`/`COMPLETED`; cửa sổ tháng hiện tại là MTD so với **cùng kỳ tháng trước**; ranh giới theo `SHOP_TIMEZONE`. Snapshot danh mục thêm vào dòng đơn (migration `00017`). **Không** thêm mã lỗi mới. Xem ADR-022. | `internal/modules/admin/presentation/http/router.go`, `migrations/00017_order_item_category_snapshot.sql` |
 | 2026-10-17 | **Ảnh card của danh mục ưu tiên gallery sản phẩm (module 04 Product, feature 015).** Ảnh của entry trong `GET /products` và `imageUrl` tóm tắt trong `GET /products/{code}` nay là **ảnh chính của gallery** sản phẩm, **fallback về ảnh của variant mặc định** (`position` nhỏ nhất), rồi `null` khi không có ảnh nào. Không đổi route/hình dạng DTO. | `internal/modules/product/infrastructure/implement/postgres/product.go` |
 | 2026-10-16 | **Chặn ẩn khi còn đơn chờ (feature 016).** Ẩn danh mục (`PATCH /admin/categories/{categoryId}` với `isVisible: false`), tắt cờ hiển thị sản phẩm (`PATCH /admin/products/{id}` với `isVisible: false`) và mọi bước chuyển variant **rời** trạng thái đang bán (`POST .../variants/{variantId}/state`) bị từ chối `409` khi còn đơn `PENDING`/`PAYMENT_PENDING` giữ variant liên quan. **Thêm ba** mã vào mục 1.4: `CATEGORY_HAS_PENDING_ORDERS`, `PRODUCT_HAS_PENDING_ORDERS`, `VARIANT_HAS_PENDING_ORDERS` — thân từ chối mang một phần tử `error.details` cho mỗi đơn chặn (`{"field": "orderId", "issue": "<định danh đơn>"}`); không gì bị đổi. Ẩn thành công gỡ các variant khỏi mọi giỏ trong cùng transaction; hiện/bật hiển thị và chuyển **về** đang bán không bao giờ bị chặn; tín hiệu hết hàng của hệ thống bị chặn thành no-op đã ghi nhận. Không thêm route, không đổi method/path; DTO chỉ thêm member `isVisible` (tuỳ chọn ở request, thêm ở response quản trị). | `specs/016-hide-guard/contracts/error-codes.md`, `internal/modules/category/presentation/http/errors.go`, `internal/modules/product/presentation/http/errors.go` |

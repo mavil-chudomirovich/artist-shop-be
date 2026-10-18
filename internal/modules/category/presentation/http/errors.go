@@ -81,6 +81,16 @@ func mapError(err error) *httpx.AppError {
 		// conflict, not a validation failure, and the message names the operator's
 		// own fact rather than the database's wording (FR-036, FR-037).
 		return coded(constant.CodeCategoryInUse, http.StatusConflict, "Category still has products and cannot be removed")
+	case errors.Is(err, domainerr.ErrCategoryReorderDuplicateID):
+		// The reorder body names the same category twice. It is a request-shape
+		// problem the client fixes, and it carries its own code so a client can
+		// tell a duplicate from an incomplete array without parsing the message
+		// (specs/018-catalog-reorder research D8). The detail names the
+		// offending member.
+		return withField(
+			coded(constant.CodeCategoryReorderDuplicateID, http.StatusBadRequest, "The same category is named more than once"),
+			fieldCategoryIDs, "send each id once",
+		)
 	case errors.Is(err, domainerr.ErrCategoryHasPendingOrders):
 		// Hiding the category is refused because at least one PENDING or
 		// PAYMENT_PENDING order holds one of its variants. Like the removal
@@ -110,8 +120,10 @@ func mapError(err error) *httpx.AppError {
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its query.
 const (
-	fieldPage       = "page"
-	fieldPageSize   = "pageSize"
-	fieldCategoryID = "categoryId"
-	fieldOrderID    = "orderId"
+	fieldPage        = "page"
+	fieldPageSize    = "pageSize"
+	fieldAll         = "all"
+	fieldCategoryID  = "categoryId"
+	fieldCategoryIDs = "categoryIds"
+	fieldOrderID     = "orderId"
 )

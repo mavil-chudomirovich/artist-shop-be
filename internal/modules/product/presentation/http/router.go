@@ -48,6 +48,10 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
 	r.Get("/", h.ListAdmin)
 	r.Post("/", h.CreateProduct)
+	// The product reorder is a static path under the group root; chi resolves it
+	// ahead of the /{id} wildcard below, so the identifier routes cannot shadow
+	// it.
+	r.Put("/reorder", h.ReorderProducts)
 	r.Get("/{id}", h.GetAdmin)
 	r.Patch("/{id}", h.UpdateProduct)
 	r.Delete("/{id}", h.DeleteProduct)
@@ -55,6 +59,9 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	// edited, removed, pictured and moved through its own routes (FR-012, FR-015,
 	// FR-016).
 	r.Post("/{id}/variants", h.AddVariant)
+	// The variant reorder is a static sub-path; chi resolves it ahead of the
+	// /{variantId} wildcard routes that follow.
+	r.Put("/{id}/variants/reorder", h.ReorderVariants)
 	r.Patch("/{id}/variants/{variantId}", h.UpdateVariant)
 	r.Delete("/{id}/variants/{variantId}", h.RemoveVariant)
 	// The variant image upload raises the body limit for its own handler; the

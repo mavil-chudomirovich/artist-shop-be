@@ -11,9 +11,11 @@ import (
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/application/mapper"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
+	domainrepo "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/repository"
 )
 
 // This file exercises the administrator maintenance use cases over the in-memory
@@ -40,8 +42,8 @@ func TestCreateProductStoresItsVariantAndAudits(t *testing.T) {
 		Code:       "acrylic-stand",
 		Price:      price(120000),
 		CategoryID: category,
-		Position:   10,
-		Variants:   []dto.CreateVariantInput{{Name: "Mặc định", SKU: "SKU-001", Position: 0}},
+		Position:   ptr(10),
+		Variants:   []dto.CreateVariantInput{{Name: "Mặc định", SKU: "SKU-001", Position: ptr(0)}},
 	})
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
@@ -149,7 +151,7 @@ func TestAddVariantAudits(t *testing.T) {
 	seeded := repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, time.Now().UTC().Add(-time.Hour))
 
 	out, err := maintenanceService(repo, recorder).AddVariant(adminContext(actor), dto.AddVariantInput{
-		ProductID: seeded.ID, Name: "Khổ lớn", SKU: "SKU-L", Position: 1,
+		ProductID: seeded.ID, Name: "Khổ lớn", SKU: "SKU-L", Position: ptr(1),
 	})
 	if err != nil {
 		t.Fatalf("AddVariant: %v", err)
@@ -544,5 +546,424 @@ func TestVariantImageAddAndRemove(t *testing.T) {
 	}
 	if media.removed != 1 {
 		t.Fatalf("expected the asset to be released once, got %d", media.removed)
+	}
+}
+
+// --- Product reorder (specs/018-catalog-reorder US1, T008) ---
+//
+// A product reorder carries the complete, ordered product set in one action.
+// Every refusal is checked before the bulk write, leaves the stored order
+// byte-for-byte unchanged and records nothing; a successful reorder stores the
+// submitted order and emits exactly one audit event whose target names the
+// ordered scope and whose metadata carries the affected ids (research D2, D9).
+
+// reorderEvent returns the one audit event of a reorder action, failing when none
+// was recorded.
+func reorderEvent(t *testing.T, recorder *recordingAuditor, action string) recordedEvent {
+	t.Helper()
+	for _, event := range recorder.snapshot() {
+		if event.action == action {
+			return event
+		}
+	}
+	t.Fatalf("%s: no audit event recorded, got %v", action, recorder.actions())
+	return recordedEvent{}
+}
+
+// productPositions reads each product's stored position in the given order.
+func productPositions(t *testing.T, repo *memoryProducts, ids []uuid.UUID) []int {
+	t.Helper()
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		view, err := repo.FindByID(context.Background(), id)
+		if err != nil {
+			t.Fatalf("read product %s: %v", id, err)
+		}
+		out = append(out, view.Product.Position)
+	}
+	return out
+}
+
+// seedThreeProducts stores three products in positions 1, 2, 3, the unit the
+// product-reorder tests share.
+func seedThreeProducts(t *testing.T, repo *memoryProducts, category uuid.UUID) (first, second, third *model.Product) {
+	t.Helper()
+	base := time.Now().UTC().Add(-time.Hour)
+	first = repo.seedWithVariants(t, productDraft("Alpha", "alpha", 100, category, 1), nil, base)
+	second = repo.seedWithVariants(t, productDraft("Beta", "beta", 100, category, 2), nil, base.Add(time.Minute))
+	third = repo.seedWithVariants(t, productDraft("Gamma", "gamma", 100, category, 3), nil, base.Add(2*time.Minute))
+	return first, second, third
+}
+
+// FR-002, FR-004, FR-013: a reorder stores the submitted order, the administrator
+// list reflects it, and exactly one audit event names the ordered scope with the
+// affected ids in its metadata (FR-010, research D9).
+func TestReorderProductsAppliesTheSubmittedOrderAndAudits(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, third := seedThreeProducts(t, repo, category)
+	svc := maintenanceService(repo, recorder)
+	ctx := adminContext(actor)
+
+	order := []uuid.UUID{third.ID, first.ID, second.ID}
+	out, err := svc.ReorderProducts(ctx, dto.ReorderProductsInput{ProductIDs: order})
+	if err != nil {
+		t.Fatalf("ReorderProducts: %v", err)
+	}
+	if out.UpdatedCount != 3 {
+		t.Fatalf("expected 3 updated rows, got %d", out.UpdatedCount)
+	}
+	if got := productPositions(t, repo, order); !reflect.DeepEqual(got, []int{0, 1, 2}) {
+		t.Fatalf("the stored positions must equal the submitted order, got %v", got)
+	}
+
+	page, err := svc.ListAdmin(context.Background(), dto.ListAdminInput{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("ListAdmin: %v", err)
+	}
+	codes := make([]string, 0, len(page.Products))
+	for _, product := range page.Products {
+		codes = append(codes, product.Code)
+	}
+	if !reflect.DeepEqual(codes, []string{"gamma", "alpha", "beta"}) {
+		t.Fatalf("the administrator list must reflect the new order, got %v", codes)
+	}
+
+	event := reorderEvent(t, recorder, constant.AuditProductReordered)
+	if event.outcome != "SUCCESS" {
+		t.Fatalf("expected SUCCESS, got %q", event.outcome)
+	}
+	if event.actorID == nil || *event.actorID != actor.ID || event.actorRole != string(actor.Role) {
+		t.Fatalf("the reorder must name the acting administrator, got %v/%q", event.actorID, event.actorRole)
+	}
+	if event.targetType != "product" || event.targetID != "" {
+		t.Fatalf("a bulk reorder targets the scope with no single row, got %q/%q", event.targetType, event.targetID)
+	}
+	if got := event.metadata["count"]; got != 3 {
+		t.Fatalf("the event metadata must carry the affected count, got %v", event.metadata)
+	}
+	ids, ok := event.metadata["ids"].([]string)
+	if !ok || len(ids) != 3 || ids[0] != third.ID.String() {
+		t.Fatalf("the event metadata must carry the affected ids in order, got %v", event.metadata)
+	}
+}
+
+// FR-005: an empty array is a validation error naming the member.
+func TestReorderProductsRefusesAnEmptyArray(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, _, _ := seedThreeProducts(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderProducts(adminContext(actor), dto.ReorderProductsInput{})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != "productIds" {
+		t.Fatalf("expected the field productIds to be named, got %v", err)
+	}
+	if got := productPositions(t, repo, []uuid.UUID{first.ID}); !reflect.DeepEqual(got, []int{1}) {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-006: a repeated identifier answers the dedicated duplicate code.
+func TestReorderProductsRefusesADuplicateID(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, _ := seedThreeProducts(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderProducts(adminContext(actor), dto.ReorderProductsInput{
+		ProductIDs: []uuid.UUID{first.ID, second.ID, second.ID},
+	})
+	if !errors.Is(err, domainerr.ErrProductReorderDuplicateID) {
+		t.Fatalf("expected ErrProductReorderDuplicateID, got %v", err)
+	}
+	if got := productPositions(t, repo, []uuid.UUID{first.ID, second.ID}); !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-005: an array that omits an existing sibling is a validation error.
+func TestReorderProductsRefusesAnIncompleteArray(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, _ := seedThreeProducts(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderProducts(adminContext(actor), dto.ReorderProductsInput{
+		ProductIDs: []uuid.UUID{second.ID, first.ID},
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	if got := productPositions(t, repo, []uuid.UUID{first.ID, second.ID}); !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-007: an identifier that names no product answers the module's not-found.
+func TestReorderProductsRefusesAnUnknownID(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, _ := seedThreeProducts(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderProducts(adminContext(actor), dto.ReorderProductsInput{
+		ProductIDs: []uuid.UUID{first.ID, second.ID, uuid.New()},
+	})
+	if !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("expected ErrProductNotFound, got %v", err)
+	}
+	if got := productPositions(t, repo, []uuid.UUID{first.ID, second.ID}); !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// --- Reorder runs through the transaction port (specs/018-catalog-reorder T029) ---
+//
+// The sibling read, the completeness check and the bulk write share one
+// transaction, so a defensive refusal after the write rolls it back and the
+// stored order is left unchanged (FR-004, research D2).
+
+// T029, FR-004: a successful product reorder runs through the UnitOfWork port, so
+// the sibling read and the bulk write share one transaction.
+func TestReorderProductsRunsInsideTheTransaction(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, third := seedThreeProducts(t, repo, category)
+	tx := &fauxUnitOfWork{}
+	svc := serviceFor(repo, newFakeAvailability(), nil, recorder, nil, tx)
+
+	order := []uuid.UUID{third.ID, first.ID, second.ID}
+	out, err := svc.ReorderProducts(adminContext(actor), dto.ReorderProductsInput{ProductIDs: order})
+	if err != nil {
+		t.Fatalf("ReorderProducts: %v", err)
+	}
+	if out.UpdatedCount != 3 {
+		t.Fatalf("expected 3 updated rows, got %d", out.UpdatedCount)
+	}
+	if got := productPositions(t, repo, order); !reflect.DeepEqual(got, []int{0, 1, 2}) {
+		t.Fatalf("the stored positions must equal the submitted order, got %v", got)
+	}
+	if tx.calls != 1 {
+		t.Fatalf("the reorder must run inside one transaction, got %d", tx.calls)
+	}
+}
+
+// T029, FR-004, research D2: a defensive refusal after the bulk product write
+// rolls it back, so the stored order is unchanged.
+func TestReorderProductsRollsBackWhenTheDefensiveGuardRefuses(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	first, second, third := seedThreeProducts(t, repo, category)
+	short := &shortWriteProducts{memoryProducts: repo}
+	tx := &rollingBackUnitOfWork{state: repo.state}
+	svc := New(Service{
+		Products: short,
+		Variants: repo.variants(),
+		Audit:    recorder,
+		Tx:       tx,
+		Mapper:   mapper.New(),
+	})
+
+	before := productPositions(t, repo, []uuid.UUID{first.ID, second.ID, third.ID})
+
+	_, err := svc.ReorderProducts(adminContext(actor), dto.ReorderProductsInput{
+		ProductIDs: []uuid.UUID{third.ID, first.ID, second.ID},
+	})
+	if !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("expected the defensive refusal ErrProductNotFound, got %v", err)
+	}
+	if tx.callCount() != 1 {
+		t.Fatalf("the reorder must run inside one transaction, got %d", tx.callCount())
+	}
+	if !short.wroteInTx {
+		t.Fatal("the bulk write must run inside the transaction")
+	}
+	if after := productPositions(t, repo, []uuid.UUID{first.ID, second.ID, third.ID}); !reflect.DeepEqual(after, before) {
+		t.Fatalf("a defensive refusal must roll the write back: got %v, want %v", after, before)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// --- Auto-front placement on create (specs/018-catalog-reorder US2, T013) ---
+//
+// A product create that omits the position is placed at the front of the
+// catalogue, smaller than every existing sibling; a variant whose position is
+// omitted takes its index in the payload, so the first payload variant is the
+// default; an explicit position is honoured; and an edit that omits the position
+// keeps the record's current order (FR-011, FR-012, research D3, D6, D7).
+
+// FR-011, research D3: a product create that omits the position places it at the
+// front of the catalogue, smaller than every existing sibling.
+func TestCreateProductWithoutPositionGoesToTheFront(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	sibling := repo.seedWithVariants(t, productDraft("Sibling", "sibling", 100, category, 5), nil, time.Now().UTC().Add(-time.Hour))
+
+	out, err := maintenanceService(repo, recorder).CreateProduct(adminContext(actor), dto.CreateProductInput{
+		Name:       "Mới",
+		Code:       "moi",
+		Price:      price(120000),
+		CategoryID: category,
+		Variants:   []dto.CreateVariantInput{{Name: "Mặc định", SKU: "SKU-001"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	if out.Position != 4 {
+		t.Fatalf("an omitted position must place the product at the front (4), got %d", out.Position)
+	}
+	if out.Position >= sibling.Position {
+		t.Fatalf("the new product (%d) must be smaller than the sibling (%d)", out.Position, sibling.Position)
+	}
+	requireAudited(t, recorder, constant.AuditProductCreated, actor, "product", out.ID)
+}
+
+// FR-011, research D7: a batch create assigns the payload index to every variant
+// whose position is omitted, so the first payload variant is the default.
+func TestCreateProductAssignsPayloadOrderToOmittedVariants(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+
+	out, err := maintenanceService(repo, recorder).CreateProduct(adminContext(actor), dto.CreateProductInput{
+		Name:       "Bộ ba",
+		Code:       "bo-ba",
+		Price:      price(100),
+		CategoryID: category,
+		Variants: []dto.CreateVariantInput{
+			{Name: "A", SKU: "SKU-A"},
+			{Name: "B", SKU: "SKU-B"},
+			{Name: "C", SKU: "SKU-C"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	if len(out.Variants) != 3 {
+		t.Fatalf("expected three variants, got %d", len(out.Variants))
+	}
+	wantSKUs := []string{"SKU-A", "SKU-B", "SKU-C"}
+	for i, want := range wantSKUs {
+		if out.Variants[i].SKU != want || out.Variants[i].Position != i {
+			t.Fatalf("variant %d must carry position %d, got SKU %q position %d",
+				i, i, out.Variants[i].SKU, out.Variants[i].Position)
+		}
+	}
+	if out.Variants[0].SKU != "SKU-A" {
+		t.Fatalf("the first payload variant must be the default, got %q", out.Variants[0].SKU)
+	}
+}
+
+// FR-012: a supplied product position and a supplied variant position are
+// honoured.
+func TestCreateProductHonoursExplicitPositions(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+
+	out, err := maintenanceService(repo, recorder).CreateProduct(adminContext(actor), dto.CreateProductInput{
+		Name:       "Đặt chỗ",
+		Code:       "dat-cho",
+		Price:      price(100),
+		CategoryID: category,
+		Position:   ptr(7),
+		Variants:   []dto.CreateVariantInput{{Name: "Mặc định", SKU: "SKU-007", Position: ptr(3)}},
+	})
+	if err != nil {
+		t.Fatalf("CreateProduct: %v", err)
+	}
+	if out.Position != 7 {
+		t.Fatalf("an explicit product position must be honoured, got %d", out.Position)
+	}
+	if len(out.Variants) != 1 || out.Variants[0].Position != 3 {
+		t.Fatalf("an explicit variant position must be honoured, got %+v", out.Variants)
+	}
+}
+
+// FR-011: an edit that omits the position keeps the record's current order.
+func TestUpdateProductWithoutPositionKeepsTheCurrentOrder(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	seeded := repo.seedWithVariants(t, productDraft("Cũ", "cu", 100, category, 3), nil, time.Now().UTC().Add(-time.Hour))
+
+	name := "Mới"
+	out, err := maintenanceService(repo, recorder).UpdateProduct(adminContext(actor), dto.UpdateProductInput{
+		ID: seeded.ID, Name: &name,
+	})
+	if err != nil {
+		t.Fatalf("UpdateProduct: %v", err)
+	}
+	if out.Position != 3 {
+		t.Fatalf("an edit that omits the position must keep the current order, got %d", out.Position)
+	}
+}
+
+// --- Complete-list fetch via the `all` selector (specs/018-catalog-reorder US3, T017) ---
+//
+// `All=true` skips the page window and answers the complete ordered list, bounded
+// by the safety maximum (FR-015, research D10). A catalogue beyond the maximum is
+// refused with the `all` member named rather than returning an unbounded result.
+
+// overCapProducts wraps the in-memory repository and reports a total beyond the
+// safety maximum, so the refusal path is exercised without seeding 1000+ rows.
+type overCapProducts struct {
+	*memoryProducts
+}
+
+func (o *overCapProducts) ListAll(ctx context.Context, page, pageSize int) ([]domainrepo.ProductListItem, int64, error) {
+	items, _, err := o.memoryProducts.ListAll(ctx, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, maxAdminListAll + 1, nil
+}
+
+// listAdminService wires the administrator list over any product repository, so
+// the `all` refusal can be driven with one that reports a total beyond the safety
+// maximum.
+func listAdminService(products domainrepo.ProductRepository) *Service {
+	return New(Service{Products: products, Mapper: mapper.New()})
+}
+
+// FR-015: `All=true` returns the whole ordered list with its total, not one page.
+func TestListAdminAllReturnsTheWholeList(t *testing.T) {
+	repo, _, _, category := adminFixture(t)
+	seedThreeProducts(t, repo, category)
+
+	page, err := listAdminService(repo).ListAdmin(context.Background(), dto.ListAdminInput{All: true})
+	if err != nil {
+		t.Fatalf("ListAdmin all: %v", err)
+	}
+	if page.Total != 3 || len(page.Products) != 3 {
+		t.Fatalf("all=true must return the whole list, got %d of %d", len(page.Products), page.Total)
+	}
+	codes := make([]string, 0, len(page.Products))
+	for _, product := range page.Products {
+		codes = append(codes, product.Code)
+	}
+	if !reflect.DeepEqual(codes, []string{"alpha", "beta", "gamma"}) {
+		t.Fatalf("all=true must preserve the stored order, got %v", codes)
+	}
+}
+
+// FR-015, research D10: a catalogue beyond the safety maximum is refused, naming
+// the `all` member and answering nothing.
+func TestListAdminAllRefusesAListBeyondTheCap(t *testing.T) {
+	repo, _, _, category := adminFixture(t)
+	seedThreeProducts(t, repo, category)
+
+	out, err := listAdminService(&overCapProducts{memoryProducts: repo}).ListAdmin(
+		context.Background(), dto.ListAdminInput{All: true})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != "all" {
+		t.Fatalf("expected the field all to be named, got %v", err)
+	}
+	if len(out.Products) != 0 || out.Total != 0 {
+		t.Fatalf("a refused all fetch must answer nothing, got %+v", out)
 	}
 }

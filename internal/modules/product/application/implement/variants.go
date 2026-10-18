@@ -10,8 +10,14 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/product/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
+
+// fieldVariantIDs is the contract member a variant reorder names, so a refused
+// array answers a field-level detail the client can map straight onto its
+// request (FR-005, contracts/error-codes.md).
+const fieldVariantIDs = "variantIds"
 
 // The whole use-case surface is satisfied now that every use case exists, so the
 // compile-time assertion lands here rather than earlier. It is the one declaration
@@ -30,21 +36,70 @@ var _ appinterface.ProductService = (*Service)(nil)
 // dedicated transition endpoint or the automatic stock signal. A SKU another
 // variant already holds is reported by the repository as the SKU sentinel, and a
 // product identifier no row carries as the module's not-found.
+//
+// The position is optional: an omitted position places the added variant at the
+// front of its product (FR-011, research D3, D7). The front read joins the
+// insert's transaction when the service carries one, so two concurrent adds
+// cannot read the same front; a supplied position is honoured and the add stays a
+// single statement.
 func (s *Service) AddVariant(ctx context.Context, in dto.AddVariantInput) (dto.AdminProductDetailOutput, error) {
+	var variant *model.Variant
+
+	switch {
+	case in.Position != nil:
+		created, err := s.createVariant(ctx, in, *in.Position)
+		if err != nil {
+			return dto.AdminProductDetailOutput{}, err
+		}
+		variant = created
+	case s.Tx == nil:
+		position, err := s.Variants.NextFrontPosition(ctx, in.ProductID)
+		if err != nil {
+			return dto.AdminProductDetailOutput{}, err
+		}
+		created, err := s.createVariant(ctx, in, position)
+		if err != nil {
+			return dto.AdminProductDetailOutput{}, err
+		}
+		variant = created
+	default:
+		if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+			position, err := s.Variants.NextFrontPosition(txCtx, in.ProductID)
+			if err != nil {
+				return err
+			}
+			created, err := s.createVariant(txCtx, in, position)
+			if err != nil {
+				return err
+			}
+			variant = created
+			return nil
+		}); err != nil {
+			return dto.AdminProductDetailOutput{}, err
+		}
+	}
+
+	s.recordVariant(ctx, constant.AuditProductVariantAdded, variant.ID, map[string]any{"productId": in.ProductID.String()})
+	return s.adminDetail(ctx, in.ProductID)
+}
+
+// createVariant builds and persists one variant at the given position. It is the
+// shared tail of AddVariant, so the explicit-position path and both auto-front
+// paths persist through the same constructor and repository call.
+func (s *Service) createVariant(ctx context.Context, in dto.AddVariantInput, position int) (*model.Variant, error) {
 	variant, err := model.NewVariant(in.ProductID, model.VariantDraft{
 		Name:        in.Name,
 		SKU:         in.SKU,
 		PriceAmount: in.PriceAmount,
-		Position:    in.Position,
+		Position:    position,
 	}, now())
 	if err != nil {
-		return dto.AdminProductDetailOutput{}, err
+		return nil, err
 	}
 	if err := s.Variants.Create(ctx, variant); err != nil {
-		return dto.AdminProductDetailOutput{}, err
+		return nil, err
 	}
-	s.recordVariant(ctx, constant.AuditProductVariantAdded, variant.ID, map[string]any{"productId": in.ProductID.String()})
-	return s.adminDetail(ctx, in.ProductID)
+	return variant, nil
 }
 
 // UpdateVariant applies a partial variant edit and audits the change (FR-014).
@@ -486,6 +541,109 @@ func (s *Service) applyAvailabilitySignal(ctx context.Context, variantID uuid.UU
 		"to":   string(variant.SellState),
 	})
 	return nil
+}
+
+// ReorderVariants replaces the order of one product's variants with the
+// complete, ordered set the request carries (specs/018-catalog-reorder FR-003,
+// FR-004, FR-014).
+//
+// The refusals are checked in the order research D2 fixes. An empty array is a
+// request-shape problem (VALIDATION_ERROR) and a repeated identifier answers the
+// dedicated duplicate code; the parent is then confirmed through the product
+// read, so a reorder for an unknown product answers PRODUCT_NOT_FOUND before any
+// variant is considered. The sibling read then scopes the set to the product: an
+// identifier that is not one of its variants answers
+// VARIANT_BELONGS_TO_OTHER_PRODUCT, whether it belongs to another product or to
+// none, which is what makes a cross-product write impossible even if this check
+// were bypassed (research D4). A missing sibling is a validation error. Only the
+// complete sibling set reaches the single bulk write, whose affected-row count is
+// required to equal the submitted size as a defensive invariant. A refusal
+// writes nothing, so the stored order is unchanged (FR-004, SC-001).
+//
+// The parent existence check, the sibling read and the bulk write run inside one
+// transaction when the service carries one, so a defensive refusal after the
+// write rolls it back instead of leaving a partially applied order (FR-004,
+// research D2). A construction without a transaction port resolves the work
+// directly.
+//
+// The stored order is the submitted order, so the first variant becomes the
+// default variant (FR-014). Exactly one audit event is emitted, targeting the
+// parent product and carrying the affected ids in its metadata (research D9,
+// FR-010); it is emitted after the transaction returns successfully. The acting
+// administrator comes from the session context, never from the input.
+func (s *Service) ReorderVariants(ctx context.Context, in dto.ReorderVariantsInput) (dto.ReorderResult, error) {
+	if len(in.VariantIDs) == 0 {
+		return dto.ReorderResult{}, domainerr.InvalidProductField(fieldVariantIDs, "must not be empty")
+	}
+	if hasDuplicateIDs(in.VariantIDs) {
+		return dto.ReorderResult{}, domainerr.ErrVariantReorderDuplicateID
+	}
+
+	reorder := func(txCtx context.Context) (dto.ReorderResult, error) {
+		exists, err := s.Products.Exists(txCtx, in.ProductID)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+		if !exists {
+			return dto.ReorderResult{}, domainerr.ErrProductNotFound
+		}
+		siblings, err := s.Variants.ListIDsByProduct(txCtx, in.ProductID)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+		existing := idSet(siblings)
+		for _, id := range in.VariantIDs {
+			if !existing[id] {
+				return dto.ReorderResult{}, domainerr.ErrVariantBelongsToOtherProduct
+			}
+		}
+		if len(in.VariantIDs) != len(siblings) {
+			return dto.ReorderResult{}, domainerr.InvalidProductField(fieldVariantIDs, "must name every variant")
+		}
+
+		updated, err := s.Variants.Reorder(txCtx, in.ProductID, in.VariantIDs)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+		if updated != int64(len(in.VariantIDs)) {
+			return dto.ReorderResult{}, domainerr.ErrVariantBelongsToOtherProduct
+		}
+		return dto.ReorderResult{UpdatedCount: updated}, nil
+	}
+
+	var result dto.ReorderResult
+	if s.Tx != nil {
+		if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+			var innerErr error
+			result, innerErr = reorder(txCtx)
+			return innerErr
+		}); err != nil {
+			return dto.ReorderResult{}, err
+		}
+	} else {
+		var err error
+		result, err = reorder(ctx)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+	}
+
+	s.recordVariantsReordered(ctx, in.ProductID, in.VariantIDs)
+	return result, nil
+}
+
+// recordVariantsReordered emits the one audit event of a bulk variant reorder.
+// The event targets the parent product, because a bulk write has no single target
+// row, and the affected variant identifiers travel in the metadata (research D9).
+// Emission never fails the business operation.
+func (s *Service) recordVariantsReordered(ctx context.Context, productID uuid.UUID, ids []uuid.UUID) {
+	if s.Audit == nil {
+		return
+	}
+	s.Audit.Record(ctx, constant.AuditProductVariantsReordered, string(audit.OutcomeSuccess),
+		auditActor(ctx), auditActorRole(ctx), targetTypeProduct, productID.String(),
+		map[string]any{"count": len(ids), "ids": idStrings(ids)},
+	)
 }
 
 // ownedVariant reads a variant and confirms it belongs to the addressed product. A

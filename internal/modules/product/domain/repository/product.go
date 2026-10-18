@@ -229,4 +229,30 @@ type ProductRepository interface {
 	// input answers an empty slice without touching the database. It joins the
 	// caller's transaction and never opens one itself.
 	VariantIDsByCategories(ctx context.Context, categoryIDs []uuid.UUID) ([]uuid.UUID, error)
+
+	// Reorder rewrites the position of every product named by ids in one
+	// statement, setting each position to the 0-based index of its identifier
+	// in the submitted order (specs/018-catalog-reorder research D1). It
+	// returns how many rows were written.
+	//
+	// The caller has already refused an empty or duplicate request and checked
+	// completeness against ListIDs, so every identifier is expected to exist.
+	// An identifier no row carries is simply not written; the caller's
+	// completeness check is what turns that into a refusal before the write
+	// (research D2, D5). It joins the caller's transaction and never opens one
+	// itself.
+	Reorder(ctx context.Context, ids []uuid.UUID) (int64, error)
+
+	// ListIDs returns the identifier of every product, whatever its display
+	// state and category. It is the sibling set a reorder request must address
+	// completely (specs/018-catalog-reorder research D2, D5). The order is not
+	// part of the contract, because the caller uses the values as a set.
+	ListIDs(ctx context.Context) ([]uuid.UUID, error)
+
+	// NextFrontPosition returns the position that places a new product at the
+	// front of the catalogue: one less than the current smallest position, or
+	// zero when the catalogue is empty (specs/018-catalog-reorder research D3).
+	// It is one bounded read over the ordering index, never a shift of every
+	// sibling.
+	NextFrontPosition(ctx context.Context) (int, error)
 }

@@ -44,6 +44,7 @@ type maintenanceStub struct {
 	*stubCategoryService
 
 	listOut   appdto.AdminCategoryPage
+	listErr   error
 	getOut    appdto.AdminCategoryOutput
 	getErr    error
 	createOut appdto.AdminCategoryOutput
@@ -55,14 +56,18 @@ type maintenanceStub struct {
 	// seenActor is the actor the use case received through the context, which is
 	// how the test proves the identity travels beside the request.
 	seenActor appinterface.Actor
+	// seenListAdmin is the input the list use case received, which is how the
+	// test proves the `all` selector travels beside the request.
+	seenListAdmin appdto.ListAdminInput
 }
 
 func newMaintenanceStub() *maintenanceStub {
 	return &maintenanceStub{stubCategoryService: &stubCategoryService{}}
 }
 
-func (s *maintenanceStub) ListAdmin(context.Context, appdto.ListAdminInput) (appdto.AdminCategoryPage, error) {
-	return s.listOut, nil
+func (s *maintenanceStub) ListAdmin(_ context.Context, in appdto.ListAdminInput) (appdto.AdminCategoryPage, error) {
+	s.seenListAdmin = in
+	return s.listOut, s.listErr
 }
 
 func (s *maintenanceStub) GetAdmin(context.Context, appdto.AdminCategoryRefInput) (appdto.AdminCategoryOutput, error) {
@@ -193,6 +198,7 @@ func TestEveryMaintenanceRouteRefusesNoTokenAndCustomerToken(t *testing.T) {
 	}{
 		{http.MethodGet, adminCategoriesPath, ""},
 		{http.MethodPost, adminCategoriesPath, `{"name":"Tranh","slug":"tranh"}`},
+		{http.MethodPut, adminCategoriesPath + "/reorder", `{"categoryIds":["` + id.String() + `"]}`},
 		{http.MethodGet, adminCategoriesPath + "/" + id.String(), ""},
 		{http.MethodPatch, adminCategoriesPath + "/" + id.String(), `{"name":"Tranh"}`},
 		{http.MethodDelete, adminCategoriesPath + "/" + id.String(), ""},
@@ -377,6 +383,58 @@ func TestTheAdministratorListRouteResolves(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"isVisible"`) {
 		t.Fatalf("the administrator list must carry the display state: %s", rec.Body.String())
 	}
+}
+
+// Spec 018 US3 (T017): `all=true` reaches the list use case with All set, a
+// service refusal of an over-cap list answers 400 VALIDATION_ERROR naming the
+// `all` member, and a non-boolean value is refused at the edge.
+func TestTheAdminListAllSelector(t *testing.T) {
+	t.Run("all=true reaches the use case with All set", func(t *testing.T) {
+		stub := newMaintenanceStub()
+		stub.listOut = appdto.AdminCategoryPage{Page: 1, PageSize: 1, Total: 1,
+			Categories: []appdto.AdminCategoryOutput{sampleAdminCategory()}}
+
+		rec := performJSON(newAdminRouter(stub, maintenanceHooks(nil)), http.MethodGet,
+			adminCategoriesPath+"?all=true", "", "admin-token")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		if !stub.seenListAdmin.All {
+			t.Fatalf("all=true must reach the use case with All set, got %+v", stub.seenListAdmin)
+		}
+	})
+
+	t.Run("a service refusal of an over-cap list answers 400 naming all", func(t *testing.T) {
+		stub := newMaintenanceStub()
+		stub.listErr = domainerr.InvalidCategoryField("all", "the list is too large to fetch in full")
+
+		rec := performJSON(newAdminRouter(stub, maintenanceHooks(nil)), http.MethodGet,
+			adminCategoriesPath+"?all=true", "", "admin-token")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		body := decodeAdminError(t, rec)
+		if body.Error.Code != "VALIDATION_ERROR" {
+			t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+		}
+		if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "all" {
+			t.Fatalf("expected the detail to name all, got %+v", body.Error.Details)
+		}
+	})
+
+	t.Run("a non-boolean all value is refused at the edge", func(t *testing.T) {
+		stub := newMaintenanceStub()
+
+		rec := performJSON(newAdminRouter(stub, maintenanceHooks(nil)), http.MethodGet,
+			adminCategoriesPath+"?all=maybe", "", "admin-token")
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+		}
+		body := decodeAdminError(t, rec)
+		if body.Error.Code != "VALIDATION_ERROR" || len(body.Error.Details) != 1 || body.Error.Details[0].Field != "all" {
+			t.Fatalf("expected a VALIDATION_ERROR naming all, got %+v", body.Error)
+		}
+	})
 }
 
 // inUseRepo is an in-memory CategoryRepository that models the one fact the

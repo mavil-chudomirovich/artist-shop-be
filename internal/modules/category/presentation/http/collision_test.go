@@ -154,6 +154,59 @@ func (r *collisionRepo) IDBySlug(_ context.Context, slug string) (uuid.UUID, boo
 	return uuid.Nil, false, nil
 }
 
+// Reorder applies the submitted order in one step, mirroring the adapter's bulk
+// UNNEST write (specs/018-catalog-reorder research D1): each identifier that
+// exists takes its 0-based index as position. The count is the number of rows
+// written, so a foreign identifier is a no-op rather than an error.
+func (r *collisionRepo) Reorder(_ context.Context, ids []uuid.UUID) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var written int64
+	for position, id := range ids {
+		row, ok := r.rows[id]
+		if !ok {
+			continue
+		}
+		row.Position = position
+		r.rows[id] = row
+		written++
+	}
+	return written, nil
+}
+
+// ListIDs mirrors the adapter's sibling-id read (research D2, D5). The order is
+// not part of the contract, so the fake sorts by identifier to stay
+// deterministic across map iteration.
+func (r *collisionRepo) ListIDs(_ context.Context) ([]uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]uuid.UUID, 0, len(r.rows))
+	for id := range r.rows {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
+	return out, nil
+}
+
+// NextFrontPosition mirrors the adapter's auto-front read (research D3): one
+// less than the smallest position, or zero when no category exists.
+func (r *collisionRepo) NextFrontPosition(_ context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lowest := 0
+	found := false
+	for _, row := range r.rows {
+		if !found || row.Position < lowest {
+			lowest = row.Position
+			found = true
+		}
+	}
+	if !found {
+		return 0, nil
+	}
+	return lowest - 1, nil
+}
+
 func (r *collisionRepo) list(onlyVisible bool, page, pageSize int) ([]model.Category, int64, error) {
 	r.mu.Lock()
 	all := make([]model.Category, 0, len(r.rows))

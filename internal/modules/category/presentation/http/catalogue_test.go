@@ -97,6 +97,11 @@ func (s *stubCategoryService) DeleteCategory(context.Context, appdto.AdminCatego
 	return nil
 }
 
+func (s *stubCategoryService) ReorderCategories(context.Context, appdto.ReorderCategoriesInput) (appdto.ReorderResult, error) {
+	s.record("ReorderCategories")
+	return appdto.ReorderResult{}, nil
+}
+
 var _ appinterface.CategoryService = (*stubCategoryService)(nil)
 
 var testLogger = slog.New(slog.NewJSONHandler(io.Discard, nil))

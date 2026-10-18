@@ -25,6 +25,21 @@ const (
 	targetTypeVariant = "product_variant"
 )
 
+// fieldProductIDs is the contract member a product reorder names, so a refused
+// array answers a field-level detail the client can map straight onto its
+// request (FR-005, contracts/error-codes.md).
+const fieldProductIDs = "productIds"
+
+// fieldAll is the contract member the `all` selector's cap refusal names, so the
+// client can map the detail straight onto its query (specs/018-catalog-reorder
+// research D10).
+const fieldAll = "all"
+
+// maxAdminListAll bounds the complete-list fetch (`?all=true`). A catalogue
+// larger than this is refused rather than returning an unbounded result
+// (specs/018-catalog-reorder FR-015, research D10).
+const maxAdminListAll = 1000
+
 // now reads the wall clock. Every use case that stamps a row goes through it, so
 // the domain stays a pure function of its arguments and the clock is injected at
 // exactly one place.
@@ -34,7 +49,14 @@ func now() time.Time { return time.Now().UTC() }
 // customers (FR-010). It applies the same window the public list applies, so an
 // out-of-range request is clamped rather than refused, and it preserves the order
 // the repository already applied.
+//
+// With All set it answers the complete ordered list instead of one page, so a
+// whole catalogue can be reordered as a whole (specs/018-catalog-reorder FR-015,
+// research D10).
 func (s *Service) ListAdmin(ctx context.Context, in dto.ListAdminInput) (dto.AdminProductPage, error) {
+	if in.All {
+		return s.listAdminAll(ctx)
+	}
 	page, pageSize := listWindow(in.Page, in.PageSize)
 	items, total, err := s.Products.ListAll(ctx, page, pageSize)
 	if err != nil {
@@ -44,6 +66,28 @@ func (s *Service) ListAdmin(ctx context.Context, in dto.ListAdminInput) (dto.Adm
 		Products: s.Mapper.AdminProducts(items),
 		Page:     page,
 		PageSize: pageSize,
+		Total:    total,
+	}, nil
+}
+
+// listAdminAll reads the complete ordered catalogue for the `all` selector in one
+// bounded read. It asks the repository for one row beyond the safety maximum, so
+// a catalogue at or below the cap is answered whole and one beyond it is refused
+// without ever materialising an unbounded result (specs/018-catalog-reorder
+// FR-015, research D10). The read reuses the same paged repository call the
+// administrator list already uses, so no repository contract changes.
+func (s *Service) listAdminAll(ctx context.Context) (dto.AdminProductPage, error) {
+	items, total, err := s.Products.ListAll(ctx, 1, maxAdminListAll+1)
+	if err != nil {
+		return dto.AdminProductPage{}, err
+	}
+	if total > maxAdminListAll {
+		return dto.AdminProductPage{}, domainerr.InvalidProductField(fieldAll, "the list is too large to fetch in full")
+	}
+	return dto.AdminProductPage{
+		Products: s.Mapper.AdminProducts(items),
+		Page:     1,
+		PageSize: len(items),
 		Total:    total,
 	}, nil
 }
@@ -66,28 +110,43 @@ func (s *Service) GetAdmin(ctx context.Context, in dto.AdminProductRefInput) (dt
 // variant already holds as the SKU sentinel, and a category identifier no row
 // carries as the invalid-field sentinel naming categoryId.
 //
+// The positions are optional (FR-011, research D3, D7): an omitted product
+// position is resolved to the front of the catalogue inside the same transaction
+// as the insert, and a variant whose position is omitted takes its index in the
+// payload, so the first payload variant is the default. A supplied position is
+// honoured.
+//
 // The acting administrator is taken from the context the session filled, never
 // from the input (FR-015).
 func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) (dto.AdminProductDetailOutput, error) {
 	variantDrafts := make([]model.VariantDraft, 0, len(in.Variants))
-	for _, v := range in.Variants {
+	for i, v := range in.Variants {
+		// An omitted variant position follows the payload order, so the first
+		// payload variant is the default variant (research D7).
+		position := i
+		if v.Position != nil {
+			position = *v.Position
+		}
 		variantDrafts = append(variantDrafts, model.VariantDraft{
 			Name:        v.Name,
 			SKU:         v.SKU,
 			PriceAmount: v.PriceAmount,
-			Position:    v.Position,
+			Position:    position,
 		})
 	}
 
-	product, err := model.NewProduct(model.ProductDraft{
+	productDraft := model.ProductDraft{
 		Name:        in.Name,
 		Code:        in.Code,
 		Description: in.Description,
 		Price:       in.Price,
 		CategoryID:  in.CategoryID,
-		Position:    in.Position,
 		Variants:    variantDrafts,
-	}, now())
+	}
+	if in.Position != nil {
+		productDraft.Position = *in.Position
+	}
+	product, err := model.NewProduct(productDraft, now())
 	if err != nil {
 		return dto.AdminProductDetailOutput{}, err
 	}
@@ -102,6 +161,16 @@ func (s *Service) CreateProduct(ctx context.Context, in dto.CreateProductInput) 
 	}
 
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+		if in.Position == nil {
+			// An omitted product position places it at the front of the
+			// catalogue. The read joins the insert's transaction, so two
+			// concurrent creates cannot read the same front (research D3).
+			front, err := s.Products.NextFrontPosition(txCtx)
+			if err != nil {
+				return err
+			}
+			product.Position = front
+		}
 		if err := s.Products.Create(txCtx, product); err != nil {
 			return err
 		}
@@ -285,6 +354,132 @@ func (s *Service) DeleteProduct(ctx context.Context, in dto.AdminProductRefInput
 	}
 	s.recordProduct(ctx, constant.AuditProductDeleted, in.ID, nil)
 	return nil
+}
+
+// ReorderProducts replaces the catalogue-wide product order with the complete,
+// ordered set the request carries (specs/018-catalog-reorder FR-002, FR-004).
+//
+// The refusals are checked in the order research D2 fixes, so each maps to the
+// code the client can act on: an empty array is a request-shape problem
+// (VALIDATION_ERROR); a repeated identifier answers the dedicated duplicate
+// code; the sibling read then distinguishes a missing sibling (VALIDATION_ERROR)
+// from an identifier that names no product (PRODUCT_NOT_FOUND). Only once the
+// request is the complete sibling set does the single bulk write run, and its
+// affected-row count is required to equal the submitted size as a defensive
+// invariant against a race the pre-checks missed. A refusal writes nothing, so
+// the stored order is unchanged (FR-004, SC-001).
+//
+// The sibling read, the checks and the bulk write run inside one transaction
+// when the service carries one, so a defensive refusal after the write rolls it
+// back instead of leaving a partially applied order (FR-004, research D2). A
+// construction without a transaction port resolves the work directly.
+//
+// The reorder emits exactly one audit event: a bulk write has no single target
+// row, so the affected ids travel in the metadata and the target names the
+// ordered scope (research D9, FR-010). It is emitted after the transaction
+// returns successfully. The acting administrator comes from the session context,
+// never from the input.
+func (s *Service) ReorderProducts(ctx context.Context, in dto.ReorderProductsInput) (dto.ReorderResult, error) {
+	if len(in.ProductIDs) == 0 {
+		return dto.ReorderResult{}, domainerr.InvalidProductField(fieldProductIDs, "must not be empty")
+	}
+	if hasDuplicateIDs(in.ProductIDs) {
+		return dto.ReorderResult{}, domainerr.ErrProductReorderDuplicateID
+	}
+
+	reorder := func(txCtx context.Context) (dto.ReorderResult, error) {
+		siblings, err := s.Products.ListIDs(txCtx)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+		existing := idSet(siblings)
+		for _, id := range in.ProductIDs {
+			if !existing[id] {
+				return dto.ReorderResult{}, domainerr.ErrProductNotFound
+			}
+		}
+		if len(in.ProductIDs) != len(siblings) {
+			return dto.ReorderResult{}, domainerr.InvalidProductField(fieldProductIDs, "must name every product")
+		}
+
+		updated, err := s.Products.Reorder(txCtx, in.ProductIDs)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+		if updated != int64(len(in.ProductIDs)) {
+			return dto.ReorderResult{}, domainerr.ErrProductNotFound
+		}
+		return dto.ReorderResult{UpdatedCount: updated}, nil
+	}
+
+	var result dto.ReorderResult
+	if s.Tx != nil {
+		if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
+			var innerErr error
+			result, innerErr = reorder(txCtx)
+			return innerErr
+		}); err != nil {
+			return dto.ReorderResult{}, err
+		}
+	} else {
+		var err error
+		result, err = reorder(ctx)
+		if err != nil {
+			return dto.ReorderResult{}, err
+		}
+	}
+
+	s.recordProductReordered(ctx, in.ProductIDs)
+	return result, nil
+}
+
+// recordProductReordered emits the one audit event of a bulk product reorder. A
+// bulk write has no single target row, so the target names the ordered scope
+// (the product list) with an empty identifier and the affected identifiers
+// travel in the metadata (research D9). Emission never fails the business
+// operation.
+func (s *Service) recordProductReordered(ctx context.Context, ids []uuid.UUID) {
+	if s.Audit == nil {
+		return
+	}
+	s.Audit.Record(ctx, constant.AuditProductReordered, string(audit.OutcomeSuccess),
+		auditActor(ctx), auditActorRole(ctx), targetTypeProduct, "",
+		map[string]any{"count": len(ids), "ids": idStrings(ids)},
+	)
+}
+
+// hasDuplicateIDs reports whether the array names the same identifier twice, so a
+// reorder can answer the dedicated duplicate code before any read or write
+// (research D2, FR-006).
+func hasDuplicateIDs(ids []uuid.UUID) bool {
+	seen := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return true
+		}
+		seen[id] = true
+	}
+	return false
+}
+
+// idSet turns an identifier slice into a membership set, so a completeness check
+// is a map lookup rather than a nested scan.
+func idSet(ids []uuid.UUID) map[uuid.UUID]bool {
+	out := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
+}
+
+// idStrings is the metadata form of the affected identifiers: the contract's
+// string representation, so an audit reader sees the same values a client sent.
+func idStrings(ids []uuid.UUID) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
 }
 
 // adminDetail reads one product's administrator detail: the product, its gallery

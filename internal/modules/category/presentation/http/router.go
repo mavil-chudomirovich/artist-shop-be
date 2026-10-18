@@ -35,6 +35,10 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
 	r.Get("/", h.ListAdmin)
 	r.Post("/", h.CreateCategory)
+	// The reorder is a static path under the group root; chi resolves it ahead
+	// of the /{categoryId} wildcard, so the identifier route below cannot
+	// shadow it.
+	r.Put("/reorder", h.ReorderCategories)
 	r.Get("/{categoryId}", h.GetAdmin)
 	r.Patch("/{categoryId}", h.UpdateCategory)
 	r.Delete("/{categoryId}", h.DeleteCategory)

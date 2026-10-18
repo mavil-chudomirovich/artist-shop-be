@@ -19,4 +19,9 @@ const (
 	// AuditCategoryDeleted is recorded when a category is removed. Removal is a
 	// hard delete (research D5); the audit entry is what survives it.
 	AuditCategoryDeleted = "CATEGORY_DELETED"
+	// AuditCategoryReordered is recorded when an administrator reorders the
+	// catalogue-wide category list in one action. A bulk reorder has no single
+	// target row, so the affected ids travel in the event metadata and the
+	// target names the ordered scope (research D9).
+	AuditCategoryReordered = "CATEGORY_REORDERED"
 )

@@ -75,6 +75,19 @@ var (
 	// ErrVariantHasPendingOrders is returned when moving a variant away from its
 	// on-sale state is refused for the same reason (specs/016-hide-guard).
 	ErrVariantHasPendingOrders = errors.New("variant has pending orders")
+	// ErrProductReorderDuplicateID is returned when a reorder names the same
+	// product more than once (specs/018-catalog-reorder). The stored order is
+	// left untouched; the client must send each id once.
+	ErrProductReorderDuplicateID = errors.New("product reorder duplicate id")
+	// ErrVariantReorderDuplicateID is returned when a variant reorder names the
+	// same variant more than once (specs/018-catalog-reorder). The stored order
+	// is left untouched; the client must send each id once.
+	ErrVariantReorderDuplicateID = errors.New("variant reorder duplicate id")
+	// ErrVariantBelongsToOtherProduct is returned when a variant reorder names a
+	// variant that does not belong to the product on the path
+	// (specs/018-catalog-reorder). It is a request-shape refusal distinct from a
+	// duplicate or a missing sibling, and the stored order is left untouched.
+	ErrVariantBelongsToOtherProduct = errors.New("variant belongs to other product")
 )
 
 // ProductPendingOrdersError carries the blocking order identifiers behind a

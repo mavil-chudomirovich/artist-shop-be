@@ -63,9 +63,27 @@ type CreateCategoryRequest struct {
 	// Description is optional; an omitted or empty description is stored as
 	// empty.
 	Description string `json:"description"`
-	// Position is optional and defaults to zero. Any whole number, including
-	// zero and negative, is valid.
-	Position int `json:"position"`
+	// Position is optional. An omitted or null position places the new
+	// category at the front of its list (FR-011); a supplied value is
+	// honoured. Any whole number, including zero and negative, is valid.
+	Position *int `json:"position"`
+}
+
+// ReorderCategoriesRequest is the body of a category reorder
+// (contracts/openapi.yaml, ReorderCategoriesRequest). CategoryIDs is the
+// complete, ordered set: every category exactly once. The schema is
+// additionalProperties: false, and the handler decodes it with unknown members
+// refused, so a client cannot smuggle a member the contract does not declare.
+type ReorderCategoriesRequest struct {
+	// CategoryIDs is every category's identifier, in the desired order.
+	CategoryIDs []uuid.UUID `json:"categoryIds"`
+}
+
+// ReorderResponse is the answer of every reorder action: how many records'
+// positions the bulk write touched (contracts/openapi.yaml, ReorderResponse).
+type ReorderResponse struct {
+	// UpdatedCount is the number of records' positions that were written.
+	UpdatedCount int64 `json:"updatedCount"`
 }
 
 // UpdateCategoryRequest is the body of a partial administrator edit.

@@ -131,6 +131,30 @@ func mapError(err error) *httpx.AppError {
 			coded(constant.CodeVariantHasPendingOrders, http.StatusConflict, "Variant has pending orders and cannot be hidden"),
 			err,
 		)
+	case errors.Is(err, domainerr.ErrProductReorderDuplicateID):
+		// The reorder body names the same product twice: a request-shape
+		// problem the client fixes, carrying its own code so a client can tell a
+		// duplicate from an incomplete array (specs/018-catalog-reorder research
+		// D8). The detail names the offending member.
+		return withField(
+			coded(constant.CodeProductReorderDuplicateID, http.StatusBadRequest, "The same product is named more than once"),
+			fieldProductIDs, "send each id once",
+		)
+	case errors.Is(err, domainerr.ErrVariantReorderDuplicateID):
+		// The variant reorder body names the same variant twice.
+		return withField(
+			coded(constant.CodeVariantReorderDuplicateID, http.StatusBadRequest, "The same variant is named more than once"),
+			fieldVariantIDs, "send each id once",
+		)
+	case errors.Is(err, domainerr.ErrVariantBelongsToOtherProduct):
+		// The variant reorder names a variant that is not one of the addressed
+		// product's variants, so ordering it would be a cross-product write. It
+		// is a request-shape problem the client fixes, distinct from a duplicate
+		// (specs/018-catalog-reorder FR-008, research D4, D8).
+		return withField(
+			coded(constant.CodeVariantBelongsToOtherProduct, http.StatusBadRequest, "A variant does not belong to the addressed product"),
+			fieldVariantIDs, "order only that product's variants",
+		)
 	case errors.As(err, &transition):
 		// The refusal names the state the variant is in, which is what makes an
 		// invalid transition distinguishable from a typo (FR-015).
@@ -160,11 +184,14 @@ func mapError(err error) *httpx.AppError {
 // Field names used in error details. They are the JSON member names of the
 // contract, so a client can map a detail straight onto its request.
 const (
-	fieldPage      = "page"
-	fieldPageSize  = "pageSize"
-	fieldID        = "id"
-	fieldVariantID = "variantId"
-	fieldImageID   = "imageId"
-	fieldImage     = "image"
-	fieldOrderID   = "orderId"
+	fieldPage       = "page"
+	fieldPageSize   = "pageSize"
+	fieldAll        = "all"
+	fieldID         = "id"
+	fieldVariantID  = "variantId"
+	fieldImageID    = "imageId"
+	fieldImage      = "image"
+	fieldOrderID    = "orderId"
+	fieldProductIDs = "productIds"
+	fieldVariantIDs = "variantIds"
 )

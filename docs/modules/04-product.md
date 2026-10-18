@@ -37,6 +37,12 @@ Có:
 - **Variant**: tên, SKU (duy nhất toàn hệ), giá riêng **tuỳ chọn** (bỏ trống → dùng giá mặc định của
   sản phẩm), ảnh riêng, thứ tự, và **trạng thái bán riêng** với state machine
   `COMING_SOON → ACTIVE ↔ OUT_OF_STOCK`, mọi trạng thái → `DISCONTINUED` (cuối).
+- **Kéo-thả sắp xếp** thứ tự hiển thị: sản phẩm có **một thứ tự chung toàn catalogue** (không theo
+  từng danh mục) và các variant có thứ tự **trong sản phẩm** (id đầu tiên là **variant mặc định**);
+  mỗi lần lưu gửi trọn danh sách định danh theo thứ tự mới (`PUT /admin/products/reorder` và
+  `PUT /admin/products/{id}/variants/reorder`, feature `018-catalog-reorder`). Tạo sản phẩm/variant mà
+  bỏ trống `position` đặt bản ghi mới **lên đầu** (variant trong một lần tạo hàng loạt theo thứ tự
+  mảng, variant đầu tiên là mặc định).
 - Mã sản phẩm (`code`) bắt buộc và duy nhất; **`code` cũng là đoạn link công khai** của sản phẩm
   (URL-safe: chữ thường, chữ số, dấu gạch đơn; ≤140 ký tự) — sản phẩm **không** có `slug` riêng
   (danh mục vẫn giữ `slug` của nó). Mỗi sản phẩm ≥1 variant (gỡ variant cuối bị từ chối).

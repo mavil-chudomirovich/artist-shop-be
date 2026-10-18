@@ -32,4 +32,13 @@ const (
 	// AuditProductVariantRemoved is recorded when a variant is removed from its
 	// product. Removal is a hard delete; the audit entry is what survives it.
 	AuditProductVariantRemoved = "PRODUCT_VARIANT_REMOVED"
+	// AuditProductReordered is recorded when an administrator reorders the
+	// catalogue-wide product list in one action. A bulk reorder has no single
+	// target row, so the affected ids travel in the event metadata and the
+	// target names the ordered scope (research D9).
+	AuditProductReordered = "PRODUCT_REORDERED"
+	// AuditProductVariantsReordered is recorded when an administrator reorders
+	// the variants of one product. The event targets the parent product and the
+	// affected variant ids travel in the metadata (research D9).
+	AuditProductVariantsReordered = "PRODUCT_VARIANTS_REORDERED"
 )

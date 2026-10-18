@@ -39,6 +39,10 @@ var (
 	// variants. The refusal names the blocking orders so an operator can act on
 	// them; it is an admin-surface answer only (specs/016-hide-guard).
 	ErrCategoryHasPendingOrders = errors.New("category has pending orders")
+	// ErrCategoryReorderDuplicateID is returned when a reorder names the same
+	// category more than once (specs/018-catalog-reorder). The stored order is
+	// left untouched; the client must send each id once.
+	ErrCategoryReorderDuplicateID = errors.New("category reorder duplicate id")
 	// ErrCategoryInvalid is returned when a value fails its own rule: a blank
 	// required member, a value longer than its bound, or a slug that is not
 	// URL-safe.

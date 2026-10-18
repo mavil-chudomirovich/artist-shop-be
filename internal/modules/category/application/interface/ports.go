@@ -86,4 +86,8 @@ type CategoryService interface {
 	// DeleteCategory removes a category and audits the removal (FR-012,
 	// FR-013).
 	DeleteCategory(ctx context.Context, in dto.AdminCategoryRefInput) error
+	// ReorderCategories replaces the catalogue-wide category order with the
+	// complete, ordered set the request carries and audits the reorder
+	// (specs/018-catalog-reorder FR-001, FR-004, FR-010).
+	ReorderCategories(ctx context.Context, in dto.ReorderCategoriesInput) (dto.ReorderResult, error)
 }

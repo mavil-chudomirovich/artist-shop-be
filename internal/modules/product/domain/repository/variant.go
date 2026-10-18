@@ -121,4 +121,32 @@ type VariantRepository interface {
 	// research D9). An empty input answers an empty slice without touching the
 	// database. It joins the caller's transaction and never opens one itself.
 	DiscontinuedIDs(ctx context.Context, ids []uuid.UUID) ([]uuid.UUID, error)
+
+	// Reorder rewrites the position of every variant of productID named by ids
+	// in one statement, setting each position to the 0-based index of its
+	// identifier in the submitted order (specs/018-catalog-reorder research
+	// D1). It returns how many rows were written.
+	//
+	// The product_id predicate is what scopes the write to the parent: an
+	// identifier belonging to another product matches nothing, so a cross-
+	// product write is impossible even if the use case's check were bypassed
+	// (research D4). The caller has already refused an empty or duplicate
+	// request, confirmed the parent exists and checked the submitted set
+	// against ListIDsByProduct (research D2, D5). It joins the caller's
+	// transaction and never opens one itself.
+	Reorder(ctx context.Context, productID uuid.UUID, ids []uuid.UUID) (int64, error)
+
+	// ListIDsByProduct returns the identifier of every variant of productID,
+	// whatever its sell state. It is the sibling set a variant reorder request
+	// must address completely (specs/018-catalog-reorder research D2, D5). A
+	// product with no variant answers an empty slice. The order is not part of
+	// the contract, because the caller uses the values as a set.
+	ListIDsByProduct(ctx context.Context, productID uuid.UUID) ([]uuid.UUID, error)
+
+	// NextFrontPosition returns the position that places a new variant at the
+	// front of its product's list: one less than the product's current smallest
+	// position, or zero when the product has no variant (specs/018-catalog-
+	// reorder research D3). It is one bounded read over the ordering index,
+	// never a shift of every sibling.
+	NextFrontPosition(ctx context.Context, productID uuid.UUID) (int, error)
 }

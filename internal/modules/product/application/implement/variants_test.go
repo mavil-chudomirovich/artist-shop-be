@@ -537,3 +537,328 @@ func TestSystemRestockIsNeverGuarded(t *testing.T) {
 		t.Fatalf("the restock must be recorded with a system actor, got %v", event.actorID)
 	}
 }
+
+// --- Variant reorder (specs/018-catalog-reorder US1, T008) ---
+//
+// A variant reorder carries the complete, ordered set of one product's variants
+// in one action. It confirms the parent exists, then scopes the set to the
+// product's own variants: an id that is not one of them (of another product or of
+// none) is refused with the dedicated code, a missing sibling with a validation
+// error. Every refusal leaves the stored order unchanged and records nothing; a
+// successful reorder stores the submitted order, so the first variant becomes the
+// default variant (FR-014), and emits exactly one audit event targeting the
+// parent product (research D2, D9).
+
+// seedThreeVariantProduct stores a product with three ordered variants.
+func seedThreeVariantProduct(t *testing.T, repo *memoryProducts, category uuid.UUID) (*model.Product, []model.Variant) {
+	t.Helper()
+	product := repo.seedWithVariants(t, model.ProductDraft{
+		Name: "Bộ ba", Code: "bo-ba-" + uuid.NewString()[:8], Price: price(100), CategoryID: category, Position: 1,
+		Variants: []model.VariantDraft{
+			{Name: "A", SKU: "A-" + uuid.NewString()[:8], Position: 0},
+			{Name: "B", SKU: "B-" + uuid.NewString()[:8], Position: 1},
+			{Name: "C", SKU: "C-" + uuid.NewString()[:8], Position: 2},
+		},
+	}, nil, time.Now().UTC().Add(-time.Hour))
+	variants := repo.variantsFor(product.ID)
+	if len(variants) != 3 {
+		t.Fatalf("expected three seeded variants, got %d", len(variants))
+	}
+	return product, variants
+}
+
+// FR-003, FR-004, FR-014: a variant reorder stores the submitted order, so the
+// first submitted variant becomes the default variant, and it emits exactly one
+// audit event targeting the parent product (FR-010).
+func TestReorderVariantsAppliesTheOrderAndMakesTheFirstTheDefault(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+	svc := maintenanceService(repo, recorder)
+	ctx := adminContext(actor)
+
+	order := []uuid.UUID{variants[2].ID, variants[0].ID, variants[1].ID}
+	out, err := svc.ReorderVariants(ctx, dto.ReorderVariantsInput{ProductID: product.ID, VariantIDs: order})
+	if err != nil {
+		t.Fatalf("ReorderVariants: %v", err)
+	}
+	if out.UpdatedCount != 3 {
+		t.Fatalf("expected 3 updated rows, got %d", out.UpdatedCount)
+	}
+
+	// The stored order equals the submitted order, so the first variant is the
+	// default variant (FR-014).
+	stored := repo.variantsFor(product.ID)
+	for i, id := range order {
+		if stored[i].ID != id {
+			t.Fatalf("stored variant %d = %s, want %s", i, stored[i].ID, id)
+		}
+	}
+	if stored[0].ID != variants[2].ID {
+		t.Fatalf("the first variant after reorder must be the default, got %s", stored[0].ID)
+	}
+
+	event := reorderEvent(t, recorder, constant.AuditProductVariantsReordered)
+	if event.outcome != "SUCCESS" {
+		t.Fatalf("expected SUCCESS, got %q", event.outcome)
+	}
+	if event.actorID == nil || *event.actorID != actor.ID || event.actorRole != string(actor.Role) {
+		t.Fatalf("the reorder must name the acting administrator, got %v/%q", event.actorID, event.actorRole)
+	}
+	if event.targetType != "product" || event.targetID != product.ID.String() {
+		t.Fatalf("a variant reorder targets the parent product, got %q/%q", event.targetType, event.targetID)
+	}
+	if got := event.metadata["count"]; got != 3 {
+		t.Fatalf("the event metadata must carry the affected count, got %v", event.metadata)
+	}
+	if ids, ok := event.metadata["ids"].([]string); !ok || len(ids) != 3 || ids[0] != variants[2].ID.String() {
+		t.Fatalf("the event metadata must carry the affected ids in order, got %v", event.metadata)
+	}
+}
+
+// FR-005: an empty array is a validation error naming the member.
+func TestReorderVariantsRefusesAnEmptyArray(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor),
+		dto.ReorderVariantsInput{ProductID: product.ID})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	var fieldErr *domainerr.ProductFieldError
+	if !errors.As(err, &fieldErr) || fieldErr.Field != "variantIds" {
+		t.Fatalf("expected the field variantIds to be named, got %v", err)
+	}
+	if got := repo.variantsFor(product.ID); got[0].ID != variants[0].ID {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-006: a repeated identifier answers the dedicated duplicate code.
+func TestReorderVariantsRefusesADuplicateID(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  product.ID,
+		VariantIDs: []uuid.UUID{variants[0].ID, variants[1].ID, variants[1].ID},
+	})
+	if !errors.Is(err, domainerr.ErrVariantReorderDuplicateID) {
+		t.Fatalf("expected ErrVariantReorderDuplicateID, got %v", err)
+	}
+	if got := repo.variantsFor(product.ID); got[0].ID != variants[0].ID {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-005: an array that omits one of the product's variants is a validation
+// error and nothing changes.
+func TestReorderVariantsRefusesAnIncompleteArray(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  product.ID,
+		VariantIDs: []uuid.UUID{variants[1].ID, variants[0].ID},
+	})
+	if !errors.Is(err, domainerr.ErrProductInvalid) {
+		t.Fatalf("expected ErrProductInvalid, got %v", err)
+	}
+	if got := repo.variantsFor(product.ID); got[0].ID != variants[0].ID {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-007: a reorder for an unknown parent answers the module's not-found before
+// any variant is considered.
+func TestReorderVariantsRefusesAnUnknownParent(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	_, variants := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  uuid.New(),
+		VariantIDs: []uuid.UUID{variants[0].ID},
+	})
+	if !errors.Is(err, domainerr.ErrProductNotFound) {
+		t.Fatalf("expected ErrProductNotFound, got %v", err)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-008, research D4: an identifier of another product's variant answers the
+// dedicated code and nothing changes.
+func TestReorderVariantsRefusesAVariantOfAnotherProduct(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+	other := repo.seedWithVariants(t, productDraft("Khác", "khac-"+uuid.NewString()[:8], 100, category, 2), nil,
+		time.Now().UTC().Add(-time.Minute))
+	foreign := repo.variantsFor(other.ID)[0]
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  product.ID,
+		VariantIDs: []uuid.UUID{variants[0].ID, variants[1].ID, foreign.ID},
+	})
+	if !errors.Is(err, domainerr.ErrVariantBelongsToOtherProduct) {
+		t.Fatalf("expected ErrVariantBelongsToOtherProduct, got %v", err)
+	}
+	if got := repo.variantsFor(product.ID); got[0].ID != variants[0].ID || got[2].ID != variants[2].ID {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-008: a variant identifier that names no variant at all is not one of the
+// product's variants either, so it answers the same dedicated code as a foreign
+// one rather than a distinct not-found (contracts/error-codes.md).
+func TestReorderVariantsRefusesAnUnknownVariantID(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  product.ID,
+		VariantIDs: []uuid.UUID{variants[0].ID, variants[1].ID, uuid.New()},
+	})
+	if !errors.Is(err, domainerr.ErrVariantBelongsToOtherProduct) {
+		t.Fatalf("expected ErrVariantBelongsToOtherProduct, got %v", err)
+	}
+	if got := repo.variantsFor(product.ID); got[0].ID != variants[0].ID {
+		t.Fatalf("a refused reorder must leave the stored order unchanged, got %v", got)
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// --- Reorder runs through the transaction port (specs/018-catalog-reorder T029) ---
+//
+// The parent check, the sibling read and the bulk write share one transaction,
+// so a defensive refusal after the write rolls it back and the stored order is
+// left unchanged (FR-004, research D2, D4).
+
+// T029, FR-004: a successful variant reorder runs through the UnitOfWork port, so
+// the parent check, the sibling read and the bulk write share one transaction.
+func TestReorderVariantsRunsInsideTheTransaction(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+	tx := &fauxUnitOfWork{}
+	svc := serviceFor(repo, newFakeAvailability(), nil, recorder, nil, tx)
+
+	order := []uuid.UUID{variants[2].ID, variants[0].ID, variants[1].ID}
+	out, err := svc.ReorderVariants(adminContext(actor),
+		dto.ReorderVariantsInput{ProductID: product.ID, VariantIDs: order})
+	if err != nil {
+		t.Fatalf("ReorderVariants: %v", err)
+	}
+	if out.UpdatedCount != 3 {
+		t.Fatalf("expected 3 updated rows, got %d", out.UpdatedCount)
+	}
+	stored := repo.variantsFor(product.ID)
+	if stored[0].ID != variants[2].ID {
+		t.Fatalf("the first variant after reorder must be the default, got %s", stored[0].ID)
+	}
+	if tx.calls != 1 {
+		t.Fatalf("the reorder must run inside one transaction, got %d", tx.calls)
+	}
+}
+
+// T029, FR-004, research D2, D4: a defensive refusal after the bulk variant write
+// rolls it back, so the stored order is unchanged.
+func TestReorderVariantsRollsBackWhenTheDefensiveGuardRefuses(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+	short := &shortWriteVariants{memoryVariants: repo.variants()}
+	tx := &rollingBackUnitOfWork{state: repo.state}
+	svc := New(Service{
+		Products: repo,
+		Variants: short,
+		Audit:    recorder,
+		Tx:       tx,
+		Mapper:   mapper.New(),
+	})
+
+	before := repo.variantsFor(product.ID)
+
+	_, err := svc.ReorderVariants(adminContext(actor), dto.ReorderVariantsInput{
+		ProductID:  product.ID,
+		VariantIDs: []uuid.UUID{variants[2].ID, variants[0].ID, variants[1].ID},
+	})
+	if !errors.Is(err, domainerr.ErrVariantBelongsToOtherProduct) {
+		t.Fatalf("expected the defensive refusal ErrVariantBelongsToOtherProduct, got %v", err)
+	}
+	if tx.callCount() != 1 {
+		t.Fatalf("the reorder must run inside one transaction, got %d", tx.callCount())
+	}
+	if !short.wroteInTx {
+		t.Fatal("the bulk write must run inside the transaction")
+	}
+	after := repo.variantsFor(product.ID)
+	if len(after) != len(before) {
+		t.Fatalf("expected the same variant count, got %d want %d", len(after), len(before))
+	}
+	for i := range before {
+		if after[i].ID != before[i].ID || after[i].Position != before[i].Position {
+			t.Fatalf("a defensive refusal must roll the write back: got %v, want %v", after, before)
+		}
+	}
+	if len(recorder.snapshot()) != 0 {
+		t.Fatalf("a refused reorder must record nothing, got %v", recorder.actions())
+	}
+}
+
+// FR-011, research D3, D7: adding a variant without a position places it at the
+// front of its product, smaller than every existing sibling, so it becomes the
+// default variant of that product.
+func TestAddVariantWithoutPositionGoesToTheFront(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, variants := seedThreeVariantProduct(t, repo, category)
+
+	out, err := maintenanceService(repo, recorder).AddVariant(adminContext(actor), dto.AddVariantInput{
+		ProductID: product.ID, Name: "Mới", SKU: "SKU-NEW",
+	})
+	if err != nil {
+		t.Fatalf("AddVariant: %v", err)
+	}
+	if len(out.Variants) != 4 {
+		t.Fatalf("expected four variants, got %d", len(out.Variants))
+	}
+	added := out.Variants[0]
+	if added.SKU != "SKU-NEW" {
+		t.Fatalf("the added variant must be first, got %q", added.SKU)
+	}
+	for _, sibling := range variants {
+		if added.Position >= sibling.Position {
+			t.Fatalf("the added variant (%d) must be smaller than sibling %s (%d)",
+				added.Position, sibling.SKU, sibling.Position)
+		}
+	}
+	requireAudited(t, recorder, constant.AuditProductVariantAdded, actor, "product_variant", added.ID)
+}
+
+// FR-012: adding a variant with a supplied position is honoured.
+func TestAddVariantWithExplicitPositionIsHonoured(t *testing.T) {
+	repo, recorder, actor, category := adminFixture(t)
+	product, _ := seedThreeVariantProduct(t, repo, category)
+
+	_, err := maintenanceService(repo, recorder).AddVariant(adminContext(actor), dto.AddVariantInput{
+		ProductID: product.ID, Name: "Đặt chỗ", SKU: "SKU-999", Position: ptr(9),
+	})
+	if err != nil {
+		t.Fatalf("AddVariant: %v", err)
+	}
+	if got := repo.variantBySKU(t, product.ID, "SKU-999"); got.Position != 9 {
+		t.Fatalf("an explicit variant position must be honoured, got %d", got.Position)
+	}
+}

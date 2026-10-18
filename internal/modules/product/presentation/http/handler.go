@@ -116,12 +116,13 @@ func (h *Handler) GetPublicByCode(w http.ResponseWriter, r *http.Request) {
 // customers (FR-010). It is reached only behind the administrator role guard.
 //
 //	@Summary		List every product (ADMIN)
-//	@Description	Returns a page of every product, including the ones withheld from customers, with the code, the default price, the position, the variant count and the picture summary a customer never sees.
+//	@Description	Returns a page of every product, including the ones withheld from customers, with the code, the default price, the position, the variant count and the picture summary a customer never sees. With all=true the complete ordered list is returned instead, bounded by the safety maximum.
 //	@Tags			Product
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			page		query	int	false	"Page number (default 1)"
-//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Param			page		query	int		false	"Page number (default 1)"
+//	@Param			pageSize	query	int		false	"Page size (default 20)"
+//	@Param			all			query	bool	false	"Return the complete ordered list instead of one page (bounded by the safety maximum)"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminProductResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
@@ -133,7 +134,12 @@ func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	out, err := h.svc.ListAdmin(r.Context(), appdto.ListAdminInput{Page: page, PageSize: pageSize})
+	all, appErr := allParam(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	out, err := h.svc.ListAdmin(r.Context(), appdto.ListAdminInput{Page: page, PageSize: pageSize, All: all})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -305,6 +311,45 @@ func (h *Handler) DeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ReorderProducts replaces the catalogue-wide product order with the complete,
+// ordered set the body carries (specs/018-catalog-reorder FR-002). A bulk
+// reorder has no single target row, so the acting administrator is taken from
+// the session and the affected ids travel in the audit metadata. An empty,
+// duplicate or incomplete array, or an identifier that names no product, is
+// refused and nothing changes (FR-004–FR-008).
+//
+//	@Summary		Reorder every product (ADMIN)
+//	@Description	Replaces the catalogue-wide product order with the submitted order. The array must contain every product exactly once; the first id becomes the first product. Atomic: on any refusal nothing changes. The acting administrator comes from the session, never the body.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body	httpdto.ReorderProductsRequest	true	"Complete, ordered product ids"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ReorderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/products/reorder [put]
+func (h *Handler) ReorderProducts(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	var req httpdto.ReorderProductsRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ReorderProducts(ctx, appdto.ReorderProductsInput{ProductIDs: req.ProductIDs})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.ReorderResponse{UpdatedCount: out.UpdatedCount})
 }
 
 // AddVariant adds a variant to a product (FR-014). A created variant starts in
@@ -604,6 +649,55 @@ func (h *Handler) ChangeVariantState(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteSuccess(w, r, http.StatusOK, toAdminProductDetailResponse(out))
 }
 
+// ReorderVariants replaces the order of a product's variants with the complete,
+// ordered set the body carries (specs/018-catalog-reorder FR-003, FR-014). The
+// stored order is the submitted order, so the first variant becomes the default
+// variant. A variant of another product, an empty or duplicate or incomplete
+// array, and an unknown parent are each refused without changing anything
+// (FR-004–FR-008). The acting administrator comes from the session, never the
+// body.
+//
+//	@Summary		Reorder a product's variants (ADMIN)
+//	@Description	Replaces the order of the product's variants with the submitted order. The array must contain every variant of that product exactly once; the first id becomes the default variant. Atomic: on any refusal nothing changes. A variant that belongs to another product is refused. The acting administrator comes from the session, never the body.
+//	@Tags			Product
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string						true	"Product identifier"
+//	@Param			request	body	httpdto.ReorderVariantsRequest	true	"Complete, ordered variant ids"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ReorderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/products/{id}/variants/reorder [put]
+func (h *Handler) ReorderVariants(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	id, appErr := pathUUID(r, "id", fieldID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	var req httpdto.ReorderVariantsRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ReorderVariants(ctx, appdto.ReorderVariantsInput{
+		ProductID:  id,
+		VariantIDs: req.VariantIDs,
+	})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.ReorderResponse{UpdatedCount: out.UpdatedCount})
+}
+
 // AddPicture stores an uploaded gallery picture. The bytes are read with a hard
 // ceiling and handed to the use case, which validates them by content and by the
 // gallery's count; neither the file name nor the client-declared media type is
@@ -756,6 +850,21 @@ func positiveQuery(raw string, fallback int) (int, error) {
 	}
 	if parsed < 1 {
 		return 0, errors.New("below the lower bound")
+	}
+	return parsed, nil
+}
+
+// allParam reads the optional `all` selector of the administrator list. Absent
+// means the ordinary page; a value that is not a boolean is a request-shape
+// problem naming the member (specs/018-catalog-reorder FR-015, research D10).
+func allParam(r *http.Request) (bool, *httpx.AppError) {
+	raw := strings.TrimSpace(r.URL.Query().Get("all"))
+	if raw == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fieldError(fieldAll, "must be true or false")
 	}
 	return parsed, nil
 }

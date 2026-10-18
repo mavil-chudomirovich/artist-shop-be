@@ -22,8 +22,8 @@ Tài liệu tra cứu:
 | 00 | Cross-cutting foundation | [00-cross-cutting.md](modules/00-cross-cutting.md) | V0 | — | ✔ `specs/002-cross-cutting-foundation` |
 | 01 | Auth | [01-auth.md](modules/01-auth.md) | V0 | cross-cutting | ✔ `specs/001-user-auth` |
 | 02 | User | [02-user.md](modules/02-user.md) | V0 | auth | ✔ `specs/003-user-profile` |
-| 03 | Category | [03-category.md](modules/03-category.md) | V0 | cross-cutting | ✔ `specs/005-category-catalog` |
-| 04 | Product | [04-product.md](modules/04-product.md) | V1.0 | category | ✔ `specs/006-product-catalog` |
+| 03 | Category | [03-category.md](modules/03-category.md) | V0 | cross-cutting | ✔ `specs/005-category-catalog`, `specs/018-catalog-reorder` |
+| 04 | Product | [04-product.md](modules/04-product.md) | V1.0 | category | ✔ `specs/006-product-catalog`, `specs/018-catalog-reorder` |
 | 05 | Inventory | [05-inventory.md](modules/05-inventory.md) | V1.0 | product | ✔ `specs/007-inventory-tracking` |
 | 06 | Cart | [06-cart.md](modules/06-cart.md) | V1.0 | product, inventory | ✔ `specs/008-cart` |
 | 07 | Order | [07-order.md](modules/07-order.md) | V1.0 | cart, product, inventory, user, auth | ✔ `specs/009-order`, `specs/010-order-confirmation` |
@@ -36,6 +36,15 @@ Tài liệu tra cứu:
 | 14 | Wishlist | [14-wishlist.md](modules/14-wishlist.md) | V2.0 | product, user | ⬜ |
 | 15 | Content | [15-content.md](modules/15-content.md) | V2.0 | cross-cutting | ⬜ |
 | 16 | Admin | [16-admin.md](modules/16-admin.md) | V1.2 | tất cả | ✔ `specs/017-admin-dashboard` (dashboard; audit log còn lại) |
+
+> **Thứ tự hiển thị (feature 018).** Danh mục, sản phẩm và variant nay đổi thứ tự bằng
+> **kéo-thả**: mỗi lần lưu gửi **toàn bộ** danh sách định danh theo thứ tự mới tới một trong ba
+> endpoint `PUT .../reorder` (module 03 và 04). Bỏ trống `position` khi **tạo** đặt bản ghi mới
+> **lên đầu** danh sách (variant bỏ trống trong một lần tạo hàng loạt theo thứ tự mảng, variant đầu
+> tiên là mặc định); giá trị cụ thể vẫn được tôn trọng, và sửa mà bỏ trống giữ nguyên thứ tự.
+> Thứ tự sản phẩm và danh mục là **một thứ tự chung toàn catalogue** (không theo từng danh mục).
+> Hợp đồng HTTP và mã lỗi ở [api-reference.md](api-reference.md) mục 5, 6; đặc tả tại
+> `specs/018-catalog-reorder/`.
 
 ## Thứ tự triển khai
 

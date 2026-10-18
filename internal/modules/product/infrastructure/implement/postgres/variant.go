@@ -368,6 +368,86 @@ func (r *VariantRepository) DiscontinuedIDs(ctx context.Context, ids []uuid.UUID
 	return out, nil
 }
 
+// Reorder rewrites the position of every named variant of one product in a
+// single statement.
+//
+// The statement is the bulk UNNEST form of specs/018-catalog-reorder research
+// D1, with the product_id predicate of research D4: $1 carries the submitted
+// identifiers, $2 the 0-based index of each in that order and $3 the parent
+// product, so an identifier belonging to another product matches nothing and
+// the variant order can never move across products. The caller has already
+// refused an empty or duplicate request and checked the submitted set against
+// ListIDsByProduct (research D2, D5), so an identifier no row carries simply
+// matches nothing rather than being an error. It returns the affected-row count
+// and joins the caller's transaction without ever opening one itself
+// (Constitution I).
+func (r *VariantRepository) Reorder(ctx context.Context, productID uuid.UUID, ids []uuid.UUID) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	positions := make([]int32, len(ids))
+	for i := range positions {
+		positions[i] = int32(i)
+	}
+	const query = `
+		UPDATE product_variants AS v
+		SET position = pos.new_pos, updated_at = now()
+		FROM UNNEST($1::uuid[], $2::int[]) AS pos(id, new_pos)
+		WHERE v.id = pos.id AND v.product_id = $3`
+	tag, err := r.querier(ctx).Exec(ctx, query, ids, positions, productID)
+	if err != nil {
+		return 0, fmt.Errorf("reorder product variants: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ListIDsByProduct returns the identifier of every variant of productID,
+// whatever its sell state, as the sibling set a variant reorder request must
+// address completely (specs/018-catalog-reorder research D2, D5).
+//
+// It is one statement scoped by product_id and is deliberately unordered: the
+// caller uses the values as a set, never as a display order, so no ORDER BY is
+// needed to make the answer correct.
+func (r *VariantRepository) ListIDsByProduct(ctx context.Context, productID uuid.UUID) ([]uuid.UUID, error) {
+	const query = `SELECT id FROM product_variants WHERE product_id = $1`
+	rows, err := r.querier(ctx).Query(ctx, query, productID)
+	if err != nil {
+		return nil, fmt.Errorf("list product variant ids: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan product variant id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// NextFrontPosition returns the position that places a new variant at the front
+// of productID's list: one less than that product's current smallest position,
+// or zero when the product has no variant (specs/018-catalog-reorder research
+// D3).
+//
+// It is one bounded read served by product_variants_product_idx, whose leading
+// columns are product_id and position; adding a variant therefore never shifts
+// every sibling to make room. The caller runs it inside its transaction, so two
+// concurrent adds cannot read the same value.
+func (r *VariantRepository) NextFrontPosition(ctx context.Context, productID uuid.UUID) (int, error) {
+	const query = `SELECT COALESCE(MIN(position) - 1, 0) FROM product_variants WHERE product_id = $1`
+	var position int
+	if err := r.querier(ctx).QueryRow(ctx, query, productID).Scan(&position); err != nil {
+		return 0, fmt.Errorf("read next front variant position: %w", err)
+	}
+	return position, nil
+}
+
 // scanVariant reads one row of the projection declared in NewVariantRepository.
 // The number of destinations must match that projection exactly.
 //

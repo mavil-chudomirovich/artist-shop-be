@@ -227,6 +227,11 @@ type ListAdminInput struct {
 	Page int
 	// PageSize is the number of products per page.
 	PageSize int
+	// All asks for the complete ordered list instead of one page, so a whole
+	// catalogue can be reordered across pages (specs/018-catalog-reorder
+	// FR-015). It is bounded by a documented safety maximum; Page and PageSize
+	// are ignored when it is set.
+	All bool
 }
 
 // AdminProductRefInput addresses one product of the administrator surface by its
@@ -246,8 +251,10 @@ type CreateVariantInput struct {
 	// PriceAmount is the variant's own price, or nil to fall back to the
 	// product's default (FR-017).
 	PriceAmount *int64
-	// Position is the ordering preference.
-	Position int
+	// Position is the ordering preference. A nil value takes the variant's
+	// index in the create payload, so the first payload variant is the
+	// default; a supplied value is honoured (FR-011, research D7).
+	Position *int
 }
 
 // CreateProductInput creates a product together with at least one variant. The
@@ -263,8 +270,10 @@ type CreateProductInput struct {
 	Price model.Price
 	// CategoryID is the one category the product belongs to.
 	CategoryID uuid.UUID
-	// Position is the ordering preference.
-	Position int
+	// Position is the ordering preference. A nil value places the product at
+	// the front of the catalogue; a supplied value is honoured (FR-011,
+	// FR-012).
+	Position *int
 	// Variants carries the variants the product is created with. A product is
 	// created with at least one variant, so an empty list is refused (FR-012,
 	// research D14).
@@ -307,8 +316,10 @@ type AddVariantInput struct {
 	// PriceAmount is the variant's own price, or nil to fall back to the
 	// product's default (FR-017).
 	PriceAmount *int64
-	// Position is the ordering preference.
-	Position int
+	// Position is the ordering preference. A nil value places the added
+	// variant at the front of its product; a supplied value is honoured
+	// (FR-011, research D7).
+	Position *int
 }
 
 // UpdateVariantInput edits one variant. Every member keeps its current value when
@@ -392,4 +403,36 @@ type SetPrimaryPictureInput struct {
 	ProductID uuid.UUID
 	// PictureID is the picture to promote. It is always scoped to ProductID.
 	PictureID uuid.UUID
+}
+
+// ReorderProductsInput replaces the catalogue-wide product order with the
+// submitted order (specs/018-catalog-reorder FR-002). ProductIDs is the
+// complete, ordered set: every product exactly once. The acting administrator is
+// taken from the session, never from this input.
+type ReorderProductsInput struct {
+	// ProductIDs is every product's identifier, in the desired order. The array
+	// must not be empty, must not repeat an identifier, and must name every
+	// existing product (FR-005–FR-008).
+	ProductIDs []uuid.UUID
+}
+
+// ReorderVariantsInput replaces the order of one product's variants with the
+// submitted order (specs/018-catalog-reorder FR-003). VariantIDs is the
+// complete, ordered set of that product's variants, and its first id becomes the
+// default variant (FR-014).
+type ReorderVariantsInput struct {
+	// ProductID is the product whose variants are being ordered.
+	ProductID uuid.UUID
+	// VariantIDs is every variant of the addressed product, in the desired
+	// order: not empty, no repeats, and none belonging to another product
+	// (FR-005–FR-008).
+	VariantIDs []uuid.UUID
+}
+
+// ReorderResult reports the outcome of a reorder. UpdatedCount is how many
+// records' positions the bulk statement wrote, so a client can confirm the whole
+// submitted set was applied (specs/018-catalog-reorder research D1).
+type ReorderResult struct {
+	// UpdatedCount is the number of rows whose position was written.
+	UpdatedCount int64
 }

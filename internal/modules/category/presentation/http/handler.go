@@ -97,12 +97,13 @@ func (h *Handler) GetPublicBySlug(w http.ResponseWriter, r *http.Request) {
 // keeps the display state and the position from a customer (FR-007, FR-014).
 //
 //	@Summary		List every category (ADMIN)
-//	@Description	Returns a page of every category, including the ones not on display, with the position and display state a customer never sees.
+//	@Description	Returns a page of every category, including the ones not on display, with the position and display state a customer never sees. With all=true the complete ordered list is returned instead, bounded by the safety maximum.
 //	@Tags			Category
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			page		query	int	false	"Page number (default 1)"
-//	@Param			pageSize	query	int	false	"Page size (default 20)"
+//	@Param			page		query	int		false	"Page number (default 1)"
+//	@Param			pageSize	query	int		false	"Page size (default 20)"
+//	@Param			all			query	bool	false	"Return the complete ordered list instead of one page (bounded by the safety maximum)"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminCategoryResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
 //	@Failure		401			{object}	httpx.SwaggerError
@@ -114,7 +115,12 @@ func (h *Handler) ListAdmin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-	out, err := h.svc.ListAdmin(r.Context(), appdto.ListAdminInput{Page: page, PageSize: pageSize})
+	all, appErr := allParam(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+	out, err := h.svc.ListAdmin(r.Context(), appdto.ListAdminInput{Page: page, PageSize: pageSize, All: all})
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -279,6 +285,45 @@ func (h *Handler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ReorderCategories replaces the catalogue-wide category order with the
+// complete, ordered set the body carries (specs/018-catalog-reorder FR-001). A
+// bulk reorder has no single target row, so the acting administrator is taken
+// from the session and the affected ids travel in the audit metadata. An empty,
+// duplicate or incomplete array, or an identifier that names no category, is
+// refused and nothing changes (FR-004–FR-008).
+//
+//	@Summary		Reorder every category (ADMIN)
+//	@Description	Replaces the catalogue-wide category order with the submitted order. The array must contain every category exactly once; the first id becomes the first category. Atomic: on any refusal nothing changes. The acting administrator comes from the session, never the body.
+//	@Tags			Category
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body	httpdto.ReorderCategoriesRequest	true	"Complete, ordered category ids"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.ReorderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		403		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Router			/admin/categories/reorder [put]
+func (h *Handler) ReorderCategories(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	var req httpdto.ReorderCategoriesRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	ctx := appinterface.WithActor(r.Context(), actor)
+	out, err := h.svc.ReorderCategories(ctx, appdto.ReorderCategoriesInput{CategoryIDs: req.CategoryIDs})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.ReorderResponse{UpdatedCount: out.UpdatedCount})
+}
+
 // decode reads a JSON body and rejects unknown members, matching the
 // additionalProperties: false of the administrator request schemas. A body that
 // tries to name the acting account is therefore refused rather than decoded.
@@ -349,6 +394,21 @@ func positiveQuery(raw string, fallback int) (int, error) {
 	}
 	if parsed < 1 {
 		return 0, errors.New("below the lower bound")
+	}
+	return parsed, nil
+}
+
+// allParam reads the optional `all` selector of the administrator list. Absent
+// means the ordinary page; a value that is not a boolean is a request-shape
+// problem naming the member (specs/018-catalog-reorder FR-015, research D10).
+func allParam(r *http.Request) (bool, *httpx.AppError) {
+	raw := strings.TrimSpace(r.URL.Query().Get("all"))
+	if raw == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fieldError(fieldAll, "must be true or false")
 	}
 	return parsed, nil
 }
