@@ -177,7 +177,9 @@ ratings and moderation. Allowing feedback before delivery — rejected by the us
 
 **Decision**: New codes — `ORDER_IMAGE_TYPE_UNSUPPORTED` (400), `ORDER_IMAGE_TOO_LARGE` (413),
 `ORDER_IMAGE_LIMIT_REACHED` (409, more than five at a stage), `ORDER_FEEDBACK_NOT_ALLOWED` (409, the
-order is not delivered/completed), `ORDER_FEEDBACK_ALREADY_SENT` (409, a second feedback). Reused:
+order is not delivered/completed), `ORDER_FEEDBACK_ALREADY_SENT` (409, a second feedback),
+`ORDER_MEDIA_UNAVAILABLE` (503, the provider rejected an upload or is unreachable — mirroring module 04's
+`PRODUCT_MEDIA_UNAVAILABLE`). Reused:
 `ORDER_STATE_TRANSITION_INVALID` (dispatch/delivery/confirm on the wrong state, naming the current
 state), `ORDER_NOT_FOUND`, `VALIDATION_ERROR` (missing/oversized `content`, wrong part), plus the shared
 `MALFORMED_REQUEST`, `UNAUTHENTICATED`, `FORBIDDEN`, `RATE_LIMITED`, `INTERNAL_ERROR`.

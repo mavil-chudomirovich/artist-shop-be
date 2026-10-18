@@ -12,6 +12,7 @@ appears; this file records what each means and which situations deliberately reu
 | `ORDER_IMAGE_LIMIT_REACHED` | 409 | More than five photos were attached to one delivery step (reachable when the total request body stays under the route ceiling) | No — send at most five |
 | `ORDER_FEEDBACK_NOT_ALLOWED` | 409 | Feedback was submitted while the order is not `DELIVERED` or `COMPLETED` | No — wait until the order is delivered |
 | `ORDER_FEEDBACK_ALREADY_SENT` | 409 | A second feedback was submitted for the same order | No — one feedback per order |
+| `ORDER_MEDIA_UNAVAILABLE` | 503 | The media provider rejected a photo upload or could not be reached (also when no credentials are configured) | Yes — retry later; the order is unchanged |
 
 ### Why the photo codes mirror the product codes
 
@@ -52,5 +53,6 @@ All of `010`'s remain in use: `ORDER_NOT_FOUND`, `ORDER_CART_EMPTY`, `ORDER_ITEM
 | A delivered order passes its five-day window without the customer confirming | It is not an error: the order completes itself, which the customer sees on the order, not as a failed request |
 | The customer confirms receipt at the same moment the sweep completes the order | It is not an error: the second act finds the order already completed; the order simply shows `COMPLETED` |
 | A photo upload succeeds at the media provider but the order write fails | It is not a client error: the request fails as it would have, and the orphaned asset is an accepted cost (the product module's rule) |
+| The media provider is down or unconfigured during an upload | `ORDER_MEDIA_UNAVAILABLE` (503) — a retryable outage, mirroring module 04's `PRODUCT_MEDIA_UNAVAILABLE`; the order is left unchanged |
 | The `SHIPPED` → `SHIPPING` rename for an existing order | It is not an error: the migration backfills the value; a client reading `SHIPPING` sees the same order |
 | An order rests at `SHIPPING`/`DELIVERED` because a delivery failed | It is not an error but a **deferred** capability: there is no failed/returned state yet (`deferred.md`) |

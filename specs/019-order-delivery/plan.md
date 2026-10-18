@@ -58,7 +58,9 @@ index-bounded (`orders_completion_idx`); a tick does two short sweeps (expiry, c
 **Constraints**: Money stays **integer minor units plus an explicit currency**, and the total is
 unchanged by this feature (still **no shipping fee**, ADR 015 §5). Photo bytes live **outside** the
 database (Constitution, Media); only the reference is stored, with the same **2 MB / JPEG-PNG-WebP**
-ceiling as avatars and product pictures. The per-step photo ceiling is **five**. The auto-completion
+ceiling as avatars and product pictures. The per-step photo ceiling is **five**; because five 2 MB photos
+exceed the default 4 MiB pipeline ceiling, the composition root **raises `MAX_BODY_BYTES`** and guards it at
+startup (mirroring `RequireAvatarUploadCeiling`) so the pipeline never cuts a legitimately-sized dispatch. The auto-completion
 window is **five days** from `delivered_at`, owned by the order module as a constant. Every customer
 route takes the owner from the session; the operator routes require `ADMIN`. The media store must not be
 called while a database lock is held.

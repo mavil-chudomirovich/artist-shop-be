@@ -57,6 +57,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '503': { $ref: '#/components/responses/MediaUnavailable' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -93,6 +94,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '503': { $ref: '#/components/responses/MediaUnavailable' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -191,6 +193,11 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
     PayloadTooLarge:
       description: ORDER_IMAGE_TOO_LARGE — an uploaded photo exceeds the size ceiling
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    MediaUnavailable:
+      description: ORDER_MEDIA_UNAVAILABLE — the media provider rejected the upload or is unreachable
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
