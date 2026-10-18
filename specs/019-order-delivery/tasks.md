@@ -192,12 +192,12 @@ description: "Task list for Order Delivery & Completion (module 07 extension)"
 
 ### Tests for User Story 6 ⚠️
 
-- [ ] T047 [P] [US6] Use-case tests `internal/modules/order/application/implement/notify_test.go` (over a fake notifier): the customer is notified on `SHIPPING`, `DELIVERED` and `COMPLETED` (including the automatic completion); the artist is notified when feedback arrives; a notifier error does not fail the operation (FR-021, FR-022, FR-023)
+- [X] T047 [P] [US6] Use-case tests `internal/modules/order/application/implement/notify_test.go` (over a fake notifier): the customer is notified on `SHIPPING`, `DELIVERED` and `COMPLETED` (including the automatic completion); the artist is notified when feedback arrives; a notifier error does not fail the operation (FR-021, FR-022, FR-023)
 
 ### Implementation for User Story 6
 
-- [ ] T048 [US6] In `internal/modules/order/application/implement/{delivery.go,completion.go,feedback.go}`: compose and send the notifications after the transaction commits (best-effort, errors logged) — the customer on each new status, the artist on feedback — reusing the existing `Notifier` port and `notifyCustomerStatusChange` (research D12)
-- [ ] T049 [US6] Extend `internal/modules/order/presentation/http/order_integration_test.go` and `internal/modules/order/application/implement/notify_test.go` to assert the notifications fire for the new status changes and the feedback, and that a failing notifier leaves the order and feedback correct (SC-005, FR-023)
+- [X] T048 [US6] In `internal/modules/order/application/implement/{delivery.go,completion.go,feedback.go}`: compose and send the notifications after the transaction commits (best-effort, errors logged) — the customer on each new status, the artist on feedback — reusing the existing `Notifier` port and `notifyCustomerStatusChange` (research D12)
+- [X] T049 [US6] Extend `internal/modules/order/presentation/http/order_integration_test.go` and `internal/modules/order/application/implement/notify_test.go` to assert the notifications fire for the new status changes and the feedback, and that a failing notifier leaves the order and feedback correct (SC-005, FR-023)
 
 **Checkpoint**: Both sides are notified, and email never breaks an order operation.
 

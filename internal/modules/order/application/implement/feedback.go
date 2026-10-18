@@ -23,6 +23,10 @@ import (
 // order that already carries feedback, and the unique index on order_feedback
 // (order_id) refuses the row a concurrent submission would add. Whichever layer
 // catches it, the client sees ORDER_FEEDBACK_ALREADY_SENT (FR-016, research D8).
+//
+// Once the feedback has committed, the artist is emailed that the order carries it
+// through the existing Notifier port — best-effort and after the commit, so a
+// delivery failure never fails the feedback (FR-022, FR-023, research D12).
 
 // SubmitFeedback records the caller's order-level feedback and answers the order
 // with it attached (FR-015 to FR-017).
@@ -49,6 +53,7 @@ func (s *Service) SubmitFeedback(ctx context.Context, in dto.FeedbackInput) (dto
 	}
 
 	var view dto.OrderView
+	var submitted *model.Order
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.LockByID(txCtx, in.OrderID)
 		if err != nil {
@@ -92,10 +97,15 @@ func (s *Service) SubmitFeedback(ctx context.Context, in dto.FeedbackInput) (dto
 			return err
 		}
 		order.Feedback = &feedback
+		submitted = order
 		view = s.Mapper.Order(*order)
 		return nil
 	}); err != nil {
 		return dto.OrderView{}, err
 	}
+	// The artist is told the order carries feedback. Sent after the transaction
+	// committed and best-effort, so a delivery failure never fails the feedback
+	// (FR-022, FR-023, research D12).
+	s.notifyArtistFeedbackReceived(ctx, submitted)
 	return view, nil
 }

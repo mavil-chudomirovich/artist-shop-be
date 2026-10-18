@@ -15,14 +15,15 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 )
 
-// This file is the use-case contract of US5: both sides are notified. The artist
-// is emailed whenever an order needs confirmation — a fresh checkout and any edit
-// that leaves the order awaiting confirmation — and the customer is emailed on
-// every status change. Sending is best-effort and runs after the transaction
-// commits, so a failing notifier never fails the order operation (FR-019 to
-// FR-021, research D9). It runs the real use cases over a fake notifier and the
-// in-memory fakes of every contract, so the answers asserted are the service's
-// own.
+// This file is the use-case contract of the notification behaviour: both sides are
+// notified. The artist is emailed whenever an order needs confirmation — a fresh
+// checkout and any edit that leaves the order awaiting confirmation — and when the
+// customer submits order feedback; the customer is emailed on every status change,
+// including the delivery lifecycle's new SHIPPING, DELIVERED and COMPLETED states
+// (FR-021, FR-022). Sending is best-effort and runs after the transaction commits,
+// so a failing notifier never fails the order operation (FR-023, research D12). It
+// runs the real use cases over a fake notifier and the in-memory fakes of every
+// contract, so the answers asserted are the service's own.
 
 // The two mailbox addresses the fixture uses: the shop operator's configured
 // address and the customer's account address.
@@ -206,6 +207,103 @@ func TestShipThenConfirmEmailTheCustomer(t *testing.T) {
 	assertEmailNames(t, toCustomer[1], order.ID.String(), string(constant.StatusCompleted))
 }
 
+// FR-021: delivering an in-transit order emails the customer the new DELIVERED
+// state the delivery lifecycle introduces, and does not reach the artist.
+func TestDeliverEmailsTheCustomerDelivered(t *testing.T) {
+	owner := uuid.New()
+	order := orderAt(owner, fixedNow, line(uuid.New(), 1000, 1))
+	order.Status = constant.StatusShipping
+	f := newDeliveryFixture(order)
+	notifier := &fakeNotifier{}
+	enableNotifications(f.svc, notifier, owner)
+
+	if _, err := f.svc.DeliverByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{OrderID: order.ID}); err != nil {
+		t.Fatalf("DeliverByAdmin: %v", err)
+	}
+
+	toCustomer := messagesTo(notifier, customerEmail)
+	if len(toCustomer) != 1 {
+		t.Fatalf("delivering must email the customer once, got %+v", notifier.sent)
+	}
+	assertEmailNames(t, toCustomer[0], order.ID.String(), string(constant.StatusDelivered))
+	if got := messagesTo(notifier, artistEmail); len(got) != 0 {
+		t.Fatalf("a delivery must not email the artist, got %+v", got)
+	}
+}
+
+// FR-021: the completion sweep's automatic completion emails the customer
+// COMPLETED, just as the customer's own confirmation does, so the order nobody
+// confirms still reaches the customer.
+func TestAutoCompleteEmailsTheCustomer(t *testing.T) {
+	owner := uuid.New()
+	order := expiredDeliveryOrder(owner, fixedNow.Add(-model.DeliveryCompletionWindow-time.Hour))
+	f := newCompletionFixture(order)
+	notifier := &fakeNotifier{}
+	enableNotifications(f.svc, notifier, owner)
+
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+
+	toCustomer := messagesTo(notifier, customerEmail)
+	if len(toCustomer) != 1 {
+		t.Fatalf("the automatic completion must email the customer once, got %+v", notifier.sent)
+	}
+	assertEmailNames(t, toCustomer[0], order.ID.String(), string(constant.StatusCompleted))
+	if got := messagesTo(notifier, artistEmail); len(got) != 0 {
+		t.Fatalf("an automatic completion must not email the artist, got %+v", got)
+	}
+}
+
+// FR-022: when the customer submits feedback, the artist is emailed that the
+// order carries it, and the customer is not — the message is the artist's.
+func TestFeedbackEmailsTheArtist(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+	notifier := &fakeNotifier{}
+	enableNotifications(f.svc, notifier, owner)
+
+	const content = "Giao hàng cẩn thận, tranh nguyên vẹn"
+	if _, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{OrderID: order.ID, Content: content}); err != nil {
+		t.Fatalf("SubmitFeedback: %v", err)
+	}
+
+	toArtist := messagesTo(notifier, artistEmail)
+	if len(toArtist) != 1 {
+		t.Fatalf("a feedback must email the artist once, got %+v", notifier.sent)
+	}
+	if !strings.Contains(toArtist[0].subject, order.ID.String()) || !strings.Contains(toArtist[0].body, order.ID.String()) {
+		t.Fatalf("the artist's note must name the order %s, got subject %q body %q", order.ID, toArtist[0].subject, toArtist[0].body)
+	}
+	if !strings.Contains(toArtist[0].body, content) {
+		t.Fatalf("the artist's note must carry the feedback, got body %q", toArtist[0].body)
+	}
+	if got := messagesTo(notifier, customerEmail); len(got) != 0 {
+		t.Fatalf("a feedback must not email the customer, got %+v", got)
+	}
+}
+
+// FR-022, FR-023: a feedback reached over a failing notifier is still stored and
+// answered — email never fails the feedback operation, and no note is recorded.
+func TestAFailingNotifierDoesNotFailFeedback(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+	enableNotifications(f.svc, &fakeNotifier{err: errors.New("smtp unavailable")}, owner)
+
+	view, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{OrderID: order.ID, Content: "vẫn gửi được"})
+	if err != nil {
+		t.Fatalf("a failing notifier must not fail feedback, got %v", err)
+	}
+	if view.Feedback == nil || view.Feedback.Content != "vẫn gửi được" {
+		t.Fatalf("the feedback must still be recorded, got %+v", view.Feedback)
+	}
+	if len(f.orders.inserts) != 1 {
+		t.Fatalf("the feedback row must still be written, got %d", len(f.orders.inserts))
+	}
+}
+
 // FR-011, FR-020: a customer cancel emails the customer its cancellation.
 func TestCancelEmailsTheCustomer(t *testing.T) {
 	owner := uuid.New()
@@ -347,5 +445,18 @@ func TestAFailingNotifierDoesNotFailTheOrderOperation(t *testing.T) {
 	}
 	if order.Status != constant.StatusPaymentPending {
 		t.Fatalf("the confirmation must still take effect, got %s", order.Status)
+	}
+
+	// A dispatch over a failing notifier still moves the order SHIPPING.
+	paid := orderAt(uuid.New(), fixedNow, line(uuid.New(), 1000, 1))
+	paid.Status = constant.StatusPaid
+	delivery := newDeliveryFixture(paid)
+	enableNotifications(delivery.svc, &fakeNotifier{err: errors.New("smtp unavailable")}, paid.UserID)
+
+	if _, err := delivery.svc.StartShippingByAdmin(adminContext(uuid.New()), appdto.EvidenceInput{OrderID: paid.ID}); err != nil {
+		t.Fatalf("a failing notifier must not fail dispatch, got %v", err)
+	}
+	if paid.Status != constant.StatusShipping {
+		t.Fatalf("the dispatch must still take effect, got %s", paid.Status)
 	}
 }

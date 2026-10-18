@@ -1207,6 +1207,87 @@ func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
 	}
 }
 
+// assertCustomerNotifiedStatus fails unless one of the customer's captured
+// messages names the given status in its body, so a test can prove a transition
+// was emailed.
+func assertCustomerNotifiedStatus(t *testing.T, messages []notifyMessage, status constant.Status) {
+	t.Helper()
+	for _, message := range messages {
+		if strings.Contains(message.body, string(status)) {
+			return
+		}
+	}
+	t.Fatalf("the customer must be emailed %s, got %+v", status, messages)
+}
+
+// FR-021, FR-022, FR-023, SC-005 against real PostgreSQL: the customer is emailed
+// on each status the delivery lifecycle introduces — SHIPPING, DELIVERED and
+// COMPLETED (the last by the sweep's automatic completion) — and the artist is
+// emailed when the customer submits feedback; and a notifier that fails leaves the
+// order and the feedback correct.
+func TestDeliveryAndFeedbackNotificationsFireAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	seedOrderCustomer(t, f.pool, testCustomerTwoID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+	orderID := checkoutDeliveredOrder(t, f)
+
+	customerEmail := "order-customer-" + testCustomerID.String() + "@example.com"
+
+	// FR-021: the dispatch and the delivery emailed the customer the two new
+	// states they introduced.
+	assertCustomerNotifiedStatus(t, f.notifier.messagesTo(customerEmail), constant.StatusShipping)
+	assertCustomerNotifiedStatus(t, f.notifier.messagesTo(customerEmail), constant.StatusDelivered)
+
+	// FR-012, FR-021: aged past the window, the sweep completes the order and
+	// emails the customer COMPLETED, exactly as the customer's own confirmation
+	// would.
+	backdateDelivery(t, f.pool, orderID, model.DeliveryCompletionWindow+time.Hour)
+	if err := f.svc.AutoCompleteDelivered(context.Background()); err != nil {
+		t.Fatalf("AutoCompleteDelivered: %v", err)
+	}
+	if got := orderStatus(t, f.pool, orderID); got != string(constant.StatusCompleted) {
+		t.Fatalf("the aged order must be COMPLETED, got %s", got)
+	}
+	assertCustomerNotifiedStatus(t, f.notifier.messagesTo(customerEmail), constant.StatusCompleted)
+
+	// FR-022: the customer's feedback on the completed order emails the artist.
+	const content = "Dong goi rat can than"
+	rec := perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
+		`{"content":"`+content+`"}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	artistMessages := f.notifier.messagesTo(integrationArtistEmail)
+	feedbackEmailed := false
+	for _, message := range artistMessages {
+		if strings.Contains(message.body, orderID.String()) && strings.Contains(message.body, content) {
+			feedbackEmailed = true
+		}
+	}
+	if !feedbackEmailed {
+		t.Fatalf("the artist must be emailed the feedback, got %+v", f.notifier.snapshot())
+	}
+
+	// FR-023: with the notifier failing, a delivered order's feedback is still
+	// stored and the order is left correct — email never breaks the operation.
+	seedOrderCart(t, f.pool, testCustomerTwoID, product, 1, 120000)
+	otherOrderID := checkoutDeliveredOrderAs(t, f, "customer2-token")
+	f.notifier.setFail(true)
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+otherOrderID.String()+"/feedback",
+		`{"content":"van gui duoc"}`, "customer2-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback over a failing notifier: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := feedbackCount(t, f.pool, otherOrderID); got != 1 {
+		t.Fatalf("the feedback must still be stored, got %d rows", got)
+	}
+	if got := orderStatus(t, f.pool, otherOrderID); got != string(constant.StatusDelivered) {
+		t.Fatalf("a failing notifier must leave the order DELIVERED, got %s", got)
+	}
+}
+
 // evidenceJPEG is a minimal payload whose leading bytes are a JPEG signature, so
 // the domain sniff accepts it. The trailing bytes stand in for image content.
 func evidenceJPEG() []byte { return []byte{0xFF, 0xD8, 0xFF, 0x00, 0x11, 0x22} }
@@ -1934,6 +2015,19 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 	}
 	if answered.Data.Feedback == nil || answered.Data.Feedback.Content != content {
 		t.Fatalf("the answer must carry the recorded feedback, got %+v", answered.Data.Feedback)
+	}
+
+	// FR-022: the artist is emailed that the order carries the feedback, named
+	// with the order and its content.
+	artistMessages := f.notifier.messagesTo(integrationArtistEmail)
+	feedbackEmailed := false
+	for _, message := range artistMessages {
+		if strings.Contains(message.body, orderID.String()) && strings.Contains(message.body, content) {
+			feedbackEmailed = true
+		}
+	}
+	if !feedbackEmailed {
+		t.Fatalf("the artist must be emailed the feedback, got %+v", f.notifier.snapshot())
 	}
 
 	// It is persisted with the session's author.
