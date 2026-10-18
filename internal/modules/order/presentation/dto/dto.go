@@ -60,6 +60,18 @@ type TransferRequest struct {
 	Email string `json:"email"`
 }
 
+// FeedbackRequest is the body of a customer's order-level feedback
+// (contracts/openapi.yaml, FeedbackRequest). `content` is required and must carry
+// 1 to 2000 characters after trimming; a missing, blank or over-long value is
+// reported as VALIDATION_ERROR naming `content` (FR-015). It is a plain string so
+// the handler can apply that rule itself rather than lose it to a decode failure.
+// The schema is additionalProperties: false and the handler decodes it with
+// unknown members refused, so a client cannot name the author or an owner.
+type FeedbackRequest struct {
+	// Content is the feedback text sent to the artist.
+	Content string `json:"content"`
+}
+
 // MoneyResponse is money as an integer amount in the currency's minor unit plus
 // its currency, the shape the contract shows (FR-008).
 type MoneyResponse struct {

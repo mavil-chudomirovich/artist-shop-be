@@ -4729,6 +4729,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/orders/{orderId}/feedback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records the caller's one order-level feedback for a delivered or completed order and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Send order-level feedback to the artist",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order identifier",
+                        "name": "orderId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Feedback content, 1 to 2000 characters",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerSuccess"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/orders/{orderId}/payment": {
             "get": {
                 "security": [
@@ -6563,6 +6657,15 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.EditLineRequest"
                     }
+                }
+            }
+        },
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackRequest": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "description": "Content is the feedback text sent to the artist.",
+                    "type": "string"
                 }
             }
         },

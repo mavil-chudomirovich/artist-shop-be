@@ -1502,8 +1502,9 @@ func TestAdminDeliversWithPhotosAgainstPostgres(t *testing.T) {
 	}
 
 	// FR-010, FR-015, FR-017: the customer's own detail projects the same evidence
-	// the operator sees, with `feedback` present and null until the customer writes
-	// one. There is no feedback route yet, so the null shape is what this asserts.
+	// the operator sees, with `feedback` present and null before the customer has
+	// written any (the feedback route is exercised by
+	// TestCustomerSendsFeedbackAgainstPostgres).
 	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("customer detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -1708,7 +1709,14 @@ func TestCustomerConfirmsReceiptAgainstPostgres(t *testing.T) {
 // age the delivery and exercise the five-day sweep against real PostgreSQL.
 func checkoutDeliveredOrder(t *testing.T, f *orderIntegrationFixture) uuid.UUID {
 	t.Helper()
-	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	return checkoutDeliveredOrderAs(t, f, "customer-token")
+}
+
+// checkoutDeliveredOrderAs is checkoutDeliveredOrder for a named session, so a
+// test can produce a delivered order for a second customer too.
+func checkoutDeliveredOrderAs(t *testing.T, f *orderIntegrationFixture, token string) uuid.UUID {
+	t.Helper()
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, token)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1895,4 +1903,153 @@ func TestCustomerConfirmationRacesTheCompletionSweepAgainstPostgres(t *testing.T
 	if again := f.auditRows(t, constant.AuditOrderCompleted); len(again) != 1 {
 		t.Fatalf("the race must produce a single completion, got %d audit rows", len(again))
 	}
+}
+
+// SC-005, FR-015, FR-016, FR-018 against real PostgreSQL: the owner sends one
+// order-level feedback through the route, it persists and reads back on the order
+// detail, a second submission is refused ORDER_FEEDBACK_ALREADY_SENT, and a
+// concurrent duplicate insert is refused by the order_feedback_order_key unique
+// index - surfaced as the same refusal rather than an internal error. Another
+// customer's order answers ORDER_NOT_FOUND and is left without feedback.
+func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	seedOrderCustomer(t, f.pool, testCustomerTwoID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	seedOrderCart(t, f.pool, testCustomerID, product, 2, 120000)
+	orderID := checkoutDeliveredOrder(t, f)
+
+	const content = "Giao hang can than, tranh nguyen ven"
+
+	// FR-015, FR-017: the owner sends feedback for the delivered order and the
+	// answer carries it.
+	rec := perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
+		`{"content":"`+content+`"}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var answered orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &answered); err != nil {
+		t.Fatalf("decode the feedback answer %q: %v", rec.Body.String(), err)
+	}
+	if answered.Data.Feedback == nil || answered.Data.Feedback.Content != content {
+		t.Fatalf("the answer must carry the recorded feedback, got %+v", answered.Data.Feedback)
+	}
+
+	// It is persisted with the session's author.
+	var storedAuthor uuid.UUID
+	var storedContent string
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT author_id, content FROM order_feedback WHERE order_id = $1`, orderID).
+		Scan(&storedAuthor, &storedContent); err != nil {
+		t.Fatalf("read the stored feedback: %v", err)
+	}
+	if storedAuthor != testCustomerID {
+		t.Fatalf("the feedback must name the session's account %s, got %s", testCustomerID, storedAuthor)
+	}
+	if storedContent != content {
+		t.Fatalf("the stored feedback must carry the sent content, got %q", storedContent)
+	}
+
+	// FR-017: the customer's detail reads the feedback back.
+	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("customer detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var detail orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode the customer detail %q: %v", rec.Body.String(), err)
+	}
+	if detail.Data.Feedback == nil || detail.Data.Feedback.Content != content {
+		t.Fatalf("the customer detail must carry the feedback, got %+v", detail.Data.Feedback)
+	}
+
+	// FR-016: a second submission is refused and does not add a row.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
+		`{"content":"second attempt"}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second feedback: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeFeedbackAlreadySent {
+		t.Fatalf("expected ORDER_FEEDBACK_ALREADY_SENT, got %s", body.Error.Code)
+	}
+	if got := feedbackCount(t, f.pool, orderID); got != 1 {
+		t.Fatalf("a refused second feedback must not add a row, got %d", got)
+	}
+
+	// A fresh delivered order owned by the second customer, so the concurrency
+	// check starts from an order with no feedback.
+	seedOrderCart(t, f.pool, testCustomerTwoID, product, 1, 120000)
+	otherOrderID := checkoutDeliveredOrderAs(t, f, "customer2-token")
+
+	// FR-018: another customer's order answers the same not-found, and nothing is
+	// written.
+	rec = perform(f.root, http.MethodPost, ordersPath+"/"+otherOrderID.String()+"/feedback",
+		`{"content":"not my order"}`, "customer-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("another customer's order: expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+	if got := feedbackCount(t, f.pool, otherOrderID); got != 0 {
+		t.Fatalf("a foreign feedback must write nothing, got %d rows", got)
+	}
+
+	// FR-016, research D8: two concurrent inserts race; the unique index refuses
+	// one, and the repository surfaces it as ORDER_FEEDBACK_ALREADY_SENT.
+	repo := orderpostgres.NewOrderRepository(f.pool)
+	uow := &database.DB{Pool: f.pool}
+	contents := []string{"concurrent-a", "concurrent-b"}
+	results := make([]error, len(contents))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range contents {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = uow.WithinTx(context.Background(), func(txCtx context.Context) error {
+				return repo.InsertFeedback(txCtx, model.Feedback{
+					ID:        uuid.New(),
+					OrderID:   otherOrderID,
+					AuthorID:  testCustomerTwoID,
+					Content:   contents[i],
+					CreatedAt: time.Now().UTC(),
+				})
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	inserted, duplicates := 0, 0
+	for i, err := range results {
+		switch {
+		case err == nil:
+			inserted++
+		case errors.Is(err, domainerr.ErrFeedbackAlreadySent):
+			duplicates++
+		default:
+			t.Fatalf("concurrent insert %d: unexpected error: %v", i, err)
+		}
+	}
+	if inserted != 1 || duplicates != 1 {
+		t.Fatalf("the unique index must admit exactly one insert and refuse the other, got %d inserted and %d duplicates",
+			inserted, duplicates)
+	}
+	if got := feedbackCount(t, f.pool, otherOrderID); got != 1 {
+		t.Fatalf("the race must leave exactly one feedback row, got %d", got)
+	}
+}
+
+// feedbackCount reads how many feedback rows one order carries.
+func feedbackCount(t *testing.T, pool *pgxpool.Pool, orderID uuid.UUID) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM order_feedback WHERE order_id = $1`, orderID).Scan(&count); err != nil {
+		t.Fatalf("read the feedback count: %v", err)
+	}
+	return count
 }

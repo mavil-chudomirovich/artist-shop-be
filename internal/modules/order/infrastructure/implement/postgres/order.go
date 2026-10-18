@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
@@ -23,6 +24,14 @@ import (
 // table is the order table this adapter owns. The lines live in order_items; this
 // adapter is the only code that reads or writes both.
 const table = "orders"
+
+// uniqueViolationCode is the SQLSTATE PostgreSQL reports for a unique-index
+// rejection (23505), and feedbackOrderKey is the one-per-order index whose
+// rejection means a second feedback was attempted (FR-016, research D8).
+const (
+	uniqueViolationCode = "23505"
+	feedbackOrderKey    = "order_feedback_order_key"
+)
 
 // orderColumns is the explicit projection of an order row, matching the scan
 // arity of scanOrder. It declares the shape rather than following the physical
@@ -663,6 +672,11 @@ func (r *OrderRepository) CountDeliveryPhotos(ctx context.Context, orderID uuid.
 // InsertFeedback records the customer's one order-level feedback. The unique index
 // on (order_id) is the storage-level guarantee that an order takes at most one
 // feedback, so a second insert is refused by the database (FR-016, research D8).
+//
+// A rejection by that index is translated to domainerr.ErrFeedbackAlreadySent, so
+// a submission that loses a race to a concurrent one still answers the documented
+// refusal rather than leaking a storage error. Any other failure is wrapped as
+// usual.
 func (r *OrderRepository) InsertFeedback(ctx context.Context, feedback model.Feedback) error {
 	id := feedback.ID
 	if id == uuid.Nil {
@@ -678,6 +692,10 @@ func (r *OrderRepository) InsertFeedback(ctx context.Context, feedback model.Fee
 		feedback.Content,
 		feedback.CreatedAt,
 	); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == uniqueViolationCode && pgErr.ConstraintName == feedbackOrderKey {
+			return domainerr.ErrFeedbackAlreadySent
+		}
 		return fmt.Errorf("insert order feedback: %w", err)
 	}
 	return nil

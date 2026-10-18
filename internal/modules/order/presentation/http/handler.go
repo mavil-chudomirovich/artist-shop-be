@@ -49,6 +49,10 @@ type Service interface {
 	// confirming receipt; another customer's order answers not-found (FR-011,
 	// FR-014, FR-018).
 	ConfirmReceived(ctx context.Context, in appdto.OrderRefInput) (appdto.OrderView, error)
+	// SubmitFeedback records the caller's one order-level feedback for a
+	// delivered or completed order; another customer's order answers not-found
+	// (FR-015, FR-016, FR-018).
+	SubmitFeedback(ctx context.Context, in appdto.FeedbackInput) (appdto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).
@@ -372,6 +376,65 @@ func (h *Handler) ConfirmReceived(w http.ResponseWriter, r *http.Request) {
 
 	ctx := appinterface.WithActor(r.Context(), actor)
 	view, err := h.svc.ConfirmReceived(ctx, appdto.OrderRefInput{OrderID: orderID})
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
+// SubmitFeedback sends the signed-in customer's one order-level feedback to the
+// artist about a delivered or completed order. The author is the session's,
+// never the request's. The content is required and must carry 1 to 2000
+// characters after trimming; a blank or over-long value is 400 VALIDATION_ERROR
+// naming `content`. An order that is not delivered or completed answers 409
+// ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409
+// ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another
+// customer, answers 404 ORDER_NOT_FOUND (FR-015 to FR-018,
+// contracts/error-codes.md).
+//
+//	@Summary		Send order-level feedback to the artist
+//	@Description	Records the caller's one order-level feedback for a delivered or completed order and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.
+//	@Tags			Orders
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			orderId	path	string					true	"Order identifier"
+//	@Param			request	body	httpdto.FeedbackRequest	true	"Feedback content, 1 to 2000 characters"
+//	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
+//	@Failure		400		{object}	httpx.SwaggerError
+//	@Failure		401		{object}	httpx.SwaggerError
+//	@Failure		404		{object}	httpx.SwaggerError
+//	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		429		{object}	httpx.SwaggerError
+//	@Failure		500		{object}	httpx.SwaggerError
+//	@Router			/orders/{orderId}/feedback [post]
+func (h *Handler) SubmitFeedback(w http.ResponseWriter, r *http.Request) {
+	actor, ok := h.sessionActor(w, r)
+	if !ok {
+		return
+	}
+	orderID, appErr := pathUUID(r, "orderId", fieldOrderID)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
+		return
+	}
+
+	var req httpdto.FeedbackRequest
+	if err := decode(r, &req); err != nil {
+		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+		return
+	}
+	// The same rule the use case applies, checked here so a malformed message is
+	// refused before any order is read and the detail names `content`
+	// (FR-015, contracts/error-codes.md).
+	if err := model.ValidateFeedbackContent(req.Content); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	ctx := appinterface.WithActor(r.Context(), actor)
+	view, err := h.svc.SubmitFeedback(ctx, appdto.FeedbackInput{OrderID: orderID, Content: req.Content})
 	if err != nil {
 		h.fail(w, r, err)
 		return

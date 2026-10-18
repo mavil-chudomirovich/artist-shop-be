@@ -42,6 +42,9 @@ type fakeOrders struct {
 	completeView appdto.OrderView
 	completeErr  error
 
+	feedbackView appdto.OrderView
+	feedbackErr  error
+
 	gotListInput     appdto.ListInput
 	gotListActor     appinterface.Actor
 	gotRefInput      appdto.OrderRefInput
@@ -50,8 +53,11 @@ type fakeOrders struct {
 	gotCancelActor   appinterface.Actor
 	gotCompleteInput appdto.OrderRefInput
 	gotCompleteActor appinterface.Actor
+	gotFeedbackInput appdto.FeedbackInput
+	gotFeedbackActor appinterface.Actor
 	cancelCalls      int
 	completeCalls    int
+	feedbackCalls    int
 }
 
 type cancelResponse struct {
@@ -87,6 +93,13 @@ func (f *fakeOrders) ConfirmReceived(ctx context.Context, in appdto.OrderRefInpu
 	f.gotCompleteActor, _ = appinterface.ActorFromContext(ctx)
 	f.completeCalls++
 	return f.completeView, f.completeErr
+}
+
+func (f *fakeOrders) SubmitFeedback(ctx context.Context, in appdto.FeedbackInput) (appdto.OrderView, error) {
+	f.gotFeedbackInput = in
+	f.gotFeedbackActor, _ = appinterface.ActorFromContext(ctx)
+	f.feedbackCalls++
+	return f.feedbackView, f.feedbackErr
 }
 
 // orderListBody decodes the paginated list answer.
@@ -406,6 +419,123 @@ func TestConfirmReceivedRefusesANonDeliveredOrder(t *testing.T) {
 	}
 }
 
+// FR-015, FR-017: sending feedback for a delivered order answers 200 with the
+// order carrying the recorded feedback, and the author and identifier are the
+// session's and the path's.
+func TestSubmitFeedbackReturnsTheOrderWithTheRecordedFeedback(t *testing.T) {
+	view := sampleView()
+	view.Status = constant.StatusDelivered
+	view.Feedback = &appdto.FeedbackView{Content: "Giao hang can than", CreatedAt: view.CreatedAt}
+	fake := &fakeOrders{feedbackView: view}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+view.ID.String()+"/feedback",
+		`{"content":"Giao hang can than"}`, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	if body.Data.Feedback == nil || body.Data.Feedback.Content != "Giao hang can than" {
+		t.Fatalf("the answer must carry the recorded feedback, got %+v", body.Data.Feedback)
+	}
+	if fake.gotFeedbackInput.OrderID != view.ID || fake.gotFeedbackInput.Content != "Giao hang can than" {
+		t.Fatalf("the addressed id and the content must be passed through, got %+v", fake.gotFeedbackInput)
+	}
+	if fake.gotFeedbackActor.ID != testCustomerID {
+		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotFeedbackActor.ID)
+	}
+}
+
+// FR-015, contracts/error-codes.md: an empty, blank or over-long content is 400
+// VALIDATION_ERROR naming `content`, before the use case is reached.
+func TestSubmitFeedbackRejectsInvalidContent(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty", `{"content":""}`},
+		{"blank", `{"content":"   "}`},
+		{"over the ceiling", `{"content":"` + strings.Repeat("a", 2001) + `"}`},
+		{"missing", `{}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeOrders{}
+			router := newOrderRouter(fake)
+			rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", tc.body, "customer-token")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			body := decodeError(t, rec)
+			if body.Error.Code != "VALIDATION_ERROR" {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+			}
+			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "content" {
+				t.Fatalf("expected a detail naming content, got %+v", body.Error.Details)
+			}
+			if fake.feedbackCalls != 0 {
+				t.Fatalf("an invalid content must not reach the use case, got %d calls", fake.feedbackCalls)
+			}
+		})
+	}
+}
+
+// contracts/error-codes.md: feedback before delivery is 409
+// ORDER_FEEDBACK_NOT_ALLOWED naming the current state.
+func TestSubmitFeedbackRefusesAnOrderThatIsNotDelivered(t *testing.T) {
+	fake := &fakeOrders{feedbackErr: domainerr.FeedbackNotAllowed(constant.StatusShipping)}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
+		`{"content":"Giao hang can than"}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeError(t, rec)
+	if body.Error.Code != constant.CodeFeedbackNotAllowed {
+		t.Fatalf("expected ORDER_FEEDBACK_NOT_ALLOWED, got %s", body.Error.Code)
+	}
+	if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
+		t.Fatalf("the refusal must name the current state SHIPPING, got %q", body.Error.Message)
+	}
+}
+
+// FR-016, contracts/error-codes.md: a second feedback for the same order is 409
+// ORDER_FEEDBACK_ALREADY_SENT.
+func TestSubmitFeedbackRefusesASecondFeedback(t *testing.T) {
+	fake := &fakeOrders{feedbackErr: domainerr.ErrFeedbackAlreadySent}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
+		`{"content":"Giao hang can than"}`, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeFeedbackAlreadySent {
+		t.Fatalf("expected ORDER_FEEDBACK_ALREADY_SENT, got %s", body.Error.Code)
+	}
+}
+
+// FR-018: another customer's (or an unknown) order answers the same 404
+// ORDER_NOT_FOUND, so the route never confirms the order exists.
+func TestSubmitFeedbackAnswersNotFoundForAnotherCustomersOrder(t *testing.T) {
+	fake := &fakeOrders{feedbackErr: domainerr.ErrNotFound}
+	router := newOrderRouter(fake)
+
+	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
+		`{"content":"Giao hang can than"}`, "customer2-token")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	}
+}
+
 // contracts/error-codes.md: every customer-order route refuses a request with no
 // session with 401 UNAUTHENTICATED, before reaching the use case.
 func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
@@ -417,6 +547,7 @@ func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
 		{http.MethodGet, ordersPath + "/" + uuid.New().String()},
 		{http.MethodPost, ordersPath + "/" + uuid.New().String() + "/cancel"},
 		{http.MethodPost, ordersPath + "/" + uuid.New().String() + "/complete"},
+		{http.MethodPost, ordersPath + "/" + uuid.New().String() + "/feedback"},
 	}
 
 	for _, tc := range cases {
@@ -430,7 +561,7 @@ func TestOrderRoutesRefuseWithoutASession(t *testing.T) {
 			if body := decodeError(t, rec); body.Error.Code != "UNAUTHENTICATED" {
 				t.Fatalf("expected UNAUTHENTICATED, got %s", body.Error.Code)
 			}
-			if fake.calls != 0 || fake.cancelCalls != 0 || fake.completeCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
+			if fake.calls != 0 || fake.cancelCalls != 0 || fake.completeCalls != 0 || fake.feedbackCalls != 0 || fake.gotRefInput.OrderID != uuid.Nil {
 				t.Fatal("an unauthenticated request must not reach the use case")
 			}
 		})
@@ -443,7 +574,7 @@ func TestOrderRoutesRejectAMalformedOrderIdentifier(t *testing.T) {
 	fake := &fakeOrders{}
 	router := newOrderRouter(fake)
 
-	for _, path := range []string{ordersPath + "/not-a-uuid", ordersPath + "/not-a-uuid/cancel", ordersPath + "/not-a-uuid/complete"} {
+	for _, path := range []string{ordersPath + "/not-a-uuid", ordersPath + "/not-a-uuid/cancel", ordersPath + "/not-a-uuid/complete", ordersPath + "/not-a-uuid/feedback"} {
 		method := http.MethodGet
 		if path != ordersPath+"/not-a-uuid" {
 			method = http.MethodPost
@@ -496,5 +627,9 @@ func (f *fakeCheckout) CancelMine(context.Context, appdto.OrderRefInput) (appdto
 }
 
 func (f *fakeCheckout) ConfirmReceived(context.Context, appdto.OrderRefInput) (appdto.OrderView, error) {
+	return appdto.OrderView{}, nil
+}
+
+func (f *fakeCheckout) SubmitFeedback(context.Context, appdto.FeedbackInput) (appdto.OrderView, error) {
 	return appdto.OrderView{}, nil
 }

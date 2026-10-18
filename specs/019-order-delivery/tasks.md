@@ -171,14 +171,14 @@ description: "Task list for Order Delivery & Completion (module 07 extension)"
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T042 [P] [US5] Use-case tests `internal/modules/order/application/implement/feedback_test.go`: `SubmitFeedback` stores one row for the owner when the order is `DELIVERED`/`COMPLETED`; refuses a non-`DELIVERED`/`COMPLETED` order (`ORDER_FEEDBACK_NOT_ALLOWED`, naming the state), a second feedback (`ORDER_FEEDBACK_ALREADY_SENT`), empty/blank content and content over 2000 characters (validation) and another customer's order as not-found (FR-015, FR-016, FR-017, FR-018)
-- [ ] T043 [P] [US5] HTTP tests `internal/modules/order/presentation/http/orders_test.go`: `POST /orders/{id}/feedback` returns `200`; `400 VALIDATION_ERROR` on empty `content` and on `content` over 2000 characters; `409` for the two feedback refusals; `404` for another customer's order (FR-015, FR-016)
+- [X] T042 [P] [US5] Use-case tests `internal/modules/order/application/implement/feedback_test.go`: `SubmitFeedback` stores one row for the owner when the order is `DELIVERED`/`COMPLETED`; refuses a non-`DELIVERED`/`COMPLETED` order (`ORDER_FEEDBACK_NOT_ALLOWED`, naming the state), a second feedback (`ORDER_FEEDBACK_ALREADY_SENT`), empty/blank content and content over 2000 characters (validation) and another customer's order as not-found (FR-015, FR-016, FR-017, FR-018)
+- [X] T043 [P] [US5] HTTP tests `internal/modules/order/presentation/http/orders_test.go`: `POST /orders/{id}/feedback` returns `200`; `400 VALIDATION_ERROR` on empty `content` and on `content` over 2000 characters; `409` for the two feedback refusals; `404` for another customer's order (FR-015, FR-016)
 
 ### Implementation for User Story 5
 
-- [ ] T044 [US5] Create `internal/modules/order/application/implement/feedback.go`: `SubmitFeedback(in FeedbackInput)` — owner from the session, lock the order, require `DELIVERED`/`COMPLETED`, refuse an existing feedback, validate content (1–2000 characters), insert the row, all in one transaction; add `SubmitFeedback` to the `OrderService` interface (FR-015, FR-016, FR-017, research D8)
-- [ ] T045 [US5] In `internal/modules/order/presentation/dto/dto.go` and `presentation/http/{handler.go,router.go}`: add `POST /orders/{id}/feedback` with body validation (`content` required, 1–2000 characters) and Swagger annotations (research D7; Constitution VIII; M3)
-- [ ] T046 [US5] Extend `internal/modules/order/presentation/http/order_integration_test.go`: feedback persists and reads back; the `order_feedback_order_key` unique index refuses a concurrent second insert on real PostgreSQL (SC-005)
+- [X] T044 [US5] Create `internal/modules/order/application/implement/feedback.go`: `SubmitFeedback(in FeedbackInput)` — owner from the session, lock the order, require `DELIVERED`/`COMPLETED`, refuse an existing feedback, validate content (1–2000 characters), insert the row, all in one transaction; add `SubmitFeedback` to the `OrderService` interface (FR-015, FR-016, FR-017, research D8)
+- [X] T045 [US5] In `internal/modules/order/presentation/dto/dto.go` and `presentation/http/{handler.go,router.go}`: add `POST /orders/{id}/feedback` with body validation (`content` required, 1–2000 characters) and Swagger annotations (research D7; Constitution VIII; M3)
+- [X] T046 [US5] Extend `internal/modules/order/presentation/http/order_integration_test.go`: feedback persists and reads back; the `order_feedback_order_key` unique index refuses a concurrent second insert on real PostgreSQL (SC-005)
 
 **Checkpoint**: Feedback reaches the artist, at most once per order.
 

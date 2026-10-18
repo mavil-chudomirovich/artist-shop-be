@@ -86,6 +86,10 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	// The owner confirms receipt of a delivered order; the owner is the session's,
 	// so a client can only complete its own order (FR-011, FR-018).
 	r.Post("/{orderId}/complete", h.ConfirmReceived)
+	// The owner sends the order's one feedback once it is delivered or completed;
+	// the author is the session's, so a client can only write about its own order
+	// (FR-015, FR-018).
+	r.Post("/{orderId}/feedback", h.SubmitFeedback)
 	return r
 }
 

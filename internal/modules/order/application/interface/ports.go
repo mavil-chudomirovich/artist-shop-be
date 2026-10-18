@@ -170,6 +170,11 @@ type OrderService interface {
 	// order answers the same not-found an unknown one does (FR-011, FR-014,
 	// FR-018).
 	ConfirmReceived(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error)
+	// SubmitFeedback records the caller's one order-level feedback for a
+	// delivered or completed order: the author is the session's, the content is
+	// 1 to 2000 characters after trimming, and a second submission for the same
+	// order is refused (FR-015, FR-016, FR-018).
+	SubmitFeedback(ctx context.Context, in dto.FeedbackInput) (dto.OrderView, error)
 
 	// ListAll returns one page of every order, newest first, with its owner
 	// (FR-021).
