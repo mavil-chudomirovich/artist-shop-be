@@ -293,7 +293,7 @@ func TestGuardedChangeVariantStateRefusesActiveToDiscontinuedWhilePaymentPending
 	requireGuardCheckedOnce(t, orders)
 }
 
-// FR-005, FR-007 (specs/016-hide-guard US2): orders in PAID, SHIPPED,
+// FR-005, FR-007 (specs/016-hide-guard US2): orders in PAID, SHIPPING,
 // COMPLETED or CANCELLED never block; the hide succeeds, every cart line
 // holding the variant is removed in the same transaction, and the hide emits
 // its audit action carrying the removed line count.
@@ -303,7 +303,7 @@ func TestGuardedChangeVariantStateSucceedsWithOnlySettledOrdersAndCleansCarts(t 
 
 	orders := &fakeVariantOrderGuard{orders: []guardOrder{
 		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{variant.ID}},
-		{id: uuid.New(), status: "SHIPPED", variants: []uuid.UUID{variant.ID}},
+		{id: uuid.New(), status: "SHIPPING", variants: []uuid.UUID{variant.ID}},
 		{id: uuid.New(), status: "COMPLETED", variants: []uuid.UUID{variant.ID}},
 		{id: uuid.New(), status: "CANCELLED", variants: []uuid.UUID{variant.ID}},
 	}}

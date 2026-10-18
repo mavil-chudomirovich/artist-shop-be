@@ -11,11 +11,17 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 )
 
-// This file exercises the order entity's six-state machine and its total: every
+// This file exercises the order entity's seven-state machine and its total: every
 // allowed edge succeeds, every forbidden move is refused naming the current state
-// and leaves the order untouched, editing is allowed only before payment, and the
-// total is the exact sum of the line snapshots with no shipping fee and no
-// rounding (FR-001, FR-004, FR-008, FR-010, FR-012, FR-018).
+// and leaves the order untouched, editing is allowed only before payment, the
+// delivery and completion edges behave (delivery stamps delivered_at; the single
+// Complete is allowed only from DELIVERED), the completion window is 120 hours, and
+// the total is the exact sum of the line snapshots with no shipping fee and no
+// rounding (FR-001, FR-004, FR-005, FR-007, FR-008, FR-011, FR-012, FR-018, FR-020).
+
+// testNow is the fixed instant the delivery edges stamp, so a stamped
+// delivered_at can be asserted exactly.
+var testNow = time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 
 // testOrder builds an order in the given state over one snapshot line, with an
 // identifier and timestamps so the assertions can observe them.
@@ -26,8 +32,7 @@ func testOrder(status constant.Status) *Order {
 		UnitPrice:   Price{Amount: 120000, Currency: "VND"},
 		Quantity:    2,
 	}
-	now := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
-	order := NewOrder(uuid.New(), testAddress(), []OrderLine{line}, now)
+	order := NewOrder(uuid.New(), testAddress(), []OrderLine{line}, testNow)
 	order.Status = status
 	return order
 }
@@ -45,12 +50,13 @@ func testAddress() Address {
 	}
 }
 
-// allStates is the six-state set, used to drive the forbidden-move table.
+// allStates is the seven-state set, used to drive the forbidden-move table.
 var allStates = []constant.Status{
 	constant.StatusPending,
 	constant.StatusPaymentPending,
 	constant.StatusPaid,
-	constant.StatusShipped,
+	constant.StatusShipping,
+	constant.StatusDelivered,
 	constant.StatusCompleted,
 	constant.StatusCancelled,
 }
@@ -63,8 +69,8 @@ type move struct {
 	to   constant.Status
 }
 
-// FR-001, FR-004, FR-010: every allowed edge succeeds and lands on the expected
-// state, including Cancel from both pre-paid states.
+// FR-001, FR-005, FR-007, FR-011: every allowed edge succeeds and lands on the
+// expected state, including Cancel from both pre-paid states.
 func TestEveryAllowedMoveSucceeds(t *testing.T) {
 	moves := []move{
 		{name: "confirm", fn: (*Order).Confirm, from: constant.StatusPending, to: constant.StatusPaymentPending},
@@ -72,8 +78,9 @@ func TestEveryAllowedMoveSucceeds(t *testing.T) {
 		{name: "cancel from PENDING", fn: (*Order).Cancel, from: constant.StatusPending, to: constant.StatusCancelled},
 		{name: "cancel from PAYMENT_PENDING", fn: (*Order).Cancel, from: constant.StatusPaymentPending, to: constant.StatusCancelled},
 		{name: "pay", fn: (*Order).MarkPaid, from: constant.StatusPaymentPending, to: constant.StatusPaid},
-		{name: "ship", fn: (*Order).Ship, from: constant.StatusPaid, to: constant.StatusShipped},
-		{name: "complete", fn: (*Order).Complete, from: constant.StatusShipped, to: constant.StatusCompleted},
+		{name: "start shipping", fn: (*Order).StartShipping, from: constant.StatusPaid, to: constant.StatusShipping},
+		{name: "deliver", fn: func(o *Order) error { return o.MarkDelivered(testNow) }, from: constant.StatusShipping, to: constant.StatusDelivered},
+		{name: "complete", fn: (*Order).Complete, from: constant.StatusDelivered, to: constant.StatusCompleted},
 	}
 
 	for _, m := range moves {
@@ -89,9 +96,10 @@ func TestEveryAllowedMoveSucceeds(t *testing.T) {
 	}
 }
 
-// FR-010, FR-011: every forbidden move is refused with the current state named,
+// FR-002, FR-003: every forbidden move is refused with the current state named,
 // and the order is left exactly as it was. Cancel is allowed from either pre-paid
-// state and from nowhere else; MarkPaid only from PAYMENT_PENDING.
+// state and from nowhere else; MarkPaid only from PAYMENT_PENDING; Complete only
+// from DELIVERED — the single completion edge.
 func TestEveryForbiddenMoveIsRefusedNamingTheCurrentState(t *testing.T) {
 	moves := []struct {
 		name    string
@@ -101,8 +109,9 @@ func TestEveryForbiddenMoveIsRefusedNamingTheCurrentState(t *testing.T) {
 		{name: "confirm", fn: (*Order).Confirm, allowed: []constant.Status{constant.StatusPending}},
 		{name: "reject", fn: (*Order).Reject, allowed: []constant.Status{constant.StatusPending}},
 		{name: "pay", fn: (*Order).MarkPaid, allowed: []constant.Status{constant.StatusPaymentPending}},
-		{name: "ship", fn: (*Order).Ship, allowed: []constant.Status{constant.StatusPaid}},
-		{name: "complete", fn: (*Order).Complete, allowed: []constant.Status{constant.StatusShipped}},
+		{name: "start shipping", fn: (*Order).StartShipping, allowed: []constant.Status{constant.StatusPaid}},
+		{name: "deliver", fn: func(o *Order) error { return o.MarkDelivered(testNow) }, allowed: []constant.Status{constant.StatusShipping}},
+		{name: "complete", fn: (*Order).Complete, allowed: []constant.Status{constant.StatusDelivered}},
 		{name: "cancel", fn: (*Order).Cancel, allowed: []constant.Status{constant.StatusPending, constant.StatusPaymentPending}},
 	}
 
@@ -135,12 +144,76 @@ func TestEveryForbiddenMoveIsRefusedNamingTheCurrentState(t *testing.T) {
 	}
 }
 
-// FR-018: a completed or cancelled order is terminal — no move out of either
+// FR-011, FR-012: the single Complete edge is allowed only from DELIVERED, so both
+// routes into COMPLETED — the customer's confirmation and the sweep — find a move
+// that a concurrently completed order no longer allows.
+func TestCompleteIsAllowedOnlyFromDelivered(t *testing.T) {
+	order := testOrder(constant.StatusDelivered)
+	if err := order.Complete(); err != nil {
+		t.Fatalf("Complete from DELIVERED must succeed, got %v", err)
+	}
+	if order.Status != constant.StatusCompleted {
+		t.Fatalf("Complete landed on %s, want COMPLETED", order.Status)
+	}
+	if !order.IsTerminal() {
+		t.Fatal("a completed order must report terminal")
+	}
+}
+
+// FR-008: MarkDelivered stamps the delivery instant, which anchors the completion
+// window; and a delivered order is the one awaiting the customer's confirmation.
+func TestMarkDeliveredStampsTheDeliveryInstant(t *testing.T) {
+	shipping := testOrder(constant.StatusShipping)
+	if shipping.DeliveredAt != nil {
+		t.Fatalf("a shipping order must carry no delivered_at, got %v", shipping.DeliveredAt)
+	}
+	if shipping.IsAwaitingCustomerConfirmation() {
+		t.Fatal("an in-transit order must not report awaiting confirmation")
+	}
+	if err := shipping.MarkDelivered(testNow); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+	if shipping.Status != constant.StatusDelivered {
+		t.Fatalf("status = %s, want DELIVERED", shipping.Status)
+	}
+	if shipping.DeliveredAt == nil || !shipping.DeliveredAt.Equal(testNow) {
+		t.Fatalf("delivered_at = %v, want the stamped instant %v", shipping.DeliveredAt, testNow)
+	}
+	if !shipping.IsAwaitingCustomerConfirmation() {
+		t.Fatal("a delivered order must report awaiting the customer's confirmation")
+	}
+
+	// Delivering again is refused and must not move the stamped instant.
+	if err := shipping.MarkDelivered(testNow.Add(time.Hour)); err == nil {
+		t.Fatal("delivering an already-delivered order must be refused")
+	}
+	if !shipping.DeliveredAt.Equal(testNow) {
+		t.Fatalf("a refused delivery must leave delivered_at as it was, got %v", shipping.DeliveredAt)
+	}
+}
+
+// FR-012: the automatic completion window is five days, expressed as 120 hours
+// (an elapsed duration, not calendar-day boundaries).
+func TestDeliveryCompletionWindowIsFiveDays(t *testing.T) {
+	if DeliveryCompletionWindow != 120*time.Hour {
+		t.Fatalf("DeliveryCompletionWindow = %v, want 120h (5 × 24h)", DeliveryCompletionWindow)
+	}
+}
+
+// FR-004: a completed or cancelled order is terminal — no move out of either
 // succeeds.
 func TestCompletedAndCancelledAreTerminal(t *testing.T) {
 	for _, terminal := range []constant.Status{constant.StatusCompleted, constant.StatusCancelled} {
 		order := testOrder(terminal)
-		for _, fn := range []func(*Order) error{(*Order).Confirm, (*Order).Reject, (*Order).MarkPaid, (*Order).Ship, (*Order).Complete, (*Order).Cancel} {
+		for _, fn := range []func(*Order) error{
+			(*Order).Confirm,
+			(*Order).Reject,
+			(*Order).MarkPaid,
+			(*Order).StartShipping,
+			func(o *Order) error { return o.MarkDelivered(testNow) },
+			(*Order).Complete,
+			(*Order).Cancel,
+		} {
 			if err := fn(order); !errors.Is(err, domainerr.ErrStateTransitionInvalid) {
 				t.Fatalf("a move out of %s must be refused, got %v", terminal, err)
 			}
@@ -193,7 +266,8 @@ func TestEditIsAllowedOnlyBeforePaymentAndBumpsTheVersion(t *testing.T) {
 	// A paid order or beyond is frozen.
 	for _, frozen := range []constant.Status{
 		constant.StatusPaid,
-		constant.StatusShipped,
+		constant.StatusShipping,
+		constant.StatusDelivered,
 		constant.StatusCompleted,
 		constant.StatusCancelled,
 	} {
@@ -231,6 +305,9 @@ func TestNewOrderStartsPendingWithItsLinesLinked(t *testing.T) {
 	if order.ConfirmedAt != nil || order.PaymentExpiresAt != nil {
 		t.Fatalf("a new order must carry no confirmation instant and no deadline, got %v/%v", order.ConfirmedAt, order.PaymentExpiresAt)
 	}
+	if order.DeliveredAt != nil || order.CompletedAt != nil || order.CompletedBy != nil {
+		t.Fatalf("a new order must carry no delivery/completion facts, got %v/%v/%v", order.DeliveredAt, order.CompletedAt, order.CompletedBy)
+	}
 	if order.UserID != owner {
 		t.Fatalf("owner = %s, want %s", order.UserID, owner)
 	}
@@ -253,7 +330,7 @@ func TestNewOrderStartsPendingWithItsLinesLinked(t *testing.T) {
 	}
 }
 
-// FR-008: the order total is the exact sum of quantity times the snapshot unit
+// FR-020: the order total is the exact sum of quantity times the snapshot unit
 // price, with no shipping fee and no rounding.
 func TestOrderTotalIsTheSumOfLineSnapshots(t *testing.T) {
 	now := time.Now().UTC()

@@ -456,7 +456,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns every dashboard section in one response: the revenue, order, customer and inventory KPIs, a daily revenue trend, the current-month category breakdown and the five newest orders. Revenue counts PAID, SHIPPED and COMPLETED orders in VND, attributed by the order creation instant; calendar boundaries use the configured shop timezone. The whole request is read-only.",
+                "description": "Returns every dashboard section in one response: the revenue, order, customer and inventory KPIs, a daily revenue trend, the current-month category breakdown and the five newest orders. Revenue counts PAID, SHIPPING, DELIVERED and COMPLETED orders in VND, attributed by the order creation instant; calendar boundaries use the configured shop timezone. The whole request is read-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -979,7 +979,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED or CANCELLED)",
+                        "description": "Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPING, DELIVERED, COMPLETED or CANCELLED)",
                         "name": "status",
                         "in": "query"
                     },
@@ -1134,14 +1134,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Moves a shipped order to completed and records the act naming the order and the administrator. The order must be shipped; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
+                "description": "Moves a delivered order to completed and records the act naming the order and the administrator. The order must be delivered; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Orders"
                 ],
-                "summary": "Mark a shipped order completed (administrator)",
+                "summary": "Mark a delivered order completed (administrator)",
                 "parameters": [
                     {
                         "type": "string",
@@ -1398,14 +1398,14 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Moves a paid order to shipped and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
+                "description": "Moves a paid order in transit and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Orders"
                 ],
-                "summary": "Mark a paid order shipped (administrator)",
+                "summary": "Mark a paid order in transit (administrator)",
                 "parameters": [
                     {
                         "type": "string",

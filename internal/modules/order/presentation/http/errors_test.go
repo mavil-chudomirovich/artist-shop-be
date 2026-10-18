@@ -178,6 +178,86 @@ func TestMapErrorCoversEveryModuleCode(t *testing.T) {
 	}
 }
 
+// FR-009, FR-015, FR-016 (specs/019-order-delivery contracts/error-codes.md): the
+// delivery-photo refusals mirror module 04's statuses and name `photos`, and the
+// feedback refusals are conflicts.
+func TestMapErrorCoversTheDeliveryPhotoAndFeedbackCodes(t *testing.T) {
+	cases := []struct {
+		name      string
+		err       error
+		code      string
+		status    int
+		field     string
+		hasDetail bool
+	}{
+		{
+			name:      "an unsupported photo type is a 400 naming photos",
+			err:       domainerr.ErrImageTypeUnsupported,
+			code:      constant.CodeImageTypeUnsupported,
+			status:    http.StatusBadRequest,
+			field:     fieldPhotos,
+			hasDetail: true,
+		},
+		{
+			name:      "an oversized photo is a 413 naming photos",
+			err:       domainerr.ErrImageTooLarge,
+			code:      constant.CodeImageTooLarge,
+			status:    http.StatusRequestEntityTooLarge,
+			field:     fieldPhotos,
+			hasDetail: true,
+		},
+		{
+			name:      "more than five photos is a 409 naming photos",
+			err:       domainerr.ErrImageLimitReached,
+			code:      constant.CodeImageLimitReached,
+			status:    http.StatusConflict,
+			field:     fieldPhotos,
+			hasDetail: true,
+		},
+		{
+			name:   "feedback before delivery is a 409",
+			err:    domainerr.FeedbackNotAllowed(constant.StatusPending),
+			code:   constant.CodeFeedbackNotAllowed,
+			status: http.StatusConflict,
+		},
+		{
+			name:   "a second feedback is a 409",
+			err:    domainerr.ErrFeedbackAlreadySent,
+			code:   constant.CodeFeedbackAlreadySent,
+			status: http.StatusConflict,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			appErr := mapError(tc.err)
+			if string(appErr.Code) != tc.code {
+				t.Fatalf("expected code %s, got %s", tc.code, appErr.Code)
+			}
+			if appErr.Status != tc.status {
+				t.Fatalf("expected status %d, got %d", tc.status, appErr.Status)
+			}
+			if tc.hasDetail {
+				if len(appErr.Details) != 1 || appErr.Details[0].Field != tc.field {
+					t.Fatalf("expected one detail naming %q, got %+v", tc.field, appErr.Details)
+				}
+				return
+			}
+			if len(appErr.Details) != 0 {
+				t.Fatalf("expected no details, got %+v", appErr.Details)
+			}
+		})
+	}
+}
+
+// FR-015: the feedback-not-allowed refusal names the current state.
+func TestFeedbackNotAllowedNamesTheCurrentState(t *testing.T) {
+	appErr := mapError(domainerr.FeedbackNotAllowed(constant.StatusPaid))
+	if !strings.Contains(appErr.Message, string(constant.StatusPaid)) {
+		t.Fatalf("the message must name the current state, got %q", appErr.Message)
+	}
+}
+
 // The quantity refusal's issue states the available amount, so a client knows how
 // far to reduce the line (contracts/error-codes.md).
 func TestQuantityRefusalNamesTheAvailableAmount(t *testing.T) {
@@ -208,10 +288,10 @@ func TestConfirmShortageMapsToTheReusedQuantityCode(t *testing.T) {
 	}
 }
 
-// A refused state move names the current state in its message (FR-011).
+// A refused state move names the current state in its message (FR-003).
 func TestTransitionRefusalNamesTheCurrentState(t *testing.T) {
-	appErr := mapError(domainerr.StateTransitionInvalid(constant.StatusShipped, constant.StatusCompleted))
-	if !strings.Contains(appErr.Message, string(constant.StatusShipped)) {
+	appErr := mapError(domainerr.StateTransitionInvalid(constant.StatusShipping, constant.StatusCompleted))
+	if !strings.Contains(appErr.Message, string(constant.StatusShipping)) {
 		t.Fatalf("the message must name the current state, got %q", appErr.Message)
 	}
 }

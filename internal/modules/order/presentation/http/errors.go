@@ -23,6 +23,7 @@ const (
 	fieldStatus    = "status"
 	fieldSort      = "sort"
 	fieldEmail     = "email"
+	fieldPhotos    = "photos"
 )
 
 // coded builds a module error response with an explicit status, so a code that is
@@ -46,23 +47,30 @@ func fieldError(field, issue string) *httpx.AppError {
 }
 
 // mapError translates the module's sentinel errors into the codes and statuses of
-// specs/010-order-confirmation/contracts/error-codes.md.
+// specs/010-order-confirmation/contracts/error-codes.md and
+// specs/019-order-delivery/contracts/error-codes.md.
 //
 // The three item refusals are conflicts (409) that name `productId` in their
 // detail — the item the customer must change — and the quantity code's issue also
 // states what remained available. A state move the order's current state forbids
-// answers ORDER_STATE_TRANSITION_INVALID naming the current state. An order that
-// may not be edited or an edit that would empty it answers ORDER_NOT_EDITABLE or
-// ORDER_EMPTY (both 409). A malformed or foreign `addressId` stays on the shared
-// VALIDATION_ERROR and names the field. A shared AppError the transport produced
-// (a malformed request, an authentication failure) passes through unchanged;
-// anything else is hidden behind INTERNAL_ERROR so storage detail is never leaked.
+// answers ORDER_STATE_TRANSITION_INVALID naming the current state. The three
+// delivery-photo refusals mirror module 04's PRODUCT_IMAGE_* codes (type 400, size
+// 413, count 409) and name `photos`; the feedback refusals are conflicts that
+// answer ORDER_FEEDBACK_NOT_ALLOWED (naming the current state) or
+// ORDER_FEEDBACK_ALREADY_SENT. An order that may not be edited or an edit that
+// would empty it answers ORDER_NOT_EDITABLE or ORDER_EMPTY (both 409). A malformed
+// or foreign `addressId` stays on the shared VALIDATION_ERROR and names the field.
+// A shared AppError the transport produced (a malformed request, an authentication
+// failure) passes through unchanged; anything else is hidden behind INTERNAL_ERROR
+// so storage detail is never leaked.
 func mapError(err error) *httpx.AppError {
 	var notPurchasable *domainerr.ItemNotPurchasableError
 	var priceChanged *domainerr.ItemPriceChangedError
 	var exceeds *domainerr.QuantityExceedsAvailableError
 	var transition *domainerr.StateTransitionError
 	var invalid *domainerr.InvalidValueError
+	var feedbackNotAllowed *domainerr.FeedbackNotAllowedError
+	var photoLimit *domainerr.DeliveryPhotoLimitError
 
 	switch {
 	case errors.Is(err, domainerr.ErrNotFound):
@@ -114,6 +122,34 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeNotEditable, http.StatusConflict, "Order is not editable")
 	case errors.Is(err, domainerr.ErrEmptyOrder):
 		return coded(constant.CodeEmptyOrder, http.StatusConflict, "Order would be left empty")
+	case errors.Is(err, domainerr.ErrImageTypeUnsupported):
+		return withField(
+			coded(constant.CodeImageTypeUnsupported, http.StatusBadRequest, "The uploaded file is not a supported image"),
+			fieldPhotos, "choose a JPEG, PNG or WebP file",
+		)
+	case errors.Is(err, domainerr.ErrImageTooLarge):
+		return withField(
+			coded(constant.CodeImageTooLarge, http.StatusRequestEntityTooLarge, "A delivery photo exceeds the size limit"),
+			fieldPhotos, "compress the photo or send fewer",
+		)
+	case errors.As(err, &photoLimit):
+		return withField(
+			coded(constant.CodeImageLimitReached, http.StatusConflict,
+				fmt.Sprintf("Too many delivery photos for the %s step", photoLimit.Stage)),
+			fieldPhotos, "send at most five",
+		)
+	case errors.Is(err, domainerr.ErrImageLimitReached):
+		return withField(
+			coded(constant.CodeImageLimitReached, http.StatusConflict, "Too many delivery photos for this step"),
+			fieldPhotos, "send at most five",
+		)
+	case errors.As(err, &feedbackNotAllowed):
+		return coded(constant.CodeFeedbackNotAllowed, http.StatusConflict,
+			fmt.Sprintf("Order is %s and does not accept feedback", feedbackNotAllowed.From))
+	case errors.Is(err, domainerr.ErrFeedbackNotAllowed):
+		return coded(constant.CodeFeedbackNotAllowed, http.StatusConflict, "Order does not accept feedback")
+	case errors.Is(err, domainerr.ErrFeedbackAlreadySent):
+		return coded(constant.CodeFeedbackAlreadySent, http.StatusConflict, "Feedback already sent")
 	case errors.As(err, &invalid):
 		return fieldError(invalid.Field, invalid.Issue)
 	case errors.Is(err, domainerr.ErrInvalidValue):

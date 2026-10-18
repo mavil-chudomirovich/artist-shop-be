@@ -79,6 +79,35 @@ type TransferInput struct {
 	Email string
 }
 
+// UploadedPhoto is one delivery-evidence photo the operator submitted: the raw
+// bytes and nothing else. The format, the size and the count are validated from
+// these bytes before the media store is called, so a refused upload leaves no
+// orphaned asset (FR-006, FR-008, FR-009).
+type UploadedPhoto struct {
+	// Content is the uploaded payload.
+	Content []byte
+}
+
+// EvidenceInput addresses one order and carries the optional photos attached to
+// a dispatch or delivery move. Zero to five photos are attached; the acting
+// administrator comes from the session, never from this input (FR-005, FR-007,
+// FR-020).
+type EvidenceInput struct {
+	// OrderID is the order being moved.
+	OrderID uuid.UUID
+	// Photos are the evidence photos, at most five.
+	Photos []UploadedPhoto
+}
+
+// FeedbackInput is the customer's order-level feedback. The author is taken from
+// the session, never from this input (FR-015, FR-018).
+type FeedbackInput struct {
+	// OrderID is the order the feedback is about.
+	OrderID uuid.UUID
+	// Content is the feedback text, 1 to 2000 characters after trimming.
+	Content string
+}
+
 // MoneyView is money as an integer amount in the currency's minor unit plus the
 // currency, the shape a response shows (FR-008).
 type MoneyView struct {
@@ -103,6 +132,32 @@ type OrderAddressView struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+}
+
+// DeliveryPhotoView is one piece of delivery evidence as a use case answers it:
+// the provider reference and the step it belongs to (FR-010, research D11).
+type DeliveryPhotoView struct {
+	// ID identifies the photo.
+	ID uuid.UUID
+	// Stage is the delivery step the photo is evidence for (SHIPPING or
+	// DELIVERED).
+	Stage string
+	// URL is the displayable link returned to clients.
+	URL string
+	// Width and Height are the stored pixel dimensions.
+	Width  int
+	Height int
+	// Position is the order within its stage.
+	Position int
+}
+
+// FeedbackView is the customer's order-level feedback as a use case answers it
+// (FR-015, research D11).
+type FeedbackView struct {
+	// Content is the feedback text.
+	Content string
+	// CreatedAt is when it was written.
+	CreatedAt time.Time
 }
 
 // OrderLineView is one order line as a use case answers it: a snapshot of the
@@ -160,6 +215,18 @@ type OrderView struct {
 	Address OrderAddressView
 	// Lines are the order's snapshot lines, in position order.
 	Lines []OrderLineView
+	// DeliveredAt is when the operator marked the order delivered; nil before
+	// delivery (FR-008, research D11).
+	DeliveredAt *time.Time
+	// CompletedAt is when the order completed; nil before then (FR-014,
+	// research D11).
+	CompletedAt *time.Time
+	// DeliveryPhotos is the dispatch and delivery evidence, ordered by stage then
+	// position (FR-010, research D11).
+	DeliveryPhotos []DeliveryPhotoView
+	// Feedback is the customer's order-level feedback, or nil (FR-015, research
+	// D11).
+	Feedback *FeedbackView
 }
 
 // AdminOrderView is one order as the operator reads it, in full, including its
@@ -172,6 +239,18 @@ type AdminOrderView struct {
 	Address OrderAddressView
 	// Lines are the order's snapshot lines, in position order.
 	Lines []OrderLineView
+	// DeliveredAt is when the operator marked the order delivered; nil before
+	// delivery (FR-008, research D11).
+	DeliveredAt *time.Time
+	// CompletedAt is when the order completed; nil before then (FR-014,
+	// research D11).
+	CompletedAt *time.Time
+	// DeliveryPhotos is the dispatch and delivery evidence, ordered by stage then
+	// position (FR-010, research D11).
+	DeliveryPhotos []DeliveryPhotoView
+	// Feedback is the customer's order-level feedback, or nil (FR-015, research
+	// D11).
+	Feedback *FeedbackView
 }
 
 // OrderPage is one page of a customer's orders.

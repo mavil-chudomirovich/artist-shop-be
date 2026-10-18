@@ -37,7 +37,7 @@ func New(svc appinterface.OverviewService, logger *slog.Logger) *Handler {
 // FR-006).
 //
 //	@Summary		Read the admin dashboard overview (ADMIN)
-//	@Description	Returns every dashboard section in one response: the revenue, order, customer and inventory KPIs, a daily revenue trend, the current-month category breakdown and the five newest orders. Revenue counts PAID, SHIPPED and COMPLETED orders in VND, attributed by the order creation instant; calendar boundaries use the configured shop timezone. The whole request is read-only.
+//	@Description	Returns every dashboard section in one response: the revenue, order, customer and inventory KPIs, a daily revenue trend, the current-month category breakdown and the five newest orders. Revenue counts PAID, SHIPPING, DELIVERED and COMPLETED orders in VND, attributed by the order creation instant; calendar boundaries use the configured shop timezone. The whole request is read-only.
 //	@Tags			Admin
 //	@Produce		json
 //	@Security		BearerAuth

@@ -99,6 +99,58 @@ type OrderRepository interface {
 	// untouched (FR-024, research D12). It joins the caller's transaction.
 	UpdateOwner(ctx context.Context, id, ownerID uuid.UUID, now time.Time) error
 
+	// ListDeliveryPhotos returns one order's delivery evidence, ordered by stage
+	// then position then id, so the detail read projects it deterministically
+	// (FR-010, research D3). It joins the caller's transaction.
+	ListDeliveryPhotos(ctx context.Context, orderID uuid.UUID) ([]model.DeliveryPhoto, error)
+
+	// AddDeliveryPhotos inserts every photo of one order's delivery step, each
+	// stamped with the caller's instant, in one transaction. The per-stage
+	// ceiling was checked under the order's row lock before this write
+	// (FR-006, FR-008, research D5). It joins the caller's transaction.
+	AddDeliveryPhotos(ctx context.Context, orderID uuid.UUID, photos []model.DeliveryPhoto, now time.Time) error
+
+	// CountDeliveryPhotos returns how many photos one order already carries at
+	// the given stage, so the use case can enforce the five-photo ceiling under
+	// the row lock (FR-006, FR-008, research D3, D5). It joins the caller's
+	// transaction.
+	CountDeliveryPhotos(ctx context.Context, orderID uuid.UUID, stage model.Stage) (int, error)
+
+	// StartShipping persists a paid order's dispatch: its new SHIPPING state and
+	// its updated_at, or domainerr.ErrNotFound when no order carries the
+	// identifier (FR-005). It joins the caller's transaction.
+	StartShipping(ctx context.Context, order *model.Order, now time.Time) error
+
+	// SaveDelivered persists an in-transit order's delivery: its new DELIVERED
+	// state, the delivered instant and its updated_at, or domainerr.ErrNotFound
+	// when no order carries the identifier (FR-007, FR-008). It joins the caller's
+	// transaction.
+	SaveDelivered(ctx context.Context, order *model.Order, now time.Time) error
+
+	// SaveCompleted persists a delivered order's completion: its new COMPLETED
+	// state, the completion instant, the acting customer (nil for the sweep) and
+	// its updated_at, or domainerr.ErrNotFound when no order carries the
+	// identifier (FR-014). It joins the caller's transaction.
+	SaveCompleted(ctx context.Context, order *model.Order, now time.Time) error
+
+	// InsertFeedback records the customer's one order-level feedback. The unique
+	// index on (order_id) is the storage-level guarantee that an order takes at
+	// most one feedback, so a second insert is refused by the database
+	// (FR-016, research D8). It joins the caller's transaction.
+	InsertFeedback(ctx context.Context, feedback model.Feedback) error
+
+	// FindFeedback returns the order's feedback, or domainerr.ErrNotFound when it
+	// has none, so the detail read projects it (FR-015, FR-017). It joins the
+	// caller's transaction.
+	FindFeedback(ctx context.Context, orderID uuid.UUID) (*model.Feedback, error)
+
+	// ListAwaitingCompletion returns the identifiers of the orders that are
+	// DELIVERED and whose delivered_at is at or before the cutoff, oldest
+	// delivered first, so the completion sweep is reproducible (FR-012,
+	// research D6). The comparison is against the instant the caller passed,
+	// never the database clock. It joins the caller's transaction.
+	ListAwaitingCompletion(ctx context.Context, cutoff time.Time) ([]uuid.UUID, error)
+
 	// FindPendingOrdersByVariants returns the identifiers of the PENDING or
 	// PAYMENT_PENDING orders that hold at least one of the given variants, in a
 	// stable order, so a hide guard can refuse while one is pending

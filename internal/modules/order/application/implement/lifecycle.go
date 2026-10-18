@@ -53,7 +53,7 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 			return err
 		}
 		switch order.Status {
-		case constant.StatusPaid, constant.StatusShipped, constant.StatusCompleted:
+		case constant.StatusPaid, constant.StatusShipping, constant.StatusDelivered, constant.StatusCompleted:
 			// The sale is already made; the repeat is a success, not an error,
 			// so a retrying caller stops retrying (FR-014).
 			return nil
@@ -195,15 +195,17 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	return view, nil
 }
 
-// Ship moves a paid order to shipped (FR-022). It is driven by an administrator;
-// the role guard and the audit entry live on the operator use case that wraps it.
+// Ship moves a paid order in transit — the dispatch edge (FR-005). It is driven
+// by an administrator; the role guard and the audit entry live on the operator use
+// case that wraps it.
 func (s *Service) Ship(ctx context.Context, orderID uuid.UUID) error {
-	return s.transition(ctx, orderID, (*model.Order).Ship)
+	return s.transition(ctx, orderID, (*model.Order).StartShipping)
 }
 
-// Complete moves a shipped order to completed (FR-022). It is driven by an
-// administrator; the role guard and the audit entry live on the operator use case
-// that wraps it.
+// Complete moves a delivered order to completed (FR-011, FR-012). It is the single
+// completion edge: the customer's confirmation and the sweep both reach it. It is
+// driven by an administrator in this phase; the customer and the sweep reach it
+// through their own use cases in later phases.
 func (s *Service) Complete(ctx context.Context, orderID uuid.UUID) error {
 	return s.transition(ctx, orderID, (*model.Order).Complete)
 }

@@ -489,6 +489,250 @@ func TestEditHistoryIsRecordedAndCascades(t *testing.T) {
 	}
 }
 
+// FR-008, FR-014, research D6, D10: the delivery and completion columns
+// round-trip through the adapter: dispatch writes SHIPPING, delivery stamps
+// delivered_at, and completion stamps completed_at and completed_by.
+func TestDeliveryAndCompletionColumnsRoundTrip(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	order := buildOrder(uuid.New(), at, []model.OrderLine{newLine(product, "ship", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Dispatch.
+	if err := order.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	if err := order.StartShipping(); err != nil {
+		t.Fatalf("StartShipping: %v", err)
+	}
+	if err := f.repo.StartShipping(ctx, order, at.Add(time.Minute)); err != nil {
+		t.Fatalf("repo StartShipping: %v", err)
+	}
+	dispatched, err := f.repo.FindByID(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindByID after dispatch: %v", err)
+	}
+	if dispatched.Status != constant.StatusShipping || dispatched.DeliveredAt != nil || dispatched.CompletedAt != nil {
+		t.Fatalf("dispatch must leave the order SHIPPING with no delivery facts: %+v", dispatched)
+	}
+
+	// Deliver.
+	deliveredAt := at.Add(time.Hour)
+	if err := order.MarkDelivered(deliveredAt); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+	if err := f.repo.SaveDelivered(ctx, order, deliveredAt.Add(time.Second)); err != nil {
+		t.Fatalf("SaveDelivered: %v", err)
+	}
+
+	// Complete by a customer.
+	completedAt := deliveredAt.Add(2 * time.Hour)
+	actor := uuid.New()
+	if err := order.Complete(); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	order.CompletedAt = &completedAt
+	order.CompletedBy = &actor
+	if err := f.repo.SaveCompleted(ctx, order, completedAt.Add(time.Second)); err != nil {
+		t.Fatalf("SaveCompleted: %v", err)
+	}
+
+	got, err := f.repo.FindByID(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindByID after completion: %v", err)
+	}
+	if got.Status != constant.StatusCompleted {
+		t.Fatalf("status = %s, want COMPLETED", got.Status)
+	}
+	if got.DeliveredAt == nil || !got.DeliveredAt.Equal(deliveredAt) {
+		t.Fatalf("delivered_at = %v, want %v", got.DeliveredAt, deliveredAt)
+	}
+	if got.CompletedAt == nil || !got.CompletedAt.Equal(completedAt) {
+		t.Fatalf("completed_at = %v, want %v", got.CompletedAt, completedAt)
+	}
+	if got.CompletedBy == nil || *got.CompletedBy != actor {
+		t.Fatalf("completed_by = %v, want %s", got.CompletedBy, actor)
+	}
+}
+
+// FR-010, research D3: delivery evidence is inserted per stage and reads back
+// ordered by (stage, position, id); the count recounts per stage.
+func TestDeliveryPhotosRoundTripInStageThenPositionOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	order := buildOrder(uuid.New(), at, []model.OrderLine{newLine(product, "photo", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Written deliberately out of order.
+	photos := []model.DeliveryPhoto{
+		{Stage: model.StageDelivered, PublicID: "d1", URL: "https://cdn.example/d1", Width: 10, Height: 20, Position: 1},
+		{Stage: model.StageShipping, PublicID: "s0", URL: "https://cdn.example/s0", Width: 10, Height: 20, Position: 0},
+		{Stage: model.StageShipping, PublicID: "s1", URL: "https://cdn.example/s1", Width: 10, Height: 20, Position: 1},
+		{Stage: model.StageDelivered, PublicID: "d0", URL: "https://cdn.example/d0", Width: 10, Height: 20, Position: 0},
+	}
+	if err := f.repo.AddDeliveryPhotos(ctx, order.ID, photos, at); err != nil {
+		t.Fatalf("AddDeliveryPhotos: %v", err)
+	}
+
+	got, err := f.repo.ListDeliveryPhotos(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("ListDeliveryPhotos: %v", err)
+	}
+	// ORDER BY stage, position: DELIVERED sorts before SHIPPING.
+	want := []string{"d0", "d1", "s0", "s1"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d photos, got %d", len(want), len(got))
+	}
+	for i, publicID := range want {
+		if got[i].PublicID != publicID {
+			t.Fatalf("photo %d = %s, want %s (stage then position order)", i, got[i].PublicID, publicID)
+		}
+	}
+
+	// The detail read attaches the evidence (research D11).
+	detail, err := f.repo.FindByID(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if len(detail.DeliveryPhotos) != len(want) {
+		t.Fatalf("the detail must carry the evidence, got %d", len(detail.DeliveryPhotos))
+	}
+
+	// The per-stage count backs the five-photo ceiling (FR-006, FR-008).
+	shippingCount, err := f.repo.CountDeliveryPhotos(ctx, order.ID, model.StageShipping)
+	if err != nil {
+		t.Fatalf("CountDeliveryPhotos(shipping): %v", err)
+	}
+	if shippingCount != 2 {
+		t.Fatalf("shipping count = %d, want 2", shippingCount)
+	}
+	deliveredCount, err := f.repo.CountDeliveryPhotos(ctx, order.ID, model.StageDelivered)
+	if err != nil {
+		t.Fatalf("CountDeliveryPhotos(delivered): %v", err)
+	}
+	if deliveredCount != 2 {
+		t.Fatalf("delivered count = %d, want 2", deliveredCount)
+	}
+}
+
+// FR-016, research D8: an order takes exactly one feedback; the unique index
+// refuses a second row, and the detail read projects the feedback.
+func TestFeedbackIsOnePerOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	order := buildOrder(uuid.New(), at, []model.OrderLine{newLine(product, "fb", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// No feedback yet.
+	if _, err := f.repo.FindFeedback(ctx, order.ID); !errors.Is(err, domainerr.ErrNotFound) {
+		t.Fatalf("an order with no feedback must answer not-found, got %v", err)
+	}
+
+	author := uuid.New()
+	if err := f.repo.InsertFeedback(ctx, model.Feedback{
+		OrderID: order.ID, AuthorID: author, Content: "Cảm ơn bạn", CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("InsertFeedback: %v", err)
+	}
+
+	stored, err := f.repo.FindFeedback(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindFeedback: %v", err)
+	}
+	if stored.Content != "Cảm ơn bạn" || stored.AuthorID != author {
+		t.Fatalf("feedback did not round-trip: %+v", stored)
+	}
+
+	// A second feedback is refused by the unique index.
+	if err := f.repo.InsertFeedback(ctx, model.Feedback{
+		OrderID: order.ID, AuthorID: uuid.New(), Content: "again", CreatedAt: at,
+	}); err == nil {
+		t.Fatal("the unique index must refuse a second feedback for one order")
+	}
+
+	// The detail read attaches the feedback (research D11).
+	detail, err := f.repo.FindByID(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if detail.Feedback == nil || detail.Feedback.Content != "Cảm ơn bạn" {
+		t.Fatalf("the detail must carry the feedback, got %+v", detail.Feedback)
+	}
+}
+
+// FR-012, research D6: ListAwaitingCompletion selects only DELIVERED orders whose
+// delivered_at is at or before the cutoff, oldest delivered first; an order still
+// in transit is never selected.
+func TestListAwaitingCompletionSelectsOnlyDeliveredPastTheCutoff(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	deliver := func(at time.Time) *model.Order {
+		order := buildOrder(uuid.New(), now.Add(-3*time.Hour), []model.OrderLine{newLine(product, "o-"+at.Format("150405.000"), 1000, 1, 0)})
+		if err := f.repo.Create(ctx, order); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if err := order.MarkPaid(); err != nil {
+			t.Fatalf("MarkPaid: %v", err)
+		}
+		if err := order.StartShipping(); err != nil {
+			t.Fatalf("StartShipping: %v", err)
+		}
+		if err := f.repo.StartShipping(ctx, order, at); err != nil {
+			t.Fatalf("repo StartShipping: %v", err)
+		}
+		if err := order.MarkDelivered(at); err != nil {
+			t.Fatalf("MarkDelivered: %v", err)
+		}
+		if err := f.repo.SaveDelivered(ctx, order, at); err != nil {
+			t.Fatalf("repo SaveDelivered: %v", err)
+		}
+		return order
+	}
+
+	older := deliver(now.Add(-2 * time.Hour))
+	newer := deliver(now.Add(-time.Hour))
+	deliver(now.Add(time.Hour)) // delivered, but within the window
+
+	// An in-transit order with no delivered_at must never be selected.
+	shipping := buildOrder(uuid.New(), now.Add(-3*time.Hour), []model.OrderLine{newLine(product, "transit", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, shipping); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := shipping.MarkPaid(); err != nil {
+		t.Fatalf("MarkPaid: %v", err)
+	}
+	if err := shipping.StartShipping(); err != nil {
+		t.Fatalf("StartShipping: %v", err)
+	}
+	if err := f.repo.StartShipping(ctx, shipping, now); err != nil {
+		t.Fatalf("repo StartShipping: %v", err)
+	}
+
+	ids, err := f.repo.ListAwaitingCompletion(ctx, now)
+	if err != nil {
+		t.Fatalf("ListAwaitingCompletion: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != older.ID || ids[1] != newer.ID {
+		t.Fatalf("ListAwaitingCompletion = %v, want the two past-window delivered orders oldest first (%s, %s)",
+			ids, older.ID, newer.ID)
+	}
+}
+
 // FR-008, FR-009, research D5: ListExpiredPending selects only awaiting-payment
 // orders whose payment deadline has passed; an order awaiting the artist (no
 // deadline) and one whose deadline is still in the future are never selected.

@@ -781,7 +781,7 @@ func TestOverviewResolvesRecentCustomersInOneBulkCall(t *testing.T) {
 	orderMissing := uuid.New()
 	h.orders.recents = []contracts.RecentOrder{
 		{ID: orderExisting, CustomerID: existingID, Total: contracts.Money{Amount: 100, Currency: "VND"}, Status: "PAID", CreatedAt: h.clock.now, FirstLineName: "Stand", FirstLineQuantity: 1, LineCount: 1, TotalQuantity: 1},
-		{ID: orderMissing, CustomerID: missingID, Total: contracts.Money{Amount: 200, Currency: "VND"}, Status: "SHIPPED", CreatedAt: h.clock.now, FirstLineName: "Print", FirstLineQuantity: 2, LineCount: 2, TotalQuantity: 2},
+		{ID: orderMissing, CustomerID: missingID, Total: contracts.Money{Amount: 200, Currency: "VND"}, Status: "SHIPPING", CreatedAt: h.clock.now, FirstLineName: "Print", FirstLineQuantity: 2, LineCount: 2, TotalQuantity: 2},
 	}
 	h.customers.summaries = []contracts.CustomerSummary{
 		{ID: existingID, DisplayName: "Alice", Email: "alice@example.com"},

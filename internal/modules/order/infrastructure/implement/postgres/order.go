@@ -43,8 +43,35 @@ var orderColumns = []string{
 	"payment_expires_at",
 	"order_version",
 	"confirmed_at",
+	"delivered_at",
+	"completed_at",
+	"completed_by",
 	"created_at",
 	"updated_at",
+}
+
+// photoColumns is the explicit projection of a delivery-evidence row, matching
+// the scan arity of scanDeliveryPhoto.
+var photoColumns = []string{
+	"id",
+	"order_id",
+	"stage",
+	"public_id",
+	"url",
+	"width",
+	"height",
+	"position",
+	"created_at",
+}
+
+// feedbackColumns is the explicit projection of an order-feedback row, matching
+// the scan arity of scanFeedback.
+var feedbackColumns = []string{
+	"id",
+	"order_id",
+	"author_id",
+	"content",
+	"created_at",
 }
 
 // lineColumns is the explicit projection of an order line, matching the scan
@@ -181,6 +208,9 @@ func (r *OrderRepository) FindByID(ctx context.Context, id uuid.UUID) (*model.Or
 	if err := r.loadLines(ctx, order); err != nil {
 		return nil, err
 	}
+	if err := r.loadDeliveryFacts(ctx, order); err != nil {
+		return nil, err
+	}
 	return order, nil
 }
 
@@ -198,6 +228,9 @@ func (r *OrderRepository) FindByOwner(ctx context.Context, ownerID, id uuid.UUID
 		return nil, err
 	}
 	if err := r.loadLines(ctx, order); err != nil {
+		return nil, err
+	}
+	if err := r.loadDeliveryFacts(ctx, order); err != nil {
 		return nil, err
 	}
 	return order, nil
@@ -510,6 +543,187 @@ func (r *OrderRepository) UpdateOwner(ctx context.Context, id, ownerID uuid.UUID
 	return nil
 }
 
+// StartShipping persists a paid order's dispatch: its new SHIPPING state and its
+// updated_at, or domainerr.ErrNotFound when no order carries the identifier
+// (FR-005).
+func (r *OrderRepository) StartShipping(ctx context.Context, order *model.Order, now time.Time) error {
+	const query = `UPDATE orders SET status = $2, updated_at = $3 WHERE id = $1`
+	tag, err := r.querier(ctx).Exec(ctx, query, order.ID, string(order.Status), now)
+	if err != nil {
+		return fmt.Errorf("save order shipping: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domainerr.ErrNotFound
+	}
+	return nil
+}
+
+// SaveDelivered persists an in-transit order's delivery: its new DELIVERED state,
+// the delivered instant and its updated_at, or domainerr.ErrNotFound when no
+// order carries the identifier (FR-007, FR-008).
+func (r *OrderRepository) SaveDelivered(ctx context.Context, order *model.Order, now time.Time) error {
+	const query = `UPDATE orders SET status = $2, delivered_at = $3, updated_at = $4 WHERE id = $1`
+	tag, err := r.querier(ctx).Exec(ctx, query, order.ID, string(order.Status), order.DeliveredAt, now)
+	if err != nil {
+		return fmt.Errorf("save order delivery: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domainerr.ErrNotFound
+	}
+	return nil
+}
+
+// SaveCompleted persists a delivered order's completion: its new COMPLETED state,
+// the completion instant, the acting customer (nil for the sweep) and its
+// updated_at, or domainerr.ErrNotFound when no order carries the identifier
+// (FR-014).
+func (r *OrderRepository) SaveCompleted(ctx context.Context, order *model.Order, now time.Time) error {
+	const query = `UPDATE orders SET status = $2, completed_at = $3, completed_by = $4, updated_at = $5 WHERE id = $1`
+	tag, err := r.querier(ctx).Exec(ctx, query, order.ID, string(order.Status), order.CompletedAt, order.CompletedBy, now)
+	if err != nil {
+		return fmt.Errorf("save order completion: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domainerr.ErrNotFound
+	}
+	return nil
+}
+
+// ListDeliveryPhotos returns one order's delivery evidence, ordered by stage then
+// position then id, so the detail read projects it deterministically (FR-010,
+// research D3).
+func (r *OrderRepository) ListDeliveryPhotos(ctx context.Context, orderID uuid.UUID) ([]model.DeliveryPhoto, error) {
+	query := fmt.Sprintf(
+		`SELECT %s FROM order_delivery_photos WHERE order_id = $1 ORDER BY stage, position, id`,
+		projection(photoColumns))
+	rows, err := r.querier(ctx).Query(ctx, query, orderID)
+	if err != nil {
+		return nil, fmt.Errorf("list order delivery photos: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.DeliveryPhoto, 0)
+	for rows.Next() {
+		photo, err := scanDeliveryPhoto(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *photo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// AddDeliveryPhotos inserts every photo of one order's delivery step, each stamped
+// with the caller's instant, in one statement per row. The per-stage ceiling was
+// checked under the order's row lock before this write (FR-006, FR-008, research
+// D5).
+func (r *OrderRepository) AddDeliveryPhotos(ctx context.Context, orderID uuid.UUID, photos []model.DeliveryPhoto, now time.Time) error {
+	const query = `
+		INSERT INTO order_delivery_photos
+			(id, order_id, stage, public_id, url, width, height, position, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	for i := range photos {
+		photo := photos[i]
+		photoID := photo.ID
+		if photoID == uuid.Nil {
+			photoID = uuid.New()
+		}
+		if _, err := r.querier(ctx).Exec(ctx, query,
+			photoID,
+			orderID,
+			string(photo.Stage),
+			photo.PublicID,
+			photo.URL,
+			photo.Width,
+			photo.Height,
+			photo.Position,
+			now,
+		); err != nil {
+			return fmt.Errorf("insert order delivery photo: %w", err)
+		}
+	}
+	return nil
+}
+
+// CountDeliveryPhotos returns how many photos one order already carries at the
+// given stage, so the use case can enforce the five-photo ceiling under the row
+// lock (FR-006, FR-008, research D3, D5).
+func (r *OrderRepository) CountDeliveryPhotos(ctx context.Context, orderID uuid.UUID, stage model.Stage) (int, error) {
+	const query = `SELECT count(*) FROM order_delivery_photos WHERE order_id = $1 AND stage = $2`
+	var count int
+	if err := r.querier(ctx).QueryRow(ctx, query, orderID, string(stage)).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count order delivery photos: %w", err)
+	}
+	return count, nil
+}
+
+// InsertFeedback records the customer's one order-level feedback. The unique index
+// on (order_id) is the storage-level guarantee that an order takes at most one
+// feedback, so a second insert is refused by the database (FR-016, research D8).
+func (r *OrderRepository) InsertFeedback(ctx context.Context, feedback model.Feedback) error {
+	id := feedback.ID
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
+	const query = `
+		INSERT INTO order_feedback (id, order_id, author_id, content, created_at)
+		VALUES ($1, $2, $3, $4, $5)`
+	if _, err := r.querier(ctx).Exec(ctx, query,
+		id,
+		feedback.OrderID,
+		feedback.AuthorID,
+		feedback.Content,
+		feedback.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("insert order feedback: %w", err)
+	}
+	return nil
+}
+
+// FindFeedback returns the order's feedback, or domainerr.ErrNotFound when it has
+// none, so the detail read projects it (FR-015, FR-017).
+func (r *OrderRepository) FindFeedback(ctx context.Context, orderID uuid.UUID) (*model.Feedback, error) {
+	query := fmt.Sprintf(`SELECT %s FROM order_feedback WHERE order_id = $1`, projection(feedbackColumns))
+	feedback, err := scanFeedback(r.querier(ctx).QueryRow(ctx, query, orderID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domainerr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return feedback, nil
+}
+
+// ListAwaitingCompletion returns the identifiers of the orders that are DELIVERED
+// and whose delivered_at is at or before the cutoff, oldest delivered first, so
+// the completion sweep is reproducible (FR-012, research D6). It uses
+// orders_completion_idx (status, delivered_at) and compares against the instant
+// the caller passed, never the database clock.
+func (r *OrderRepository) ListAwaitingCompletion(ctx context.Context, cutoff time.Time) ([]uuid.UUID, error) {
+	const query = `SELECT id FROM orders WHERE status = $1 AND delivered_at IS NOT NULL AND delivered_at <= $2 ORDER BY delivered_at, id`
+	rows, err := r.querier(ctx).Query(ctx, query, string(constant.StatusDelivered), cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("list orders awaiting completion: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan awaiting-completion order id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FindPendingOrdersByVariants returns the identifiers of the PENDING or
 // PAYMENT_PENDING orders that hold at least one of the given variants, so a
 // hide guard can refuse while one is pending (specs/016-hide-guard research
@@ -558,18 +772,19 @@ func (r *OrderRepository) FindPendingOrdersByVariants(ctx context.Context, varia
 // KPIs answers the dashboard's revenue and order figures in one
 // conditional-aggregate query (FR-010, FR-012, FR-013, FR-014, research D7). The
 // two windows are supplied by the application in the shop timezone; revenue counts
-// only the three earned states and VND, while the order counts include every state.
-// The sums are cast to bigint so the adapter never reads a numeric.
+// only the four earned states — PAID, SHIPPING, DELIVERED and COMPLETED — and VND,
+// while the order counts include every state. The sums are cast to bigint so the
+// adapter never reads a numeric.
 func (r *OrderRepository) KPIs(ctx context.Context, current, last model.TimeWindow) (model.OrderKPIs, error) {
 	const query = `
 		SELECT
 			COALESCE(sum(total_amount) FILTER (
-				WHERE status IN ('PAID', 'SHIPPED', 'COMPLETED')
+				WHERE status IN ('PAID', 'SHIPPING', 'DELIVERED', 'COMPLETED')
 				  AND currency = 'VND'
 				  AND created_at >= $1 AND created_at < $2
 			), 0)::bigint,
 			COALESCE(sum(total_amount) FILTER (
-				WHERE status IN ('PAID', 'SHIPPED', 'COMPLETED')
+				WHERE status IN ('PAID', 'SHIPPING', 'DELIVERED', 'COMPLETED')
 				  AND currency = 'VND'
 				  AND created_at >= $3 AND created_at < $4
 			), 0)::bigint,
@@ -604,7 +819,7 @@ func (r *OrderRepository) DailyRevenue(ctx context.Context, window model.TimeWin
 		SELECT to_char(o.created_at AT TIME ZONE $3, 'YYYY-MM-DD') AS day,
 		       sum(o.total_amount)::bigint AS amount
 		FROM orders o
-		WHERE o.status IN ('PAID', 'SHIPPED', 'COMPLETED')
+		WHERE o.status IN ('PAID', 'SHIPPING', 'DELIVERED', 'COMPLETED')
 		  AND o.currency = 'VND'
 		  AND o.created_at >= $1 AND o.created_at < $2
 		GROUP BY day
@@ -641,7 +856,7 @@ func (r *OrderRepository) CategoryRevenue(ctx context.Context, window model.Time
 		       sum(oi.quantity * oi.unit_price_amount)::bigint AS amount
 		FROM orders o
 		JOIN order_items oi ON oi.order_id = o.id
-		WHERE o.status IN ('PAID', 'SHIPPED', 'COMPLETED')
+		WHERE o.status IN ('PAID', 'SHIPPING', 'DELIVERED', 'COMPLETED')
 		  AND o.currency = 'VND'
 		  AND o.created_at >= $1 AND o.created_at < $2
 		GROUP BY oi.category_id, oi.category_name
@@ -760,6 +975,25 @@ func (r *OrderRepository) loadLines(ctx context.Context, order *model.Order) err
 	return nil
 }
 
+// loadDeliveryFacts reads one order's delivery evidence and its feedback and
+// attaches them, so the detail read projects them while a summary read does not
+// (FR-010, FR-015, research D11). An order with no feedback carries a nil Feedback,
+// not an error.
+func (r *OrderRepository) loadDeliveryFacts(ctx context.Context, order *model.Order) error {
+	photos, err := r.ListDeliveryPhotos(ctx, order.ID)
+	if err != nil {
+		return err
+	}
+	order.DeliveryPhotos = photos
+
+	feedback, err := r.FindFeedback(ctx, order.ID)
+	if err != nil && !errors.Is(err, domainerr.ErrNotFound) {
+		return err
+	}
+	order.Feedback = feedback
+	return nil
+}
+
 // normalizePage applies the module's pagination convention, mirroring the shared
 // generic repository: a page below 1 becomes 1, and a size outside 1..100 becomes
 // the default 20, so a caller that passes an absent or out-of-range window reads
@@ -804,6 +1038,9 @@ func scanOrder(row baserepo.Row) (*model.Order, error) {
 		&order.PaymentExpiresAt,
 		&order.Version,
 		&order.ConfirmedAt,
+		&order.DeliveredAt,
+		&order.CompletedAt,
+		&order.CompletedBy,
 		&order.CreatedAt,
 		&order.UpdatedAt,
 	)
@@ -879,4 +1116,46 @@ func scanSummary(row baserepo.Row) (*model.OrderSummary, error) {
 	}
 	summary.Status = constant.Status(status)
 	return &summary, nil
+}
+
+// scanDeliveryPhoto reads one row of photoColumns.
+func scanDeliveryPhoto(row baserepo.Row) (*model.DeliveryPhoto, error) {
+	var (
+		photo model.DeliveryPhoto
+		stage string
+	)
+	if err := row.Scan(
+		&photo.ID,
+		&photo.OrderID,
+		&stage,
+		&photo.PublicID,
+		&photo.URL,
+		&photo.Width,
+		&photo.Height,
+		&photo.Position,
+		&photo.CreatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan order delivery photo: %w", err)
+	}
+	photo.Stage = model.Stage(stage)
+	return &photo, nil
+}
+
+// scanFeedback reads one row of feedbackColumns. A no-rows error is returned
+// unwrapped so the caller can recognise it; any other failure is wrapped.
+func scanFeedback(row baserepo.Row) (*model.Feedback, error) {
+	var feedback model.Feedback
+	if err := row.Scan(
+		&feedback.ID,
+		&feedback.OrderID,
+		&feedback.AuthorID,
+		&feedback.Content,
+		&feedback.CreatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, pgx.ErrNoRows
+		}
+		return nil, fmt.Errorf("scan order feedback: %w", err)
+	}
+	return &feedback, nil
 }

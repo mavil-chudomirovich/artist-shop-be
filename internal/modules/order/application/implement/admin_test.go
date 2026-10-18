@@ -205,8 +205,8 @@ func TestGetByIDAdminReturnsAnyOrderInFull(t *testing.T) {
 	}
 }
 
-// FR-022, FR-023: shipping a paid order then completing it advances the state and
-// records each act, naming the order and the administrator.
+// FR-005, FR-011, FR-019: dispatching a paid order then completing a delivered one
+// advances the state and records each act, naming the order and the administrator.
 func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
 	admin := uuid.New()
 	order := orderAt(uuid.New(), fixedNow, line(uuid.New(), 120000, 1))
@@ -217,17 +217,20 @@ func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ShipByAdmin: %v", err)
 	}
-	if shipped.Status != constant.StatusShipped {
-		t.Fatalf("the order must answer SHIPPED, got %s", shipped.Status)
+	if shipped.Status != constant.StatusShipping {
+		t.Fatalf("the order must answer SHIPPING, got %s", shipped.Status)
 	}
-	if order.Status != constant.StatusShipped {
-		t.Fatalf("the persisted state must be SHIPPED, got %s", order.Status)
+	if order.Status != constant.StatusShipping {
+		t.Fatalf("the persisted state must be SHIPPING, got %s", order.Status)
 	}
 	if len(f.audit.events) != 1 {
-		t.Fatalf("shipping must record one audit entry, got %+v", f.audit.events)
+		t.Fatalf("dispatching must record one audit entry, got %+v", f.audit.events)
 	}
 	assertAudit(t, f.audit.events[0], constant.AuditOrderShipped, admin, order.ID)
 
+	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
+	// it directly so the completed edge can be exercised.
+	order.Status = constant.StatusDelivered
 	completed, err := f.svc.CompleteByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
 	if err != nil {
 		t.Fatalf("CompleteByAdmin: %v", err)
@@ -240,13 +243,13 @@ func TestShipAndCompleteByAdminAdvanceTheOrderAndAuditEach(t *testing.T) {
 	}
 	assertAudit(t, f.audit.events[1], constant.AuditOrderCompleted, admin, order.ID)
 
-	if len(f.orders.updates) != 2 || f.orders.updates[0].status != constant.StatusShipped ||
+	if len(f.orders.updates) != 2 || f.orders.updates[0].status != constant.StatusShipping ||
 		f.orders.updates[1].status != constant.StatusCompleted {
 		t.Fatalf("each move must persist its new state, got %+v", f.orders.updates)
 	}
 }
 
-// FR-011, FR-022: a move the current state does not allow is refused naming that
+// FR-003, FR-005: a move the current state does not allow is refused naming that
 // state, and neither the order nor the audit trail changes.
 func TestAdminMoveRefusesAnIllegalMoveAndRecordsNothing(t *testing.T) {
 	admin := uuid.New()
@@ -256,9 +259,9 @@ func TestAdminMoveRefusesAnIllegalMoveAndRecordsNothing(t *testing.T) {
 	_, err := f.svc.ShipByAdmin(adminContext(admin), appdto.OrderRefInput{OrderID: order.ID})
 	var refusal *domainerr.StateTransitionError
 	if !errors.As(err, &refusal) {
-		t.Fatalf("shipping an unpaid order must be refused with a state transition error, got %v", err)
+		t.Fatalf("dispatching an unpaid order must be refused with a state transition error, got %v", err)
 	}
-	if refusal.From != constant.StatusPending || refusal.To != constant.StatusShipped {
+	if refusal.From != constant.StatusPending || refusal.To != constant.StatusShipping {
 		t.Fatalf("the refusal must name PENDING, got %+v", refusal)
 	}
 	if order.Status != constant.StatusPending {

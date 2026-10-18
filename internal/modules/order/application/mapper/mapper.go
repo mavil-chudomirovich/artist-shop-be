@@ -92,6 +92,40 @@ func (m *Mapper) Summaries(summaries []model.OrderSummary) []dto.OrderSummaryVie
 	return out
 }
 
+// DeliveryPhoto maps one piece of delivery evidence to its DTO shape (FR-010,
+// research D11).
+func (m *Mapper) DeliveryPhoto(photo model.DeliveryPhoto) dto.DeliveryPhotoView {
+	return dto.DeliveryPhotoView{
+		ID:       photo.ID,
+		Stage:    string(photo.Stage),
+		URL:      photo.URL,
+		Width:    photo.Width,
+		Height:   photo.Height,
+		Position: photo.Position,
+	}
+}
+
+// DeliveryPhotos maps an order's evidence, preserving the stage-then-position
+// order the repository applied. A nil list maps to an empty slice, never a nil
+// one, so a detail serialises `deliveryPhotos: []` rather than `deliveryPhotos:
+// null`.
+func (m *Mapper) DeliveryPhotos(photos []model.DeliveryPhoto) []dto.DeliveryPhotoView {
+	out := make([]dto.DeliveryPhotoView, 0, len(photos))
+	for _, photo := range photos {
+		out = append(out, m.DeliveryPhoto(photo))
+	}
+	return out
+}
+
+// Feedback maps the order's feedback, or returns nil when the order has none, so
+// a detail serialises `feedback: null` (FR-015, research D11).
+func (m *Mapper) Feedback(feedback *model.Feedback) *dto.FeedbackView {
+	if feedback == nil {
+		return nil
+	}
+	return &dto.FeedbackView{Content: feedback.Content, CreatedAt: feedback.CreatedAt}
+}
+
 // AdminSummaries maps a page of list rows to the operator-facing shapes,
 // preserving the newest-first order the repository applied.
 func (m *Mapper) AdminSummaries(summaries []model.OrderSummary) []dto.AdminOrderSummaryView {
@@ -105,7 +139,10 @@ func (m *Mapper) AdminSummaries(summaries []model.OrderSummary) []dto.AdminOrder
 // Order maps a whole order to the customer's detail shape. The line count is the
 // number of lines the order carries, so the summary and the detail cannot
 // disagree. The order's content version is deliberately not mapped: it is an
-// internal seam for module 08, never a client-facing value (research D10).
+// internal seam for module 08, never a client-facing value (research D10). The
+// delivery facts — delivered/completed instants, the evidence and the feedback —
+// are mapped because the detail projects them while a list does not (research
+// D11); `completed_by` stays internal.
 func (m *Mapper) Order(order model.Order) dto.OrderView {
 	return dto.OrderView{
 		OrderSummaryView: dto.OrderSummaryView{
@@ -115,13 +152,18 @@ func (m *Mapper) Order(order model.Order) dto.OrderView {
 			ItemCount: int64(len(order.Lines)),
 			CreatedAt: order.CreatedAt,
 		},
-		Address: m.Address(order.Address),
-		Lines:   m.Lines(order.Lines),
+		Address:        m.Address(order.Address),
+		Lines:          m.Lines(order.Lines),
+		DeliveredAt:    order.DeliveredAt,
+		CompletedAt:    order.CompletedAt,
+		DeliveryPhotos: m.DeliveryPhotos(order.DeliveryPhotos),
+		Feedback:       m.Feedback(order.Feedback),
 	}
 }
 
 // AdminOrder maps a whole order to the operator's detail shape, including its
-// owner (FR-021).
+// owner (FR-021). It carries the same delivery facts as the customer detail; the
+// acting customer behind `completed_by` stays internal.
 func (m *Mapper) AdminOrder(order model.Order) dto.AdminOrderView {
 	return dto.AdminOrderView{
 		AdminOrderSummaryView: dto.AdminOrderSummaryView{
@@ -134,7 +176,11 @@ func (m *Mapper) AdminOrder(order model.Order) dto.AdminOrderView {
 			},
 			UserID: order.UserID,
 		},
-		Address: m.Address(order.Address),
-		Lines:   m.Lines(order.Lines),
+		Address:        m.Address(order.Address),
+		Lines:          m.Lines(order.Lines),
+		DeliveredAt:    order.DeliveredAt,
+		CompletedAt:    order.CompletedAt,
+		DeliveryPhotos: m.DeliveryPhotos(order.DeliveryPhotos),
+		Feedback:       m.Feedback(order.Feedback),
 	}
 }

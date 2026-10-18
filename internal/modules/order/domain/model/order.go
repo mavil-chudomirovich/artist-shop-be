@@ -23,6 +23,10 @@ const (
 	// customer named at checkout. A malformed or foreign value is reported
 	// against it (FR-003, contracts/error-codes.md).
 	FieldAddressID = "addressId"
+	// FieldFeedbackContent is the member carrying a customer's order-level
+	// feedback message. An empty, blank or over-long value is reported against
+	// it (FR-015, contracts/error-codes.md).
+	FieldFeedbackContent = "content"
 )
 
 // Price is money as an integer amount in a currency's minor unit together with
@@ -113,6 +117,14 @@ type Address struct {
 	StreetAddress string
 }
 
+// DeliveryCompletionWindow is how long a delivered order awaits the customer's
+// confirmation before the sweep completes it: five days, defined as an elapsed
+// duration of 120 hours (5 × 24h) from the delivered instant, not calendar-day
+// boundaries (FR-012, research D6). It is owned here so the window lives in one
+// place; the sweep computes delivered_at <= now − DeliveryCompletionWindow from
+// the injected clock.
+const DeliveryCompletionWindow = 5 * 24 * time.Hour
+
 // Order is a purchase a customer has committed to: who owns it, where it goes,
 // what it costs, and where it is in its life (spec Key Entities).
 type Order struct {
@@ -142,6 +154,27 @@ type Order struct {
 	// nil while the order awaits the artist, so an order with no hold carries no
 	// deadline (FR-006, FR-008, research D4).
 	PaymentExpiresAt *time.Time
+	// DeliveredAt is when the operator marked the order delivered. It is nil
+	// before delivery and anchors the five-day automatic completion window
+	// (FR-008, FR-012, research D6).
+	DeliveredAt *time.Time
+	// CompletedAt is when the order reached COMPLETED, by the customer
+	// confirming receipt or by the sweep. It is nil before then (FR-014,
+	// research D10).
+	CompletedAt *time.Time
+	// CompletedBy is the customer who confirmed receipt; it is nil when the
+	// sweep completed the order. A loose reference with no foreign key, like
+	// UserID (FR-014, research D10). It is internal and never mapped into a
+	// client response.
+	CompletedBy *uuid.UUID
+	// DeliveryPhotos is the dispatch and delivery evidence read alongside the
+	// order on the detail paths. It is the order's own collection but is loaded
+	// separately from the order row, so it is empty on a summary read
+	// (FR-010, research D11).
+	DeliveryPhotos []DeliveryPhoto
+	// Feedback is the customer's order-level feedback, read alongside the order
+	// on the detail paths. It is nil when none was sent (FR-015, research D11).
+	Feedback *Feedback
 	// CreatedAt is when the order was placed. Set once.
 	CreatedAt time.Time
 	// UpdatedAt is touched on every write.
@@ -220,16 +253,42 @@ func (o *Order) MarkPaid() error {
 	return o.transition(constant.StatusPaymentPending, constant.StatusPaid)
 }
 
-// Ship moves a paid order to shipped. It is the edge an administrator drives
-// (FR-022, research D9 of 009).
-func (o *Order) Ship() error {
-	return o.transition(constant.StatusPaid, constant.StatusShipped)
+// StartShipping moves a paid order in transit: the operator hands it to the
+// carrier. It is the edge an administrator drives when it dispatches an order,
+// and the customer is told the order is on its way (FR-005, research D1).
+func (o *Order) StartShipping() error {
+	return o.transition(constant.StatusPaid, constant.StatusShipping)
 }
 
-// Complete moves a shipped order to completed. It is the edge an administrator
-// drives (FR-022, research D9 of 009).
+// MarkDelivered moves an in-transit order to delivered and stamps the delivery
+// instant, which anchors the five-day window the sweep completes from. It is the
+// edge an administrator drives when the customer has received the order
+// (FR-007, FR-008, research D6).
+func (o *Order) MarkDelivered(now time.Time) error {
+	if err := o.transition(constant.StatusShipping, constant.StatusDelivered); err != nil {
+		return err
+	}
+	deliveredAt := now
+	o.DeliveredAt = &deliveredAt
+	return nil
+}
+
+// Complete moves a delivered order to completed. It is the single completion
+// edge, serving both routes into COMPLETED: the customer's ConfirmReceived use
+// case and the five-day automatic sweep. The caller stamps CompletedAt and, for
+// the customer, CompletedBy; the sweep leaves CompletedBy nil (FR-011, FR-012,
+// FR-014, research D6). A move from any state but DELIVERED is refused naming the
+// current state, so whichever of the customer or the sweep commits second finds
+// the order no longer DELIVERED and is refused — completion happens once.
 func (o *Order) Complete() error {
-	return o.transition(constant.StatusShipped, constant.StatusCompleted)
+	return o.transition(constant.StatusDelivered, constant.StatusCompleted)
+}
+
+// IsAwaitingCustomerConfirmation reports whether the order is delivered and so
+// awaits the customer's confirmation (or, failing that, the five-day sweep)
+// before it completes (FR-011, FR-012).
+func (o Order) IsAwaitingCustomerConfirmation() bool {
+	return o.Status == constant.StatusDelivered
 }
 
 // Cancel moves an order awaiting the artist or payment to cancelled. It is the

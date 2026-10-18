@@ -70,6 +70,19 @@ type Service struct {
 	// after the transaction commits, so it never fails a business operation
 	// (FR-019 to FR-021, research D9). A nil notifier is tolerated.
 	Notifier appinterface.Notifier
+	// Media stores the order's dispatch and delivery evidence photos through the
+	// shared media port — the same Cloudinary-backed store the user and product
+	// modules already use. It is supplied by the composition root; the read paths
+	// never call it, and a delivery use case refuses an upload when it is unset
+	// (FR-009, FR-010, research D4). Photos are stored outside any transaction and
+	// their rows inserted inside, so no database lock is held across a provider
+	// call (research D5).
+	Media appinterface.MediaStore
+	// PhotoMaxBytes is the configured ceiling on one delivery-evidence photo,
+	// enforced before the payload reaches the media store. Zero means the
+	// documented ceiling (model.MaxDeliveryPhotoBytes, the shared 2 MB image
+	// limit) (FR-009, research D4).
+	PhotoMaxBytes int64
 	// Cancellations tells the payment module (08) that an order was cancelled, so
 	// the provider payment request it created is cancelled too. It is the
 	// contract module 08 provides at the composition root (research D9). The call

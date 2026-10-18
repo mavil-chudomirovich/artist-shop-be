@@ -258,11 +258,12 @@ func TestMarkPaidTurnsTheHoldIntoASaleExactlyOnce(t *testing.T) {
 	}
 }
 
-// FR-014: once the order is past the awaiting-payment edge — paid, shipped or
-// completed — a payment event is a no-op success, matching module 05's
-// already-applied outcomes. It neither transitions the order nor sells anything.
+// FR-014: once the order is past the awaiting-payment edge — paid, in transit,
+// delivered or completed — a payment event is a no-op success, matching module
+// 05's already-applied outcomes. It neither transitions the order nor sells
+// anything.
 func TestMarkPaidIsANoOpOnceTheOrderIsPastAwaitingPayment(t *testing.T) {
-	for _, status := range []constant.Status{constant.StatusPaid, constant.StatusShipped, constant.StatusCompleted} {
+	for _, status := range []constant.Status{constant.StatusPaid, constant.StatusShipping, constant.StatusDelivered, constant.StatusCompleted} {
 		order := paymentPendingOrder(uuid.New(), line(uuid.New(), 1000, 1))
 		order.Status = status
 		f := newLifecycleFixture(order)
@@ -373,7 +374,7 @@ func TestCancelReturnsTheHoldExactlyOnce(t *testing.T) {
 	}
 }
 
-// FR-009, FR-011, FR-022: ship and complete drive their transitions, and a move
+// FR-003, FR-005, FR-011: ship and complete drive their transitions, and a move
 // the current state does not allow is refused naming that state and leaves the
 // order exactly as it was.
 func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) {
@@ -387,7 +388,7 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 	if !errors.As(err, &refusal) {
 		t.Fatalf("shipping an unpaid order must be refused with a state transition error, got %v", err)
 	}
-	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusShipped {
+	if refusal.From != constant.StatusPaymentPending || refusal.To != constant.StatusShipping {
 		t.Fatalf("the refusal must name PAYMENT_PENDING, got %+v", refusal)
 	}
 	if order.Status != constant.StatusPaymentPending {
@@ -397,14 +398,17 @@ func TestShipAndCompleteDriveTheTransitionsAndRefuseAnIllegalMove(t *testing.T) 
 		t.Fatalf("a refused move must persist nothing, got %+v", f.orders.updates)
 	}
 
-	// A paid order can be shipped and then completed.
+	// A paid order can be dispatched and, once delivered, completed.
 	order.Status = constant.StatusPaid
 	if err := f.svc.Ship(ctx, order.ID); err != nil {
 		t.Fatalf("Ship: %v", err)
 	}
-	if order.Status != constant.StatusShipped {
-		t.Fatalf("status = %s, want SHIPPED", order.Status)
+	if order.Status != constant.StatusShipping {
+		t.Fatalf("status = %s, want SHIPPING", order.Status)
 	}
+	// The delivery step (US2) moves the order to DELIVERED; here the fixture sets
+	// it directly so the completed edge can be exercised.
+	order.Status = constant.StatusDelivered
 	if err := f.svc.Complete(ctx, order.ID); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}

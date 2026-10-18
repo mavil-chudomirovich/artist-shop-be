@@ -164,7 +164,7 @@ func (f *dashboardFixture) seed(t *testing.T) {
 		 )
 		 SELECT ('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid,
 		        gen_random_uuid(),
-		        CASE WHEN g % 3 = 0 THEN 'PENDING' WHEN g % 3 = 1 THEN 'SHIPPED' ELSE 'PAID' END,
+		        CASE WHEN g % 3 = 0 THEN 'PENDING' WHEN g % 3 = 1 THEN 'SHIPPING' ELSE 'PAID' END,
 		        1000, 'VND', 'A', '0912345678', '01', 'Ha Noi', '00001', 'Phuc Xa', '1 street',
 		        ($1::timestamptz - (g % 40) * interval '1 day'), $1::timestamptz
 		 FROM generate_series(1, $2::int) g`, f.now, scenarioOrderCount); err != nil {

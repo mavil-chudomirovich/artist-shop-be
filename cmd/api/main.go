@@ -418,6 +418,11 @@ func run() error {
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
 		Notifier:     orderNotifier,
+		// The order module stores its delivery evidence through the same shared
+		// media store the user and product modules already use, so there is one
+		// Cloudinary adapter and one credential set (feature 019 FR-009, FR-010,
+		// research D4).
+		Media: userMediaStore,
 		// Cancellations is set a few lines below, once module 08's use cases
 		// exist: the payment service is built from this order service (through
 		// the OrderPayment adapter) while this order service is built before it,

@@ -395,7 +395,7 @@ func TestGuardedProductFlagOffRefusedWhilePending(t *testing.T) {
 	}
 }
 
-// FR-006, FR-007 (specs/016-hide-guard US3): orders in PAID, SHIPPED,
+// FR-006, FR-007 (specs/016-hide-guard US3): orders in PAID, SHIPPING,
 // COMPLETED or CANCELLED never block; the flag turns off, both variants leave
 // every cart in the same transaction, and the hide emits its audit action
 // carrying the removed line count.
@@ -405,7 +405,7 @@ func TestGuardedProductFlagOffSucceedsWithOnlySettledOrdersAndCleansCarts(t *tes
 
 	orders := &fakeVariantOrderGuard{orders: []guardOrder{
 		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{v1.ID}},
-		{id: uuid.New(), status: "SHIPPED", variants: []uuid.UUID{v2.ID}},
+		{id: uuid.New(), status: "SHIPPING", variants: []uuid.UUID{v2.ID}},
 		{id: uuid.New(), status: "COMPLETED", variants: []uuid.UUID{v1.ID, v2.ID}},
 		{id: uuid.New(), status: "CANCELLED", variants: []uuid.UUID{v1.ID}},
 	}}

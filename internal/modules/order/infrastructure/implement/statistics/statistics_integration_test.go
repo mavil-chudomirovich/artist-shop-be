@@ -113,7 +113,7 @@ func (f *orderStatsFixture) insertOrder(t *testing.T, status constant.Status, cu
 	return id
 }
 
-// FR-010, FR-012 to FR-014: current/last revenue count only PAID, SHIPPED and
+// FR-010, FR-012 to FR-014: current/last revenue count only PAID, SHIPPING and
 // COMPLETED in VND within their window; the order counts include every state and
 // the all-time counts ignore the windows.
 func TestKPIsCountOnlyEarnedRevenueInVNDAcrossTheWindows(t *testing.T) {
@@ -133,7 +133,7 @@ func TestKPIsCountOnlyEarnedRevenueInVNDAcrossTheWindows(t *testing.T) {
 	older := time.Date(2025, time.December, 20, 12, 0, 0, 0, f.loc)
 
 	f.insertOrder(t, constant.StatusPaid, "VND", inCurrent, 1000, 1)
-	f.insertOrder(t, constant.StatusShipped, "VND", inCurrent, 2000, 1)
+	f.insertOrder(t, constant.StatusShipping, "VND", inCurrent, 2000, 1)
 	f.insertOrder(t, constant.StatusCompleted, "VND", inCurrent, 3000, 1)
 	f.insertOrder(t, constant.StatusPending, "VND", inCurrent, 4000, 1)
 	f.insertOrder(t, constant.StatusPaymentPending, "VND", inCurrent, 5000, 1)
@@ -151,7 +151,7 @@ func TestKPIsCountOnlyEarnedRevenueInVNDAcrossTheWindows(t *testing.T) {
 	}
 
 	if got.CurrentRevenue.Amount != 6000 || got.CurrentRevenue.Currency != "VND" {
-		t.Fatalf("current revenue = %+v, want 6000 VND (PAID+SHIPPED+COMPLETED only)", got.CurrentRevenue)
+		t.Fatalf("current revenue = %+v, want 6000 VND (PAID+SHIPPING+COMPLETED only)", got.CurrentRevenue)
 	}
 	if got.LastRevenue.Amount != 800 || got.LastRevenue.Currency != "VND" {
 		t.Fatalf("last revenue = %+v, want 800 VND", got.LastRevenue)

@@ -281,7 +281,7 @@ func TestAdminDetailReturnsAnyOrderInFull(t *testing.T) {
 // FR-022: ship then complete answer 200 with the advanced order.
 func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
 	shipped := sampleAdminView()
-	shipped.Status = constant.StatusShipped
+	shipped.Status = constant.StatusShipping
 	completed := sampleAdminView()
 	completed.Status = constant.StatusCompleted
 	fake := &fakeAdmin{shipView: shipped, completeView: completed}
@@ -295,8 +295,8 @@ func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &shipBody); err != nil {
 		t.Fatalf("decode the shipped order %q: %v", rec.Body.String(), err)
 	}
-	if shipBody.Data.Status != "SHIPPED" {
-		t.Fatalf("the shipped order must answer SHIPPED, got %s", shipBody.Data.Status)
+	if shipBody.Data.Status != "SHIPPING" {
+		t.Fatalf("the dispatched order must answer SHIPPING, got %s", shipBody.Data.Status)
 	}
 
 	rec = perform(router, http.MethodPost, adminOrdersPath+"/"+completed.ID.String()+"/complete", "", "admin-token")
@@ -318,7 +318,7 @@ func TestAdminShipAndCompleteReturnTheAdvancedOrder(t *testing.T) {
 // contracts/error-codes.md: an illegal move answers 409
 // ORDER_STATE_TRANSITION_INVALID.
 func TestAdminMoveRefusesAnIllegalMove(t *testing.T) {
-	fake := &fakeAdmin{shipErr: domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusShipped)}
+	fake := &fakeAdmin{shipErr: domainerr.StateTransitionInvalid(constant.StatusPaymentPending, constant.StatusShipping)}
 	router := newOrderAdminRouter(fake)
 
 	rec := perform(router, http.MethodPost, adminOrdersPath+"/"+uuid.New().String()+"/ship", "", "admin-token")

@@ -12,6 +12,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/contracts"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/repository"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // OrderRepository is the persistence port the use cases depend on. It is the
@@ -51,6 +52,14 @@ type CustomerLookupService = contracts.CustomerLookupService
 // transfer recipient by email. It is declared in internal/contracts and provided
 // by module 01 at the composition root (research D8).
 type AccountLookup = contracts.AccountLookup
+
+// MediaStore is the shared media port, re-exported here so this module names its
+// dependency without declaring a second interface that could drift from the
+// shared one. The port itself lives in internal/share/media; the order's
+// application imports it only for this interface, and the order's domain imports
+// no media package at all (Constitution I, research D4). Module 04 (product)
+// re-exports it the same way.
+type MediaStore = media.Store
 
 // PaymentCancellation is the cross-module contract the order consumes to tell the
 // payment module (08) that an order was cancelled, so the provider payment request

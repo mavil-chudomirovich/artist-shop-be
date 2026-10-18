@@ -1,4 +1,4 @@
-// Package constant holds the order module's business constants: the six order
+// Package constant holds the order module's business constants: the seven order
 // states, the machine-readable error codes, the list sort orders and the audit
 // actions.
 //
@@ -27,21 +27,30 @@ const (
 	// StatusPaid is an order a confirmed payment has turned its hold into a
 	// sale. Module 08 drives this transition (research D13 of 009).
 	StatusPaid Status = "PAID"
-	// StatusShipped is a paid order an administrator has marked shipped.
-	StatusShipped Status = "SHIPPED"
-	// StatusCompleted is a shipped order an administrator has marked completed.
-	// It is terminal.
+	// StatusShipping is a paid order an administrator has handed to the carrier:
+	// it is in transit. It is the state formerly named SHIPPED, renamed by
+	// feature 019 so the name matches the delivery step it now describes
+	// (FR-001, FR-005, research D1).
+	StatusShipping Status = "SHIPPING"
+	// StatusDelivered is an in-transit order an administrator has marked
+	// delivered: the customer has it. It anchors the five-day automatic
+	// completion window and is the state the customer confirms receipt from
+	// (FR-007, FR-008, FR-011, FR-012, research D1).
+	StatusDelivered Status = "DELIVERED"
+	// StatusCompleted is a delivered order the customer confirmed or the
+	// five-day sweep completed. It is terminal.
 	StatusCompleted Status = "COMPLETED"
 	// StatusCancelled is an order the customer cancelled, the artist declined, or
 	// that expired unpaid. It is terminal.
 	StatusCancelled Status = "CANCELLED"
 )
 
-// IsValidStatus reports whether value is one of the six order states. It mirrors
-// the orders_status_ck check so the domain and the storage agree on the set.
+// IsValidStatus reports whether value is one of the seven order states. It
+// mirrors the orders_status_ck check so the domain and the storage agree on the
+// set.
 func IsValidStatus(value Status) bool {
 	switch value {
-	case StatusPending, StatusPaymentPending, StatusPaid, StatusShipped, StatusCompleted, StatusCancelled:
+	case StatusPending, StatusPaymentPending, StatusPaid, StatusShipping, StatusDelivered, StatusCompleted, StatusCancelled:
 		return true
 	default:
 		return false
@@ -104,6 +113,26 @@ const (
 	// order always carries at least one line; the customer cancels instead
 	// (FR-015).
 	CodeEmptyOrder = "ORDER_EMPTY"
+	// CodeImageTypeUnsupported reports that an uploaded delivery photo is not
+	// JPEG, PNG or WebP, decided by sniffing the bytes rather than by a file
+	// name or a client-declared media type (FR-009). It mirrors module 04's
+	// PRODUCT_IMAGE_TYPE_UNSUPPORTED and maps to 400 (research D9).
+	CodeImageTypeUnsupported = "ORDER_IMAGE_TYPE_UNSUPPORTED"
+	// CodeImageTooLarge reports that an uploaded delivery photo exceeds the
+	// size ceiling; it is also the refusal when a request near the route's body
+	// ceiling is turned away (FR-009). It maps to 413 (research D9).
+	CodeImageTooLarge = "ORDER_IMAGE_TOO_LARGE"
+	// CodeImageLimitReached reports that more than five photos were attached to
+	// one delivery step (FR-006, FR-008). It maps to 409 (research D9).
+	CodeImageLimitReached = "ORDER_IMAGE_LIMIT_REACHED"
+	// CodeFeedbackNotAllowed reports that feedback was submitted while the order
+	// is not DELIVERED or COMPLETED. The message names the current state
+	// (FR-015). It maps to 409 (research D9).
+	CodeFeedbackNotAllowed = "ORDER_FEEDBACK_NOT_ALLOWED"
+	// CodeFeedbackAlreadySent reports that a second feedback was submitted for
+	// the same order. Each order accepts one (FR-016). It maps to 409 (research
+	// D9).
+	CodeFeedbackAlreadySent = "ORDER_FEEDBACK_ALREADY_SENT"
 )
 
 // Audit actions emitted by the order module. The values are the action names
@@ -119,11 +148,18 @@ const (
 	// AuditOrderRejected is recorded when an administrator declines an order
 	// awaiting the artist (FR-018).
 	AuditOrderRejected = "ORDER_REJECTED"
-	// AuditOrderShipped is recorded when an administrator marks a paid order
-	// shipped (FR-022, FR-023).
+	// AuditOrderShipped is recorded when an administrator marks a paid order in
+	// transit (dispatches it) (FR-019, research D10). It is kept unchanged
+	// though the state is now named SHIPPING: the value is part of the
+	// historical audit contract and renaming it would make past rows
+	// undecodable.
 	AuditOrderShipped = "ORDER_SHIPPED"
-	// AuditOrderCompleted is recorded when an administrator marks a shipped order
-	// completed (FR-022, FR-023).
+	// AuditOrderDelivered is recorded when an administrator marks an in-transit
+	// order delivered (FR-019, research D10).
+	AuditOrderDelivered = "ORDER_DELIVERED"
+	// AuditOrderCompleted is recorded when a delivered order is completed — by
+	// the customer confirming receipt, or by the sweep with no actor (FR-014,
+	// research D10). Kept unchanged for the same reason as AuditOrderShipped.
 	AuditOrderCompleted = "ORDER_COMPLETED"
 	// AuditOrderTransferred is recorded when an administrator hands a paid order
 	// to another account (FR-024).

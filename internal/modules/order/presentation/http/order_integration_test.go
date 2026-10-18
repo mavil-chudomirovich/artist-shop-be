@@ -797,10 +797,17 @@ func TestAdminRunsTheOrderDeskAgainstPostgres(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &shipped); err != nil {
 		t.Fatalf("decode the shipped order %q: %v", rec.Body.String(), err)
 	}
-	if shipped.Data.Status != "SHIPPED" {
-		t.Fatalf("the order must answer SHIPPED, got %s", shipped.Data.Status)
+	if shipped.Data.Status != "SHIPPING" {
+		t.Fatalf("the order must answer SHIPPING, got %s", shipped.Data.Status)
 	}
 	f.requireAudit(t, constant.AuditOrderShipped, orderID, testAdminID)
+
+	// The delivery step (US2) has no route yet; move the order to DELIVERED
+	// directly so the completion edge can be driven through the admin route.
+	if _, err := f.pool.Exec(context.Background(),
+		`UPDATE orders SET status = 'DELIVERED', delivered_at = now() WHERE id = $1`, orderID); err != nil {
+		t.Fatalf("seed the delivered state: %v", err)
+	}
 
 	rec = perform(f.root, http.MethodPost, adminOrdersPath+"/"+orderID.String()+"/complete", "", "admin-token")
 	if rec.Code != http.StatusOK {

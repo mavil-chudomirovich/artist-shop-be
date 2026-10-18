@@ -620,7 +620,7 @@ func TestGuardedHideRefusedWhilePendingOrdersHoldItsVariants(t *testing.T) {
 	}
 }
 
-// FR-001, FR-004, FR-007 (specs/016-hide-guard US1): orders in PAID, SHIPPED,
+// FR-001, FR-004, FR-007 (specs/016-hide-guard US1): orders in PAID, SHIPPING,
 // COMPLETED or CANCELLED never block; the hide succeeds, every cart line holding
 // the category's variants is removed in the same transaction, and the hide emits
 // its audit action carrying the removed line count.
@@ -633,7 +633,7 @@ func TestGuardedHideSucceedsWithOnlySettledOrdersAndCleansCarts(t *testing.T) {
 	variants := &fakeCategoryVariants{byCategory: map[uuid.UUID][]uuid.UUID{seeded.ID: {v1, v2}}}
 	orders := &fakeOrderGuard{orders: []guardOrder{
 		{id: uuid.New(), status: "PAID", variants: []uuid.UUID{v1}},
-		{id: uuid.New(), status: "SHIPPED", variants: []uuid.UUID{v2}},
+		{id: uuid.New(), status: "SHIPPING", variants: []uuid.UUID{v2}},
 		{id: uuid.New(), status: "COMPLETED", variants: []uuid.UUID{v1, v2}},
 		{id: uuid.New(), status: "CANCELLED", variants: []uuid.UUID{v1}},
 	}}

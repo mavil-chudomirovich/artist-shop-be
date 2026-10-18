@@ -76,6 +76,28 @@ var (
 	// FR-012, research D5). It maps to ORDER_STATE_TRANSITION_INVALID (409) at the
 	// order level; the payment module records it as UNMATCHED.
 	ErrStalePayment = errors.New("order payment is stale")
+	// ErrImageTypeUnsupported is returned when an uploaded delivery-evidence
+	// photo is not JPEG, PNG or WebP, decided by sniffing its leading bytes and
+	// never by a file name or a client-declared media type (FR-009). It maps to
+	// ORDER_IMAGE_TYPE_UNSUPPORTED (400).
+	ErrImageTypeUnsupported = errors.New("order image type unsupported")
+	// ErrImageTooLarge is returned when an uploaded delivery-evidence photo
+	// exceeds the size ceiling (FR-009). It maps to ORDER_IMAGE_TOO_LARGE (413).
+	ErrImageTooLarge = errors.New("order image too large")
+	// ErrImageLimitReached is returned when more than five photos are attached
+	// to one delivery step (FR-006, FR-008). It maps to
+	// ORDER_IMAGE_LIMIT_REACHED (409).
+	ErrImageLimitReached = errors.New("order image limit reached")
+	// ErrFeedbackNotAllowed is returned when feedback is submitted while the
+	// order's state does not allow it — it is not DELIVERED or COMPLETED
+	// (FR-015). It is the single sentinel for the typed refusals built by
+	// FeedbackNotAllowed, which carry the current state, so the module keeps one
+	// error to map. It maps to ORDER_FEEDBACK_NOT_ALLOWED (409).
+	ErrFeedbackNotAllowed = errors.New("order feedback not allowed")
+	// ErrFeedbackAlreadySent is returned when a second feedback is submitted for
+	// an order that already has one (FR-016). It maps to
+	// ORDER_FEEDBACK_ALREADY_SENT (409).
+	ErrFeedbackAlreadySent = errors.New("order feedback already sent")
 )
 
 // ItemNotPurchasableError carries the variant that cannot be bought, so the
@@ -181,6 +203,58 @@ func (e *StateTransitionError) Unwrap() error { return ErrStateTransitionInvalid
 // StateTransitionInvalid builds the typed refusal for one refused move.
 func StateTransitionInvalid(from, to constant.Status) error {
 	return &StateTransitionError{From: from, To: to}
+}
+
+// FeedbackNotAllowedError carries the state that refused a feedback submission,
+// so the response can name the current state (FR-015). It is the single typed
+// carrier for ErrFeedbackNotAllowed.
+type FeedbackNotAllowedError struct {
+	// From is the state the order was in when feedback was attempted.
+	From constant.Status
+}
+
+// Error implements the error interface. It names the current state, which is what
+// FR-015 requires the caller to be told.
+func (e *FeedbackNotAllowedError) Error() string {
+	return fmt.Sprintf("%s: the order is %s, not delivered", ErrFeedbackNotAllowed, e.From)
+}
+
+// Is makes errors.Is(err, ErrFeedbackNotAllowed) match this error.
+func (e *FeedbackNotAllowedError) Is(target error) bool { return target == ErrFeedbackNotAllowed }
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *FeedbackNotAllowedError) Unwrap() error { return ErrFeedbackNotAllowed }
+
+// FeedbackNotAllowed builds the typed refusal for one order state.
+func FeedbackNotAllowed(from constant.Status) error {
+	return &FeedbackNotAllowedError{From: from}
+}
+
+// DeliveryPhotoLimitError carries the delivery step that reached its photo
+// ceiling, so the refusal can name the step the operator must trim. It is the
+// typed carrier for ErrImageLimitReached (FR-006, FR-008). The stage is carried as
+// its stored value rather than as the model's Stage type, because model imports
+// this package and importing model back would be a cycle.
+type DeliveryPhotoLimitError struct {
+	// Stage is the delivery step that is full (SHIPPING or DELIVERED).
+	Stage string
+}
+
+// Error implements the error interface. It names the full step, which is what the
+// operator must act on.
+func (e *DeliveryPhotoLimitError) Error() string {
+	return fmt.Sprintf("%s: the %s step already holds its maximum photos", ErrImageLimitReached, e.Stage)
+}
+
+// Is makes errors.Is(err, ErrImageLimitReached) match this error.
+func (e *DeliveryPhotoLimitError) Is(target error) bool { return target == ErrImageLimitReached }
+
+// Unwrap exposes the sentinel to errors.Is and errors.As.
+func (e *DeliveryPhotoLimitError) Unwrap() error { return ErrImageLimitReached }
+
+// DeliveryPhotoLimit builds the typed refusal for one delivery step.
+func DeliveryPhotoLimit(stage string) error {
+	return &DeliveryPhotoLimitError{Stage: stage}
 }
 
 // InvalidValueError reports which member of a request is not acceptable. It is

@@ -13,6 +13,12 @@ const orderMigration = "00009_order.sql"
 // order_edit_history.
 const orderConfirmationMigration = "00011_order_confirmation.sql"
 
+// orderDeliveryMigration reshapes orders for feature 019's seven-state machine
+// (SHIPPED renamed SHIPPING, DELIVERED added), adds the delivery/completion
+// columns, the completion-sweep index, and the order_delivery_photos and
+// order_feedback tables.
+const orderDeliveryMigration = "00018_order_delivery.sql"
+
 // readOrderMigration returns the Up and Down halves of the migration, split on the
 // goose marker. It fails the test when the file or either section is missing, so
 // the assertions below can assume both are present.
@@ -347,5 +353,142 @@ func TestOrderEditHistoryCascadesAndChecksVersion(t *testing.T) {
 	}
 	if !strings.Contains(up, "order_edit_history_version_ck CHECK (version >= 1)") {
 		t.Errorf("%s: Up section must constrain order_edit_history.version >= 1", orderConfirmationMigration)
+	}
+}
+
+// TestOrderDeliveryMigrationBackfillsAndReshapes guards the storage-level
+// invariants feature 019 rests on (FR-001, FR-002, FR-006, FR-008, FR-010, FR-012,
+// FR-014, FR-015, FR-016): the old SHIPPED value is backfilled BEFORE the check is
+// widened, the seven-value check is installed, the delivery/completion columns are
+// added, the completion-sweep index is created and the two evidence tables are
+// created with their keys, checks and indexes — each created in the Up section and
+// reverted in the Down section, so the migration stays reversible, and the Down
+// restores the six-value check including SHIPPED.
+func TestOrderDeliveryMigrationBackfillsAndReshapes(t *testing.T) {
+	up, down := readMigration(t, orderDeliveryMigration)
+
+	upNeeds := []string{
+		"UPDATE orders SET status = 'SHIPPING' WHERE status = 'SHIPPED'",
+		"DROP CONSTRAINT orders_status_ck",
+		"ALTER TABLE orders ADD CONSTRAINT orders_status_ck CHECK",
+		"'PENDING', 'PAYMENT_PENDING', 'PAID', 'SHIPPING', 'DELIVERED', 'COMPLETED', 'CANCELLED'",
+		"ADD COLUMN delivered_at timestamptz",
+		"ADD COLUMN completed_at timestamptz",
+		"ADD COLUMN completed_by uuid",
+		"CREATE INDEX orders_completion_idx ON orders (status, delivered_at)",
+		"CREATE TABLE order_delivery_photos",
+		"order_delivery_photos_order_fk FOREIGN KEY (order_id)",
+		"REFERENCES orders(id) ON DELETE CASCADE",
+		"order_delivery_photos_stage_ck CHECK (stage IN ('SHIPPING', 'DELIVERED'))",
+		"CREATE INDEX order_delivery_photos_ordering_idx ON order_delivery_photos (order_id, stage, position, id)",
+		"CREATE TABLE order_feedback",
+		"order_feedback_order_fk FOREIGN KEY (order_id)",
+		"CREATE UNIQUE INDEX order_feedback_order_key ON order_feedback (order_id)",
+		"order_feedback_content_ck CHECK (length(btrim(content)) BETWEEN 1 AND 2000)",
+	}
+	for _, needle := range upNeeds {
+		if !strings.Contains(up, needle) {
+			t.Errorf("%s: Up section is missing %q", orderDeliveryMigration, needle)
+		}
+	}
+
+	// The backfill must come before the widened check, or a database holding the
+	// old value would fail the new check (research D2).
+	if backfill, widen := strings.Index(up, "UPDATE orders SET status = 'SHIPPING'"),
+		strings.Index(up, "ADD CONSTRAINT orders_status_ck"); backfill < 0 || widen < 0 || backfill > widen {
+		t.Errorf("%s: the SHIPPING backfill must precede the widened status check", orderDeliveryMigration)
+	}
+
+	// The three new columns are nullable: an existing order carries none of them
+	// (data-model.md).
+	for _, column := range []string{
+		"delivered_at timestamptz NOT NULL",
+		"completed_at timestamptz NOT NULL",
+		"completed_by uuid NOT NULL",
+	} {
+		if strings.Contains(up, column) {
+			t.Errorf("%s: %q must be nullable, not NOT NULL", orderDeliveryMigration, column)
+		}
+	}
+
+	downNeeds := []string{
+		"DROP CONSTRAINT orders_status_ck",
+		"UPDATE orders SET status = 'SHIPPED' WHERE status = 'SHIPPING'",
+		"'PENDING', 'PAYMENT_PENDING', 'PAID', 'SHIPPED', 'COMPLETED', 'CANCELLED'",
+		"DROP INDEX orders_completion_idx",
+		"DROP TABLE order_delivery_photos",
+		"DROP CONSTRAINT order_delivery_photos_order_fk",
+		"DROP CONSTRAINT order_delivery_photos_stage_ck",
+		"DROP INDEX order_delivery_photos_ordering_idx",
+		"DROP TABLE order_feedback",
+		"DROP CONSTRAINT order_feedback_order_fk",
+		"DROP CONSTRAINT order_feedback_content_ck",
+		"DROP INDEX order_feedback_order_key",
+		"DROP COLUMN delivered_at",
+		"DROP COLUMN completed_at",
+		"DROP COLUMN completed_by",
+	}
+	for _, needle := range downNeeds {
+		if !strings.Contains(down, needle) {
+			t.Errorf("%s: Down section is missing %q", orderDeliveryMigration, needle)
+		}
+	}
+}
+
+// TestOrderDeliveryMigrationListsTheSevenStates checks the widened check lists
+// exactly the seven states, adds SHIPPING and DELIVERED and no longer lists
+// SHIPPED (FR-001, research D1). The window is the constraint body, not the whole
+// Up section, because the Up section legitimately names 'SHIPPED' in its backfill.
+func TestOrderDeliveryMigrationListsTheSevenStates(t *testing.T) {
+	up, _ := readMigration(t, orderDeliveryMigration)
+
+	index := strings.Index(up, "orders_status_ck CHECK")
+	if index < 0 {
+		t.Fatalf("%s: Up section does not declare the widened orders_status_ck", orderDeliveryMigration)
+	}
+	window := up[index:]
+	if end := strings.Index(window, ";"); end >= 0 {
+		window = window[:end]
+	}
+	for _, status := range []string{
+		"'PENDING'", "'PAYMENT_PENDING'", "'PAID'", "'SHIPPING'", "'DELIVERED'", "'COMPLETED'", "'CANCELLED'",
+	} {
+		if !strings.Contains(window, status) {
+			t.Errorf("%s: the widened check does not list the state %s", orderDeliveryMigration, status)
+		}
+	}
+	if strings.Contains(window, "'SHIPPED'") {
+		t.Errorf("%s: the widened check must not list the renamed SHIPPED", orderDeliveryMigration)
+	}
+}
+
+// TestOrderDeliveryMigrationCascadesEvidenceAndFeedback pins the two new tables'
+// storage invariants (FR-010, FR-015, FR-016): a removed order takes its delivery
+// evidence and its feedback with it, the photo stage is one of the two steps, and
+// an order takes at most one feedback through the unique index.
+func TestOrderDeliveryMigrationCascadesEvidenceAndFeedback(t *testing.T) {
+	up, _ := readMigration(t, orderDeliveryMigration)
+
+	for _, fk := range []string{
+		"order_delivery_photos_order_fk FOREIGN KEY",
+		"order_feedback_order_fk FOREIGN KEY",
+	} {
+		index := strings.Index(up, fk)
+		if index < 0 {
+			t.Fatalf("%s: Up section does not declare %s", orderDeliveryMigration, fk)
+		}
+		window := up[index:]
+		if end := strings.Index(window, ";"); end >= 0 {
+			window = window[:end+1]
+		}
+		if !strings.Contains(window, "REFERENCES orders(id) ON DELETE CASCADE") {
+			t.Errorf("%s: %s must reference orders(id) with ON DELETE CASCADE", orderDeliveryMigration, fk)
+		}
+	}
+	if !strings.Contains(up, "order_delivery_photos_stage_ck CHECK (stage IN ('SHIPPING', 'DELIVERED'))") {
+		t.Errorf("%s: Up section must constrain the photo stage to SHIPPING or DELIVERED", orderDeliveryMigration)
+	}
+	if !strings.Contains(up, "CREATE UNIQUE INDEX order_feedback_order_key ON order_feedback (order_id)") {
+		t.Errorf("%s: Up section must make order_feedback one per order", orderDeliveryMigration)
 	}
 }

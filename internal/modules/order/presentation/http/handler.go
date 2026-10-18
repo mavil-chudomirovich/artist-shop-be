@@ -56,11 +56,11 @@ type Service interface {
 	// RejectByAdmin declines an order awaiting the artist, moving it to
 	// cancelled; no goods were held, so nothing is returned (FR-018).
 	RejectByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
-	// ShipByAdmin moves a paid order to shipped and records the act (FR-022,
-	// FR-023).
+	// ShipByAdmin moves a paid order in transit (dispatch) and records the act
+	// (FR-005, FR-019).
 	ShipByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
-	// CompleteByAdmin moves a shipped order to completed and records the act
-	// (FR-022, FR-023).
+	// CompleteByAdmin moves a delivered order to completed and records the act
+	// (FR-011, FR-014).
 	CompleteByAdmin(ctx context.Context, in appdto.OrderRefInput) (appdto.AdminOrderView, error)
 	// Transfer hands a paid order to another existing account, named by email,
 	// changing only the owner, and records the act (FR-024).
@@ -344,7 +344,7 @@ func (h *Handler) EditMine(w http.ResponseWriter, r *http.Request) {
 //	@Security		BearerAuth
 //	@Param			page		query	int		false	"Page number (default 1)"
 //	@Param			pageSize	query	int		false	"Page size (default 20)"
-//	@Param			status		query	string	false	"Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPED, COMPLETED or CANCELLED)"
+//	@Param			status		query	string	false	"Only orders in this state (PENDING, PAYMENT_PENDING, PAID, SHIPPING, DELIVERED, COMPLETED or CANCELLED)"
 //	@Param			sort		query	string	false	"Ordering: newest (default) or oldest; oldest with status=PENDING is the FIFO confirmation queue"
 //	@Success		200			{object}	httpx.SwaggerSuccess{data=[]httpdto.AdminOrderSummaryResponse}
 //	@Failure		400			{object}	httpx.SwaggerError
@@ -465,12 +465,12 @@ func (h *Handler) RejectByAdmin(w http.ResponseWriter, r *http.Request) {
 	h.adminMove(w, r, h.svc.RejectByAdmin)
 }
 
-// ShipByAdmin moves a paid order to shipped and records the act. A move the
-// current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID naming
-// the current state (FR-022, FR-023).
+// ShipByAdmin moves a paid order in transit (dispatch) and records the act. A
+// move the current state does not allow answers 409
+// ORDER_STATE_TRANSITION_INVALID naming the current state (FR-005, FR-019).
 //
-//	@Summary		Mark a paid order shipped (administrator)
-//	@Description	Moves a paid order to shipped and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Summary		Mark a paid order in transit (administrator)
+//	@Description	Moves a paid order in transit and records the act naming the order and the administrator. The order must be paid; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
 //	@Tags			Orders
 //	@Produce		json
 //	@Security		BearerAuth
@@ -488,12 +488,12 @@ func (h *Handler) ShipByAdmin(w http.ResponseWriter, r *http.Request) {
 	h.adminMove(w, r, h.svc.ShipByAdmin)
 }
 
-// CompleteByAdmin moves a shipped order to completed and records the act. A move
+// CompleteByAdmin moves a delivered order to completed and records the act. A move
 // the current state does not allow answers 409 ORDER_STATE_TRANSITION_INVALID
-// naming the current state (FR-022, FR-023).
+// naming the current state (FR-011, FR-014).
 //
-//	@Summary		Mark a shipped order completed (administrator)
-//	@Description	Moves a shipped order to completed and records the act naming the order and the administrator. The order must be shipped; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
+//	@Summary		Mark a delivered order completed (administrator)
+//	@Description	Moves a delivered order to completed and records the act naming the order and the administrator. The order must be delivered; an illegal move answers 409 ORDER_STATE_TRANSITION_INVALID naming the current state. Administrator role required.
 //	@Tags			Orders
 //	@Produce		json
 //	@Security		BearerAuth
@@ -701,7 +701,7 @@ func adminListFilter(r *http.Request) (*constant.Status, constant.OrderListSort,
 	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
 		candidate := constant.Status(raw)
 		if !constant.IsValidStatus(candidate) {
-			return nil, "", fieldError(fieldStatus, "must be one of the six order states")
+			return nil, "", fieldError(fieldStatus, "must be one of the seven order states")
 		}
 		status = &candidate
 	}
