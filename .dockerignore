@@ -13,6 +13,8 @@ docker-compose*.yml
 .opencode
 specs
 doc
+deployments
+nginx
 
 # Build artifacts and local env
 bin

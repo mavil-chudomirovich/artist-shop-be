@@ -50,6 +50,7 @@ Dùng [template.md](template.md).
 | [022](022-admin-dashboard-read-model.md) | Admin Dashboard: module admin read-only trên hợp đồng đọc công bố, snapshot danh mục trên dòng đơn, và timezone cửa hàng + so sánh MTD | Accepted |
 | [023](023-order-delivery-and-completion.md) | Đơn hàng: hai bước giao có bằng chứng, đổi tên `SHIPPED` thành `SHIPPING` và thêm `DELIVERED`, hoàn tất do khách hoặc sweeper, feedback cấp đơn | Accepted |
 | [024](024-admin-seed-sql-file.md) | Seed admin bằng file SQL thủ công (`scripts/seed_admin.sql` + `make seed-sql`), xoá container `seed` | Accepted |
+| [025](025-production-deploy-ghcr-digest.md) | Production deploy production-only bằng GitHub Actions, image GHCR pin digest, port riêng trên VPS dùng chung | Accepted |
 
 ## Khi nào phải viết ADR
 

@@ -23,6 +23,36 @@ config.ValidateForAPI()  // chỉ cmd/api gọi
 trường, và bị bỏ qua hoàn toàn khi `APP_ENV=production`. Đây là lý do CI không cần
 file `.env`.
 
+## Môi trường production
+
+Production dùng hai file env **chỉ nằm trên VPS**, không commit:
+
+| File | Nội dung | Ai ghi |
+|---|---|---|
+| `.env.production` | `APP_ENV`, secret, domain/port, provider keys | người vận hành, mode `600` |
+| `.env.deploy` | `API_IMAGE=ghcr.io/...@sha256:<digest>` | workflow CD |
+
+Lệnh compose production luôn truyền cả hai:
+
+```bash
+docker compose -f docker-compose.prod.yml \
+  --env-file .env.production --env-file .env.deploy <command>
+```
+
+Vì `APP_ENV=production`, `LoadDotenv()` bị bỏ qua hoàn toàn: mọi giá trị phải
+đến từ `env_file` của compose (hoặc biến môi trường thật). Production bắt buộc:
+
+- `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `JWT_SECRET` (≥ 32 byte) đặt lại, không
+  dùng giá trị dev.
+- `CORS_ALLOWED_ORIGINS` là danh sách cụ thể, không dùng `*`.
+- `HTTP_TRUSTED_PROXIES` đặt theo dải IP của nginx/compose network để rate limit
+  theo IP hoạt động đúng.
+- `SWAGGER_ENABLED=false`, `MIGRATIONS_AUTO_APPLY=false` (migration chạy thành
+  job riêng trước rollout).
+- `API_IMAGE` bắt buộc, do `.env.deploy` cung cấp.
+
+Mẫu đầy đủ: `.env.production.example`. Runbook: `../Docs/deploy/README.md`.
+
 ## Ba mức "bắt buộc"
 
 | Mức | Nghĩa | Kiểm tra ở đâu |
@@ -352,6 +382,10 @@ cho phép đổi cấu hình stack mà không sửa file:
 | `API_PORT` | `8080` | Port host của API |
 | `DB_PORT` / `REDIS_PORT` | `5432` / `6379` | Port host (chỉ trong `.dev.yml`) |
 | `MAILPIT_UI_PORT` / `MAILPIT_SMTP_PORT` | `8025` / `1025` | Port Mailpit |
+| `API_IMAGE` | — | Image production (bắt buộc; CD ghi vào `.env.deploy`) |
+| `API_DOMAIN` | — | Domain production cho nginx + cert |
+| `HTTP_PORT` / `HTTPS_PORT` | `8083` / `8445` | Port publish của nginx production |
+| `TLS_DIR` | `/opt/artist-shop-tls` | Thư mục cert mount read-only vào nginx |
 
 > `POSTGRES_PASSWORD` mặc định là `app` và **không** dùng `REDIS_PASSWORD` cho
 > PostgreSQL. Với môi trường thật, hãy đặt lại cả hai.

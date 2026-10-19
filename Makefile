@@ -17,6 +17,8 @@ GOLANGCI_LINT ?= golangci-lint
 SWAG ?= swag
 COMPOSE ?= docker compose
 COMPOSE_DEV = $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
+COMPOSE_PROD = $(COMPOSE) -f docker-compose.prod.yml
+PROD_ENV_FILES = --env-file .env.production --env-file .env.deploy
 
 BIN_DIR := bin
 GO_BUILD_FLAGS := -trimpath -ldflags="-s -w"
@@ -126,6 +128,12 @@ docker-help:
 	@echo   make redis-cli      : redis-cli inside the redis container
 	@echo   make mail           : Print emails captured by Mailpit
 	@echo   make docker-build   : Build the image and tag it artist-shop-be:<sha>
+	@echo PRODUCTION (VPS, needs .env.production + .env.deploy):
+	@echo   make docker-prod-up     : Start the production stack
+	@echo   make docker-prod-stop   : Stop it, keep data
+	@echo   make docker-prod-down   : Remove containers/network, keep volumes
+	@echo   make docker-prod-migrate: Apply migrations in the production stack
+	@echo   make nginx-reload-prod  : Reload nginx in the production stack
 
 migration-help:
 	@echo MIGRATIONS (local Go, needs DATABASE_URL):
@@ -364,6 +372,26 @@ redis-cli: ## Open redis-cli inside the redis container (auth comes from the con
 .PHONY: mail
 mail: ## Print emails captured by Mailpit (requires make up-tools)
 	curl -s http://localhost:$(MAILPIT_UI_PORT)/api/v1/messages
+
+.PHONY: docker-prod-up
+docker-prod-up: ## Start the production stack (VPS; needs .env.production + .env.deploy)
+	$(COMPOSE_PROD) $(PROD_ENV_FILES) up -d
+
+.PHONY: docker-prod-stop
+docker-prod-stop: ## Stop the production stack, keep data
+	$(COMPOSE_PROD) $(PROD_ENV_FILES) stop
+
+.PHONY: docker-prod-down
+docker-prod-down: ## Remove production containers and network, keep volumes
+	$(COMPOSE_PROD) $(PROD_ENV_FILES) down
+
+.PHONY: docker-prod-migrate
+docker-prod-migrate: ## Apply migrations in the production stack
+	$(COMPOSE_PROD) $(PROD_ENV_FILES) --profile migrate run --rm migrate
+
+.PHONY: nginx-reload-prod
+nginx-reload-prod: ## Reload nginx in the production stack
+	$(COMPOSE_PROD) $(PROD_ENV_FILES) exec -T nginx nginx -s reload
 
 .PHONY: migrate-up-docker
 migrate-up-docker: ## Apply migrations in a container

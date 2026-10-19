@@ -9,7 +9,7 @@ make help       # như trên
 make docker-help
 ```
 
-Danh sách đầy đủ 49 target: xem `make help` và 4 nhóm bên dưới.
+Danh sách đầy đủ: xem `make help` và 4 nhóm bên dưới.
 
 ---
 
@@ -71,6 +71,9 @@ COMPOSE_DEV = $(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml
 Mọi lệnh dev dùng biến này, nên người dùng **không phải nhớ** `docker compose -f
 a -f b`. `make up` dùng `$(COMPOSE)` (stack tối thiểu), các lệnh cần port host /
 Mailpit dùng `$(COMPOSE_DEV)`.
+
+Production dùng `COMPOSE_PROD` + `PROD_ENV_FILES` (`--env-file .env.production
+--env-file .env.deploy`), nên các lệnh `docker-prod-*` không lặp lại cờ dài.
 
 Chi tiết hai file: [docker.md](docker.md).
 
@@ -212,6 +215,16 @@ binary**, không phải Goose CLI, nên tạo file migration mới là thêm fil
 | `db-shell` | `exec db psql -U app -d artist_shop` |
 | `redis-cli` | `exec redis redis-cli` |
 | `mail` | `curl http://localhost:8025/api/v1/messages` |
+
+Production (chạy trên VPS, cần `.env.production` + `.env.deploy`):
+
+| Target | Cách chạy |
+|---|---|
+| `docker-prod-up` | `$(COMPOSE_PROD) $(PROD_ENV_FILES) up -d` |
+| `docker-prod-stop` | `stop` — dừng, giữ volume |
+| `docker-prod-down` | `down` — xoá container + network, **giữ volume** |
+| `docker-prod-migrate` | `--profile migrate run --rm migrate` |
+| `nginx-reload-prod` | `exec -T nginx nginx -s reload` |
 
 Ba điểm cố ý:
 

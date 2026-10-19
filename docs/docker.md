@@ -1,6 +1,6 @@
 # Docker
 
-Repo có 4 file Docker:
+Repo có các file Docker:
 
 | File | Vai trò |
 |---|---|
@@ -8,6 +8,9 @@ Repo có 4 file Docker:
 | `.dockerignore` | Loại file khỏi build context |
 | `docker-compose.yml` | Stack mặc định: `db` + `redis` + `api` |
 | `docker-compose.dev.yml` | Override cho dev: mở port, thêm Mailpit |
+| `docker-compose.prod.yml` | Stack production trên VPS: `db` + `redis` + `api` + `nginx`, migrate one-shot |
+| `nginx/prod.conf` | Reverse proxy + TLS cho production |
+| `deployments/scripts/*.sh` | Cấp/gia hạn cert lego DNS-01 (Vercel) |
 
 ---
 
@@ -92,7 +95,7 @@ Không chỉ để giảm context — mà còn để **tránh lộ secret**:
 
 ```
 .git .github .gitignore .gitattributes .dockerignore Dockerfile docker-compose*.yml
-.specify .opencode specs doc
+.specify .opencode specs doc deployments nginx
 bin dist coverage.out *.log
 .env .env.*  !.env.example
 .idea .vscode *.swp .DS_Store Thumbs.db
@@ -103,6 +106,8 @@ bin dist coverage.out *.log
 | `.env`, `.env.*` | Nếu sót, secret của máy dev nằm trong build cache/layer |
 | `!.env.example` | Cho phép copy file mẫu vào image nếu sau này cần |
 | `specs`, `doc`, `.specify` | Không ảnh hưởng build |
+| `deployments`, `nginx` | Chỉ dùng khi deploy trên VPS, không vào image |
+| **Không loại `docs/`** | `cmd/api` import `docs/swagger` (spec sinh từ annotation), cần cho `go build` |
 | **Không loại `migrations/`** | `go:embed` cần |
 
 ---
@@ -264,13 +269,32 @@ muốn migrate **trước** khi app lên (CI, deploy).
 
 ## 8. Deploy
 
-Hiện **chưa** có file deploy trong repo (không có `docker-compose.prod.yml`). Khi
-làm, dự kiến:
+Repo có thêm stack production riêng, không sửa stack local:
 
-- `.env.production` không commit; secret từ secret store.
-- `APP_ENV=production` ⇒ `LoadDotenv()` bị bỏ qua, buộc phải truyền biến thật.
-- `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `JWT_SECRET` đặt lại, không dùng giá trị dev.
-- `HTTP_TRUSTED_PROXIES` đặt theo dải IP của reverse proxy.
-- `MIGRATIONS_AUTO_APPLY=false` + chạy `migrate` một lần như job trước khi deploy app.
+| File | Vai trò |
+|---|---|
+| `docker-compose.prod.yml` | `db` + `redis` + `api` + `nginx`, migration one-shot |
+| `nginx/prod.conf` | Reverse proxy + TLS cho `api:8080` |
+| `.env.production.example` | Mẫu biến và secret cho VPS |
+| `deployments/scripts/issue-certs.sh` | Cấp cert lego DNS-01 (Vercel) |
+| `deployments/scripts/renew-certs.sh` | Gia hạn cert + reload nginx |
+| `.github/workflows/cd.yml` | CD production khi tag `v*` hoặc dispatch |
 
-Các mục này nằm ngoài phạm vi hiện tại; xem `docs/architecture.md` cho kiến trúc tổng.
+Khác stack local ở các điểm:
+
+- `db`/`redis` vẫn không publish port; chỉ `nginx` publish HTTP/HTTPS.
+- `api` chạy với `APP_ENV=production`, `MIGRATIONS_AUTO_APPLY=false`,
+  `SWAGGER_ENABLED=false`; migration chạy thành job `migrate` **trước** khi
+  rollout.
+- Image do CD build và pin theo digest trong `/opt/artist-shop/.env.deploy`;
+  `.env.production` chứa secret và chỉ nằm trên VPS (mode 600).
+- Trên VPS dùng chung, port production là `8083`/`8445` để không đụng stack
+  khác đang giữ `80/443` hoặc `8081/8082/8443/8444`.
+- `APP_ENV=production` ⇒ `LoadDotenv()` bị bỏ qua, buộc phải truyền biến thật
+  qua `env_file` của compose.
+- Rollback: sửa digest trong `.env.deploy` rồi `up -d api`, hoặc dispatch lại
+  tag cũ. Không chạy `down -v` trên production.
+
+Runbook đầy đủ (chuẩn bị VPS, cert, seed admin, backup, rollback, troubleshooting)
+nằm ngoài repo tại `../Docs/deploy/README.md`.
+

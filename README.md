@@ -98,6 +98,27 @@ make test-integration  # integration test (cần Docker, tự tạo PostgreSQL)
 make lint              # golangci-lint (CI dùng v2.14.0, `make install-tools` để cài)
 ```
 
+## Triển khai
+
+Production chạy Docker Compose trên VPS dùng chung, port `8083`/`8445`:
+
+```bash
+# Trên VPS, sau khi có .env.production và .env.deploy:
+make docker-prod-up
+make docker-prod-migrate
+```
+
+- `.github/workflows/cd.yml` build image `linux/amd64`, push GHCR, pin digest vào
+  `API_IMAGE` trong `/opt/artist-shop/.env.deploy`, chạy migration rồi rollout
+  `api` và recreate nginx. Trigger: tag `v*` hoặc dispatch thủ công.
+- `docker-compose.prod.yml` là stack production; `nginx/prod.conf` là reverse
+  proxy + TLS; `.env.production.example` là mẫu biến và secret.
+- TLS cấp bằng lego DNS-01 (Vercel) qua `deployments/scripts/issue-certs.sh`;
+  gia hạn bằng `renew-certs.sh` qua cron.
+- Runbook đầy đủ (chuẩn bị VPS, cert, seed admin, backup, rollback,
+  troubleshooting) nằm ngoài repo tại `../Docs/deploy/README.md`.
+- Không chạy `docker compose down -v` trên production; thao tác đó xoá database.
+
 ## Kiến trúc
 
 Modular monolith: mỗi nghiệp vụ là một module dưới `internal/modules/<module>` với

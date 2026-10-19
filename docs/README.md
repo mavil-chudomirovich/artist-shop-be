@@ -79,6 +79,7 @@ specs/NNN-*/                       Artifact Spec Kit cho từng feature
 | Hiểu endpoint nào đã có | [api-reference.md](api-reference.md) |
 | Hiểu cấu trúc code | [architecture.md](architecture.md) |
 | Biết đang làm module nào | [modules.md](modules.md) |
+| Triển khai production | [docker.md § Deploy](docker.md#8-deploy); runbook đầy đủ ở `../Docs/deploy/README.md` |
 
 ## Quy tắc bắt buộc khi thêm/sửa tài liệu
 

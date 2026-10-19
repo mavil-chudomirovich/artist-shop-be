@@ -1,0 +1,146 @@
+# Production stack for artist-shop-be on a shared VPS.
+#
+#   make docker-prod-up
+#   docker compose --env-file .env.production --env-file .env.deploy \
+#     -f docker-compose.prod.yml up -d
+#
+# `.env.production` holds environment-specific settings and secrets and lives
+# only on the VPS (mode 600). `.env.deploy` is written by the CD workflow and
+# contains the image reference pinned by digest:
+#
+#   API_IMAGE=ghcr.io/mavil-chudomirovich/artist-shop-be@sha256:<digest>
+#
+# Neither file is committed. The db and redis containers publish no host ports;
+# only nginx is reachable from outside.
+
+name: artist-shop-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-security: &security
+  - no-new-privileges:true
+
+x-db-url: &db-url postgres://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-artist_shop}?sslmode=disable
+
+x-common-env: &common-env
+  env_file:
+    - .env.production
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    mem_limit: 512m
+    shm_size: 128m
+    <<: *common-env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-artist_shop}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-artist_shop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    security_opt: *security
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    mem_limit: 96m
+    <<: *common-env
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    security_opt: *security
+    logging: *logging
+
+  # One-shot migration job. The CD workflow runs it before rolling out `api`,
+  # and it can be run by hand with:
+  #   docker compose ... --profile migrate run --rm migrate
+  # Migrations are embedded in the binary, so the image needs no extra files.
+  migrate:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    profiles: ["migrate"]
+    restart: "no"
+    mem_limit: 128m
+    <<: *common-env
+    entrypoint: ["/app/migrate"]
+    command: ["up"]
+    environment:
+      DATABASE_URL: *db-url
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt: *security
+    logging: *logging
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    restart: unless-stopped
+    mem_limit: 256m
+    stop_grace_period: 30s
+    <<: *common-env
+    environment:
+      APP_ENV: production
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: *db-url
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      # Migrations run as their own step before rollout; the API must never
+      # apply them on start in production.
+      MIGRATIONS_AUTO_APPLY: "false"
+      SWAGGER_ENABLED: "false"
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt: *security
+    logging: *logging
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    mem_limit: 48m
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
+      HTTPS_PORT: ${HTTPS_PORT:-8445}
+      NGINX_ENVSUBST_FILTER: ^(API_DOMAIN|HTTPS_PORT)$
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    ports:
+      - "${HTTP_PORT:-8083}:80"
+      - "${HTTPS_PORT:-8445}:443"
+    volumes:
+      - ./nginx/prod.conf:/etc/nginx/templates/default.conf.template:ro
+      - ${TLS_DIR:-/opt/artist-shop-tls}:/etc/nginx/tls:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt: *security
+    logging: *logging
+
+volumes:
+  pgdata:
+  redisdata:

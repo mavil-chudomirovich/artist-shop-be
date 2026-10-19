@@ -26,6 +26,7 @@ coverage.out
 .env.*
 !.env.example
 !.env.example.local
+!.env.production.example
 
 # Local admin-seed variables (real email + Argon2id hash, never commit)
 scripts/*.local.psql
