@@ -60,18 +60,6 @@ type TransferRequest struct {
 	Email string `json:"email"`
 }
 
-// FeedbackRequest is the body of a customer's order-level feedback
-// (contracts/openapi.yaml, FeedbackRequest). `content` is required and must carry
-// 1 to 2000 characters after trimming; a missing, blank or over-long value is
-// reported as VALIDATION_ERROR naming `content` (FR-015). It is a plain string so
-// the handler can apply that rule itself rather than lose it to a decode failure.
-// The schema is additionalProperties: false and the handler decodes it with
-// unknown members refused, so a client cannot name the author or an owner.
-type FeedbackRequest struct {
-	// Content is the feedback text sent to the artist.
-	Content string `json:"content"`
-}
-
 // MoneyResponse is money as an integer amount in the currency's minor unit plus
 // its currency, the shape the contract shows (FR-008).
 type MoneyResponse struct {
@@ -140,14 +128,33 @@ type DeliveryPhotoResponse struct {
 	Position int `json:"position"`
 }
 
+// FeedbackPhotoResponse is one image attached to the customer's order-level
+// feedback as a client reads it (contracts/openapi.yaml, FeedbackPhoto). The
+// feedback is multipart, so a client sends a photo as a `photos` file part and
+// reads it back here (FR-025).
+type FeedbackPhotoResponse struct {
+	// ID identifies the photo.
+	ID uuid.UUID `json:"id"`
+	// URL is the displayable link to the stored image.
+	URL string `json:"url"`
+	// Width and Height are the stored pixel dimensions.
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	// Position is the order within the feedback.
+	Position int `json:"position"`
+}
+
 // FeedbackResponse is the customer's order-level feedback as a client reads it
 // (contracts/openapi.yaml, Feedback). It is present only on a detail answer and
-// only once the order carries one (FR-015, FR-017).
+// only once the order carries one (FR-015, FR-017, FR-025).
 type FeedbackResponse struct {
 	// Content is the feedback text.
 	Content string `json:"content"`
 	// CreatedAt is when it was written.
 	CreatedAt time.Time `json:"createdAt"`
+	// Photos are the images attached to the feedback, ordered by position; a
+	// feedback with none serialises `photos: []` (FR-025).
+	Photos []FeedbackPhotoResponse `json:"photos"`
 }
 
 // OrderSummaryResponse is one row of the signed-in customer's order list

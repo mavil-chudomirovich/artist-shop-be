@@ -655,6 +655,37 @@ func TestFeedbackIsOnePerOrder(t *testing.T) {
 		t.Fatalf("feedback did not round-trip: %+v", stored)
 	}
 
+	// FR-025: feedback photos insert and read back in position order, and the
+	// feedback read attaches them.
+	photos := []model.FeedbackPhoto{
+		{PublicID: "p1", URL: "https://cdn.example/p1", Width: 10, Height: 20, Position: 1},
+		{PublicID: "p0", URL: "https://cdn.example/p0", Width: 10, Height: 20, Position: 0},
+	}
+	if err := f.repo.InsertFeedbackPhotos(ctx, stored.ID, photos, at); err != nil {
+		t.Fatalf("InsertFeedbackPhotos: %v", err)
+	}
+	count, err := f.repo.CountFeedbackPhotos(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("CountFeedbackPhotos: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("feedback photo count = %d, want 2", count)
+	}
+	listed, err := f.repo.ListFeedbackPhotos(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("ListFeedbackPhotos: %v", err)
+	}
+	if len(listed) != 2 || listed[0].PublicID != "p0" || listed[1].PublicID != "p1" {
+		t.Fatalf("feedback photos must read back in position order, got %+v", listed)
+	}
+	attached, err := f.repo.FindFeedback(ctx, order.ID)
+	if err != nil {
+		t.Fatalf("FindFeedback: %v", err)
+	}
+	if len(attached.Photos) != 2 || attached.Photos[0].PublicID != "p0" {
+		t.Fatalf("FindFeedback must attach the photos in position order, got %+v", attached.Photos)
+	}
+
 	// A second feedback is refused by the unique index.
 	if err := f.repo.InsertFeedback(ctx, model.Feedback{
 		OrderID: order.ID, AuthorID: uuid.New(), Content: "again", CreatedAt: at,
@@ -669,6 +700,23 @@ func TestFeedbackIsOnePerOrder(t *testing.T) {
 	}
 	if detail.Feedback == nil || detail.Feedback.Content != "Cảm ơn bạn" {
 		t.Fatalf("the detail must carry the feedback, got %+v", detail.Feedback)
+	}
+	if len(detail.Feedback.Photos) != 2 {
+		t.Fatalf("the detail must carry the feedback photos, got %d", len(detail.Feedback.Photos))
+	}
+
+	// FR-025: a removed feedback takes its photos with it, through the cascading
+	// foreign key.
+	if _, err := f.pool.Exec(ctx, `DELETE FROM order_feedback WHERE id = $1`, stored.ID); err != nil {
+		t.Fatalf("delete the feedback: %v", err)
+	}
+	var remaining int
+	if err := f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM order_feedback_photos WHERE feedback_id = $1`, stored.ID).Scan(&remaining); err != nil {
+		t.Fatalf("count the remaining photos: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("removing the feedback must cascade to its photos, got %d", remaining)
 	}
 }
 

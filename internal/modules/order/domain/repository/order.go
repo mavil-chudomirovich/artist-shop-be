@@ -140,9 +140,26 @@ type OrderRepository interface {
 	InsertFeedback(ctx context.Context, feedback model.Feedback) error
 
 	// FindFeedback returns the order's feedback, or domainerr.ErrNotFound when it
-	// has none, so the detail read projects it (FR-015, FR-017). It joins the
-	// caller's transaction.
+	// has none, so the detail read projects it (FR-015, FR-017). The feedback's
+	// photos are attached, ordered by position. It joins the caller's
+	// transaction.
 	FindFeedback(ctx context.Context, orderID uuid.UUID) (*model.Feedback, error)
+
+	// InsertFeedbackPhotos inserts every photo of one feedback, each stamped with
+	// the caller's instant, in one transaction. The five-photo ceiling was
+	// checked before this write (FR-025, research D16). It joins the caller's
+	// transaction.
+	InsertFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID, photos []model.FeedbackPhoto, now time.Time) error
+
+	// CountFeedbackPhotos returns how many photos one feedback carries, so the
+	// use case can enforce the five-photo ceiling (FR-025, research D16). It
+	// joins the caller's transaction.
+	CountFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID) (int, error)
+
+	// ListFeedbackPhotos returns one feedback's photos, ordered by position then
+	// id, so the detail read projects them deterministically (FR-025, research
+	// D16). It joins the caller's transaction.
+	ListFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID) ([]model.FeedbackPhoto, error)
 
 	// ListAwaitingCompletion returns the identifiers of the orders that are
 	// DELIVERED and whose delivered_at is at or before the cutoff, oldest

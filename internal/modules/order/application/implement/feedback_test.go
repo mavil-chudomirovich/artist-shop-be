@@ -1,10 +1,12 @@
 package implement
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -14,27 +16,30 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
 // This file is the use-case contract of US5: the customer's one order-level
 // feedback. SubmitFeedback stores one row for the owner of a delivered or
 // completed order, refuses any earlier state naming it, refuses a second feedback,
-// validates the content (1 to 2000 characters after trimming), and answers another
-// customer's order with the same not-found an unknown one answers (FR-015 to
-// FR-018). It runs the real use case over an in-memory repository, so the answers
-// asserted are the service's own.
+// validates the content (1 to 2000 characters after trimming), stores up to five
+// optional photos exactly like delivery evidence, and answers another customer's
+// order with the same not-found an unknown one answers (FR-015 to FR-018, FR-025).
+// It runs the real use case over an in-memory repository, so the answers asserted
+// are the service's own.
 
 // feedbackOrders is the in-memory OrderRepository the feedback use case uses. Its
 // row lock returns a copy — the way the postgres adapter scans a fresh row — and it
-// keeps the stored feedback rows, so a test can assert what was written and, just
-// as importantly, that a refusal wrote nothing. duplicateOnInsert models a
-// concurrent submission that passed the "no feedback yet" read: the storage unique
-// index rejects its insert (FR-016, research D8).
+// keeps the stored feedback rows and their photos, so a test can assert what was
+// written and, just as importantly, that a refusal wrote nothing. duplicateOnInsert
+// models a concurrent submission that passed the "no feedback yet" read: the
+// storage unique index rejects its insert (FR-016, research D8).
 type feedbackOrders struct {
 	appinterface.OrderRepository
 	byID              map[uuid.UUID]*model.Order
 	feedback          map[uuid.UUID]model.Feedback
 	inserts           []model.Feedback
+	photoInserts      map[uuid.UUID][]model.FeedbackPhoto
 	duplicateOnInsert bool
 }
 
@@ -53,6 +58,9 @@ func (r *feedbackOrders) FindFeedback(_ context.Context, orderID uuid.UUID) (*mo
 		return nil, domainerr.ErrNotFound
 	}
 	clone := feedback
+	if photos, ok := r.photoInserts[feedback.ID]; ok {
+		clone.Photos = photos
+	}
 	return &clone, nil
 }
 
@@ -68,10 +76,25 @@ func (r *feedbackOrders) InsertFeedback(_ context.Context, feedback model.Feedba
 	return nil
 }
 
+func (r *feedbackOrders) InsertFeedbackPhotos(_ context.Context, feedbackID uuid.UUID, photos []model.FeedbackPhoto, _ time.Time) error {
+	r.photoInserts[feedbackID] = append(r.photoInserts[feedbackID], photos...)
+	return nil
+}
+
+func (r *feedbackOrders) CountFeedbackPhotos(_ context.Context, feedbackID uuid.UUID) (int, error) {
+	return len(r.photoInserts[feedbackID]), nil
+}
+
+func (r *feedbackOrders) ListFeedbackPhotos(_ context.Context, feedbackID uuid.UUID) ([]model.FeedbackPhoto, error) {
+	return r.photoInserts[feedbackID], nil
+}
+
 // feedbackFixture is the real feedback use case over in-memory fakes.
 type feedbackFixture struct {
-	svc    *Service
-	orders *feedbackOrders
+	svc      *Service
+	orders   *feedbackOrders
+	media    *fakeMediaStore
+	notifier *fakeNotifier
 }
 
 func newFeedbackFixture(orders ...*model.Order) *feedbackFixture {
@@ -80,16 +103,22 @@ func newFeedbackFixture(orders ...*model.Order) *feedbackFixture {
 		byID[order.ID] = order
 	}
 	store := &feedbackOrders{
-		byID:     byID,
-		feedback: map[uuid.UUID]model.Feedback{},
+		byID:         byID,
+		feedback:     map[uuid.UUID]model.Feedback{},
+		photoInserts: map[uuid.UUID][]model.FeedbackPhoto{},
 	}
+	mediaStore := &fakeMediaStore{}
+	notifier := &fakeNotifier{}
 	svc := New(Service{
-		Orders: store,
-		Tx:     passthroughTx{},
-		Clock:  memoryClock{},
-		Mapper: mapper.New(),
+		Orders:      store,
+		Tx:          passthroughTx{},
+		Clock:       memoryClock{},
+		Mapper:      mapper.New(),
+		Media:       mediaStore,
+		Notifier:    notifier,
+		ArtistEmail: "shop@example.com",
 	})
-	return &feedbackFixture{svc: svc, orders: store}
+	return &feedbackFixture{svc: svc, orders: store, media: mediaStore, notifier: notifier}
 }
 
 // completedOrder builds a COMPLETED order owned by owner, ready for feedback.
@@ -324,5 +353,167 @@ func TestSubmitFeedbackRequiresASession(t *testing.T) {
 		Content: "Không phiên",
 	}); !errors.Is(err, errNoActor) {
 		t.Fatalf("SubmitFeedback without a session must fail with errNoActor, got %v", err)
+	}
+}
+
+// FR-025, research D16: a feedback may carry up to five photos; each reaches the
+// media store, is persisted with the feedback at its position, and is answered on
+// the order detail.
+func TestSubmitFeedbackStoresUpToFivePhotos(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+
+	view, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+		OrderID: order.ID,
+		Content: "Có ảnh kèm theo",
+		Photos:  []appdto.UploadedPhoto{{Content: jpeg()}, {Content: jpeg()}},
+	})
+	if err != nil {
+		t.Fatalf("SubmitFeedback: %v", err)
+	}
+	if len(f.media.uploaded) != 2 {
+		t.Fatalf("every photo must reach the media store, got %d uploads", len(f.media.uploaded))
+	}
+	feedbackID := f.orders.inserts[0].ID
+	stored := f.orders.photoInserts[feedbackID]
+	if len(stored) != 2 {
+		t.Fatalf("both photos must be persisted, got %d", len(stored))
+	}
+	for i, photo := range stored {
+		if photo.FeedbackID != feedbackID {
+			t.Fatalf("photo %d must name the feedback, got %s", i, photo.FeedbackID)
+		}
+		if photo.Position != i {
+			t.Fatalf("photo %d must be positioned %d, got %d", i, i, photo.Position)
+		}
+		if photo.PublicID == "" || photo.URL == "" {
+			t.Fatalf("photo %d must carry the provider reference, got %+v", i, photo)
+		}
+	}
+	if view.Feedback == nil || len(view.Feedback.Photos) != 2 {
+		t.Fatalf("the answer must carry both photos, got %+v", view.Feedback)
+	}
+}
+
+// FR-025: photos are optional; a feedback with no photo is still accepted and
+// never calls the media store.
+func TestSubmitFeedbackAcceptsNoPhotos(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+
+	if _, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+		OrderID: order.ID,
+		Content: "Không có ảnh",
+	}); err != nil {
+		t.Fatalf("a feedback with no photos must be accepted, got %v", err)
+	}
+	if len(f.media.uploaded) != 0 {
+		t.Fatalf("a feedback with no photos must not call the media store, got %d uploads", len(f.media.uploaded))
+	}
+}
+
+// FR-025, research D16: a submission carrying more than five photos is refused
+// ORDER_IMAGE_LIMIT_REACHED before anything is stored or uploaded.
+func TestSubmitFeedbackRefusesMoreThanFivePhotosBeforeStorage(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+
+	photos := make([]appdto.UploadedPhoto, 6)
+	for i := range photos {
+		photos[i] = appdto.UploadedPhoto{Content: jpeg()}
+	}
+	_, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+		OrderID: order.ID,
+		Content: "Quá nhiều ảnh",
+		Photos:  photos,
+	})
+	if !errors.Is(err, domainerr.ErrImageLimitReached) {
+		t.Fatalf("an over-ceiling submission must answer ORDER_IMAGE_LIMIT_REACHED, got %v", err)
+	}
+	if len(f.orders.inserts) != 0 || len(f.media.uploaded) != 0 {
+		t.Fatalf("a refused submission must write and upload nothing, got %d inserts / %d uploads",
+			len(f.orders.inserts), len(f.media.uploaded))
+	}
+}
+
+// FR-025, FR-009: an unsupported or oversized photo is refused before the media
+// store is called, and nothing is stored.
+func TestSubmitFeedbackRefusesABadOrOversizedPhotoBeforeStorage(t *testing.T) {
+	oversized := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x00}, int(model.MaxDeliveryPhotoBytes))...)
+	cases := []struct {
+		name    string
+		photo   []byte
+		wantErr error
+	}{
+		{"unsupported", []byte("GIF89a...."), domainerr.ErrImageTypeUnsupported},
+		{"oversized", oversized, domainerr.ErrImageTooLarge},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := uuid.New()
+			order := deliveredOrder(owner)
+			f := newFeedbackFixture(order)
+
+			_, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+				OrderID: order.ID,
+				Content: "Ảnh lỗi",
+				Photos:  []appdto.UploadedPhoto{{Content: jpeg()}, {Content: tc.photo}},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected %v, got %v", tc.wantErr, err)
+			}
+			if len(f.orders.inserts) != 0 || len(f.media.uploaded) != 0 {
+				t.Fatalf("a refused submission must write and upload nothing, got %d inserts / %d uploads",
+					len(f.orders.inserts), len(f.media.uploaded))
+			}
+		})
+	}
+}
+
+// FR-025, FR-009: a media provider refusal answers ORDER_MEDIA_UNAVAILABLE and
+// leaves the order and the feedback unchanged.
+func TestSubmitFeedbackSurfacesMediaUnavailable(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+	f.media.err = errors.New("provider down")
+
+	_, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+		OrderID: order.ID,
+		Content: "Có ảnh",
+		Photos:  []appdto.UploadedPhoto{{Content: jpeg()}},
+	})
+	if !errors.Is(err, media.ErrUnavailable) {
+		t.Fatalf("a provider refusal must answer media unavailable, got %v", err)
+	}
+	if len(f.orders.inserts) != 0 {
+		t.Fatalf("a refused submission must write nothing, got %+v", f.orders.inserts)
+	}
+}
+
+// FR-022: the artist is emailed the feedback once it has committed; the note names
+// the order and carries the content.
+func TestSubmitFeedbackNotifiesTheArtist(t *testing.T) {
+	owner := uuid.New()
+	order := deliveredOrder(owner)
+	f := newFeedbackFixture(order)
+
+	if _, err := f.svc.SubmitFeedback(actorContext(owner), appdto.FeedbackInput{
+		OrderID: order.ID,
+		Content: "Tranh rất đẹp",
+	}); err != nil {
+		t.Fatalf("SubmitFeedback: %v", err)
+	}
+
+	sent := messagesTo(f.notifier, "shop@example.com")
+	if len(sent) != 1 {
+		t.Fatalf("the artist must be emailed once, got %+v", f.notifier.sent)
+	}
+	if !strings.Contains(sent[0].body, order.ID.String()) || !strings.Contains(sent[0].body, "Tranh rất đẹp") {
+		t.Fatalf("the artist's email must name the order and the content, got %q", sent[0].body)
 	}
 }

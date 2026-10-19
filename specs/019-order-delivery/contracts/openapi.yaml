@@ -11,7 +11,9 @@ info:
     the status enum renames SHIPPED -> SHIPPING and adds DELIVERED; POST /admin/orders/{orderId}/ship
     becomes multipart; POST /admin/orders/{orderId}/complete is REMOVED (the customer route and the
     sweep replace it); POST /orders/{orderId}/complete and POST /orders/{orderId}/feedback are new;
-    POST /admin/orders/{orderId}/deliver is new.
+    POST /admin/orders/{orderId}/deliver is new. A later extension (FR-025) makes
+    POST /orders/{orderId}/feedback multipart too, so the feedback may carry up to five photos and
+    Feedback.photos is part of the detail read.
 
 servers:
   - url: /api/v1
@@ -127,28 +129,38 @@ paths:
       - { $ref: '#/components/parameters/OrderId' }
     post:
       tags: [orders]
-      summary: Send order-level feedback to the artist
+      summary: Send order-level feedback to the artist, with up to five photos
       operationId: submitFeedback
       security: [{ bearerAuth: [] }]
       requestBody:
         required: true
         content:
-          application/json:
-            schema: { $ref: '#/components/schemas/FeedbackRequest' }
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/FeedbackUpload' }
       responses:
         '200':
           description: The order with its feedback recorded
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OrderEnvelope' }
-        '400': { $ref: '#/components/responses/ValidationError' }
-        '401': { $ref: '#/components/responses/Unauthenticated' }
-        '404': { $ref: '#/components/responses/OrderNotFound' }
-        '409':
-          description: ORDER_FEEDBACK_NOT_ALLOWED or ORDER_FEEDBACK_ALREADY_SENT
+        '400':
+          description: >
+            VALIDATION_ERROR (missing/empty/over-long content, a wrong part) or
+            ORDER_IMAGE_TYPE_UNSUPPORTED
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/OrderNotFound' }
+        '409':
+          description: >
+            ORDER_FEEDBACK_NOT_ALLOWED, ORDER_FEEDBACK_ALREADY_SENT or
+            ORDER_IMAGE_LIMIT_REACHED (more than five photos)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '503': { $ref: '#/components/responses/MediaUnavailable' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '500': { $ref: '#/components/responses/InternalError' }
 
@@ -248,22 +260,44 @@ components:
         height: { type: integer }
         position: { type: integer }
 
+    FeedbackPhoto:
+      type: object
+      required: [id, url, width, height, position]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        width: { type: integer }
+        height: { type: integer }
+        position: { type: integer }
+
     Feedback:
       type: object
-      required: [content, createdAt]
+      required: [content, createdAt, photos]
       properties:
         content: { type: string, minLength: 1, maxLength: 2000 }
         createdAt: { type: string, format: date-time }
+        photos:
+          type: array
+          description: The optional images attached to the feedback, ordered by position.
+          items: { $ref: '#/components/schemas/FeedbackPhoto' }
 
-    FeedbackRequest:
+    FeedbackUpload:
       type: object
-      required: [content]
+      description: >
+        The feedback text and its optional photos. `content` is required and must carry 1 to 2000
+        characters after trimming; zero to five photos may be attached, each validated (JPEG, PNG or
+        WebP, within the size ceiling) before it is sent to the media store. Sending the photo part more
+        than five times is refused with ORDER_IMAGE_LIMIT_REACHED.
       properties:
         content:
           type: string
           minLength: 1
           maxLength: 2000
           description: The feedback text sent to the artist.
+        photos:
+          type: array
+          maxItems: 5
+          items: { type: string, format: binary }
 
     OrderDetail:
       type: object

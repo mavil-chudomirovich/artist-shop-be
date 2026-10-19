@@ -14,7 +14,7 @@ row set to `PAID` in a dev database.
 ## Prerequisites
 
 - Dependencies running: `make up-tools`.
-- Migration applied: `make migrate-up` — this feature adds `migrations/00018_order_delivery.sql`.
+- Migration applied: `make migrate-up` — this feature adds `migrations/00018_order_delivery.sql` and, for the feedback photos, `migrations/00019_order_feedback_photos.sql`.
 - API running: `make run`, or `go run ./cmd/api`.
 - `MEDIA_*` (Cloudinary) configured if you want real photo uploads; without them the media store is
   unavailable and an upload answers `INTERNAL_ERROR` (the order is left unchanged).
@@ -63,11 +63,13 @@ jumping to a delivered state.
 
 | # | Action | Expected |
 |---|---|---|
-| 4a | `POST $BASE/orders/$O/feedback` `{"content":"Thank you!"}` as CUSTOMER on a `DELIVERED` order | `200`, the order detail now carries `feedback.content` |
-| 4b | `POST $BASE/orders/$O/feedback` a second time | `409 ORDER_FEEDBACK_ALREADY_SENT` |
-| 4c | `POST $BASE/orders/$O/feedback` on an order still `SHIPPING` | `409 ORDER_FEEDBACK_NOT_ALLOWED`, naming the state |
-| 4d | `POST $BASE/orders/$O/feedback` `{"content":""}` | `400 VALIDATION_ERROR`, `details[].field = "content"` |
-| 4e | the artist's mailbox | an email that feedback arrived |
+| 4a | `POST $BASE/orders/$O/feedback -F content="Thank you!" -F photos=@p.jpg` as CUSTOMER on a `DELIVERED` order | `200`, the order detail now carries `feedback.content` and one `feedback.photos` element |
+| 4b | `POST $BASE/orders/$O/feedback -F content="Again"` a second time | `409 ORDER_FEEDBACK_ALREADY_SENT` |
+| 4c | `POST $BASE/orders/$O/feedback -F content="Too soon"` on an order still `SHIPPING` | `409 ORDER_FEEDBACK_NOT_ALLOWED`, naming the state |
+| 4d | `POST $BASE/orders/$O/feedback -F content=""` | `400 VALIDATION_ERROR`, `details[].field = "content"` |
+| 4e | `POST $BASE/orders/$O/feedback -F content="x"` with 6 `photos` files | `409 ORDER_IMAGE_LIMIT_REACHED` |
+| 4f | `POST $BASE/orders/$O/feedback -F content="x" -F photos=@note.txt` | `400 ORDER_IMAGE_TYPE_UNSUPPORTED` |
+| 4g | the artist's mailbox | an email that feedback arrived |
 
 ## Scenario 5 — the operator and role guards (automatic)
 
@@ -90,8 +92,10 @@ automated tests (direct use cases over real PostgreSQL), not here:
 | 6d | a database holding `SHIPPED` rows, after the migration | those orders read `SHIPPING`, none lost |
 | 6e | insert an order with a status outside the seven | refused by `orders_status_ck` |
 | 6f | a six-photo dispatch | refused with `ORDER_IMAGE_LIMIT_REACHED` before the media store is called; a second dispatch of the same order is refused naming `SHIPPING` (the edge fires once) |
-| 6g | delete an order | its `order_delivery_photos` and `order_feedback` rows are gone with it |
+| 6g | delete an order | its `order_delivery_photos`, `order_feedback` and `order_feedback_photos` rows are gone with it |
 | 6h | insert a second feedback row for one order | refused by `order_feedback_order_key` |
+| 6i | delete a feedback | its `order_feedback_photos` rows are gone with it (cascade) |
+| 6j | a six-photo feedback | refused `ORDER_IMAGE_LIMIT_REACHED` before the media store is called |
 
 ## Automated gates
 

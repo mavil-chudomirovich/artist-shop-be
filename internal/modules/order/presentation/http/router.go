@@ -88,8 +88,13 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Post("/{orderId}/complete", h.ConfirmReceived)
 	// The owner sends the order's one feedback once it is delivered or completed;
 	// the author is the session's, so a client can only write about its own order
-	// (FR-015, FR-018).
-	r.Post("/{orderId}/feedback", h.SubmitFeedback)
+	// (FR-015, FR-018). The feedback may carry up to five photos, so the route
+	// raises the same body limit the evidence routes install and accepts
+	// multipart/form-data; the handler caps each photo again while it reads
+	// (FR-025).
+	r.With(middleware.BodyLimitWithRefusal(
+		DeliveryEvidenceUploadCeiling(), photosTooLarge(),
+	)).Post("/{orderId}/feedback", h.SubmitFeedback)
 	return r
 }
 

@@ -83,6 +83,19 @@ var feedbackColumns = []string{
 	"created_at",
 }
 
+// feedbackPhotoColumns is the explicit projection of a feedback-photo row,
+// matching the scan arity of scanFeedbackPhoto.
+var feedbackPhotoColumns = []string{
+	"id",
+	"feedback_id",
+	"public_id",
+	"url",
+	"width",
+	"height",
+	"position",
+	"created_at",
+}
+
 // lineColumns is the explicit projection of an order line, matching the scan
 // arity of scanLine.
 var lineColumns = []string{
@@ -702,7 +715,8 @@ func (r *OrderRepository) InsertFeedback(ctx context.Context, feedback model.Fee
 }
 
 // FindFeedback returns the order's feedback, or domainerr.ErrNotFound when it has
-// none, so the detail read projects it (FR-015, FR-017).
+// none, so the detail read projects it (FR-015, FR-017). Its photos are attached,
+// ordered by position then id (FR-025).
 func (r *OrderRepository) FindFeedback(ctx context.Context, orderID uuid.UUID) (*model.Feedback, error) {
 	query := fmt.Sprintf(`SELECT %s FROM order_feedback WHERE order_id = $1`, projection(feedbackColumns))
 	feedback, err := scanFeedback(r.querier(ctx).QueryRow(ctx, query, orderID))
@@ -712,7 +726,79 @@ func (r *OrderRepository) FindFeedback(ctx context.Context, orderID uuid.UUID) (
 	if err != nil {
 		return nil, err
 	}
+	photos, err := r.ListFeedbackPhotos(ctx, feedback.ID)
+	if err != nil {
+		return nil, err
+	}
+	feedback.Photos = photos
 	return feedback, nil
+}
+
+// InsertFeedbackPhotos inserts every photo of one feedback, each stamped with the
+// caller's instant, in one statement per row. The five-photo ceiling was checked
+// before this write (FR-025, research D16).
+func (r *OrderRepository) InsertFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID, photos []model.FeedbackPhoto, now time.Time) error {
+	const query = `
+		INSERT INTO order_feedback_photos
+			(id, feedback_id, public_id, url, width, height, position, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	for i := range photos {
+		photo := photos[i]
+		photoID := photo.ID
+		if photoID == uuid.Nil {
+			photoID = uuid.New()
+		}
+		if _, err := r.querier(ctx).Exec(ctx, query,
+			photoID,
+			feedbackID,
+			photo.PublicID,
+			photo.URL,
+			photo.Width,
+			photo.Height,
+			photo.Position,
+			now,
+		); err != nil {
+			return fmt.Errorf("insert order feedback photo: %w", err)
+		}
+	}
+	return nil
+}
+
+// CountFeedbackPhotos returns how many photos one feedback carries, so the use
+// case can enforce the five-photo ceiling (FR-025, research D16).
+func (r *OrderRepository) CountFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID) (int, error) {
+	const query = `SELECT count(*) FROM order_feedback_photos WHERE feedback_id = $1`
+	var count int
+	if err := r.querier(ctx).QueryRow(ctx, query, feedbackID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count order feedback photos: %w", err)
+	}
+	return count, nil
+}
+
+// ListFeedbackPhotos returns one feedback's photos, ordered by position then id,
+// so the detail read projects them deterministically (FR-025, research D16).
+func (r *OrderRepository) ListFeedbackPhotos(ctx context.Context, feedbackID uuid.UUID) ([]model.FeedbackPhoto, error) {
+	query := fmt.Sprintf(
+		`SELECT %s FROM order_feedback_photos WHERE feedback_id = $1 ORDER BY position, id`,
+		projection(feedbackPhotoColumns))
+	rows, err := r.querier(ctx).Query(ctx, query, feedbackID)
+	if err != nil {
+		return nil, fmt.Errorf("list order feedback photos: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]model.FeedbackPhoto, 0)
+	for rows.Next() {
+		photo, err := scanFeedbackPhoto(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *photo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ListAwaitingCompletion returns the identifiers of the orders that are DELIVERED
@@ -1176,4 +1262,22 @@ func scanFeedback(row baserepo.Row) (*model.Feedback, error) {
 		return nil, fmt.Errorf("scan order feedback: %w", err)
 	}
 	return &feedback, nil
+}
+
+// scanFeedbackPhoto reads one row of feedbackPhotoColumns.
+func scanFeedbackPhoto(row baserepo.Row) (*model.FeedbackPhoto, error) {
+	var photo model.FeedbackPhoto
+	if err := row.Scan(
+		&photo.ID,
+		&photo.FeedbackID,
+		&photo.PublicID,
+		&photo.URL,
+		&photo.Width,
+		&photo.Height,
+		&photo.Position,
+		&photo.CreatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan order feedback photo: %w", err)
+	}
+	return &photo, nil
 }

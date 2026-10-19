@@ -24,6 +24,11 @@ type Feedback struct {
 	AuthorID uuid.UUID
 	// Content is the feedback text.
 	Content string
+	// Photos are the optional images attached to the feedback, at most five,
+	// ordered by position. They are read alongside the feedback on the detail
+	// paths, so they are empty when the feedback is not loaded through the
+	// ordered read (FR-025, research D16).
+	Photos []FeedbackPhoto
 	// CreatedAt is when it was written. Set once.
 	CreatedAt time.Time
 }

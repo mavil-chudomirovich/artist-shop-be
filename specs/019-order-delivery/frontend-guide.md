@@ -32,8 +32,7 @@ hay Swagger.
   mình sang `COMPLETED`; hoặc đơn **tự hoàn tất sau 120 giờ** kể từ `deliveredAt` (FE thấy trạng thái,
   **không** nhận lỗi).
 - **`POST /admin/orders/{orderId}/complete` đã bị XOÁ** — operator **không** còn hoàn tất thay khách.
-- **Feedback cấp đơn**: `POST /orders/{orderId}/feedback` (body `{ "content": string }`, 1–2000 ký tự),
-  tối đa **một lần** mỗi đơn, chỉ khi đơn `DELIVERED`/`COMPLETED`.
+- **Feedback cấp đơn**: `POST /orders/{orderId}/feedback` (**`multipart/form-data`**: `content` 1–2000 ký tự + **0–5** phần `photos`), tối đa **một lần** mỗi đơn, chỉ khi đơn `DELIVERED`/`COMPLETED`.
 - **Detail đơn mang thêm bốn trường**: `deliveredAt`, `completedAt`, `deliveryPhotos` (mảng) và
   `feedback` (object hoặc `null`). **Danh sách không có** các trường này.
 - **Không đụng tiền/tồn**: các bước giao và hoàn tất **không** đổi `total` và **không** tạo
@@ -52,8 +51,8 @@ hay Swagger.
 - `orderId` là UUID. Không phải UUID → `400 VALIDATION_ERROR` với `details[].field = "orderId"`.
 - `page` mặc định `1` (tối thiểu `1`); `pageSize` mặc định `20`, khoảng `1..100`.
 - Tiền là **số nguyên đơn vị nhỏ nhất + currency**, không bao giờ là số thực.
-- **Upload**: hai route `ship`/`deliver` nhận `multipart/form-data` với trường `photos` (file); trường
-  khác bị bỏ qua. Gửi JSON cho hai route này là **sai** (`400 VALIDATION_ERROR`/`MALFORMED_REQUEST`).
+- **Upload**: ba route `ship`/`deliver`/`feedback` nhận `multipart/form-data` với trường `photos` (file);
+  trường khác bị bỏ qua. Gửi JSON cho ba route này là **sai** (`400 VALIDATION_ERROR`/`MALFORMED_REQUEST`).
 
 ### Kiểu dữ liệu *(mọi trường JSON của **mọi** DTO client thấy)*
 
@@ -110,10 +109,19 @@ Cả 7 member là chuỗi, luôn có mặt.
 - `width`/`height`: kích thước pixel đã lưu.
 - `position`: thứ tự ảnh trong cùng `stage` (bắt đầu 0). Ảnh đọc theo `stage` rồi `position`.
 
-**`FeedbackResponse` (2 member) — feedback cấp đơn (MỚI ở feature 019):**
+**`FeedbackPhotoResponse` (5 member) — một ảnh gắn vào feedback (MỚI, mở rộng 019, FR-025):**
 ```json
-{ "content": "Cảm ơn artist, tranh rất đẹp!", "createdAt": "2026-10-18T09:00:00Z" }
+{ "id": "…", "url": "https://res.cloudinary.com/.../feedback-1.jpg", "width": 1600, "height": 1200, "position": 0 }
 ```
+- `url`: link hiển thị ảnh (HTTPS). `width`/`height`: kích thước pixel đã lưu.
+- `position`: thứ tự ảnh trong feedback (bắt đầu 0). Ảnh đọc theo `position`.
+- **Không** có `stage` (khác `DeliveryPhotoResponse`): feedback là một tập ảnh, không chia bước.
+
+**`FeedbackResponse` (3 member) — feedback cấp đơn (MỚI ở feature 019; thêm `photos` ở mở rộng FR-025):**
+```json
+{ "content": "Cảm ơn artist, tranh rất đẹp!", "createdAt": "2026-10-18T09:00:00Z", "photos": [] }
+```
+- `photos`: **luôn là mảng**; feedback không ảnh trả `[]`, **không** phải `null`.
 
 `OrderSummaryResponse` (5 member) — một dòng của danh sách khách:
 ```json
@@ -191,12 +199,17 @@ bộ `deliveredAt`/`completedAt`/`deliveryPhotos`/`feedback` như khách.
 { "email": "recipient@example.com" }
 ```
 
-**`FeedbackRequest` (1 member) — body `POST /orders/{orderId}/feedback` (MỚI ở feature 019):**
-```json
-{ "content": "Cảm ơn artist, tranh rất đẹp!" }
+**Body `POST /orders/{orderId}/feedback` (MỚI ở feature 019; `multipart/form-data` ở mở rộng FR-025):**
+hai trường — `content` (text) và `photos` (file, 0–5 phần).
+```bash
+curl -X POST "$BASE/orders/$O/feedback" -H "Authorization: Bearer $CUSTOMER" \
+  -F 'content=Cảm ơn artist, tranh rất đẹp!' -F photos=@a.jpg
 ```
 - `content`: **bắt buộc**, **1 đến 2000 ký tự** sau khi cắt khoảng trắng. Rỗng hoặc quá dài →
   `400 VALIDATION_ERROR`, `details[].field = "content"`.
+- `photos`: **tuỳ chọn**, tối đa **5** ảnh, mỗi ảnh JPEG/PNG/WebP ≤ 2 MB; nhiều hơn 5 →
+  `409 ORDER_IMAGE_LIMIT_REACHED`, sai định dạng → `400 ORDER_IMAGE_TYPE_UNSUPPORTED`, quá 2 MB →
+  `413 ORDER_IMAGE_TOO_LARGE` (`details[].field = "photos"`).
 
 ---
 
@@ -231,11 +244,14 @@ bộ `deliveredAt`/`completedAt`/`deliveryPhotos`/`feedback` như khách.
 Lỗi: `VALIDATION_ERROR` 400 · `UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 ·
 `ORDER_STATE_TRANSITION_INVALID` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500.
 
-**9.7 `POST /orders/{orderId}/feedback`** — **MỚI**. Khách gửi **một** feedback cấp đơn cho artist. Body
-`FeedbackRequest`. Đơn phải `DELIVERED`/`COMPLETED`; gửi lần hai bị từ chối.
-Lỗi: `VALIDATION_ERROR` 400 (`content` rỗng/quá dài) · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 ·
-`ORDER_NOT_FOUND` 404 · `ORDER_FEEDBACK_NOT_ALLOWED` 409 · `ORDER_FEEDBACK_ALREADY_SENT` 409 ·
-`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500.
+**9.7 `POST /orders/{orderId}/feedback`** — **MỚI**, body **`multipart/form-data`** (mở rộng FR-025).
+Khách gửi **một** feedback cấp đơn cho artist: `content` (1–2000 ký tự) + 0–5 `photos`. Đơn phải
+`DELIVERED`/`COMPLETED`; gửi lần hai bị từ chối. Response `200 OrderResponse` với `feedback` (gồm
+`photos[]`).
+Lỗi: `VALIDATION_ERROR` 400 (`content` rỗng/quá dài) · `MALFORMED_REQUEST` 400 ·
+`ORDER_IMAGE_TYPE_UNSUPPORTED` 400 · `UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 ·
+`ORDER_FEEDBACK_NOT_ALLOWED` 409 · `ORDER_FEEDBACK_ALREADY_SENT` 409 · `ORDER_IMAGE_LIMIT_REACHED` 409 ·
+`ORDER_IMAGE_TOO_LARGE` 413 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500 · `ORDER_MEDIA_UNAVAILABLE` 503.
 
 **9.12 `POST /admin/orders/{orderId}/ship`** — **ĐỔI sang `multipart/form-data`**. Đưa đơn `PAID` sang
 `SHIPPING`, kèm **0–5 ảnh** `photos`. Không ảnh vẫn thành công.
@@ -275,12 +291,13 @@ Lỗi: như 9.12, với `409 ORDER_STATE_TRANSITION_INVALID` khi đơn không �
 |---|---|---|---|---|
 | — | POST | `/api/v1/admin/orders/{orderId}/complete` | Admin hoàn tất đơn đã giao (`-> COMPLETED`) | **XOÁ**: hoàn tất do khách (9.6) hoặc tự động 120 giờ |
 
-### Không phải endpoint nhưng **ĐỔI bề mặt client** (2)
+### Không phải endpoint nhưng **ĐỔI bề mặt client** (3)
 
 | Bề mặt | Trước (010) | Sau (019) |
 |---|---|---|
 | Enum `OrderStatus` trong **mọi** response có `status` | **6** giá trị, gồm `SHIPPED` | **7** giá trị; `SHIPPED` **đổi tên** `SHIPPING`, thêm `DELIVERED` |
 | Detail đơn (`OrderResponse`/`AdminOrderResponse`) | 7/8 member, không có sự kiện giao hàng | **11/12** member; thêm `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback` |
+| `FeedbackResponse` trong detail | 2 member (`content`, `createdAt`) | **3** member; thêm `photos[]` (`FeedbackPhotoResponse`, 5 member) |
 
 **Tổng: 3 mới, 1 endpoint đổi, 1 endpoint xoá, 1 enum đổi (breaking), 1 hình dạng detail đổi, 10 endpoint
 giữ nguyên.** Không endpoint nào của module khác bị đổi.
@@ -349,8 +366,8 @@ giữ nguyên.** Không endpoint nào của module khác bị đổi.
   tự hoàn tất. FE nên hiển thị đếm ngược nếu muốn, nhưng **không** giả định trạng thái bất biến — hãy
   đọc lại đơn.
 - **Khách xác nhận** (`9.6`) chỉ khi đơn `DELIVERED`; gọi ở trạng thái khác → `409` nêu trạng thái.
-- **Feedback** (`9.7`): một lần mỗi đơn, chỉ khi `DELIVERED`/`COMPLETED`; sau khi gửi, `feedback` xuất
-  hiện trong detail.
+- **Feedback** (`9.7`): `multipart/form-data`, một lần mỗi đơn, chỉ khi `DELIVERED`/`COMPLETED`; `content`
+  bắt buộc, kèm 0–5 `photos`. Sau khi gửi, `feedback` (kèm `photos[]`) xuất hiện trong detail.
 - **Chỉ detail** mang `deliveredAt`/`completedAt`/`deliveryPhotos`/`feedback`; **danh sách không** — FE
   phải gọi `GET /orders/{orderId}` (hoặc admin tương ứng) để hiển thị bằng chứng.
 
@@ -368,6 +385,8 @@ giữ nguyên.** Không endpoint nào của module khác bị đổi.
       `ORDER_MEDIA_UNAVAILABLE`.
 - [ ] Màn khách: nút "Đã nhận hàng" chỉ khi `status == "DELIVERED"`; form feedback chỉ khi
       `DELIVERED`/`COMPLETED` và chưa có `feedback`.
+- [ ] Form feedback gửi **`multipart/form-data`**: trường `content` + 0–5 file `photos` (JPEG/PNG/WebP
+      ≤ 2 MB); đọc `feedback.photos[]` để hiển thị.
 - [ ] Xử lý `ORDER_FEEDBACK_ALREADY_SENT`/`ORDER_FEEDBACK_NOT_ALLOWED` bằng ẩn/disable form và giải thích.
 - [ ] Không gửi `userId`/`ownerId` ở body/query; tác nhân lấy từ phiên.
 - [ ] Hiển thị tiền bằng `amount` (số nguyên) + `currency`; `total` **không** gồm phí ship.
@@ -378,7 +397,7 @@ giữ nguyên.** Không endpoint nào của module khác bị đổi.
 
 ## 8. Đồng bộ guide với mã nguồn (có đếm)
 
-Lần đồng bộ này đọc lại source ngày **2026-10-18** và đếm theo quy tắc frontend-guide sync: **mọi** route
+Lần đồng bộ này đọc lại source ngày **2026-10-19** và đếm theo quy tắc frontend-guide sync: **mọi** route
 trong `router.go`, **mọi** thẻ `json:"…"` của DTO presentation và application, **mọi** giá trị enum
 `OrderStatus`, **mọi** mã HTTP trong `errors.go`. Mọi con số dưới đây **đếm lại từ chính nguồn**, không
 chép từ tài liệu khác.
@@ -393,7 +412,7 @@ chép từ tài liệu khác.
 Khớp `contracts/openapi.yaml` (**4** operation dưới `paths:` cho các endpoint 019 chạm) và
 `docs/api-reference.md` §9 (**14** mục `9.1`–`9.14`). **3 mới, 1 đổi, 1 xoá.**
 
-### 8.2 Trường JSON — **50** thẻ `json:"…"` trên **14** kiểu (nguồn: `presentation/dto/dto.go`)
+### 8.2 Trường JSON — **55** thẻ `json:"…"` trên **14** kiểu (nguồn: `presentation/dto/dto.go`)
 
 `application/dto/dto.go` có **0** thẻ `json` — chúng là type nội bộ của use case, **không** ra dây.
 
@@ -403,20 +422,21 @@ Khớp `contracts/openapi.yaml` (**4** operation dưới `paths:` cho các endpo
 | `EditLineRequest` | 2 | `variantId`, `quantity` |
 | `EditOrderRequest` | 2 | `addressId`, `lines` |
 | `TransferRequest` | 1 | `email` |
-| `FeedbackRequest` ▲ | 1 | `content` |
+| `FeedbackPhotoResponse` ▲ | 5 | `id`, `url`, `width`, `height`, `position` |
 | `MoneyResponse` | 2 | `amount`, `currency` |
 | `OrderLineResponse` | 8 | `productId`, `productName`, `variantId`, `variantName`, `quantity`, `unitPrice`, `lineTotal`, `position` |
 | `OrderAddressResponse` | 7 | `recipientName`, `recipientPhone`, `provinceCode`, `provinceName`, `wardCode`, `wardName`, `streetAddress` |
 | `DeliveryPhotoResponse` ▲ | 6 | `id`, `stage`, `url`, `width`, `height`, `position` |
-| `FeedbackResponse` ▲ | 2 | `content`, `createdAt` |
+| `FeedbackResponse` ▲ | 3 | `content`, `createdAt`, `photos` ▲ |
 | `OrderSummaryResponse` | 5 | `id`, `status`, `total`, `itemCount`, `createdAt` |
 | `OrderResponse` | 11 | `id`, `status`, `total`, `itemCount`, `createdAt`, `address`, `lines`, `deliveredAt` ▲, `completedAt` ▲, `deliveryPhotos` ▲, `feedback` ▲ |
 | `AdminOrderSummaryResponse` | 1 (+5 nhúng) | `userId` |
 | `AdminOrderResponse` | 1 (+11 nhúng) | `userId` |
 
-Tổng: 1+2+2+1+1+2+8+7+6+2+5+11+1+1 = **50** thẻ trên **14** kiểu, thành **36** tên member phân biệt;
-**36/36** đều có mặt ở §1. Bốn tên **mới** trong 019: `deliveredAt`, `completedAt`, `deliveryPhotos`,
-`feedback` (cộng ba kiểu mới `DeliveryPhotoResponse`, `FeedbackResponse`, `FeedbackRequest`).
+Tổng: 1+2+2+1+5+2+8+7+6+3+5+11+1+1 = **55** thẻ trên **14** kiểu, thành **37** tên member phân biệt;
+**37/37** đều có mặt ở §1. Năm tên **mới** trong 019 (kể cả mở rộng FR-025): `deliveredAt`, `completedAt`,
+`deliveryPhotos`, `feedback`, `photos` (cộng ba kiểu mới `DeliveryPhotoResponse`, `FeedbackResponse`,
+`FeedbackPhotoResponse`).
 
 ### 8.3 Enum `OrderStatus` — **7** giá trị (nguồn: `domain/constant/codes.go`)
 
@@ -429,7 +449,9 @@ Tổng: 1+2+2+1+1+2+8+7+6+2+5+11+1+1 = **50** thẻ trên **14** kiểu, thành 
 Nguồn: `domain/constant/codes.go` (**17** hằng `Code*`) và `presentation/http/errors.go` (ánh xạ).
 **6** mã mới trong 019: `ORDER_IMAGE_TYPE_UNSUPPORTED`, `ORDER_IMAGE_TOO_LARGE`,
 `ORDER_IMAGE_LIMIT_REACHED`, `ORDER_MEDIA_UNAVAILABLE`, `ORDER_FEEDBACK_NOT_ALLOWED`,
-`ORDER_FEEDBACK_ALREADY_SENT`. §5 liệt kê **đủ 17** (▲ đánh **đủ 6** mã mới).
+`ORDER_FEEDBACK_ALREADY_SENT`. §5 liệt kê **đủ 17** (▲ đánh **đủ 6** mã mới). Ba mã ảnh
+(`ORDER_IMAGE_*`) được **dùng chung** cho cả ảnh bằng chứng giao hàng **và** ảnh feedback (FR-025) —
+mở rộng này **không** thêm mã mới.
 
 ### 8.5 HTTP status — **5** do `errors.go` ánh xạ, **11** trên bề mặt module
 
@@ -447,5 +469,9 @@ module **không** dùng `204`, `405`, `415`.
 - Guide 017 (admin dashboard) ghi `recentOrders[].status` là **6** giá trị và doanh thu chỉ gồm
   `PAID`/`SHIPPED`/`COMPLETED` — **sai** sau 019; đã sửa thành **7** giá trị và
   `PAID`/`SHIPPING`/`DELIVERED`/`COMPLETED`.
-- Không còn mismatch nào khác giữa guide này và source tại thời điểm đồng bộ: **14** route, **50** thẻ
+- Bản thân guide này ghi `POST /orders/{orderId}/feedback` là body JSON `{ "content": string }` và
+  `FeedbackResponse` có **2** member — **sai** sau mở rộng FR-025; đã sửa thành **`multipart/form-data`**
+  (`content` + 0–5 `photos`), `FeedbackResponse` **3** member (thêm `photos`) và thêm kiểu
+  `FeedbackPhotoResponse` (5 member).
+- Không còn mismatch nào khác giữa guide này và source tại thời điểm đồng bộ: **14** route, **55** thẻ
   `json`, **7** giá trị enum, **17+6** mã lỗi, **11** HTTP status — tất cả khớp.

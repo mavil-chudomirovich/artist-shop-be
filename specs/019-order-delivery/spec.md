@@ -168,6 +168,7 @@ Khách được báo mỗi khi trạng thái đơn đổi (đang giao, đã giao
 - **FR-015**: Khách MUST gửi được **feedback cấp đơn** (nội dung) cho artist, gắn với một đơn của mình, khi đơn ở `DELIVERED` hoặc `COMPLETED`. Nội dung feedback MUST có **1 đến 2000 ký tự** (sau khi cắt khoảng trắng); nội dung rỗng hoặc quá dài MUST bị từ chối.
 - **FR-016**: Mỗi đơn MUST nhận **tối đa một** feedback; gửi lần hai MUST bị từ chối.
 - **FR-017**: Feedback MUST đọc được bởi operator/artist cùng đơn.
+- **FR-025**: Khi gửi feedback, khách MUST được phép đính kèm **0 đến 5 ảnh**; gửi nhiều hơn 5 ảnh MUST bị từ chối. Ảnh là **tuỳ chọn** (feedback không ảnh vẫn hợp lệ). Mỗi ảnh MUST được **kiểm tra định dạng và kích thước** (cùng định dạng/ngưỡng như ảnh bằng chứng giao hàng, FR-009) và MUST bị từ chối **trước khi** lưu trữ. Ảnh MUST được lưu bởi nhà cung cấp media (không lưu nhị phân trong cơ sở dữ liệu) và MUST được trả lại trong `feedback.photos` ở response chi tiết của đơn.
 
 ### Functional Requirements — quyền, audit, toàn vẹn
 
@@ -189,7 +190,7 @@ Khách được báo mỗi khi trạng thái đơn đổi (đang giao, đã giao
 
 - **Order**: đơn của khách — chủ, địa chỉ snapshot, tổng, **trạng thái** (bảy giá trị), phiên bản, **mốc giao thành công**, mốc xác nhận/hạn thanh toán hiện có, thời điểm hoàn tất, thời điểm tạo/đổi.
 - **Delivery evidence (ảnh bằng chứng)**: một ảnh gắn với một đơn ở một bước giao (đang giao hoặc giao thành công) — tham chiếu của nhà cung cấp media, thứ tự, thời điểm tạo.
-- **Order feedback**: feedback cấp đơn — đơn, người gửi, nội dung, thời điểm; tối đa một cho mỗi đơn.
+- **Order feedback**: feedback cấp đơn — đơn, người gửi, nội dung, thời điểm; tối đa một cho mỗi đơn; kèm **0–5 ảnh tuỳ chọn** (tham chiếu nhà cung cấp media, thứ tự, thời điểm tạo).
 - **Order line / Hold**: giữ nguyên như hiện có; feature này không đụng tới.
 
 ## Success Criteria *(mandatory)*
@@ -211,6 +212,7 @@ Khách được báo mỗi khi trạng thái đơn đổi (đang giao, đã giao
 - **Chuyển nhượng đơn giữ nguyên cơ chế hiện có** trong feature này; việc giới hạn/mở rộng nó theo `SHIPPING`/`DELIVERED` là quyết định **hoãn** (ghi `deferred.md`), không phải một phần của deliverable.
 - **Ảnh tuỳ chọn** ở cả hai bước; trần **5 ảnh** mỗi bước (bước giao thành công cũng 5, theo cùng ngưỡng đã nêu cho bước đang giao). Ảnh dùng **cùng ngưỡng kích thước/định dạng** như ảnh sản phẩm/avatar hiện có.
 - **Feedback cấp đơn, chỉ nội dung văn bản, một lần mỗi đơn**, gửi cho artist; không phải đánh giá sản phẩm (module 13) và không có điểm số/kiểm duyệt trong feature này.
+- **Ảnh trong feedback** dùng **cùng định dạng/ngưỡng** và cùng trần **5 ảnh** như ảnh bằng chứng giao hàng (FR-025, FR-009); ảnh là **tuỳ chọn** — feedback không ảnh vẫn hợp lệ. Endpoint gửi feedback chuyển sang **`multipart/form-data`** (`content` + 0–5 `photos`), cùng hình dạng upload với hai route giao hàng.
 - **Ca giao thất bại / khách không nhận hàng** được **hoãn** (ghi `deferred.md`): không có trạng thái `FAILED`/`RETURNED`, không hoàn tiền trong feature này.
 - **Thông báo chỉ qua email** (cơ chế best-effort hiện có); thông báo in-app và các email khác thuộc module 12.
 - **Không phí ship, không đổi tiền/tồn sau `PAID`** (ADR 015 §5, module 05).

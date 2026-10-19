@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/interface"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 )
 
 // This file is the transport contract of US3: `GET /orders`, `GET /orders/{id}`
@@ -419,8 +423,33 @@ func TestConfirmReceivedRefusesANonDeliveredOrder(t *testing.T) {
 	}
 }
 
-// FR-015, FR-017: sending feedback for a delivered order answers 200 with the
-// order carrying the recorded feedback, and the author and identifier are the
+// multipartFeedback builds a multipart/form-data body carrying a `content` field
+// and one `photos` file part per payload, so a test drives the feedback route's
+// multipart contract.
+func multipartFeedbackForm(t *testing.T, content string, payloads [][]byte) (string, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("content", content); err != nil {
+		t.Fatalf("write the content field: %v", err)
+	}
+	for i, payload := range payloads {
+		part, err := writer.CreateFormFile("photos", fmt.Sprintf("photo-%d.jpg", i))
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(payload); err != nil {
+			t.Fatalf("write the photo part: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close the multipart writer: %v", err)
+	}
+	return buf.String(), writer.FormDataContentType()
+}
+
+// FR-015, FR-017, FR-025: sending feedback for a delivered order answers 200 with
+// the order carrying the recorded feedback, and the author and identifier are the
 // session's and the path's.
 func TestSubmitFeedbackReturnsTheOrderWithTheRecordedFeedback(t *testing.T) {
 	view := sampleView()
@@ -429,17 +458,17 @@ func TestSubmitFeedbackReturnsTheOrderWithTheRecordedFeedback(t *testing.T) {
 	fake := &fakeOrders{feedbackView: view}
 	router := newOrderRouter(fake)
 
-	rec := perform(router, http.MethodPost, ordersPath+"/"+view.ID.String()+"/feedback",
-		`{"content":"Giao hang can than"}`, "customer-token")
+	body, contentType := multipartFeedbackForm(t, "Giao hang can than", nil)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+view.ID.String()+"/feedback", body, contentType, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	var body orderBody
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+	var decoded orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &decoded); err != nil {
 		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
 	}
-	if body.Data.Feedback == nil || body.Data.Feedback.Content != "Giao hang can than" {
-		t.Fatalf("the answer must carry the recorded feedback, got %+v", body.Data.Feedback)
+	if decoded.Data.Feedback == nil || decoded.Data.Feedback.Content != "Giao hang can than" {
+		t.Fatalf("the answer must carry the recorded feedback, got %+v", decoded.Data.Feedback)
 	}
 	if fake.gotFeedbackInput.OrderID != view.ID || fake.gotFeedbackInput.Content != "Giao hang can than" {
 		t.Fatalf("the addressed id and the content must be passed through, got %+v", fake.gotFeedbackInput)
@@ -449,33 +478,71 @@ func TestSubmitFeedbackReturnsTheOrderWithTheRecordedFeedback(t *testing.T) {
 	}
 }
 
+// FR-025: the feedback route accepts zero to five `photos` parts alongside the
+// content and hands every photo to the use case.
+func TestSubmitFeedbackAcceptsMultipartPhotos(t *testing.T) {
+	view := sampleView()
+	view.Status = constant.StatusDelivered
+	view.Feedback = &appdto.FeedbackView{Content: "Co anh", CreatedAt: view.CreatedAt}
+	fake := &fakeOrders{feedbackView: view}
+	router := newOrderRouter(fake)
+
+	body, contentType := multipartFeedbackForm(t, "Co anh", [][]byte{sampledJPEG(), sampledJPEG()})
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+view.ID.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.gotFeedbackInput.Photos) != 2 {
+		t.Fatalf("both photo parts must reach the use case, got %d", len(fake.gotFeedbackInput.Photos))
+	}
+}
+
+// FR-025: a feedback with no photo is still accepted; an absent body is an empty
+// content and is refused, so a feedback always carries text.
+func TestSubmitFeedbackAcceptsNoPhotos(t *testing.T) {
+	view := sampleView()
+	view.Status = constant.StatusDelivered
+	view.Feedback = &appdto.FeedbackView{Content: "Khong anh", CreatedAt: view.CreatedAt}
+	fake := &fakeOrders{feedbackView: view}
+	router := newOrderRouter(fake)
+
+	body, contentType := multipartFeedbackForm(t, "Khong anh", nil)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+view.ID.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.gotFeedbackInput.Photos) != 0 {
+		t.Fatalf("a feedback with no photos must carry none, got %d", len(fake.gotFeedbackInput.Photos))
+	}
+}
+
 // FR-015, contracts/error-codes.md: an empty, blank or over-long content is 400
 // VALIDATION_ERROR naming `content`, before the use case is reached.
 func TestSubmitFeedbackRejectsInvalidContent(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
+		name    string
+		content string
 	}{
-		{"empty", `{"content":""}`},
-		{"blank", `{"content":"   "}`},
-		{"over the ceiling", `{"content":"` + strings.Repeat("a", 2001) + `"}`},
-		{"missing", `{}`},
+		{"empty", ""},
+		{"blank", "   "},
+		{"over the ceiling", strings.Repeat("a", 2001)},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeOrders{}
 			router := newOrderRouter(fake)
-			rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", tc.body, "customer-token")
+			body, contentType := multipartFeedbackForm(t, tc.content, nil)
+			rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
 			}
-			body := decodeError(t, rec)
-			if body.Error.Code != "VALIDATION_ERROR" {
-				t.Fatalf("expected VALIDATION_ERROR, got %s", body.Error.Code)
+			decoded := decodeError(t, rec)
+			if decoded.Error.Code != "VALIDATION_ERROR" {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", decoded.Error.Code)
 			}
-			if len(body.Error.Details) != 1 || body.Error.Details[0].Field != "content" {
-				t.Fatalf("expected a detail naming content, got %+v", body.Error.Details)
+			if len(decoded.Error.Details) != 1 || decoded.Error.Details[0].Field != "content" {
+				t.Fatalf("expected a detail naming content, got %+v", decoded.Error.Details)
 			}
 			if fake.feedbackCalls != 0 {
 				t.Fatalf("an invalid content must not reach the use case, got %d calls", fake.feedbackCalls)
@@ -490,17 +557,17 @@ func TestSubmitFeedbackRefusesAnOrderThatIsNotDelivered(t *testing.T) {
 	fake := &fakeOrders{feedbackErr: domainerr.FeedbackNotAllowed(constant.StatusShipping)}
 	router := newOrderRouter(fake)
 
-	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
-		`{"content":"Giao hang can than"}`, "customer-token")
+	body, contentType := multipartFeedbackForm(t, "Giao hang can than", nil)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	body := decodeError(t, rec)
-	if body.Error.Code != constant.CodeFeedbackNotAllowed {
-		t.Fatalf("expected ORDER_FEEDBACK_NOT_ALLOWED, got %s", body.Error.Code)
+	decoded := decodeError(t, rec)
+	if decoded.Error.Code != constant.CodeFeedbackNotAllowed {
+		t.Fatalf("expected ORDER_FEEDBACK_NOT_ALLOWED, got %s", decoded.Error.Code)
 	}
-	if !strings.Contains(body.Error.Message, string(constant.StatusShipping)) {
-		t.Fatalf("the refusal must name the current state SHIPPING, got %q", body.Error.Message)
+	if !strings.Contains(decoded.Error.Message, string(constant.StatusShipping)) {
+		t.Fatalf("the refusal must name the current state SHIPPING, got %q", decoded.Error.Message)
 	}
 }
 
@@ -510,13 +577,70 @@ func TestSubmitFeedbackRefusesASecondFeedback(t *testing.T) {
 	fake := &fakeOrders{feedbackErr: domainerr.ErrFeedbackAlreadySent}
 	router := newOrderRouter(fake)
 
-	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
-		`{"content":"Giao hang can than"}`, "customer-token")
+	body, contentType := multipartFeedbackForm(t, "Giao hang can than", nil)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if body := decodeError(t, rec); body.Error.Code != constant.CodeFeedbackAlreadySent {
-		t.Fatalf("expected ORDER_FEEDBACK_ALREADY_SENT, got %s", body.Error.Code)
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeFeedbackAlreadySent {
+		t.Fatalf("expected ORDER_FEEDBACK_ALREADY_SENT, got %s", decoded.Error.Code)
+	}
+}
+
+// FR-025, contracts/error-codes.md: more than five photos answer 409
+// ORDER_IMAGE_LIMIT_REACHED.
+func TestSubmitFeedbackRefusesOverCeilingPhotos(t *testing.T) {
+	fake := &fakeOrders{feedbackErr: domainerr.ErrImageLimitReached}
+	router := newOrderRouter(fake)
+
+	six := [][]byte{sampledJPEG(), sampledJPEG(), sampledJPEG(), sampledJPEG(), sampledJPEG(), sampledJPEG()}
+	body, contentType := multipartFeedbackForm(t, "Qua nhieu anh", six)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeImageLimitReached {
+		t.Fatalf("expected ORDER_IMAGE_LIMIT_REACHED, got %s", decoded.Error.Code)
+	}
+}
+
+// FR-025, contracts/error-codes.md: an unsupported photo answers 400
+// ORDER_IMAGE_TYPE_UNSUPPORTED, naming `photos`.
+func TestSubmitFeedbackRefusesABadPhoto(t *testing.T) {
+	fake := &fakeOrders{feedbackErr: domainerr.ErrImageTypeUnsupported}
+	router := newOrderRouter(fake)
+
+	body, contentType := multipartFeedbackForm(t, "Anh loi", [][]byte{[]byte("GIF89a....")})
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	decoded := decodeError(t, rec)
+	if decoded.Error.Code != constant.CodeImageTypeUnsupported {
+		t.Fatalf("expected ORDER_IMAGE_TYPE_UNSUPPORTED, got %s", decoded.Error.Code)
+	}
+	if len(decoded.Error.Details) != 1 || decoded.Error.Details[0].Field != "photos" {
+		t.Fatalf("expected a detail naming photos, got %+v", decoded.Error.Details)
+	}
+}
+
+// FR-025, FR-009: a photo part over the per-photo ceiling is refused by the
+// reader with 413 ORDER_IMAGE_TOO_LARGE, before the use case is reached.
+func TestSubmitFeedbackRefusesAnOversizedPhoto(t *testing.T) {
+	fake := &fakeOrders{}
+	router := newOrderRouter(fake)
+
+	oversized := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x00}, int(model.MaxDeliveryPhotoBytes))...)
+	body, contentType := multipartFeedbackForm(t, "Anh qua lon", [][]byte{oversized})
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeImageTooLarge {
+		t.Fatalf("expected ORDER_IMAGE_TOO_LARGE, got %s", decoded.Error.Code)
+	}
+	if fake.feedbackCalls != 0 {
+		t.Fatalf("an oversized photo must not reach the use case, got %d calls", fake.feedbackCalls)
 	}
 }
 
@@ -526,13 +650,13 @@ func TestSubmitFeedbackAnswersNotFoundForAnotherCustomersOrder(t *testing.T) {
 	fake := &fakeOrders{feedbackErr: domainerr.ErrNotFound}
 	router := newOrderRouter(fake)
 
-	rec := perform(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback",
-		`{"content":"Giao hang can than"}`, "customer2-token")
+	body, contentType := multipartFeedbackForm(t, "Giao hang can than", nil)
+	rec := performBody(router, http.MethodPost, ordersPath+"/"+uuid.New().String()+"/feedback", body, contentType, "customer2-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if body := decodeError(t, rec); body.Error.Code != constant.CodeOrderNotFound {
-		t.Fatalf("expected ORDER_NOT_FOUND, got %s", body.Error.Code)
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeOrderNotFound {
+		t.Fatalf("expected ORDER_NOT_FOUND, got %s", decoded.Error.Code)
 	}
 }
 

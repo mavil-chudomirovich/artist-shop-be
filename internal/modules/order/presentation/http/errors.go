@@ -25,6 +25,7 @@ const (
 	fieldSort      = "sort"
 	fieldEmail     = "email"
 	fieldPhotos    = "photos"
+	fieldContent   = "content"
 )
 
 // coded builds a module error response with an explicit status, so a code that is

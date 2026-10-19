@@ -106,6 +106,9 @@ type FeedbackInput struct {
 	OrderID uuid.UUID
 	// Content is the feedback text, 1 to 2000 characters after trimming.
 	Content string
+	// Photos are the optional images attached to the feedback, at most five
+	// (FR-025, research D16).
+	Photos []UploadedPhoto
 }
 
 // MoneyView is money as an integer amount in the currency's minor unit plus the
@@ -151,13 +154,31 @@ type DeliveryPhotoView struct {
 	Position int
 }
 
+// FeedbackPhotoView is one image attached to a customer's order-level feedback as
+// a use case answers it: the provider reference and its position (FR-025,
+// research D16).
+type FeedbackPhotoView struct {
+	// ID identifies the photo.
+	ID uuid.UUID
+	// URL is the displayable link returned to clients.
+	URL string
+	// Width and Height are the stored pixel dimensions.
+	Width  int
+	Height int
+	// Position is the order within the feedback.
+	Position int
+}
+
 // FeedbackView is the customer's order-level feedback as a use case answers it
-// (FR-015, research D11).
+// (FR-015, FR-025, research D11).
 type FeedbackView struct {
 	// Content is the feedback text.
 	Content string
 	// CreatedAt is when it was written.
 	CreatedAt time.Time
+	// Photos are the images attached to the feedback, ordered by position
+	// (FR-025, research D16).
+	Photos []FeedbackPhotoView
 }
 
 // OrderLineView is one order line as a use case answers it: a snapshot of the

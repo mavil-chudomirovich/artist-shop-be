@@ -1,8 +1,10 @@
 # Phase 1 Data Model: Order Delivery & Completion
 
 One migration changes `orders` (status set, delivery/completion timestamps) and adds `order_delivery_photos`
-and `order_feedback`, plus the completion index. The decisions behind the shape are in `research.md`; this
-file records what is stored, what is constrained, and what the read paths project.
+and `order_feedback`, plus the completion index; a second migration (`00019_order_feedback_photos.sql`)
+adds `order_feedback_photos` for the optional photos on a customer's feedback (FR-025). The decisions
+behind the shape are in `research.md`; this file records what is stored, what is constrained, and what
+the read paths project.
 
 ## Entity: Order (changed)
 
@@ -100,6 +102,35 @@ The customer's one message to the artist about a delivered order (FR-015 to FR-0
 | `order_feedback_order_key` | **unique** on `(order_id)` | FR-016 | One feedback per order is a rule no code path can bypass |
 | `order_feedback_content_ck` | check: `length(btrim(content)) BETWEEN 1 AND 2000` | FR-015 | Empty feedback is not feedback, and the 2000-character ceiling keeps a client's message bounded (research D8) |
 
+## Entity: Feedback photo (new, extension)
+
+One optional image attached to a customer's order-level feedback (FR-025, research D16). Stored exactly
+like delivery evidence, in its own table because it keys off `order_feedback`, not `orders`.
+
+### Stored columns
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `id` | uuid | no | Primary key; the detail response addresses it by this |
+| `feedback_id` | uuid | no | The feedback it belongs to. FK → `order_feedback(id)` **ON DELETE CASCADE** |
+| `public_id` | text | no | The provider's opaque identifier, used to release the asset |
+| `url` | text | no | The displayable link returned to clients (HTTPS) |
+| `width` / `height` | integer | no | Stored pixel dimensions the provider reported |
+| `position` | integer | no | Order within the feedback; insertion order |
+| `created_at` | timestamptz | no | Set once |
+
+### Constraints
+
+| Constraint | Kind | Requirement | Why |
+|---|---|---|---|
+| `order_feedback_photos_pkey` | primary key on `id` | FR-025 | A photo is addressable |
+| `order_feedback_photos_feedback_fk` | FK → `order_feedback(id)` ON DELETE CASCADE | FR-025 | A removed feedback takes its photos with it |
+| `order_feedback_photos_ordering_idx` | btree on `(feedback_id, position, id)` | FR-025 | Photos are read in position order |
+
+**On the five-photo ceiling**: it is a **count per feedback**, which no unique index expresses, so it is
+enforced in the use case before anything is uploaded and re-checked before the insert (FR-025, research
+D16). An over-ceiling submission is refused **before** the provider is called, so no orphan is left.
+
 ## Transitions
 
 ```
@@ -135,7 +166,7 @@ and is refused. The sweep skips an already-completed order rather than failing (
 | Path | Reader | Adds over `010` |
 |---|---|---|
 | customer list / admin list | session owner / ADMIN | unchanged (no photos/feedback on a summary) |
-| customer detail | session owner | `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback` |
+| customer detail | session owner | `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback` (with `photos[]`) |
 | admin detail | ADMIN | the same additions |
 
 `completed_by` and `order_version` stay **internal** (never in a client response). Both lists stay

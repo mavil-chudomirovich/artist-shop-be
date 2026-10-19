@@ -384,30 +384,37 @@ func (h *Handler) ConfirmReceived(w http.ResponseWriter, r *http.Request) {
 }
 
 // SubmitFeedback sends the signed-in customer's one order-level feedback to the
-// artist about a delivered or completed order. The author is the session's,
-// never the request's. The content is required and must carry 1 to 2000
-// characters after trimming; a blank or over-long value is 400 VALIDATION_ERROR
-// naming `content`. An order that is not delivered or completed answers 409
+// artist about a delivered or completed order, optionally attaching up to five
+// photos. The author is the session's, never the request's. The content is
+// required and must carry 1 to 2000 characters after trimming; a blank or
+// over-long value is 400 VALIDATION_ERROR naming `content`. Each photo is
+// validated by signature (JPEG, PNG or WebP) and size before it is stored, and
+// more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED; an unsupported one
+// answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED and an oversized one answers 413
+// ORDER_IMAGE_TOO_LARGE. An order that is not delivered or completed answers 409
 // ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409
 // ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another
-// customer, answers 404 ORDER_NOT_FOUND (FR-015 to FR-018,
+// customer, answers 404 ORDER_NOT_FOUND (FR-015 to FR-018, FR-025,
 // contracts/error-codes.md).
 //
-//	@Summary		Send order-level feedback to the artist
-//	@Description	Records the caller's one order-level feedback for a delivered or completed order and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.
+//	@Summary		Send order-level feedback to the artist, with up to five photos
+//	@Description	Records the caller's one order-level feedback for a delivered or completed order, optionally attaching up to five photos, and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED, an oversized one answers 413 ORDER_IMAGE_TOO_LARGE and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.
 //	@Tags			Orders
-//	@Accept			json
+//	@Accept			multipart/form-data
 //	@Produce		json
 //	@Security		BearerAuth
-//	@Param			orderId	path	string					true	"Order identifier"
-//	@Param			request	body	httpdto.FeedbackRequest	true	"Feedback content, 1 to 2000 characters"
+//	@Param			orderId	path		string	true	"Order identifier"
+//	@Param			content	formData	string	true	"Feedback text, 1 to 2000 characters"
+//	@Param			photos	formData	file	false	"Feedback photo (JPEG, PNG or WebP); send the part zero to five times"
 //	@Success		200		{object}	httpx.SwaggerSuccess{data=httpdto.OrderResponse}
 //	@Failure		400		{object}	httpx.SwaggerError
 //	@Failure		401		{object}	httpx.SwaggerError
 //	@Failure		404		{object}	httpx.SwaggerError
 //	@Failure		409		{object}	httpx.SwaggerError
+//	@Failure		413		{object}	httpx.SwaggerError
 //	@Failure		429		{object}	httpx.SwaggerError
 //	@Failure		500		{object}	httpx.SwaggerError
+//	@Failure		503		{object}	httpx.SwaggerError
 //	@Router			/orders/{orderId}/feedback [post]
 func (h *Handler) SubmitFeedback(w http.ResponseWriter, r *http.Request) {
 	actor, ok := h.sessionActor(w, r)
@@ -419,27 +426,96 @@ func (h *Handler) SubmitFeedback(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
-
-	var req httpdto.FeedbackRequest
-	if err := decode(r, &req); err != nil {
-		httpx.WriteError(w, r, httpx.New(httpx.CodeMalformedRequest), h.logger)
+	content, photos, appErr := h.readFeedbackMultipart(r)
+	if appErr != nil {
+		httpx.WriteError(w, r, appErr, h.logger)
 		return
 	}
 	// The same rule the use case applies, checked here so a malformed message is
 	// refused before any order is read and the detail names `content`
 	// (FR-015, contracts/error-codes.md).
-	if err := model.ValidateFeedbackContent(req.Content); err != nil {
+	if err := model.ValidateFeedbackContent(content); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 
 	ctx := appinterface.WithActor(r.Context(), actor)
-	view, err := h.svc.SubmitFeedback(ctx, appdto.FeedbackInput{OrderID: orderID, Content: req.Content})
+	view, err := h.svc.SubmitFeedback(ctx, appdto.FeedbackInput{OrderID: orderID, Content: content, Photos: photos})
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	httpx.WriteSuccess(w, r, http.StatusOK, toOrderResponse(view))
+}
+
+// readFeedbackMultipart streams the `content` field and the optional `photos`
+// parts of a feedback multipart body, refusing to buffer more than the image
+// ceiling per photo. Reading with a ceiling is what makes the size rule
+// enforceable: a post-hoc check on an already buffered body cannot stop a
+// memory-exhaustion upload. The client-declared file name and media type are
+// deliberately not trusted — the use case decides the image type from the leading
+// signature (FR-025, FR-009).
+//
+// An absent body is an empty content and zero photos; the empty content is then
+// refused by the content rule, so a feedback must always carry text (FR-015). The
+// route's own body ceiling refuses a body whose size is already over the limit
+// before this runs, and the reader maps a stream cut by that ceiling to the same
+// ORDER_IMAGE_TOO_LARGE refusal.
+func (h *Handler) readFeedbackMultipart(r *http.Request) (string, []appdto.UploadedPhoto, *httpx.AppError) {
+	if r.Body == nil || r.ContentLength == 0 {
+		return "", nil, nil
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return "", nil, fieldError(fieldContent, "a multipart/form-data body with a content field is required")
+	}
+	ceiling := int64(model.MaxDeliveryPhotoBytes)
+	var content string
+	photos := make([]appdto.UploadedPhoto, 0)
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				return "", nil, photosTooLarge()
+			}
+			return "", nil, httpx.New(httpx.CodeMalformedRequest)
+		}
+		switch part.FormName() {
+		case fieldContent:
+			raw, err := io.ReadAll(part)
+			_ = part.Close()
+			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					return "", nil, photosTooLarge()
+				}
+				return "", nil, httpx.New(httpx.CodeMalformedRequest)
+			}
+			content = string(raw)
+		case fieldPhotos:
+			// One extra byte distinguishes "at the ceiling" from "over it".
+			raw, err := io.ReadAll(io.LimitReader(part, ceiling+1))
+			_ = part.Close()
+			if err != nil {
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					return "", nil, photosTooLarge()
+				}
+				return "", nil, httpx.New(httpx.CodeMalformedRequest)
+			}
+			if int64(len(raw)) > ceiling {
+				return "", nil, photosTooLarge()
+			}
+			photos = append(photos, appdto.UploadedPhoto{Content: raw})
+		default:
+			_ = part.Close()
+		}
+	}
+	return content, photos, nil
 }
 
 // ListAll returns a page of every order, newest first by default, with its owner,
@@ -1024,13 +1100,34 @@ func toDeliveryPhotoResponses(photos []appdto.DeliveryPhotoView) []httpdto.Deliv
 	return out
 }
 
+// toFeedbackPhotoResponses maps a feedback's images, preserving the position
+// order the use case applied. It always allocates, so a feedback with no photos
+// serialises `photos: []` rather than null.
+func toFeedbackPhotoResponses(photos []appdto.FeedbackPhotoView) []httpdto.FeedbackPhotoResponse {
+	out := make([]httpdto.FeedbackPhotoResponse, 0, len(photos))
+	for _, photo := range photos {
+		out = append(out, httpdto.FeedbackPhotoResponse{
+			ID:       photo.ID,
+			URL:      photo.URL,
+			Width:    photo.Width,
+			Height:   photo.Height,
+			Position: photo.Position,
+		})
+	}
+	return out
+}
+
 // toFeedbackResponse maps the order's feedback, or returns nil when it has none,
-// so a detail serialises `feedback: null` (FR-015, FR-017).
+// so a detail serialises `feedback: null` (FR-015, FR-017, FR-025).
 func toFeedbackResponse(feedback *appdto.FeedbackView) *httpdto.FeedbackResponse {
 	if feedback == nil {
 		return nil
 	}
-	return &httpdto.FeedbackResponse{Content: feedback.Content, CreatedAt: feedback.CreatedAt}
+	return &httpdto.FeedbackResponse{
+		Content:   feedback.Content,
+		CreatedAt: feedback.CreatedAt,
+		Photos:    toFeedbackPhotoResponses(feedback.Photos),
+	}
 }
 
 // toOrderResponse maps one order view to its wire shape. It always returns a

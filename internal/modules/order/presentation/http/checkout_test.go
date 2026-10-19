@@ -118,11 +118,22 @@ type deliveryPhotoBody struct {
 	Position int       `json:"position"`
 }
 
+// feedbackPhotoBody is one image attached to the order's feedback as a detail
+// answer shows it (contracts/openapi.yaml, FeedbackPhoto).
+type feedbackPhotoBody struct {
+	ID       uuid.UUID `json:"id"`
+	URL      string    `json:"url"`
+	Width    int       `json:"width"`
+	Height   int       `json:"height"`
+	Position int       `json:"position"`
+}
+
 // feedbackBody is the order's own feedback as a detail answer shows it
 // (contracts/openapi.yaml, Feedback).
 type feedbackBody struct {
-	Content   string `json:"content"`
-	CreatedAt string `json:"createdAt"`
+	Content   string              `json:"content"`
+	CreatedAt string              `json:"createdAt"`
+	Photos    []feedbackPhotoBody `json:"photos"`
 }
 
 type orderBody struct {

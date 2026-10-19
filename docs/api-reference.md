@@ -319,9 +319,9 @@ hạn mức → `RATE_LIMITED` 429; lỗi ngoài dự kiến → `INTERNAL_ERROR
 | `ORDER_TRANSFER_TARGET_NOT_FOUND` | 404 | Không có tài khoản nào mang email mà lệnh chuyển nhượng nêu. Không có gì bị đổi |
 | `ORDER_NOT_EDITABLE` | 409 | Đơn không ở trạng thái khách được sửa — đã trả tiền hoặc xa hơn. Chỉ sửa được khi đơn **chờ artist xác nhận** hoặc **chờ thanh toán**. Không có gì bị đổi |
 | `ORDER_EMPTY` | 409 | Một lần sửa để đơn **còn 0 dòng**. Một đơn luôn có **≥1 dòng**; khách muốn bỏ hết thì **huỷ đơn**. Không có gì bị đổi |
-| `ORDER_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte ảnh bằng chứng giao hàng không phải JPEG, PNG hoặc WebP — quyết định theo **chữ ký nội dung**, không theo tên tệp hay kiểu client khai (feature 019). `details[].field = "photos"` |
-| `ORDER_IMAGE_TOO_LARGE` | 413 | Ảnh bằng chứng vượt trần kích thước (2 MB), **hoặc** request chạm trần body riêng của route upload và bị từ chối trước khi đếm (feature 019). `details[].field = "photos"` |
-| `ORDER_IMAGE_LIMIT_REACHED` | 409 | Một bước giao kèm **hơn 5 ảnh** (feature 019). `details[].field = "photos"`; không gì bị đổi |
+| `ORDER_IMAGE_TYPE_UNSUPPORTED` | 400 | Byte ảnh bằng chứng giao hàng **hoặc ảnh feedback** không phải JPEG, PNG hoặc WebP — quyết định theo **chữ ký nội dung**, không theo tên tệp hay kiểu client khai (feature 019, FR-025). `details[].field = "photos"` |
+| `ORDER_IMAGE_TOO_LARGE` | 413 | Ảnh bằng chứng giao hàng **hoặc ảnh feedback** vượt trần kích thước (2 MB), **hoặc** request chạm trần body riêng của route upload và bị từ chối trước khi đếm (feature 019, FR-025). `details[].field = "photos"` |
+| `ORDER_IMAGE_LIMIT_REACHED` | 409 | Một bước giao **hoặc một feedback** kèm **hơn 5 ảnh** (feature 019, FR-025). `details[].field = "photos"`; không gì bị đổi |
 | `ORDER_MEDIA_UNAVAILABLE` | 503 | Nhà cung cấp media từ chối hoặc không tới được khi lưu ảnh bằng chứng, kể cả khi chưa cấu hình credential (feature 019). **Đơn không đổi** nên thử lại được |
 | `ORDER_FEEDBACK_NOT_ALLOWED` | 409 | Gửi feedback khi đơn **không** ở `DELIVERED`/`COMPLETED` (feature 019). Message nêu trạng thái hiện tại |
 | `ORDER_FEEDBACK_ALREADY_SENT` | 409 | Gửi feedback lần thứ hai cho cùng một đơn (feature 019). Mỗi đơn nhận **tối đa một** |
@@ -2906,8 +2906,9 @@ member = summary + `address` + `lines` + bốn sự kiện giao hàng `delivered
 `productId`/`variantId` là **bản ghi**, không phải tham chiếu sống. Bốn member giao hàng chỉ có trên
 **chi tiết**, không có trên danh sách (feature 019): `deliveredAt`/`completedAt` là mốc ISO 8601 hoặc
 `null`; `deliveryPhotos` là mảng ảnh bằng chứng, mỗi phần tử 6 member (`id`, `stage`, `url`, `width`,
-`height`, `position`), luôn là mảng (đơn chưa có ảnh trả `[]`); `feedback` là object 2 member
-(`content`, `createdAt`) hoặc `null`.
+`height`, `position`), luôn là mảng (đơn chưa có ảnh trả `[]`); `feedback` là object 3 member
+(`content`, `createdAt`, `photos` — mảng ảnh feedback, mỗi phần tử 5 member `id`, `url`, `width`,
+`height`, `position`) hoặc `null`.
 
 ```json
 {
@@ -3162,8 +3163,8 @@ Ghi chú:
 
 ### 9.7 `POST /orders/{orderId}/feedback`
 
-Khách gửi **feedback cấp đơn** (nội dung văn bản) cho artist về một đơn **của chính mình** đang
-`DELIVERED` hoặc `COMPLETED`. Mỗi đơn nhận **tối đa một** feedback (feature 019).
+Khách gửi **feedback cấp đơn** cho artist về một đơn **của chính mình** đang `DELIVERED` hoặc
+`COMPLETED`, kèm **0–5 ảnh tuỳ chọn**. Mỗi đơn nhận **tối đa một** feedback (feature 019, FR-025).
 
 | | |
 |---|---|
@@ -3173,26 +3174,38 @@ Khách gửi **feedback cấp đơn** (nội dung văn bản) cho artist về m�
 
 Path: `orderId` (UUID).
 
-Request (`FeedbackRequest`, `additionalProperties: false`)
+Request: **`multipart/form-data`** với hai trường:
 
-```json
-{ "content": "Cảm ơn artist, tranh rất đẹp!" }
+| Trường | Kiểu | Bắt buộc | Ghi chú |
+|---|---|---|---|
+| `content` | text | **có** | 1–2000 ký tự sau khi cắt khoảng trắng |
+| `photos` | file | không | 0–5 phần, mỗi phần là ảnh JPEG/PNG/WebP ≤ 2 MB |
+
+```bash
+curl -X POST "$BASE/orders/$O/feedback" -H "Authorization: Bearer $CUSTOMER" \
+  -F 'content=Cảm ơn artist, tranh rất đẹp!' -F photos=@a.jpg -F photos=@b.jpg
 ```
 
 `content` **bắt buộc**, **1–2000 ký tự** sau khi cắt khoảng trắng; rỗng hoặc quá dài → `400
-VALIDATION_ERROR` (`details[].field = "content"`). Tác nhân lấy từ **session**, không bao giờ từ body.
+VALIDATION_ERROR` (`details[].field = "content"`). Mỗi ảnh được kiểm định dạng theo **chữ ký nội dung**
+(JPEG/PNG/WebP) và kích thước **trước khi** lưu; nhiều hơn 5 ảnh → `409 ORDER_IMAGE_LIMIT_REACHED`
+(`details[].field = "photos"`). Tác nhân lấy từ **session**, không bao giờ từ body.
 
-Response `200`: `data` = `OrderResponse` với `feedback` là object (`content`, `createdAt`).
+Response `200`: `data` = `OrderResponse` với `feedback` là object gồm `content`, `createdAt` và
+`photos[]` (mỗi phần tử `{ id, url, width, height, position }`, thứ tự theo `position`).
 
 Lỗi: `VALIDATION_ERROR` 400 (`content` rỗng hoặc quá 2000 ký tự) · `MALFORMED_REQUEST` 400 ·
-`UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 · `ORDER_FEEDBACK_NOT_ALLOWED` 409 (đơn không ở
-`DELIVERED`/`COMPLETED`; message nêu trạng thái) · `ORDER_FEEDBACK_ALREADY_SENT` 409 ·
-`RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
+`ORDER_IMAGE_TYPE_UNSUPPORTED` 400 (ảnh không phải JPEG/PNG/WebP) · `UNAUTHENTICATED` 401 ·
+`ORDER_NOT_FOUND` 404 · `ORDER_FEEDBACK_NOT_ALLOWED` 409 (đơn không ở `DELIVERED`/`COMPLETED`; message
+nêu trạng thái) · `ORDER_FEEDBACK_ALREADY_SENT` 409 · `ORDER_IMAGE_LIMIT_REACHED` 409 (hơn 5 ảnh) ·
+`ORDER_IMAGE_TOO_LARGE` 413 (một ảnh quá 2 MB, hoặc request chạm trần body của route) ·
+`ORDER_MEDIA_UNAVAILABLE` 503 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
 Ghi chú:
 
 - Feedback là **cấp đơn**, chỉ nội dung văn bản (không điểm số, không kiểm duyệt) — đánh giá sản phẩm là
-  **module 13**.
+  **module 13**; **ảnh** trong feedback là tuỳ chọn và dùng cùng định dạng/ngưỡng như ảnh bằng chứng giao
+  hàng (FR-025). Ảnh lưu qua **media store dùng chung**, không lưu nhị phân trong cơ sở dữ liệu.
 - **Một feedback mỗi đơn** được bảo đảm ở tầng lưu trữ (unique index `order_feedback_order_key`); một
   lần gửi thứ hai trả `409 ORDER_FEEDBACK_ALREADY_SENT`.
 - Artist được **thông báo** (email) khi feedback lưu xong; gửi best-effort, lỗi gửi **không** làm hỏng
@@ -3793,7 +3806,7 @@ huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTr
 | PUT | `/api/v1/orders/{orderId}` | Bearer | Sửa đơn chưa trả tiền (thay dòng + địa chỉ) |
 | POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn chưa trả tiền, trả hàng đã giữ |
 | POST | `/api/v1/orders/{orderId}/complete` | Bearer | Khách xác nhận đã nhận: đơn `DELIVERED` → `COMPLETED` (feature 019) |
-| POST | `/api/v1/orders/{orderId}/feedback` | Bearer | Gửi feedback cấp đơn cho artist — tối đa một lần mỗi đơn (feature 019) |
+| POST | `/api/v1/orders/{orderId}/feedback` | Bearer | Gửi feedback cấp đơn cho artist — **multipart**, `content` + 0–5 ảnh `photos`, tối đa một lần mỗi đơn (feature 019, FR-025) |
 | GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang, lọc `status`, sắp xếp `sort`) |
 | GET | `/api/v1/admin/orders/{orderId}` | ADMIN | Chi tiết một đơn bất kỳ, kèm chủ sở hữu |
 | POST | `/api/v1/admin/orders/{orderId}/confirm` | ADMIN | Artist xác nhận: giữ toàn bộ hàng, mở hạn thanh toán |
@@ -3830,6 +3843,7 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
 | 2026-10-18 | **Giao hàng & hoàn tất đơn (module 07 Order, feature 019) — thay đổi enum phá vỡ hợp đồng công khai.** **Đổi tên** `SHIPPED` → **`SHIPPING`** (đang giao) và **thêm** `DELIVERED` (giao thành công); bộ trạng thái đơn còn **bảy** giá trị. **Thêm hai** endpoint khách: `POST /api/v1/orders/{orderId}/complete` (khách xác nhận đã nhận `DELIVERED → COMPLETED`, không body) và `POST /api/v1/orders/{orderId}/feedback` (body `{ "content": string }`, 1–2000 ký tự, một lần mỗi đơn). **Thêm một** endpoint admin: `POST /api/v1/admin/orders/{orderId}/deliver` (`SHIPPING → DELIVERED`, ghi mốc giao). **Đổi** `POST /api/v1/admin/orders/{orderId}/ship`: payload **đổi sang `multipart/form-data`** nhận 0–5 ảnh `photos` (`PAID → SHIPPING`). **Xoá** `POST /api/v1/admin/orders/{orderId}/complete` — hoàn tất nay do khách xác nhận (`9.6`) hoặc **sweeper tự hoàn tất sau 120 giờ** kể từ `delivered_at`. Detail đơn (khách và admin) mang thêm `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback`. **Thêm sáu** mã vào mục 1.4 — `ORDER_IMAGE_TYPE_UNSUPPORTED` 400, `ORDER_IMAGE_TOO_LARGE` 413, `ORDER_IMAGE_LIMIT_REACHED` 409, `ORDER_MEDIA_UNAVAILABLE` 503, `ORDER_FEEDBACK_NOT_ALLOWED` 409, `ORDER_FEEDBACK_ALREADY_SENT` 409; thêm action audit `ORDER_DELIVERED` (`ORDER_SHIPPED`/`ORDER_COMPLETED` **giữ nguyên**). Migration `00018_order_delivery.sql` backfill `SHIPPED → SHIPPING` trước khi siết check bảy giá trị, thêm `delivered_at`/`completed_at`/`completed_by`, bảng `order_delivery_photos`/`order_feedback`. Mục 9 đánh số lại (`9.6`/`9.7` mới của khách; admin dời thành `9.8`–`9.14`); §11 đổi tập trạng thái doanh thu và `recentOrders[].status` thành bảy giá trị; §12 cập nhật. Xem ADR 023, `specs/019-order-delivery/`. | `internal/modules/order/presentation/http/router.go`, `migrations/00018_order_delivery.sql` |
+| 2026-10-19 | **Ảnh trong feedback cấp đơn (module 07 Order, feature 019 mở rộng, FR-025).** `POST /api/v1/orders/{orderId}/feedback` **đổi sang `multipart/form-data`**: trường `content` (1–2000 ký tự) cộng **0–5 phần** `photos` (JPEG/PNG/WebP ≤ 2 MB), dùng cùng trần body và cùng bộ mã `ORDER_IMAGE_TYPE_UNSUPPORTED` 400 / `ORDER_IMAGE_TOO_LARGE` 413 / `ORDER_IMAGE_LIMIT_REACHED` 409 như hai route giao hàng; **thêm** `ORDER_MEDIA_UNAVAILABLE` 503 cho route này. `feedback` trong chi tiết đơn thêm member `photos[]` (`{ id, url, width, height, position }`, thứ tự theo `position`). Migration `00019_order_feedback_photos.sql` thêm bảng `order_feedback_photos` (FK `feedback_id → order_feedback(id) ON DELETE CASCADE`, index `(feedback_id, position, id)`, trần 5 ảnh do use case thực thi). `content` vẫn **bắt buộc**. | `internal/modules/order/presentation/http/{handler.go,router.go}`, `migrations/00019_order_feedback_photos.sql` |
 | 2026-10-18 | **Kéo-thả sắp xếp danh mục, sản phẩm và variant (modules 03 Category, 04 Product, feature 018).** **Thêm ba** endpoint reorder: `PUT /api/v1/admin/categories/reorder` (body `{ "categoryIds": [...] }`), `PUT /api/v1/admin/products/reorder` (body `{ "productIds": [...] }`) và `PUT /api/v1/admin/products/{id}/variants/reorder` (body `{ "variantIds": [...] }`); mỗi mảng phải là **toàn bộ** các sibling, đúng **một lần**, và được áp bằng **một** câu `UPDATE ... FROM UNNEST(...)` (all-or-nothing, last-write-wins). Response `200` với `data = { "updatedCount": <số nguyên> }`. **Đổi** `GET /admin/categories` và `GET /admin/products`: thêm `all` (boolean) trả trọn danh sách đã sắp xếp, giới hạn ngưỡng an toàn **1000** bản ghi; vượt ngưỡng → `400 VALIDATION_ERROR` với `details[].field` là `"all"`. **Đổi** `POST /admin/categories`, `POST /admin/products`, `POST /admin/products/{id}/variants`: `position` trở thành **tuỳ chọn** — bỏ trống đặt bản ghi mới **lên đầu** (variant bỏ trống trong một lần tạo hàng loạt nhận thứ tự trong mảng `variants`, variant đầu tiên là **mặc định**); giá trị cụ thể vẫn được tôn trọng. **Thêm bốn** mã vào mục 1.4 — `CATEGORY_REORDER_DUPLICATE_ID`, `PRODUCT_REORDER_DUPLICATE_ID`, `VARIANT_REORDER_DUPLICATE_ID`, `VARIANT_BELONGS_TO_OTHER_PRODUCT` (cả bốn `400`); mảng rỗng/thiếu sibling dùng `VALIDATION_ERROR` 400, id không tồn tại dùng `CATEGORY_NOT_FOUND`/`PRODUCT_NOT_FOUND` 404. Không có mã `PRODUCT_BELONGS_TO_OTHER_CATEGORY` (thứ tự sản phẩm toàn catalogue, FR-016). **Không** migration: dùng lại cột `position` và các index sắp xếp hiện có. Mục 5 thêm `5.8`; mục 6 thêm `6.17`, `6.18`; bảng tổng hợp §12 cập nhật. Xem `specs/018-catalog-reorder/`. | `internal/modules/category/presentation/http/router.go`, `internal/modules/product/presentation/http/router.go`, `docs/modules.md` |
 | 2026-10-17 | **Thêm nhóm `/api/v1/admin/dashboard` (module 16 Admin, feature 017).** **Một** endpoint `GET /admin/dashboard/overview` trả toàn bộ dashboard vận hành trong một request **read-only**: bốn nhóm KPI (`revenue`/`orders`/`customers`/`inventory`), `revenueTrend` (`days` = 7 hoặc 30), `categoryBreakdown` (group theo snapshot danh mục trên dòng đơn, bucket "Khác") và `recentOrders` (tối đa 5 đơn mới nhất). Auth `ADMIN` (guest 401, CUSTOMER 403); query `days` (mặc định 7, ∈ {7,30}) và `lowStockThreshold` (mặc định 5, 0..10000). Mọi giá trị tiền là object `{amount, currency}` (VND, số nguyên minor unit). Doanh thu quy theo `orders.created_at`, chỉ `PAID`/`SHIPPED`/`COMPLETED`; cửa sổ tháng hiện tại là MTD so với **cùng kỳ tháng trước**; ranh giới theo `SHOP_TIMEZONE`. Snapshot danh mục thêm vào dòng đơn (migration `00017`). **Không** thêm mã lỗi mới. Xem ADR-022. | `internal/modules/admin/presentation/http/router.go`, `migrations/00017_order_item_category_snapshot.sql` |
 | 2026-10-17 | **Ảnh card của danh mục ưu tiên gallery sản phẩm (module 04 Product, feature 015).** Ảnh của entry trong `GET /products` và `imageUrl` tóm tắt trong `GET /products/{code}` nay là **ảnh chính của gallery** sản phẩm, **fallback về ảnh của variant mặc định** (`position` nhỏ nhất), rồi `null` khi không có ảnh nào. Không đổi route/hình dạng DTO. | `internal/modules/product/infrastructure/implement/postgres/product.go` |

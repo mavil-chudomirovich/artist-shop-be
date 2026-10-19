@@ -236,6 +236,21 @@ description: "Task list for Order Delivery & Completion (module 07 extension)"
 
 ---
 
+## Phase 10: Feedback photos (extension, US5) — append-only amendment
+
+**Goal**: a customer's order-level feedback may carry **up to five photos**, validated and stored exactly like delivery evidence (FR-025).
+
+**Independent Test**: submit feedback with photos → the images persist and read back on the order detail; 6 photos is refused `ORDER_IMAGE_LIMIT_REACHED`; a bad/oversized photo is refused before storage; feedback without photos still works.
+
+- [X] T065 [P] [US5] Domain: create `internal/modules/order/domain/model/feedback_photo.go` — the `FeedbackPhoto` entity (`ID`, `FeedbackID`, `PublicID`, `URL`, `Width`, `Height`, `Position`, `CreatedAt`), `MaxFeedbackPhotos = 5`, and `EnsureFeedbackPhotoCapacity(existing int) error` (returns `domainerr.ErrImageLimitReached`); add `Photos []FeedbackPhoto` to `model.Feedback`; add `ValidateFeedbackPhoto(content []byte) error` in `domain/model/photo_image.go` delegating to the shared `ValidateDeliveryPhoto` + `MaxDeliveryPhotoBytes`; unit test `feedback_photo_test.go` (capacity + reuse of the image rule) (FR-025, research D16)
+- [X] T066 [US5] Migration `migrations/00019_order_feedback_photos.sql`: create `order_feedback_photos` (`id`, `feedback_id`, `public_id`, `url`, `width`, `height`, `position`, `created_at`), FK `feedback_id → order_feedback(id) ON DELETE CASCADE`, index `(feedback_id, position, id)`; reversible `Down`; extend `migrations/order_guard_test.go` (FK/cascade, ordering index) (FR-025, data-model.md)
+- [X] T067 [US5] Repository: add `InsertFeedbackPhotos(ctx, feedbackID, photos, now)`, `CountFeedbackPhotos(ctx, feedbackID)`, `ListFeedbackPhotos(ctx, feedbackID)` to `domain/repository/order.go` and implement them in `infrastructure/implement/postgres/order.go` (`feedbackPhotoColumns`, `scanFeedbackPhoto`); make `FindFeedback` attach the photos so the detail read projects them; extend `postgres/order_integration_test.go` (insert/read ordering; cascade on feedback delete) (FR-025)
+- [X] T068 [US5] Application: add `Photos []UploadedPhoto` to `dto.FeedbackInput`; add `FeedbackPhotoView` and `Photos []FeedbackPhotoView` to `dto.FeedbackView`; map them in `application/mapper/mapper.go`; rewrite `SubmitFeedback` in `application/implement/feedback.go` to the delivery shape — validate content + every photo (≤5, format/size) **before** anything is stored, first transaction locks/checks (owner, state, no existing feedback), upload through `MediaStore` **outside** the transaction, second transaction re-checks and inserts the feedback row + its photo rows (releasing just-stored assets if it fails), notify the artist after commit; extend `feedback_test.go` (with/without photos, over-ceiling, bad/oversized photo, media-unavailable, artist email) (FR-025, research D16)
+- [X] T069 [US5] Presentation: make `POST /orders/{orderId}/feedback` **multipart** — a `content` form field (1–2000 chars) and 0–5 `photos` file parts — installing the shared `DeliveryEvidenceUploadCeiling()` body limit with the `ORDER_IMAGE_TOO_LARGE` (413) refusal; stream the parts in a new reader (`readFeedbackMultipart`); add `photos []FeedbackPhotoResponse` to `presentation/dto.FeedbackResponse` + `FeedbackPhotoResponse`; update the handler's Swagger annotations (`@Accept multipart/form-data`, form params, `@Failure 413/503`); extend `orders_test.go` + `order_integration_test.go` (multipart 200 with photos; 0 photos still works; 6 photos 409; bad/oversized 400/413) (FR-025; Constitution VIII)
+- [X] T070 [US5] Docs/contracts: add FR-025 and an Assumption to `spec.md`; add the `order_feedback_photos` table and the feedback read projection to `data-model.md`; update `contracts/openapi.yaml` (feedback is multipart; `Feedback.photos`) and `contracts/error-codes.md` (feedback photos reuse `ORDER_IMAGE_*`); add research decision D16; update `frontend-guide.md` (feedback endpoint changed to multipart + `feedback.photos`) and `docs/api-reference.md` §9.7 + the `OrderResponse.feedback.photos` member; update `quickstart.md`; run `make swagger` (FR-025; Constitution VIII)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

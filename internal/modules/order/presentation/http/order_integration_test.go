@@ -400,6 +400,26 @@ func seedOrderCart(t *testing.T, pool *pgxpool.Pool, ownerID, productID uuid.UUI
 	return cartID
 }
 
+// seedOrderCartLine re-fills the customer's cart, creating it on the first call.
+// A customer has exactly one cart (carts_user_key), and checkout empties the cart
+// but keeps the row, so a test that needs several orders for one customer must add
+// a line back rather than insert a second cart.
+func seedOrderCartLine(t *testing.T, pool *pgxpool.Pool, ownerID, productID uuid.UUID, quantity, unitPrice int64) {
+	t.Helper()
+	ctx := context.Background()
+	var cartID uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM carts WHERE user_id = $1`, ownerID).Scan(&cartID); err != nil {
+		seedOrderCart(t, pool, ownerID, productID, quantity, unitPrice)
+		return
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cart_items (id, cart_id, variant_id, quantity, unit_price_amount, currency)
+		VALUES ($1, $2, $3, $4, $5, 'VND')`,
+		uuid.New(), cartID, defaultVariantID(t, pool, productID), quantity, unitPrice); err != nil {
+		t.Fatalf("insert cart line: %v", err)
+	}
+}
+
 // physicalStock reads a product's default variant's physical quantity straight
 // from the table.
 func physicalStock(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID) int64 {
@@ -1254,8 +1274,8 @@ func TestDeliveryAndFeedbackNotificationsFireAgainstPostgres(t *testing.T) {
 
 	// FR-022: the customer's feedback on the completed order emails the artist.
 	const content = "Dong goi rat can than"
-	rec := perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
-		`{"content":"`+content+`"}`, "customer-token")
+	feedbackBody, feedbackType := multipartFeedback(t, content, nil)
+	rec := performMultipart(f.root, ordersPath+"/"+orderID.String()+"/feedback", feedbackBody, feedbackType, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("feedback: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1275,8 +1295,8 @@ func TestDeliveryAndFeedbackNotificationsFireAgainstPostgres(t *testing.T) {
 	seedOrderCart(t, f.pool, testCustomerTwoID, product, 1, 120000)
 	otherOrderID := checkoutDeliveredOrderAs(t, f, "customer2-token")
 	f.notifier.setFail(true)
-	rec = perform(f.root, http.MethodPost, ordersPath+"/"+otherOrderID.String()+"/feedback",
-		`{"content":"van gui duoc"}`, "customer2-token")
+	failingBody, failingType := multipartFeedback(t, "van gui duoc", nil)
+	rec = performMultipart(f.root, ordersPath+"/"+otherOrderID.String()+"/feedback", failingBody, failingType, "customer2-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("feedback over a failing notifier: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -1324,6 +1344,42 @@ func performMultipart(handler http.Handler, path, body, contentType, token strin
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+// multipartFeedback builds a multipart/form-data body carrying a `content` field
+// and one `photos` file part per payload, so a test drives the feedback route's
+// multipart contract (FR-025).
+func multipartFeedback(t *testing.T, content string, payloads [][]byte) (string, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	if err := writer.WriteField("content", content); err != nil {
+		t.Fatalf("write the content field: %v", err)
+	}
+	for i, payload := range payloads {
+		part, err := writer.CreateFormFile("photos", fmt.Sprintf("feedback-%d.jpg", i))
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(payload); err != nil {
+			t.Fatalf("write the photo part: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close the multipart writer: %v", err)
+	}
+	return buf.String(), writer.FormDataContentType()
+}
+
+// feedbackPhotoCount reads how many photos one feedback carries.
+func feedbackPhotoCount(t *testing.T, pool *pgxpool.Pool, feedbackID uuid.UUID) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM order_feedback_photos WHERE feedback_id = $1`, feedbackID).Scan(&count); err != nil {
+		t.Fatalf("read the feedback photo count: %v", err)
+	}
+	return count
 }
 
 // deliveryPhotoCount reads how many evidence photos one order carries at a stage.
@@ -2002,10 +2058,10 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 
 	const content = "Giao hang can than, tranh nguyen ven"
 
-	// FR-015, FR-017: the owner sends feedback for the delivered order and the
-	// answer carries it.
-	rec := perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
-		`{"content":"`+content+`"}`, "customer-token")
+	// FR-015, FR-017, FR-025: the owner sends feedback, attaching two photos, for
+	// the delivered order and the answer carries it.
+	feedbackBody, feedbackType := multipartFeedback(t, content, [][]byte{evidenceJPEG(), evidenceJPEG()})
+	rec := performMultipart(f.root, ordersPath+"/"+orderID.String()+"/feedback", feedbackBody, feedbackType, "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("feedback: expected 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -2015,6 +2071,9 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 	}
 	if answered.Data.Feedback == nil || answered.Data.Feedback.Content != content {
 		t.Fatalf("the answer must carry the recorded feedback, got %+v", answered.Data.Feedback)
+	}
+	if len(answered.Data.Feedback.Photos) != 2 {
+		t.Fatalf("the answer must carry both photos, got %d", len(answered.Data.Feedback.Photos))
 	}
 
 	// FR-022: the artist is emailed that the order carries the feedback, named
@@ -2030,12 +2089,16 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 		t.Fatalf("the artist must be emailed the feedback, got %+v", f.notifier.snapshot())
 	}
 
-	// It is persisted with the session's author.
-	var storedAuthor uuid.UUID
-	var storedContent string
+	// It is persisted with the session's author, and the two photos are persisted
+	// against the feedback in position order (FR-025).
+	var (
+		feedbackID    uuid.UUID
+		storedAuthor  uuid.UUID
+		storedContent string
+	)
 	if err := f.pool.QueryRow(context.Background(),
-		`SELECT author_id, content FROM order_feedback WHERE order_id = $1`, orderID).
-		Scan(&storedAuthor, &storedContent); err != nil {
+		`SELECT id, author_id, content FROM order_feedback WHERE order_id = $1`, orderID).
+		Scan(&feedbackID, &storedAuthor, &storedContent); err != nil {
 		t.Fatalf("read the stored feedback: %v", err)
 	}
 	if storedAuthor != testCustomerID {
@@ -2044,8 +2107,11 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 	if storedContent != content {
 		t.Fatalf("the stored feedback must carry the sent content, got %q", storedContent)
 	}
+	if got := feedbackPhotoCount(t, f.pool, feedbackID); got != 2 {
+		t.Fatalf("both photos must be persisted against the feedback, got %d", got)
+	}
 
-	// FR-017: the customer's detail reads the feedback back.
+	// FR-017, FR-025: the customer's detail reads the feedback and its photos back.
 	rec = perform(f.root, http.MethodGet, ordersPath+"/"+orderID.String(), "", "customer-token")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("customer detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
@@ -2057,10 +2123,13 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 	if detail.Data.Feedback == nil || detail.Data.Feedback.Content != content {
 		t.Fatalf("the customer detail must carry the feedback, got %+v", detail.Data.Feedback)
 	}
+	if len(detail.Data.Feedback.Photos) != 2 {
+		t.Fatalf("the customer detail must carry both photos, got %d", len(detail.Data.Feedback.Photos))
+	}
 
 	// FR-016: a second submission is refused and does not add a row.
-	rec = perform(f.root, http.MethodPost, ordersPath+"/"+orderID.String()+"/feedback",
-		`{"content":"second attempt"}`, "customer-token")
+	secondBody, secondType := multipartFeedback(t, "second attempt", nil)
+	rec = performMultipart(f.root, ordersPath+"/"+orderID.String()+"/feedback", secondBody, secondType, "customer-token")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("second feedback: expected 409, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -2078,8 +2147,8 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 
 	// FR-018: another customer's order answers the same not-found, and nothing is
 	// written.
-	rec = perform(f.root, http.MethodPost, ordersPath+"/"+otherOrderID.String()+"/feedback",
-		`{"content":"not my order"}`, "customer-token")
+	foreignBody, foreignType := multipartFeedback(t, "not my order", nil)
+	rec = performMultipart(f.root, ordersPath+"/"+otherOrderID.String()+"/feedback", foreignBody, foreignType, "customer-token")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("another customer's order: expected 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -2134,6 +2203,109 @@ func TestCustomerSendsFeedbackAgainstPostgres(t *testing.T) {
 	}
 	if got := feedbackCount(t, f.pool, otherOrderID); got != 1 {
 		t.Fatalf("the race must leave exactly one feedback row, got %d", got)
+	}
+}
+
+// FR-025, SC-004 against real PostgreSQL: a feedback may carry up to five photos;
+// zero photos is still accepted, two persist and read back on the detail, six is
+// refused ORDER_IMAGE_LIMIT_REACHED before the media store is called, and an
+// unsupported or oversized photo is refused before storage.
+func TestCustomerFeedbackPhotosAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+
+	// deliverNew drives a fresh cart to a DELIVERED order of the seeded customer.
+	deliverNew := func() uuid.UUID {
+		seedOrderCartLine(t, f.pool, testCustomerID, product, 1, 120000)
+		return checkoutDeliveredOrder(t, f)
+	}
+
+	// FR-025: zero photos is still an accepted feedback.
+	noPhotoOrder := deliverNew()
+	body, contentType := multipartFeedback(t, "khong anh", nil)
+	rec := performMultipart(f.root, ordersPath+"/"+noPhotoOrder.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback with no photos: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := feedbackCount(t, f.pool, noPhotoOrder); got != 1 {
+		t.Fatalf("a feedback with no photos must persist one row, got %d", got)
+	}
+
+	// FR-025: two photos persist against the feedback and read back on the detail.
+	withPhotoOrder := deliverNew()
+	body, contentType = multipartFeedback(t, "co hai anh", [][]byte{evidenceJPEG(), evidenceJPEG()})
+	rec = performMultipart(f.root, ordersPath+"/"+withPhotoOrder.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("feedback with photos: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var feedbackID uuid.UUID
+	if err := f.pool.QueryRow(context.Background(),
+		`SELECT id FROM order_feedback WHERE order_id = $1`, withPhotoOrder).Scan(&feedbackID); err != nil {
+		t.Fatalf("read the feedback id: %v", err)
+	}
+	if got := feedbackPhotoCount(t, f.pool, feedbackID); got != 2 {
+		t.Fatalf("both photos must be persisted against the feedback, got %d", got)
+	}
+	rec = perform(f.root, http.MethodGet, ordersPath+"/"+withPhotoOrder.String(), "", "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("customer detail: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var detail orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode the customer detail %q: %v", rec.Body.String(), err)
+	}
+	if detail.Data.Feedback == nil || len(detail.Data.Feedback.Photos) != 2 {
+		t.Fatalf("the customer detail must carry both photos, got %+v", detail.Data.Feedback)
+	}
+
+	// FR-025, SC-004: six photos are refused ORDER_IMAGE_LIMIT_REACHED before the
+	// media store is called, and no feedback row is written.
+	sixPhotoOrder := deliverNew()
+	uploadsBefore := f.media.uploadCount()
+	six := [][]byte{evidenceJPEG(), evidenceJPEG(), evidenceJPEG(), evidenceJPEG(), evidenceJPEG(), evidenceJPEG()}
+	body, contentType = multipartFeedback(t, "sau anh", six)
+	rec = performMultipart(f.root, ordersPath+"/"+sixPhotoOrder.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("six photos: expected 409, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeImageLimitReached {
+		t.Fatalf("expected ORDER_IMAGE_LIMIT_REACHED, got %s", decoded.Error.Code)
+	}
+	if got := feedbackCount(t, f.pool, sixPhotoOrder); got != 0 {
+		t.Fatalf("a refused six-photo feedback must write nothing, got %d rows", got)
+	}
+	if got := f.media.uploadCount(); got != uploadsBefore {
+		t.Fatalf("a refused six-photo feedback must not reach the media store, got %d uploads", got)
+	}
+
+	// FR-009, FR-025: an unsupported photo is refused before storage.
+	badPhotoOrder := deliverNew()
+	body, contentType = multipartFeedback(t, "anh loi", [][]byte{[]byte("GIF89a....")})
+	rec = performMultipart(f.root, ordersPath+"/"+badPhotoOrder.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unsupported photo: expected 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeImageTypeUnsupported {
+		t.Fatalf("expected ORDER_IMAGE_TYPE_UNSUPPORTED, got %s", decoded.Error.Code)
+	}
+	if got := feedbackCount(t, f.pool, badPhotoOrder); got != 0 {
+		t.Fatalf("a refused unsupported photo must write nothing, got %d rows", got)
+	}
+
+	// FR-009, FR-025: an oversized photo is refused before storage.
+	oversizedOrder := deliverNew()
+	oversized := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0x00}, int(model.MaxDeliveryPhotoBytes))...)
+	body, contentType = multipartFeedback(t, "anh qua lon", [][]byte{oversized})
+	rec = performMultipart(f.root, ordersPath+"/"+oversizedOrder.String()+"/feedback", body, contentType, "customer-token")
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized photo: expected 413, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if decoded := decodeError(t, rec); decoded.Error.Code != constant.CodeImageTooLarge {
+		t.Fatalf("expected ORDER_IMAGE_TOO_LARGE, got %s", decoded.Error.Code)
+	}
+	if got := feedbackCount(t, f.pool, oversizedOrder); got != 0 {
+		t.Fatalf("a refused oversized photo must write nothing, got %d rows", got)
 	}
 }
 

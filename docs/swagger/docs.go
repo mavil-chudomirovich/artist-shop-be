@@ -4736,9 +4736,9 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Records the caller's one order-level feedback for a delivered or completed order and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.",
+                "description": "Records the caller's one order-level feedback for a delivered or completed order, optionally attaching up to five photos, and returns the order with it attached. The content must carry 1 to 2000 characters after trimming. Each photo is validated by signature (JPEG, PNG or WebP) and size before it is stored. The order must be delivered or completed; a wrong state answers 409 ORDER_FEEDBACK_NOT_ALLOWED naming its state, a second feedback answers 409 ORDER_FEEDBACK_ALREADY_SENT, more than five photos answer 409 ORDER_IMAGE_LIMIT_REACHED, an unsupported photo answers 400 ORDER_IMAGE_TYPE_UNSUPPORTED, an oversized one answers 413 ORDER_IMAGE_TOO_LARGE and an unknown order, or one belonging to another customer, answers 404 ORDER_NOT_FOUND.",
                 "consumes": [
-                    "application/json"
+                    "multipart/form-data"
                 ],
                 "produces": [
                     "application/json"
@@ -4746,7 +4746,7 @@ const docTemplate = `{
                 "tags": [
                     "Orders"
                 ],
-                "summary": "Send order-level feedback to the artist",
+                "summary": "Send order-level feedback to the artist, with up to five photos",
                 "parameters": [
                     {
                         "type": "string",
@@ -4756,13 +4756,17 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Feedback content, 1 to 2000 characters",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackRequest"
-                        }
+                        "type": "string",
+                        "description": "Feedback text, 1 to 2000 characters",
+                        "name": "content",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Feedback photo (JPEG, PNG or WebP); send the part zero to five times",
+                        "name": "photos",
+                        "in": "formData"
                     }
                 ],
                 "responses": {
@@ -4808,6 +4812,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
                     },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
                     "429": {
                         "description": "Too Many Requests",
                         "schema": {
@@ -4816,6 +4826,12 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
                         }
@@ -6660,12 +6676,27 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackRequest": {
+        "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackPhotoResponse": {
             "type": "object",
             "properties": {
-                "content": {
-                    "description": "Content is the feedback text sent to the artist.",
+                "height": {
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "ID identifies the photo.",
                     "type": "string"
+                },
+                "position": {
+                    "description": "Position is the order within the feedback.",
+                    "type": "integer"
+                },
+                "url": {
+                    "description": "URL is the displayable link to the stored image.",
+                    "type": "string"
+                },
+                "width": {
+                    "description": "Width and Height are the stored pixel dimensions.",
+                    "type": "integer"
                 }
             }
         },
@@ -6679,6 +6710,13 @@ const docTemplate = `{
                 "createdAt": {
                     "description": "CreatedAt is when it was written.",
                     "type": "string"
+                },
+                "photos": {
+                    "description": "Photos are the images attached to the feedback, ordered by position; a\nfeedback with none serialises ` + "`" + `photos: []` + "`" + ` (FR-025).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.FeedbackPhotoResponse"
+                    }
                 }
             }
         },

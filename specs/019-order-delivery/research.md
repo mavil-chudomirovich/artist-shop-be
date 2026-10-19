@@ -281,6 +281,35 @@ test-first; the storage and concurrency rules can only be proven against the dat
 **Alternatives considered**: Fakes for the storage guarantees — rejected: they prove the fake, not the
 schema.
 
+## D16: Feedback photos reuse the delivery-evidence rule and shape
+
+**Decision**: A customer's order-level feedback may carry up to **five** optional photos, stored exactly
+like delivery evidence: a new table `order_feedback_photos(id, feedback_id, public_id, url, width,
+height, position, created_at)` with `feedback_id → order_feedback(id) ON DELETE CASCADE` and a read
+ordered by `(position, id)`; the count is enforced by the use case (a count, which no unique index
+expresses). The order's own stdlib-only rule is reused: `ValidateFeedbackPhoto` delegates to
+`ValidateDeliveryPhoto` + `MaxDeliveryPhotoBytes`, so the format sniff and the 2 MB ceiling cannot
+diverge, and `EnsureFeedbackPhotoCapacity` returns the same `ORDER_IMAGE_LIMIT_REACHED` sentinel the
+delivery steps use. `POST /orders/{orderId}/feedback` becomes **multipart** (a `content` field plus 0–5
+`photos` parts) and installs the same `DeliveryEvidenceUploadCeiling()` body limit with the
+`ORDER_IMAGE_TOO_LARGE` (413) refusal. The submission takes the delivery use-case shape: validate every
+payload before anything is stored; lock and check (owner, state, no existing feedback) in a first
+transaction; upload through `MediaStore` **outside** the transaction; then re-check and insert the
+feedback row and its photo rows in a second transaction, releasing just-stored assets on failure; notify
+the artist after commit.
+
+**Rationale**: A feedback image is the same "customer-supplied media" risk as delivery evidence, so it
+must obey the same type/size/count rules and the same upload-outside-the-transaction discipline (FR-025,
+Constitution V, research D4, D5). One rule and one shape mean a client handles a feedback image exactly
+as it handles a dispatch image, and the `domain` stays stdlib-only (Constitution I).
+
+**Alternatives considered**: Base64 photos in a JSON body — rejected: it inflates the payload ~33% and
+departs from the shared multipart pattern the evidence routes use. Reusing `order_delivery_photos` with a
+nullable stage — rejected: the FK to `order_feedback`, the distinct read projection and the different
+ceiling are what the table needs; a delivery row is not a feedback row. A per-feedback unique index —
+rejected: a photo **count** is not expressible as a unique index, so a use-case check under the row lock
+is the rule (research D5).
+
 ## Open questions carried into implementation
 
 None. Every decision above is settled and each is testable.

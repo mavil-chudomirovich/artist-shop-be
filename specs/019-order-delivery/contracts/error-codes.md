@@ -7,9 +7,9 @@ appears; this file records what each means and which situations deliberately reu
 
 | Code | HTTP | Meaning | Retryable |
 |---|---|---|---|
-| `ORDER_IMAGE_TYPE_UNSUPPORTED` | 400 | An uploaded photo is not JPEG, PNG or WebP (the format is decided by sniffing the bytes) | No — choose a supported file |
+| `ORDER_IMAGE_TYPE_UNSUPPORTED` | 400 | An uploaded photo — delivery evidence or a feedback photo — is not JPEG, PNG or WebP (the format is decided by sniffing the bytes) | No — choose a supported file |
 | `ORDER_IMAGE_TOO_LARGE` | 413 | An uploaded photo exceeds the size ceiling; also returned when a request near the route's body ceiling is refused before the count check | No — compress the photo / send fewer |
-| `ORDER_IMAGE_LIMIT_REACHED` | 409 | More than five photos were attached to one delivery step (reachable when the total request body stays under the route ceiling) | No — send at most five |
+| `ORDER_IMAGE_LIMIT_REACHED` | 409 | More than five photos were attached to one delivery step **or to one feedback** (reachable when the total request body stays under the route ceiling) | No — send at most five |
 | `ORDER_FEEDBACK_NOT_ALLOWED` | 409 | Feedback was submitted while the order is not `DELIVERED` or `COMPLETED` | No — wait until the order is delivered |
 | `ORDER_FEEDBACK_ALREADY_SENT` | 409 | A second feedback was submitted for the same order | No — one feedback per order |
 | `ORDER_MEDIA_UNAVAILABLE` | 503 | The media provider rejected a photo upload or could not be reached (also when no credentials are configured) | Yes — retry later; the order is unchanged |
@@ -19,6 +19,14 @@ appears; this file records what each means and which situations deliberately reu
 The three photo codes carry the same HTTP statuses as module 04's `PRODUCT_IMAGE_*` codes
 (type 400, size 413, count 409), so a client handles an upload refusal the same way everywhere, while
 the `ORDER_*` prefix names the resource the client is actually touching (an order, not a product).
+
+### Feedback photos reuse the same three codes
+
+A feedback photo obeys the same type/size/count rule as a delivery photo (FR-025, research D16), so it
+answers with the same three codes rather than a feedback-specific family: an unsupported photo is
+`ORDER_IMAGE_TYPE_UNSUPPORTED` (400), an oversized one `ORDER_IMAGE_TOO_LARGE` (413), and a submission
+with more than five photos `ORDER_IMAGE_LIMIT_REACHED` (409). `details[].field` names `photos` in all
+three cases, exactly as it does for a dispatch/delivery upload.
 
 ### Why the feedback refusals are conflicts and not validation failures
 

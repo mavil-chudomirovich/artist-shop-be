@@ -118,12 +118,39 @@ func (m *Mapper) DeliveryPhotos(photos []model.DeliveryPhoto) []dto.DeliveryPhot
 }
 
 // Feedback maps the order's feedback, or returns nil when the order has none, so
-// a detail serialises `feedback: null` (FR-015, research D11).
+// a detail serialises `feedback: null` (FR-015, research D11). Its photos are
+// mapped with it, ordered by position (FR-025, research D16).
 func (m *Mapper) Feedback(feedback *model.Feedback) *dto.FeedbackView {
 	if feedback == nil {
 		return nil
 	}
-	return &dto.FeedbackView{Content: feedback.Content, CreatedAt: feedback.CreatedAt}
+	return &dto.FeedbackView{
+		Content:   feedback.Content,
+		CreatedAt: feedback.CreatedAt,
+		Photos:    m.FeedbackPhotos(feedback.Photos),
+	}
+}
+
+// FeedbackPhoto maps one feedback image to its DTO shape (FR-025, research D16).
+func (m *Mapper) FeedbackPhoto(photo model.FeedbackPhoto) dto.FeedbackPhotoView {
+	return dto.FeedbackPhotoView{
+		ID:       photo.ID,
+		URL:      photo.URL,
+		Width:    photo.Width,
+		Height:   photo.Height,
+		Position: photo.Position,
+	}
+}
+
+// FeedbackPhotos maps a feedback's images, preserving the position order the
+// repository applied. A nil list maps to an empty slice, never a nil one, so a
+// detail serialises `photos: []` rather than `photos: null`.
+func (m *Mapper) FeedbackPhotos(photos []model.FeedbackPhoto) []dto.FeedbackPhotoView {
+	out := make([]dto.FeedbackPhotoView, 0, len(photos))
+	for _, photo := range photos {
+		out = append(out, m.FeedbackPhoto(photo))
+	}
+	return out
 }
 
 // AdminSummaries maps a page of list rows to the operator-facing shapes,

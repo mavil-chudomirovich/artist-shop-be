@@ -45,6 +45,16 @@ func ValidateDeliveryPhoto(content []byte, maxBytes int64) error {
 	return nil
 }
 
+// ValidateFeedbackPhoto decides whether an image attached to a customer's
+// order-level feedback may be sent to the media provider. It delegates to the
+// same rule a delivery-evidence photo uses — the same format sniff and the same
+// size ceiling — so the order module keeps one image rule however the image is
+// used (FR-025, research D16). It stays stdlib-only and in the order's own
+// domain, exactly as ValidateDeliveryPhoto does (Constitution I, research D4).
+func ValidateFeedbackPhoto(content []byte) error {
+	return ValidateDeliveryPhoto(content, MaxDeliveryPhotoBytes)
+}
+
 // DetectDeliveryImage reports whether the payload begins with the signature of one
 // of the three accepted formats.
 //

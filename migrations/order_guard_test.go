@@ -19,6 +19,11 @@ const orderConfirmationMigration = "00011_order_confirmation.sql"
 // order_feedback tables.
 const orderDeliveryMigration = "00018_order_delivery.sql"
 
+// orderFeedbackPhotosMigration adds the optional photos attached to a customer's
+// order-level feedback (feature 019 extension, FR-025): the order_feedback_photos
+// table with its cascading foreign key to order_feedback and its ordering index.
+const orderFeedbackPhotosMigration = "00019_order_feedback_photos.sql"
+
 // readOrderMigration returns the Up and Down halves of the migration, split on the
 // goose marker. It fails the test when the file or either section is missing, so
 // the assertions below can assume both are present.
@@ -490,5 +495,48 @@ func TestOrderDeliveryMigrationCascadesEvidenceAndFeedback(t *testing.T) {
 	}
 	if !strings.Contains(up, "CREATE UNIQUE INDEX order_feedback_order_key ON order_feedback (order_id)") {
 		t.Errorf("%s: Up section must make order_feedback one per order", orderDeliveryMigration)
+	}
+}
+
+// TestOrderFeedbackPhotosMigrationCascadesAndOrders guards the storage-level
+// invariants of the feedback-photo extension (FR-025): a removed feedback takes
+// its photos with it through the cascading foreign key, and the read path orders
+// them by (feedback_id, position, id). Each is created in the Up section and
+// reverted in the Down section, so the migration stays reversible.
+func TestOrderFeedbackPhotosMigrationCascadesAndOrders(t *testing.T) {
+	up, down := readMigration(t, orderFeedbackPhotosMigration)
+
+	upNeeds := []string{
+		"CREATE TABLE order_feedback_photos",
+		"order_feedback_photos_feedback_fk FOREIGN KEY (feedback_id)",
+		"CREATE INDEX order_feedback_photos_ordering_idx ON order_feedback_photos (feedback_id, position, id)",
+	}
+	for _, needle := range upNeeds {
+		if !strings.Contains(up, needle) {
+			t.Errorf("%s: Up section is missing %q", orderFeedbackPhotosMigration, needle)
+		}
+	}
+
+	index := strings.Index(up, "order_feedback_photos_feedback_fk FOREIGN KEY")
+	if index < 0 {
+		t.Fatalf("%s: Up section does not declare order_feedback_photos_feedback_fk", orderFeedbackPhotosMigration)
+	}
+	window := up[index:]
+	if end := strings.Index(window, ";"); end >= 0 {
+		window = window[:end+1]
+	}
+	if !strings.Contains(window, "REFERENCES order_feedback(id) ON DELETE CASCADE") {
+		t.Errorf("%s: order_feedback_photos_feedback_fk must reference order_feedback(id) with ON DELETE CASCADE", orderFeedbackPhotosMigration)
+	}
+
+	downNeeds := []string{
+		"DROP INDEX order_feedback_photos_ordering_idx",
+		"DROP CONSTRAINT order_feedback_photos_feedback_fk",
+		"DROP TABLE order_feedback_photos",
+	}
+	for _, needle := range downNeeds {
+		if !strings.Contains(down, needle) {
+			t.Errorf("%s: Down section is missing %q", orderFeedbackPhotosMigration, needle)
+		}
 	}
 }
