@@ -45,6 +45,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/audit"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/database/migrate"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/testsupport"
 )
@@ -293,6 +294,9 @@ func newOrderIntegrationFixture(t *testing.T) *orderIntegrationFixture {
 		Notifier:     notifier,
 		Media:        mediaStore,
 		ArtistEmail:  integrationArtistEmail,
+		AppName:      "Sumichi Art Shop",
+		FrontendURL:  "http://localhost:3000",
+		SupportEmail: integrationArtistEmail,
 		Mapper:       ordermapper.New(),
 	})
 	handler := New(svc, testLogger)
@@ -1193,8 +1197,8 @@ func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
 	if len(artist) != 1 {
 		t.Fatalf("checkout must email the artist once, got %+v", f.notifier.snapshot())
 	}
-	if !strings.Contains(artist[0].body, string(constant.StatusPending)) {
-		t.Fatalf("the artist's note must name PENDING, got %q", artist[0].body)
+	if !strings.Contains(artist[0].body, "Chờ xác nhận") {
+		t.Fatalf("the artist's note must ask for confirmation, got %q", artist[0].body)
 	}
 
 	// FR-020: confirming emails the customer the new state.
@@ -1207,8 +1211,8 @@ func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
 	if len(customer) != 1 {
 		t.Fatalf("confirming must email the customer once, got %+v", f.notifier.snapshot())
 	}
-	if !strings.Contains(customer[0].body, string(constant.StatusPaymentPending)) {
-		t.Fatalf("the customer's note must name PAYMENT_PENDING, got %q", customer[0].body)
+	if !strings.Contains(customer[0].body, "Chờ thanh toán") {
+		t.Fatalf("the customer's note must ask for payment, got %q", customer[0].body)
 	}
 
 	// FR-021: with the notifier failing, cancelling still succeeds and the order
@@ -1232,12 +1236,13 @@ func TestNotificationsFireAndNeverFailTheOrderAgainstPostgres(t *testing.T) {
 // was emailed.
 func assertCustomerNotifiedStatus(t *testing.T, messages []notifyMessage, status constant.Status) {
 	t.Helper()
+	badge, _, title, _ := mailer.HumanizeOrderStatus(string(status))
 	for _, message := range messages {
-		if strings.Contains(message.body, string(status)) {
+		if strings.Contains(message.body, badge) || strings.Contains(message.body, title) {
 			return
 		}
 	}
-	t.Fatalf("the customer must be emailed %s, got %+v", status, messages)
+	t.Fatalf("the customer must be emailed the friendly status %q for %s, got %+v", badge, status, messages)
 }
 
 // FR-021, FR-022, FR-023, SC-005 against real PostgreSQL: the customer is emailed

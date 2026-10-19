@@ -3,8 +3,12 @@ package implement
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 )
 
 // This file composes and sends the order module's notifications. Every helper is
@@ -37,6 +41,18 @@ func (s *Service) notifyArtistConfirmationNeeded(ctx context.Context, order *mod
 		"Order %s is awaiting your confirmation.\nStatus: %s\nNext step: confirm or decline the order.\n",
 		order.ID, order.Status,
 	)
+	if renderedSubject, renderedBody, err := mailer.RenderArtistOrderConfirmEmail(mailer.ArtistOrderConfirmParams{
+		AppName:      s.appName(),
+		OrderID:      order.ID.String(),
+		OrderTime:    s.formatTime(order.CreatedAt),
+		CustomerName: order.Address.RecipientName,
+		ItemsSummary: s.itemsSummary(order),
+		TotalAmount:  mailer.FormatMoney(order.Total.Amount, order.Total.Currency),
+		ConfirmURL:   s.frontendURL("/admin/orders/" + order.ID.String()),
+		SupportEmail: s.supportEmail(),
+	}); err == nil {
+		subject, body = renderedSubject, renderedBody
+	}
 	_ = s.Notifier.Send(ctx, s.ArtistEmail, subject, body)
 }
 
@@ -56,7 +72,57 @@ func (s *Service) notifyCustomerStatusChange(ctx context.Context, order *model.O
 	}
 	subject := fmt.Sprintf("Order status updated: %s", order.ID)
 	body := fmt.Sprintf("Your order %s is now %s.\n", order.ID, order.Status)
+	if renderedSubject, renderedBody, err := mailer.RenderOrderStatusEmail(mailer.OrderStatusParams{
+		AppName:        s.appName(),
+		CustomerName:   customer.DisplayName,
+		OrderID:        order.ID.String(),
+		RawStatus:      string(order.Status),
+		OrderDate:      s.formatTime(order.UpdatedAt),
+		OrderDateLabel: statusDateLabel(order.Status),
+		Lines:          s.orderLines(order),
+		TotalAmount:    mailer.FormatMoney(order.Total.Amount, order.Total.Currency),
+		OrderURL:       s.frontendURL("/account/orders/" + order.ID.String()),
+		SupportEmail:   s.supportEmail(),
+	}); err == nil {
+		subject, body = renderedSubject, renderedBody
+	}
 	_ = s.Notifier.Send(ctx, customer.Email, subject, body)
+}
+
+// notifyAdminPaymentReceived emails the shop operator that a customer paid an
+// order, so the shop knows to prepare the artwork. A nil notifier or an
+// unconfigured artist address skips the notification silently; a delivery
+// failure never fails the operation that produced it.
+func (s *Service) notifyAdminPaymentReceived(ctx context.Context, order *model.Order) {
+	if s.Notifier == nil || s.ArtistEmail == "" || order == nil {
+		return
+	}
+	subject := fmt.Sprintf("Order paid: %s", order.ID)
+	body := fmt.Sprintf("Order %s has been paid.\n", order.ID)
+
+	customerName, customerEmail := order.Address.RecipientName, ""
+	if s.Customers != nil {
+		if customer, err := s.Customers.LookupCustomer(ctx, order.UserID); err == nil {
+			if customer.DisplayName != "" {
+				customerName = customer.DisplayName
+			}
+			customerEmail = customer.Email
+		}
+	}
+	if renderedSubject, renderedBody, err := mailer.RenderAdminPaymentReceivedEmail(mailer.AdminPaymentParams{
+		AppName:       s.appName(),
+		OrderID:       order.ID.String(),
+		CustomerName:  customerName,
+		CustomerEmail: customerEmail,
+		PaidAt:        s.formatTime(order.UpdatedAt),
+		Lines:         s.orderLines(order),
+		TotalAmount:   mailer.FormatMoney(order.Total.Amount, order.Total.Currency),
+		OrderURL:      s.frontendURL("/admin/orders/" + order.ID.String()),
+		SupportEmail:  s.supportEmail(),
+	}); err == nil {
+		subject, body = renderedSubject, renderedBody
+	}
+	_ = s.Notifier.Send(ctx, s.ArtistEmail, subject, body)
 }
 
 // notifyArtistFeedbackReceived emails the shop operator that an order carries the
@@ -73,5 +139,99 @@ func (s *Service) notifyArtistFeedbackReceived(ctx context.Context, order *model
 	}
 	subject := fmt.Sprintf("Order feedback received: %s", order.ID)
 	body := fmt.Sprintf("Order %s received feedback.\nFeedback: %s\n", order.ID, order.Feedback.Content)
+
+	customerName := order.Address.RecipientName
+	if s.Customers != nil {
+		if customer, err := s.Customers.LookupCustomer(ctx, order.Feedback.AuthorID); err == nil && customer.DisplayName != "" {
+			customerName = customer.DisplayName
+		}
+	}
+	if renderedSubject, renderedBody, err := mailer.RenderArtistFeedbackEmail(mailer.ArtistFeedbackParams{
+		AppName:         s.appName(),
+		OrderID:         order.ID.String(),
+		CustomerName:    customerName,
+		FeedbackContent: order.Feedback.Content,
+		FeedbackDate:    s.formatTime(order.Feedback.CreatedAt),
+		OrderURL:        s.frontendURL("/admin/orders/" + order.ID.String()),
+		SupportEmail:    s.supportEmail(),
+	}); err == nil {
+		subject, body = renderedSubject, renderedBody
+	}
 	_ = s.Notifier.Send(ctx, s.ArtistEmail, subject, body)
+}
+
+func (s *Service) appName() string {
+	if strings.TrimSpace(s.AppName) != "" {
+		return s.AppName
+	}
+	return mailer.DefaultAppName
+}
+
+func (s *Service) supportEmail() string {
+	if strings.TrimSpace(s.SupportEmail) != "" {
+		return s.SupportEmail
+	}
+	return s.ArtistEmail
+}
+
+func (s *Service) location() *time.Location {
+	if s.Location != nil {
+		return s.Location
+	}
+	return time.UTC
+}
+
+func (s *Service) formatTime(t time.Time) string {
+	return t.In(s.location()).Format("02/01/2006 15:04")
+}
+
+func (s *Service) frontendURL(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(s.FrontendURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + path
+}
+
+func (s *Service) orderLines(order *model.Order) []mailer.OrderLineItem {
+	lines := make([]mailer.OrderLineItem, 0, len(order.Lines))
+	for _, line := range order.Lines {
+		total := line.LineTotal()
+		lines = append(lines, mailer.OrderLineItem{
+			ProductName: line.ProductName,
+			VariantName: line.VariantName,
+			Quantity:    line.Quantity,
+			LineTotal:   mailer.FormatMoney(total.Amount, total.Currency),
+		})
+	}
+	return lines
+}
+
+func (s *Service) itemsSummary(order *model.Order) string {
+	parts := make([]string, 0, len(order.Lines))
+	for _, line := range order.Lines {
+		name := line.ProductName
+		if line.VariantName != "" {
+			name += " (" + line.VariantName + ")"
+		}
+		parts = append(parts, fmt.Sprintf("%dx %s", line.Quantity, name))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func statusDateLabel(status constant.Status) string {
+	switch status {
+	case constant.StatusPending, constant.StatusPaymentPending:
+		return "Ngày đặt"
+	case constant.StatusPaid:
+		return "Thời gian thanh toán"
+	case constant.StatusShipping, constant.StatusDelivered:
+		return "Thời gian giao"
+	case constant.StatusCompleted:
+		return "Thời gian hoàn tất"
+	case constant.StatusCancelled:
+		return "Thời gian hủy"
+	default:
+		return "Cập nhật"
+	}
 }

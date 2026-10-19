@@ -31,6 +31,10 @@ type Config struct {
 	// OTPTTL is the code's own lifetime. It is reported to the client as
 	// otpExpiresIn when a registration starts (FR-007).
 	OTPTTL time.Duration
+	// AppName is the shop name rendered in the emails.
+	AppName string
+	// SupportEmail is the reply-to address shown in the emails.
+	SupportEmail string
 }
 
 // Service implements appinterface.AuthService.

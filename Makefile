@@ -30,6 +30,11 @@ SWAG_VERSION ?= v1.16.4
 # "The system cannot find the path specified." and GIT_SHA falls back to "dev".
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null 2>NUL || echo dev)
 
+# `go test -race` needs cgo and a C compiler. CI (ubuntu) has both; a Windows
+# box without gcc reports CGO_ENABLED=0, so `make check` skips test-race there
+# instead of failing. Define this before test-race so its ifeq can see it.
+CGO_ENABLED_VALUE := $(shell $(GO) env CGO_ENABLED)
+
 IMAGE_NAME ?= artist-shop-be
 
 # Database credentials for the compose stack (keep in sync with .env).
@@ -82,15 +87,15 @@ help: ## Show this index
 	@echo   make dev-help       : Development workflow
 	@echo   make quality-help   : CI quality checks, tests, compilation
 	@echo   make docker-help    : Docker Compose stack and image
-	@echo   make migration-help : Database migration (goose) commands
-	@echo Most used: make up | make up-tools | make check | make seed-sql
+	@echo   make migration-help : Database migration - goose commands
+	@echo Most used: make up, make up-tools, make check, make seed-sql
 	@echo ================
 
 dev-help:
 	@echo DEVELOPMENT:
 	@echo   make env            : Create .env from .env.example if missing
 	@echo   make run            : Run the API locally with 'go run'
-	@echo   make seed-hash      : Print an Argon2id hash for ADMIN_PASSWORD (dev-only)
+	@echo   make seed-hash      : Print an Argon2id hash for ADMIN_PASSWORD [dev-only]
 	@echo   make seed-sql       : Provision the admin account via scripts/seed_admin.sql
 	@echo   make build          : Build api and migrate into bin/
 	@echo   make dev            : Build everything, ready to run
@@ -100,14 +105,14 @@ dev-help:
 	@echo   make clean          : Remove bin/ and coverage.out
 
 quality-help:
-	@echo QUALITY (mirrors .github/workflows/ci.yml):
+	@echo QUALITY - mirrors .github/workflows/ci.yml:
 	@echo   make fmt-check      : Verify formatting without editing files
-	@echo   make tidy-check     : Verify go.mod / go.sum are tidy (no writes)
+	@echo   make tidy-check     : Verify go.mod / go.sum are tidy - no writes
 	@echo   make vet            : go vet for unit and integration builds
-	@echo   make lint           : golangci-lint (override GOLANGCI_LINT=path)
+	@echo   make lint           : golangci-lint - override GOLANGCI_LINT=path
 	@echo   make test           : Unit tests
 	@echo   make test-race      : Unit tests with the race detector
-	@echo   make test-integration : Integration tests (needs Docker)
+	@echo   make test-integration : Integration tests - needs Docker
 	@echo   make coverage       : Unit test coverage summary
 	@echo   make static-check   : fmt-check + tidy-check + vet
 	@echo   make swagger        : Generate the OpenAPI spec into docs/swagger
@@ -116,19 +121,19 @@ quality-help:
 
 docker-help:
 	@echo DOCKER COMPOSE:
-	@echo   make up             : Start db + redis + api (no host db/redis ports)
+	@echo   make up             : Start db + redis + api - no host db/redis ports
 	@echo   make up-tools       : Same, plus host ports for db/redis and Mailpit
 	@echo   make stop           : Stop containers, keep data
 	@echo   make down           : Stop and remove containers, keep data
-	@echo   make down-all       : Stop and DELETE volumes (wipes the database)
+	@echo   make down-all       : Stop and DELETE volumes - wipes the database
 	@echo   make ps             : Container status
 	@echo   make logs           : Follow API logs
 	@echo   make rebuild        : Rebuild the image without cache, then start
 	@echo   make db-shell       : psql inside the db container
 	@echo   make redis-cli      : redis-cli inside the redis container
 	@echo   make mail           : Print emails captured by Mailpit
-	@echo   make docker-build   : Build the image and tag it artist-shop-be:<sha>
-	@echo PRODUCTION (VPS, needs .env.production + .env.deploy):
+	@echo   make docker-build   : Build the image and tag it artist-shop-be:[sha]
+	@echo PRODUCTION - VPS, needs .env.production + .env.deploy:
 	@echo   make docker-prod-up     : Start the production stack
 	@echo   make docker-prod-stop   : Stop it, keep data
 	@echo   make docker-prod-down   : Remove containers/network, keep volumes
@@ -136,12 +141,12 @@ docker-help:
 	@echo   make nginx-reload-prod  : Reload nginx in the production stack
 
 migration-help:
-	@echo MIGRATIONS (local Go, needs DATABASE_URL):
+	@echo MIGRATIONS - local Go, needs DATABASE_URL:
 	@echo   make migrate-up     : Apply pending migrations
 	@echo   make migrate-down   : Roll back the last migration
 	@echo   make migrate-status : Show applied/pending migrations
 	@echo   make migrate-version: Print the current schema version
-	@echo MIGRATIONS (inside Docker):
+	@echo MIGRATIONS - inside Docker:
 	@echo   make migrate-up-docker     : Apply migrations in a container
 	@echo   make migrate-status-docker : Migration status in a container
 
@@ -174,7 +179,7 @@ build: ## Build api and migrate into bin/
 
 .PHONY: dev
 dev: build ## Build everything and report how to run it
-	@echo Ready. Run 'make run' (local Go) or 'make up' (Docker).
+	@echo Ready. Run 'make run' for local Go or 'make up' for Docker.
 
 .PHONY: fmt
 fmt: ## Format all Go source files
@@ -264,13 +269,13 @@ ifeq ($(CGO_ENABLED_VALUE),1)
 	@echo Race tests finished.
 else
 	@echo ERROR: the race detector requires CGO_ENABLED=1 and a C compiler.
-	@echo        Install gcc (choco install mingw) or run this target in CI.
+	@echo        Install gcc with [choco install mingw], or run this target in CI.
 	@exit 1
 endif
 
 .PHONY: test-integration
 test-integration: ## Run integration tests (needs Docker)
-	@echo Running integration tests (Docker required)...
+	@echo Running integration tests - Docker required...
 	$(GO) test -count=1 -p 1 -tags integration ./...
 	@echo Integration tests finished.
 
@@ -279,10 +284,8 @@ coverage: ## Report unit test coverage
 	$(GO) test -count=1 -coverprofile=coverage.out ./...
 	$(GO) tool cover -func=coverage.out
 
-# `go test -race` needs cgo and a C compiler. CI (ubuntu) has both; a Windows
-# box without gcc reports CGO_ENABLED=0, so `make check` skips test-race there
-# instead of failing. `make test-race` stays available and explains the problem.
-CGO_ENABLED_VALUE := $(shell $(GO) env CGO_ENABLED)
+# `make test-race` stays available on a box without a C compiler and explains
+# the problem instead of failing.
 ifeq ($(CGO_ENABLED_VALUE),1)
 CHECK_TARGETS := static-check swagger-check lint test test-race test-integration build
 else
@@ -292,10 +295,10 @@ endif
 .PHONY: check
 check: $(CHECK_TARGETS) ## Run the whole CI suite locally
 ifeq ($(CGO_ENABLED_VALUE),1)
-	@echo All checks passed (including test-race).
+	@echo All checks passed - including test-race.
 else
 	@echo All checks passed. SKIPPED test-race: it needs CGO_ENABLED=1 and a C
-	@echo compiler (gcc). Install gcc or run it in CI.
+	@echo compiler - gcc. Install gcc or run it in CI.
 endif
 
 # --- Migrations -------------------------------------------------------------
@@ -328,7 +331,7 @@ up-tools: env ## Start the stack with host ports for db/redis plus Mailpit
 	$(COMPOSE_DEV) up -d --build --wait
 	@echo API:      http://localhost:$(API_PORT)/healthz
 	@echo Mailpit:  http://localhost:$(MAILPIT_UI_PORT)
-	@echo Postgres: localhost:$(DB_PORT) (user $(DB_USER), db $(DB_NAME))
+	@echo Postgres: localhost:$(DB_PORT) - user $(DB_USER), db $(DB_NAME)
 	@echo Redis:    localhost:$(REDIS_PORT)
 	@echo For Mailpit set SMTP_HOST=mailpit and SMTP_PORT=1025 in .env
 

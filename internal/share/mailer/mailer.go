@@ -10,8 +10,11 @@
 package mailer
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"mime"
+	"mime/quotedprintable"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -66,19 +69,44 @@ func (s *SMTPSender) Send(_ context.Context, to, subject, body string) error {
 	if s.username != "" {
 		auth = smtp.PlainAuth("", s.username, s.password, s.host)
 	}
-	message := strings.Join([]string{
-		"To: " + to,
-		"From: " + s.from,
-		"Subject: " + subject,
-		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=\"utf-8\"",
-		"",
-		body,
-	}, "\r\n")
-	if err := smtp.SendMail(addr, auth, s.from, []string{to}, []byte(message)); err != nil {
+	if err := smtp.SendMail(addr, auth, sanitizeHeader(s.from), []string{to}, BuildMessage(to, s.from, subject, body)); err != nil {
 		return err
 	}
 	return nil
+}
+
+// BuildMessage assembles an RFC 5322 message: the subject is encoded so a
+// Vietnamese subject survives every client, and the body is quoted-printable so
+// the HTML's non-ASCII text survives servers that are not 8BITMIME.
+func BuildMessage(to, from, subject, body string) []byte {
+	contentType := "text/plain; charset=\"utf-8\""
+	if strings.Contains(body, "<html") || strings.Contains(body, "<!DOCTYPE") {
+		contentType = "text/html; charset=\"utf-8\""
+	}
+
+	headers := []string{
+		"From: " + sanitizeHeader(from),
+		"To: " + sanitizeHeader(to),
+		"Subject: " + mime.QEncoding.Encode("utf-8", sanitizeHeader(subject)),
+		"MIME-Version: 1.0",
+		"Content-Type: " + contentType,
+		"Content-Transfer-Encoding: quoted-printable",
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(strings.Join(headers, "\r\n"))
+	buf.WriteString("\r\n\r\n")
+	w := quotedprintable.NewWriter(&buf)
+	_, _ = w.Write([]byte(body))
+	_ = w.Close()
+	return buf.Bytes()
+}
+
+// sanitizeHeader removes the line breaks that would let a caller inject a header.
+func sanitizeHeader(value string) string {
+	value = strings.ReplaceAll(value, "\r", "")
+	value = strings.ReplaceAll(value, "\n", "")
+	return strings.TrimSpace(value)
 }
 
 // NewSender returns an SMTP sender when a host is set, otherwise a log sender. The

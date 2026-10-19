@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Mã xác nhận đăng ký tài khoản</title>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+  </style>
+  <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #1E293B;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAFC; padding: 40px 10px;">
+    <tr>
+      <td align="center">
+        <!-- Main Container -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 580px; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05); border: 1px solid #E2E8F0;">
+          
+          <!-- Header with Brand Accent -->
+          <tr>
+            <td style="padding: 36px 40px 24px; text-align: center; border-bottom: 1px solid #F1F5F9;">
+              <div style="display: inline-block; padding: 8px 16px; background-color: #EEF2FF; border-radius: 9999px; margin-bottom: 12px;">
+                <span style="font-size: 13px; font-weight: 600; color: #4F46E5; letter-spacing: 0.5px; text-transform: uppercase;">
+                  {{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}
+                </span>
+              </div>
+              <h1 style="margin: 0; font-size: 24px; font-weight: 700; color: #0F172A; line-height: 1.3;">
+                Xác thực đăng ký tài khoản
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 32px 40px;">
+              <p style="margin: 0 0 16px; font-size: 16px; line-height: 1.6; color: #334155;">
+                Xin chào {{if .DisplayName}}<strong>{{.DisplayName}}</strong>{{else}}bạn{{end}},
+              </p>
+              <p style="margin: 0 0 24px; font-size: 15px; line-height: 1.6; color: #475569;">
+                Chào mừng bạn đến với <strong>{{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}</strong>. Để hoàn tất việc tạo tài khoản{{if .Email}} cho <strong>{{.Email}}</strong>{{end}}, vui lòng nhập mã xác thực bảo mật bên dưới:
+              </p>
+
+              <!-- OTP Code Display Card -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 28px 0;">
+                <tr>
+                  <td align="center" style="background: linear-gradient(135deg, #F8FAFC 0%, #EEF2FF 100%); border: 2px dashed #C7D2FE; border-radius: 12px; padding: 24px;">
+                    <div style="font-size: 13px; font-weight: 600; color: #6366F1; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">
+                      Mã xác thực của bạn
+                    </div>
+                    <div data-code="{{.OTP}}" style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #1E1B4B; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; line-height: 1.2;">
+                      {{.OTP}}
+                    </div>
+                    {{if .ExpiresInMinutes}}
+                    <div style="font-size: 13px; color: #64748B; margin-top: 10px;">
+                      Hiệu lực trong vòng <strong>{{.ExpiresInMinutes}} phút</strong>
+                    </div>
+                    {{end}}
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Notice Box -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #FEF3C7; border-left: 4px solid #F59E0B; border-radius: 4px; padding: 12px 16px; margin-bottom: 24px;">
+                <tr>
+                  <td style="font-size: 13px; line-height: 1.5; color: #92400E;">
+                    <strong>Lưu ý bảo mật:</strong> Không chia sẻ mã xác thực này cho bất kỳ ai. Nếu bạn không yêu cầu đăng ký này, bạn có thể yên tâm bỏ qua email này.
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #475569;">
+                Trân trọng,<br>
+                <span style="font-weight: 600; color: #1E293B;">Đội ngũ {{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #F8FAFC; border-top: 1px solid #E2E8F0; text-align: center;">
+              <p style="margin: 0 0 8px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+                Đây là thư điện tử được gửi tự động từ hệ thống. Vui lòng không trả lời trực tiếp email này.
+              </p>
+              {{if .SupportEmail}}
+              <p style="margin: 0; font-size: 12px; color: #64748B;">
+                Cần trợ giúp? Liên hệ với chúng tôi qua <a href="mailto:{{.SupportEmail}}" style="color: #4F46E5; text-decoration: underline;">{{.SupportEmail}}</a>
+              </p>
+              {{end}}
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

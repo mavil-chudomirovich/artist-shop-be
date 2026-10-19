@@ -96,7 +96,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/sse"
 )
 
-// @title           Artist Shop API
+// @title           Sumichi Art Shop API
 // @version         1.0
 // @description     Modular-monolith backend for the artist shop.
 // @description     Every business endpoint is mounted under /api/v1 and uses the shared success/error envelope.
@@ -233,6 +233,8 @@ func run() error {
 			PendingRegistrationTTL: cfg.Auth.PendingRegistrationTTL,
 			OTPResendCooldown:      cfg.Auth.OTPResendCooldown,
 			OTPTTL:                 cfg.Auth.OTPTTL,
+			AppName:                cfg.AppName,
+			SupportEmail:           cfg.Auth.AdminEmail,
 		},
 	})
 
@@ -454,8 +456,11 @@ func run() error {
 		// the OrderPayment adapter) while this order service is built before it,
 		// so the real PaymentCancellation adapter is assigned after both are
 		// constructed (research D9).
-		ArtistEmail: cfg.Auth.AdminEmail,
-		Mapper:      ordermapper.New(),
+		ArtistEmail:  cfg.Auth.AdminEmail,
+		AppName:      cfg.AppName,
+		FrontendURL:  cfg.FrontendURL,
+		SupportEmail: cfg.Auth.AdminEmail,
+		Mapper:       ordermapper.New(),
 	})
 	orderHandler := orderhttp.New(orderService, logger).SetStreams(orderHub)
 
@@ -537,6 +542,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	orderService.Location = shopLocation
 	adminService := adminimplement.New(adminimplement.Service{
 		// One read per section: the order module answers the revenue/order KPIs,
 		// the daily trend, the category breakdown and the newest orders.

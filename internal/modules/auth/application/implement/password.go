@@ -13,6 +13,7 @@ import (
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 )
 
 // ForgotPassword requests a password reset by emailing a short one-time code.
@@ -40,7 +41,7 @@ func (s *Service) ForgotPassword(ctx context.Context, in dto.EmailInput) error {
 		return err
 	}
 
-	attempts, err := s.issueResetOTP(ctx, normalized)
+	attempts, err := s.issueResetOTP(ctx, normalized, derefString(account.DisplayName))
 	if err != nil {
 		return s.reportResetDeliveryFailure(ctx, account, attempts, err)
 	}
@@ -51,7 +52,7 @@ func (s *Service) ForgotPassword(ctx context.Context, in dto.EmailInput) error {
 // issueResetOTP generates a code, stores only its non-reversible representation
 // against the normalized address, and delivers it with the shared retry budget.
 // It returns the number of delivery attempts made.
-func (s *Service) issueResetOTP(ctx context.Context, to string) (int, error) {
+func (s *Service) issueResetOTP(ctx context.Context, to, displayName string) (int, error) {
 	otp, err := generateOTP()
 	if err != nil {
 		return 0, err
@@ -63,8 +64,19 @@ func (s *Service) issueResetOTP(ctx context.Context, to string) (int, error) {
 	if err := s.ResetOTP.Issue(ctx, to, hash); err != nil {
 		return 0, err
 	}
+	subject, body, err := mailer.RenderPasswordResetOTPEmail(mailer.PasswordResetOTPParams{
+		AppName:          s.Config.AppName,
+		DisplayName:      displayName,
+		Email:            to,
+		OTP:              otp,
+		ExpiresInMinutes: int(s.Config.OTPTTL.Minutes()),
+		SupportEmail:     s.Config.SupportEmail,
+	})
+	if err != nil {
+		subject, body = "Reset your password", "Your password reset code is "+otp
+	}
 	return s.sendWithRetry(ctx, func(ctx context.Context) error {
-		return s.Email.Send(ctx, to, "Reset your password", "Your password reset code is "+otp)
+		return s.Email.Send(ctx, to, subject, body)
 	})
 }
 

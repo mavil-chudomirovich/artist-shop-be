@@ -8103,7 +8103,7 @@ var SwaggerInfo = &swag.Spec{
 	Host:             "",
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
-	Title:            "Artist Shop API",
+	Title:            "Sumichi Art Shop API",
 	Description:      "Modular-monolith backend for the artist shop.\nEvery business endpoint is mounted under /api/v1 and uses the shared success/error envelope.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,

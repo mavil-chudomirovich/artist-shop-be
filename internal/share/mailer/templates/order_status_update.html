@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>{{if .StatusTitle}}{{.StatusTitle}}{{else}}Cập nhật trạng thái đơn hàng{{end}}</title>
+  <style type="text/css">
+    .order-badge { display: inline-block; font-size: 13px; font-weight: 700; color: #FFFFFF; background-color: #64748B !important; border-radius: 9999px; padding: 4px 14px; letter-spacing: 0.3px; }
+    .order-badge-pending { background-color: #F59E0B !important; }
+    .order-badge-payment { background-color: #EC4899 !important; }
+    .order-badge-paid { background-color: #10B981 !important; }
+    .order-badge-shipping { background-color: #8B5CF6 !important; }
+    .order-badge-delivered { background-color: #10B981 !important; }
+    .order-badge-completed { background-color: #059669 !important; }
+    .order-badge-cancelled { background-color: #EF4444 !important; }
+    .order-badge-default { background-color: #64748B !important; }
+  </style>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+  </style>
+  <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #1E293B;">
+  <span style="display: none; max-height: 0px; overflow: hidden;">{{.Preheader}}</span>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAFC; padding: 40px 10px;">
+    <tr>
+      <td align="center">
+        <!-- Main Container -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05); border: 1px solid #E2E8F0;">
+
+          <!-- Brand Header -->
+          <tr>
+            <td style="padding: 32px 40px 20px; text-align: center; border-bottom: 1px solid #F1F5F9;">
+              <div style="display: inline-block; padding: 6px 14px; background-color: #EEF2FF; border-radius: 9999px; margin-bottom: 8px;">
+                <span style="font-size: 13px; font-weight: 600; color: #4F46E5; letter-spacing: 0.5px; text-transform: uppercase;">
+                  {{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}
+                </span>
+              </div>
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #0F172A; line-height: 1.3;">
+                {{if .StatusTitle}}{{.StatusTitle}}{{else}}Cập nhật trạng thái đơn hàng{{end}}
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Main Content -->
+          <tr>
+            <td style="padding: 32px 40px;">
+              <p style="margin: 0 0 16px; font-size: 16px; line-height: 1.6; color: #334155;">
+                Xin chào {{if .CustomerName}}<strong>{{.CustomerName}}</strong>{{else}}quý khách{{end}},
+              </p>
+              <p style="margin: 0 0 24px; font-size: 15px; line-height: 1.6; color: #475569;">
+                {{if .StatusMessage}}{{.StatusMessage}}{{else}}Đơn hàng của bạn đã có cập nhật tiến độ mới nhất từ hệ thống.{{end}}
+              </p>
+
+              <!-- Order Summary Card -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; margin-bottom: 24px;">
+                <tr>
+                  <td style="padding: 20px 24px;">
+                    <!-- Order ID Line -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Mã đơn hàng:</td>
+                        <td align="right">
+                          <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 15px; font-weight: 700; color: #1E293B; background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; padding: 4px 10px; display: inline-block;">
+                            #{{.OrderShortID}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Status Badge Line (No Raw Status Code) -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Trạng thái hiện tại:</td>
+                        <td align="right">
+                          <span class="order-badge order-badge-{{.StatusTone}}">
+                            {{if .StatusBadge}}{{.StatusBadge}}{{else}}Đang xử lý{{end}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    {{if .OrderDate}}
+                    <!-- Order Date -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">{{if .OrderDateLabel}}{{.OrderDateLabel}}{{else}}Cập nhật{{end}}:</td>
+                        <td align="right" style="font-size: 14px; font-weight: 500; color: #334155;">
+                          {{.OrderDate}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+
+                    {{if .Lines}}
+                    <!-- Line Items List -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px dashed #E2E8F0; padding-top: 12px; margin-top: 6px;">
+                      <tr>
+                        <td colspan="2" style="font-size: 13px; font-weight: 600; color: #64748B; padding-bottom: 6px;">Chi tiết sản phẩm:</td>
+                      </tr>
+                      {{range .Lines}}
+                      <tr>
+                        <td style="font-size: 14px; color: #334155; padding: 4px 0;">
+                          {{.ProductName}}{{if .VariantName}} <span style="color: #64748B; font-size: 13px;">({{.VariantName}})</span>{{end}}
+                          <span style="color: #64748B;">× {{.Quantity}}</span>
+                        </td>
+                        <td align="right" style="font-size: 14px; font-weight: 600; color: #1E293B; padding: 4px 0;">
+                          {{.LineTotal}}
+                        </td>
+                      </tr>
+                      {{end}}
+                    </table>
+                    {{end}}
+
+                    {{if .TotalAmount}}
+                    <!-- Total Amount -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px dashed #E2E8F0; padding-top: 12px; margin-top: 6px;">
+                      <tr>
+                        <td style="font-size: 14px; font-weight: 600; color: #1E293B;">Tổng thanh toán:</td>
+                        <td align="right" style="font-size: 16px; font-weight: 700; color: #4F46E5;">
+                          {{.TotalAmount}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+                  </td>
+                </tr>
+              </table>
+
+              {{if .Note}}
+              <!-- Extra Note / Instructions -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F0FDF4; border-left: 4px solid #22C55E; border-radius: 4px; padding: 12px 16px; margin-bottom: 24px;">
+                <tr>
+                  <td style="font-size: 13px; line-height: 1.5; color: #15803D;">
+                    {{.Note}}
+                  </td>
+                </tr>
+              </table>
+              {{end}}
+
+              {{if .OrderURL}}
+              <!-- CTA Button -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 28px 0 16px;">
+                <tr>
+                  <td align="center">
+                    <a href="{{.OrderURL}}" style="display: inline-block; background-color: #4F46E5; color: #FFFFFF; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 10px; padding: 14px 32px; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25);">
+                      Xem chi tiết đơn hàng
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              {{end}}
+
+              <p style="margin: 20px 0 0; font-size: 14px; line-height: 1.6; color: #64748B;">
+                Thân ái,<br>
+                <span style="font-weight: 600; color: #1E293B;">Đội ngũ {{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #F8FAFC; border-top: 1px solid #E2E8F0; text-align: center;">
+              <p style="margin: 0 0 8px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+                Email được gửi tự động để cập nhật trạng thái đơn hàng của bạn tại hệ thống.
+              </p>
+              {{if .SupportEmail}}
+              <p style="margin: 0; font-size: 12px; color: #64748B;">
+                Trung tâm trợ giúp: <a href="mailto:{{.SupportEmail}}" style="color: #4F46E5; text-decoration: underline;">{{.SupportEmail}}</a>
+              </p>
+              {{end}}
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

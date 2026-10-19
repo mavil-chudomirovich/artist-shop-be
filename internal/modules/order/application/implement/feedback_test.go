@@ -16,6 +16,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
 )
 
@@ -513,7 +514,7 @@ func TestSubmitFeedbackNotifiesTheArtist(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("the artist must be emailed once, got %+v", f.notifier.sent)
 	}
-	if !strings.Contains(sent[0].body, order.ID.String()) || !strings.Contains(sent[0].body, "Tranh rất đẹp") {
-		t.Fatalf("the artist's email must name the order and the content, got %q", sent[0].body)
+	if !strings.Contains(sent[0].body, "#"+mailer.ShortOrderID(order.ID.String())) || !strings.Contains(sent[0].body, "Tranh rất đẹp") {
+		t.Fatalf("the artist's email must name the short order code and the content, got %q", sent[0].body)
 	}
 }

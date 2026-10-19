@@ -2,7 +2,7 @@
     "swagger": "2.0",
     "info": {
         "description": "Modular-monolith backend for the artist shop.\nEvery business endpoint is mounted under /api/v1 and uses the shared success/error envelope.",
-        "title": "Artist Shop API",
+        "title": "Sumichi Art Shop API",
         "contact": {},
         "version": "1.0"
     },

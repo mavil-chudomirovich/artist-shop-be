@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -134,7 +135,12 @@ func post(handler http.Handler, path, body, token string) *httptest.ResponseReco
 	return rec
 }
 
+var otpCodePattern = regexp.MustCompile(`data-code="(\d{6})"`)
+
 func lastFieldText(body string) string {
+	if match := otpCodePattern.FindStringSubmatch(body); len(match) == 2 {
+		return match[1]
+	}
 	fields := strings.Fields(body)
 	if len(fields) == 0 {
 		return ""

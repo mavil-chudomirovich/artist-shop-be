@@ -15,6 +15,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/model"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 )
 
 // registrationStatusPendingVerification is the status reported while a
@@ -75,7 +76,7 @@ func (s *Service) StartRegistration(ctx context.Context, in dto.StartRegistratio
 		return dto.RegistrationStartedOutput{}, err
 	}
 
-	attempts, err := s.issueRegistrationOTP(ctx, registrationID, normalized)
+	attempts, err := s.issueRegistrationOTP(ctx, registrationID, normalized, derefString(reg.DisplayName))
 	if err != nil {
 		return dto.RegistrationStartedOutput{}, s.reportRegistrationDeliveryFailure(ctx, registrationID, attempts, err)
 	}
@@ -92,7 +93,7 @@ func (s *Service) StartRegistration(ctx context.Context, in dto.StartRegistratio
 // issueRegistrationOTP generates a code, stores only its non-reversible
 // representation against the registration reference, and delivers it with the
 // shared retry budget (FR-006). It returns the number of delivery attempts made.
-func (s *Service) issueRegistrationOTP(ctx context.Context, registrationID, to string) (int, error) {
+func (s *Service) issueRegistrationOTP(ctx context.Context, registrationID, to, displayName string) (int, error) {
 	otp, err := generateOTP()
 	if err != nil {
 		return 0, err
@@ -104,8 +105,19 @@ func (s *Service) issueRegistrationOTP(ctx context.Context, registrationID, to s
 	if err := s.Registration.IssueOTP(ctx, registrationID, hash); err != nil {
 		return 0, err
 	}
+	subject, body, err := mailer.RenderRegisterOTPEmail(mailer.RegisterOTPParams{
+		AppName:          s.Config.AppName,
+		DisplayName:      displayName,
+		Email:            to,
+		OTP:              otp,
+		ExpiresInMinutes: int(s.Config.OTPTTL.Minutes()),
+		SupportEmail:     s.Config.SupportEmail,
+	})
+	if err != nil {
+		subject, body = "Confirm your email", "Your confirmation code is "+otp
+	}
 	return s.sendWithRetry(ctx, func(ctx context.Context) error {
-		return s.Email.Send(ctx, to, "Confirm your email", "Your confirmation code is "+otp)
+		return s.Email.Send(ctx, to, subject, body)
 	})
 }
 
@@ -233,7 +245,7 @@ func (s *Service) ResendRegistrationOTP(ctx context.Context, in dto.Registration
 	if err := s.Registration.CanResend(ctx, in.RegistrationID); err != nil {
 		return err
 	}
-	attempts, err := s.issueRegistrationOTP(ctx, in.RegistrationID, reg.Email)
+	attempts, err := s.issueRegistrationOTP(ctx, in.RegistrationID, reg.Email, derefString(reg.DisplayName))
 	if err != nil {
 		return s.reportRegistrationDeliveryFailure(ctx, in.RegistrationID, attempts, err)
 	}

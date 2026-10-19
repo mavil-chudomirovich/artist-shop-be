@@ -82,7 +82,7 @@ $body = (Invoke-RestMethod "http://localhost:8025/api/v1/message/$($msgs[0].ID)"
 
 `register` trả `202` chung chung, nên **không** suy ra được gì từ body — phải đọc thư.
 
-1. `POST /auth/register` → `202`. Thư `Confirm your email` xuất hiện trong Mailpit.
+1. `POST /auth/register` → `202`. Thư `[Sumichi Art Shop] Mã xác thực đăng ký tài khoản` xuất hiện trong Mailpit.
 2. Đọc OTP 6 chữ số từ thư.
 3. Đăng nhập **trước** khi xác minh → `401 AUTH_INVALID_CREDENTIALS` (chưa có tài khoản).
 4. `POST /auth/register/verify-otp` với `{ registrationId, otp }` → `200`.
@@ -103,7 +103,7 @@ gửi **thành công** thì nó được giữ.
 
 ### Đặt lại mật khẩu
 
-`POST /auth/password/forgot` → `202`, thư `Reset your password` chứa **mã 6 chữ số** (không
+`POST /auth/password/forgot` → `202`, thư `[Sumichi Art Shop] Yêu cầu đặt lại mật khẩu` chứa **mã 6 chữ số** (không
 phải reset token). Đọc mã từ thư theo cách trên, rồi:
 
 1. `POST /auth/password/forgot/verify-otp` với `{ email, otp }` → `200` kèm `resetToken` +

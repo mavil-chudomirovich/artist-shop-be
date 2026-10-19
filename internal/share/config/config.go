@@ -21,7 +21,9 @@ const (
 // Config is the fully-resolved runtime configuration. Every value originates
 // from the environment; nothing environment-specific is compiled in.
 type Config struct {
-	AppEnv string `env:"APP_ENV" envDefault:"development"`
+	AppEnv      string `env:"APP_ENV" envDefault:"development"`
+	AppName     string `env:"APP_NAME" envDefault:"Sumichi Art Shop"`
+	FrontendURL string `env:"FRONTEND_URL" envDefault:"http://localhost:3000"`
 
 	HTTP       HTTPConfig `envPrefix:"HTTP_"`
 	Database   DatabaseConfig

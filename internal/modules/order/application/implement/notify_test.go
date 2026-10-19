@@ -13,6 +13,7 @@ import (
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 )
 
 // This file is the use-case contract of the notification behaviour: both sides are
@@ -79,11 +80,15 @@ func enableNotifications(svc *Service, notifier *fakeNotifier, customerID uuid.U
 // its body, so the note is factual rather than a bare ping.
 func assertEmailNames(t *testing.T, message sentEmail, orderID, status string) {
 	t.Helper()
-	if !strings.Contains(message.subject, orderID) || !strings.Contains(message.body, orderID) {
-		t.Fatalf("the email must name the order %s, got subject %q body %q", orderID, message.subject, message.body)
+	if !strings.Contains(message.subject, "#"+mailer.ShortOrderID(orderID)) {
+		t.Fatalf("the email must name the short order code in its subject, got subject %q", message.subject)
 	}
-	if !strings.Contains(message.body, status) {
-		t.Fatalf("the email must name the status %s, got body %q", status, message.body)
+	if !strings.Contains(message.body, "#"+mailer.ShortOrderID(orderID)) {
+		t.Fatalf("the email must name the short order code in its body, got subject %q body %q", message.subject, message.body)
+	}
+	badge, _, title, _ := mailer.HumanizeOrderStatus(status)
+	if !strings.Contains(message.body, badge) && !strings.Contains(message.body, title) {
+		t.Fatalf("the email must carry the friendly status %q for %s, got body %q", badge, status, message.body)
 	}
 }
 
@@ -177,6 +182,17 @@ func TestMarkPaidEmailsTheCustomer(t *testing.T) {
 		t.Fatalf("paying must email the customer once, got %+v", notifier.sent)
 	}
 	assertEmailNames(t, toCustomer[0], order.ID.String(), string(constant.StatusPaid))
+
+	toAdmin := messagesTo(notifier, artistEmail)
+	if len(toAdmin) != 1 {
+		t.Fatalf("paying must email the admin once, got %+v", notifier.sent)
+	}
+	if !strings.Contains(toAdmin[0].subject, "#"+mailer.ShortOrderID(order.ID.String())) {
+		t.Fatalf("the admin's note must name the short order code, got subject %q", toAdmin[0].subject)
+	}
+	if !strings.Contains(toAdmin[0].body, "Đã thanh toán") {
+		t.Fatalf("the admin's note must name the paid state, got body %q", toAdmin[0].body)
+	}
 }
 
 // FR-021: dispatching then confirming receipt of a delivered order emails the
@@ -273,8 +289,8 @@ func TestFeedbackEmailsTheArtist(t *testing.T) {
 	if len(toArtist) != 1 {
 		t.Fatalf("a feedback must email the artist once, got %+v", notifier.sent)
 	}
-	if !strings.Contains(toArtist[0].subject, order.ID.String()) || !strings.Contains(toArtist[0].body, order.ID.String()) {
-		t.Fatalf("the artist's note must name the order %s, got subject %q body %q", order.ID, toArtist[0].subject, toArtist[0].body)
+	if !strings.Contains(toArtist[0].subject, "#"+mailer.ShortOrderID(order.ID.String())) || !strings.Contains(toArtist[0].body, "#"+mailer.ShortOrderID(order.ID.String())) {
+		t.Fatalf("the artist's note must name the short order code %s, got subject %q body %q", order.ID, toArtist[0].subject, toArtist[0].body)
 	}
 	if !strings.Contains(toArtist[0].body, content) {
 		t.Fatalf("the artist's note must carry the feedback, got body %q", toArtist[0].body)

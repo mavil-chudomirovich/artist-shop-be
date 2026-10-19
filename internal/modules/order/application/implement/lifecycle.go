@@ -92,6 +92,7 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 	// sends nothing.
 	if paid != nil {
 		s.notifyCustomerStatusChange(ctx, paid)
+		s.notifyAdminPaymentReceived(ctx, paid)
 		s.publishStatusChanged(ctx, paid, constant.StatusPaymentPending)
 	}
 	return nil

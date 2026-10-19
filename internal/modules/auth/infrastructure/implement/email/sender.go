@@ -10,12 +10,12 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"strconv"
-	"strings"
 
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/interface"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/config"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 )
 
 // LogSender logs messages instead of sending them (local/dev). It implements
@@ -56,16 +56,7 @@ func (s *SMTPSender) Send(_ context.Context, to, subject, body string) error {
 	if s.username != "" {
 		auth = smtp.PlainAuth("", s.username, s.password, s.host)
 	}
-	message := strings.Join([]string{
-		"To: " + to,
-		"From: " + s.from,
-		"Subject: " + subject,
-		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=\"utf-8\"",
-		"",
-		body,
-	}, "\r\n")
-	if err := smtp.SendMail(addr, auth, s.from, []string{to}, []byte(message)); err != nil {
+	if err := smtp.SendMail(addr, auth, s.from, []string{to}, mailer.BuildMessage(to, s.from, subject, body)); err != nil {
 		return classifySendError(err)
 	}
 	return nil

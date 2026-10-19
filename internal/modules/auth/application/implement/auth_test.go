@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,12 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/access"
 )
 
+var otpCodePattern = regexp.MustCompile(`data-code="(\d{6})"`)
+
 func lastField(body string) string {
+	if match := otpCodePattern.FindStringSubmatch(body); len(match) == 2 {
+		return match[1]
+	}
 	fields := strings.Fields(body)
 	if len(fields) == 0 {
 		return ""

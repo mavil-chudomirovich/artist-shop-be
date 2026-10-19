@@ -1625,7 +1625,7 @@ info:
   description: |-
     Modular-monolith backend for the artist shop.
     Every business endpoint is mounted under /api/v1 and uses the shared success/error envelope.
-  title: Artist Shop API
+  title: Sumichi Art Shop API
   version: "1.0"
 paths:
   /admin/categories:

@@ -97,6 +97,16 @@ type Service struct {
 	// ArtistEmail is the shop operator's address, the recipient of the
 	// confirmation-needed note (research D9).
 	ArtistEmail string
+	// AppName is the shop name rendered in the notification emails.
+	AppName string
+	// FrontendURL is the customer-facing origin the email call-to-action links to.
+	FrontendURL string
+	// SupportEmail is the reply-to address shown in the notification emails. It
+	// falls back to ArtistEmail when unset.
+	SupportEmail string
+	// Location formats the timestamps shown in the notification emails. It falls
+	// back to UTC when unset.
+	Location *time.Location
 	// Mapper is the single conversion point between models and DTOs.
 	Mapper *mapper.Mapper
 }

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>Khách hàng đã thanh toán đơn hàng #{{.OrderShortID}}</title>
+  <!--[if mso]>
+  <style type="text/css">
+    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
+  </style>
+  <![endif]-->
+</head>
+<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color: #1E293B;">
+  <span style="display: none; max-height: 0px; overflow: hidden;">Khách hàng đã thanh toán - Đơn hàng #{{.OrderShortID}}</span>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAFC; padding: 40px 10px;">
+    <tr>
+      <td align="center">
+        <!-- Main Container -->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05); border: 1px solid #E2E8F0;">
+
+          <!-- Header with Payment Accent -->
+          <tr>
+            <td style="padding: 32px 40px 20px; text-align: center; border-bottom: 1px solid #F1F5F9;">
+              <div style="display: inline-block; padding: 6px 14px; background-color: #ECFDF5; border-radius: 9999px; margin-bottom: 8px;">
+                <span style="font-size: 13px; font-weight: 600; color: #059669; letter-spacing: 0.5px; text-transform: uppercase;">
+                  Đã Nhận Thanh Toán
+                </span>
+              </div>
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #0F172A; line-height: 1.3;">
+                Khách hàng đã thanh toán đơn hàng
+              </h1>
+            </td>
+          </tr>
+
+          <!-- Main Content -->
+          <tr>
+            <td style="padding: 32px 40px;">
+              <p style="margin: 0 0 16px; font-size: 16px; line-height: 1.6; color: #334155;">
+                Xin chào {{if .AdminName}}<strong>{{.AdminName}}</strong>{{else}}Quản trị viên{{end}},
+              </p>
+              <p style="margin: 0 0 24px; font-size: 15px; line-height: 1.6; color: #475569;">
+                Đơn hàng dưới đây đã được khách hàng thanh toán thành công trên <strong>{{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}</strong>. Hãy chuẩn bị tác phẩm để giao:
+              </p>
+
+              <!-- Order Summary Card -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; margin-bottom: 24px;">
+                <tr>
+                  <td style="padding: 20px 24px;">
+                    <!-- Order ID Line -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Mã đơn hàng:</td>
+                        <td align="right">
+                          <span style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 15px; font-weight: 700; color: #1E293B; background-color: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 6px; padding: 4px 10px; display: inline-block;">
+                            #{{.OrderShortID}}
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <!-- Payment Status Badge -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Trạng thái:</td>
+                        <td align="right">
+                          <span style="display: inline-block; font-size: 13px; font-weight: 700; color: #FFFFFF; background-color: #10B981; border-radius: 9999px; padding: 4px 14px; letter-spacing: 0.3px;">
+                            Đã thanh toán
+                          </span>
+                        </td>
+                      </tr>
+                    </table>
+
+                    {{if .CustomerName}}
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Khách hàng:</td>
+                        <td align="right" style="font-size: 14px; font-weight: 600; color: #334155;">
+                          {{.CustomerName}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+
+                    {{if .CustomerEmail}}
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Email:</td>
+                        <td align="right" style="font-size: 14px; color: #475569;">
+                          {{.CustomerEmail}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+
+                    {{if .PaidAt}}
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 14px;">
+                      <tr>
+                        <td style="font-size: 14px; color: #64748B;">Thời gian thanh toán:</td>
+                        <td align="right" style="font-size: 14px; color: #475569;">
+                          {{.PaidAt}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+
+                    {{if .Lines}}
+                    <!-- Line Items List -->
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px dashed #E2E8F0; padding-top: 12px; margin-top: 6px;">
+                      <tr>
+                        <td colspan="2" style="font-size: 13px; font-weight: 600; color: #64748B; padding-bottom: 6px;">Chi tiết sản phẩm:</td>
+                      </tr>
+                      {{range .Lines}}
+                      <tr>
+                        <td style="font-size: 14px; color: #334155; padding: 4px 0;">
+                          {{.ProductName}}{{if .VariantName}} <span style="color: #64748B; font-size: 13px;">({{.VariantName}})</span>{{end}}
+                          <span style="color: #64748B;">× {{.Quantity}}</span>
+                        </td>
+                        <td align="right" style="font-size: 14px; font-weight: 600; color: #1E293B; padding: 4px 0;">
+                          {{.LineTotal}}
+                        </td>
+                      </tr>
+                      {{end}}
+                    </table>
+                    {{end}}
+
+                    {{if .TotalAmount}}
+                    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px dashed #E2E8F0; padding-top: 12px; margin-top: 6px;">
+                      <tr>
+                        <td style="font-size: 14px; font-weight: 600; color: #1E293B;">Tổng đã nhận:</td>
+                        <td align="right" style="font-size: 16px; font-weight: 700; color: #059669;">
+                          {{.TotalAmount}}
+                        </td>
+                      </tr>
+                    </table>
+                    {{end}}
+                  </td>
+                </tr>
+              </table>
+
+              {{if .OrderURL}}
+              <!-- CTA Button -->
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 28px 0 16px;">
+                <tr>
+                  <td align="center">
+                    <a href="{{.OrderURL}}" style="display: inline-block; background-color: #4F46E5; color: #FFFFFF; font-size: 15px; font-weight: 600; text-decoration: none; border-radius: 10px; padding: 14px 32px; box-shadow: 0 4px 10px rgba(79, 70, 229, 0.25);">
+                      Xem đơn hàng
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              {{end}}
+
+              <p style="margin: 20px 0 0; font-size: 14px; line-height: 1.6; color: #64748B;">
+                Thân ái,<br>
+                <span style="font-weight: 600; color: #1E293B;">Đội ngũ {{if .AppName}}{{.AppName}}{{else}}Sumichi Art Shop{{end}}</span>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 40px; background-color: #F8FAFC; border-top: 1px solid #E2E8F0; text-align: center;">
+              <p style="margin: 0 0 8px; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+                Thông báo tự động gửi đến quản trị viên của hệ thống.
+              </p>
+              {{if .SupportEmail}}
+              <p style="margin: 0; font-size: 12px; color: #64748B;">
+                Bộ phận hỗ trợ: <a href="mailto:{{.SupportEmail}}" style="color: #4F46E5; text-decoration: underline;">{{.SupportEmail}}</a>
+              </p>
+              {{end}}
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
