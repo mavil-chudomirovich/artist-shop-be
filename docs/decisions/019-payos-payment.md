@@ -178,8 +178,16 @@ thái chỉ đổi qua phương thức chuyển của entity; `status` là **che
 | Event bus cho sự kiện huỷ đơn | Constitution VII: không dựng máy móc khi chưa đo được nhu cầu; một hợp đồng đủ |
 
 ## 5. Bổ sung (2026-10-11)
-
 Module 08 là **module cuối của V1.0**. Sau nó, toàn bộ `00`–`08` đã được giao (xem
 `docs/modules.md`). Các việc cố ý hoãn của feature này — hoàn tiền, đa tiền tệ, thanh toán định kỳ, thanh
 toán end-to-end với provider thật, đăng ký URL webhook một lần (`POST /confirm-webhook`), khôi phục tự
 động link mồ côi, và đường "áp tay" cho `UNMATCHED` — nằm ở `specs/011-order-payment/deferred.md`.
+
+## 6. Bổ sung (2026-10-19) — link PayOS tự hết hạn theo `payment_expires_at`
+
+Trước đây body `POST /v2/payment-requests` không gửi `expiredAt`, nên hạn duy nhất là hạn shop-side
+(`payment_expires_at = confirmed_at + 60 phút`, sweeper 30s + `CancelForOrder` best-effort). Nay `Start`
+gửi `expiredAt = payment_expires_at` (Unix seconds, nguồn `contracts.OrderPaymentTarget`), nên link/QR
+phía PayOS tự hết hạn cùng cửa sổ với web. `expiredAt` **không** nằm trong chuỗi ký (doc PayOS chỉ ký 5
+field `amount/cancelUrl/description/orderCode/returnUrl`); deadline zero thì bỏ field, giữ hành vi cũ.
+Quyết định chi tiết ở `specs/011-order-payment/research.md` §D2 (bổ sung).

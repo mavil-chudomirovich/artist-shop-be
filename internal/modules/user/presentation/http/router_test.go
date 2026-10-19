@@ -467,7 +467,7 @@ func TestAddressRoutesTakeTheAccountFromTheSession(t *testing.T) {
 	svc := newStub(access.RoleCustomer)
 	router := usersRouter(svc, &recordingAuditor{}, openLimits)
 	otherCustomerAddress := uuid.New()
-	body := `{"recipientName":"Nguyen Van A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`
+	body := `{"recipientName":"Nguyen Van A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`
 
 	rec := doJSON(router, http.MethodPost, "/me/addresses", body, "token")
 	if rec.Code != http.StatusCreated {
@@ -668,6 +668,7 @@ func TestAddressCreateRequiresEveryMandatoryMember(t *testing.T) {
 		"provinceCode":   "79",
 		"wardCode":       "26734",
 		"streetAddress":  "12 Nguyen Hue",
+		"facebookUrl":    "https://facebook.com/nguyen.van.a",
 	}
 	for field := range complete {
 		t.Run(field, func(t *testing.T) {
@@ -746,7 +747,7 @@ func TestAddressListDefaultsAndForwardsTheWindow(t *testing.T) {
 }
 
 func TestAddressWriteRoutesAreRateLimited(t *testing.T) {
-	body := `{"recipientName":"Nguyen Van A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`
+	body := `{"recipientName":"Nguyen Van A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`
 	limits := config.UserConfig{AvatarUploadRatePerHour: 1000, AddressWriteRatePerMinute: 1}
 	svc := newStub(access.RoleCustomer)
 	router := usersRouter(svc, &recordingAuditor{}, limits)

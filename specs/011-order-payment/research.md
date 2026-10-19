@@ -40,6 +40,13 @@ amount=$amount&cancelUrl=$cancelUrl&description=$description&orderCode=$orderCod
 `amount` and `orderCode` are integers; `description` is short (the reference notes a 9-character limit
 for non-PayOS-linked bank accounts), so it carries a stable, short reference.
 
+**Supplement (2026-10-19 — provider-side expiry)**: the create-link body also carries an optional
+`expiredAt` (Unix seconds, Int32). It is **not** part of the signature above: the documented signature
+covers only the five fields. The shop sends `expiredAt = payment_expires_at` (the order's own deadline
+from `OrderPaymentTarget`), so the PayOS link expires with the shop-side 60-minute window instead of
+living on after the sweeper cancels the order. A zero deadline omits the field, keeping the previous
+behaviour.
+
 **Rationale**: This is the algorithm the reference states for `create-payment-link`.
 
 **Alternatives considered**: Signing the whole body — rejected: the reference fixes the exact field set

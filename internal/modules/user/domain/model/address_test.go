@@ -30,6 +30,7 @@ func validDraft() AddressDraft {
 		WardCode:       "26734",
 		WardName:       "Phuong Ben Nghe",
 		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 	}
 }
 
@@ -53,6 +54,179 @@ func editPtr(raw string) *string {
 // be stated as a number rather than counted by hand.
 func repeat(char string, n int) string {
 	return strings.Repeat(char, n)
+}
+
+// A new address stores the trimmed Facebook contact link: the shop uses it to
+// confirm the order, so every new address must carry a real one (FR-001).
+func TestNewAddressTrimsAndStoresTheFacebookURL(t *testing.T) {
+	draft := validDraft()
+	draft.FacebookURL = "  https://facebook.com/nguyen.van.a  "
+
+	address, err := NewAddress(uuid.New(), draft, fixedNow)
+
+	if err != nil {
+		t.Fatalf("NewAddress: %v", err)
+	}
+	if address.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the trimmed Facebook URL to be stored, got %q", address.FacebookURL)
+	}
+}
+
+// The Facebook link is required and must be a valid https Facebook URL (FR-001,
+// FR-002, FR-003, FR-007): blank or whitespace-only is missing, an overlong link
+// is refused, anything that is not an https facebook.com/fb.com link with content
+// after the host is refused, and the legacy placeholder is never accepted on a
+// new write. Every refusal names the facebookUrl member.
+func TestNewAddressRefusesAnInvalidFacebookURL(t *testing.T) {
+	overlong := "https://facebook.com/" + repeat("a", maxFacebookURLRunes)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"blank", ""},
+		{"whitespace-only", "   \t\n "},
+		{"one character over the ceiling", overlong},
+		{"missing scheme", "facebook.com/nguyen.van.a"},
+		{"http scheme", "http://facebook.com/nguyen.van.a"},
+		{"ftp scheme", "ftp://facebook.com/nguyen.van.a"},
+		{"foreign host", "https://example.com/nguyen.van.a"},
+		{"lookalike host", "https://faceboook.com/nguyen.van.a"},
+		{"host with a Facebook suffix", "https://myfacebook.com/nguyen.van.a"},
+		{"evil subdomain", "https://facebook.com.evil.com/nguyen.van.a"},
+		{"bare host without a path", "https://facebook.com"},
+		{"host with only a slash", "https://facebook.com/"},
+		{"the legacy placeholder", "https://facebook.com/unknown"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			draft := validDraft()
+			draft.FacebookURL = tc.value
+
+			address, err := NewAddress(uuid.New(), draft, fixedNow)
+
+			if address != nil {
+				t.Fatalf("a refused draft must yield no address, got %+v", address)
+			}
+			if !errors.Is(err, domainerr.ErrAddressInvalid) {
+				t.Fatalf("expected ErrAddressInvalid, got %v", err)
+			}
+			var invalid *domainerr.AddressFieldError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("expected an *AddressFieldError, got %v", err)
+			}
+			if invalid.Field != FieldFacebookURL {
+				t.Fatalf("expected the error to name %q, got %q", FieldFacebookURL, invalid.Field)
+			}
+		})
+	}
+}
+
+// The overlong refusal states the ceiling in characters, like every other
+// maxLength refusal, so the client knows what to shorten (FR-003, FR-020).
+func TestTheFacebookURLLengthRejectionExplainsTheCeilingInCharacters(t *testing.T) {
+	draft := validDraft()
+	draft.FacebookURL = "https://facebook.com/" + repeat("a", maxFacebookURLRunes)
+
+	_, err := NewAddress(uuid.New(), draft, fixedNow)
+
+	var invalid *domainerr.AddressFieldError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected the typed carrier, got %v", err)
+	}
+	if invalid.Field != FieldFacebookURL {
+		t.Fatalf("expected the error to name %q, got %q", FieldFacebookURL, invalid.Field)
+	}
+	if want := limitIssue(maxFacebookURLRunes); invalid.Issue != want {
+		t.Fatalf("expected the issue %q, got %q", want, invalid.Issue)
+	}
+}
+
+// A blank Facebook link is reported as missing rather than as malformed, so the
+// required rule keeps reporting the problem the client has.
+func TestABlankFacebookURLIsReportedAsMissing(t *testing.T) {
+	draft := validDraft()
+	draft.FacebookURL = "  "
+
+	_, err := NewAddress(uuid.New(), draft, fixedNow)
+
+	var invalid *domainerr.AddressFieldError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected the typed carrier, got %v", err)
+	}
+	if invalid.Field != FieldFacebookURL || invalid.Issue != requiredIssue {
+		t.Fatalf("expected %q to be reported as %q, got %q %q",
+			FieldFacebookURL, requiredIssue, invalid.Field, invalid.Issue)
+	}
+}
+
+// Subdomains of facebook.com, the fb.com short domain, an uppercase host and an
+// explicit port are all the same Facebook link in different spellings, so they
+// are accepted as long as content follows the host (FR-002). The stored value
+// keeps what the customer typed (trimmed), not a normalised form.
+func TestNewAddressAcceptsFacebookURLVariants(t *testing.T) {
+	cases := []string{
+		"https://facebook.com/x",
+		"https://www.facebook.com/x",
+		"https://m.facebook.com/x",
+		"https://fb.com/x",
+		"https://FACEBOOK.COM/x",
+		"https://Facebook.Com/Nguyen.Van.A",
+		"https://facebook.com:8443/x",
+		"https://www.fb.com/x",
+	}
+
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			draft := validDraft()
+			draft.FacebookURL = value
+
+			address, err := NewAddress(uuid.New(), draft, fixedNow)
+
+			if err != nil {
+				t.Fatalf("a valid Facebook link must be accepted: %v", err)
+			}
+			if address.FacebookURL != value {
+				t.Fatalf("expected the link to be stored unchanged, got %q", address.FacebookURL)
+			}
+		})
+	}
+}
+
+// The Facebook ceiling is the exact number the contract advertises as maxLength
+// on facebookUrl, for the same reason the other ceilings are pinned: a constant
+// changed to the wrong number would otherwise keep the suite green while the
+// server enforced a limit different from the one it advertises.
+func TestTheFacebookURLCeilingMatchesTheAdvertisedMaxLength(t *testing.T) {
+	if maxFacebookURLRunes != 500 {
+		t.Errorf("facebookUrl: the contract advertises maxLength 500, the entity enforces %d",
+			maxFacebookURLRunes)
+	}
+}
+
+// A rejected Facebook link yields no address at all, so a caller cannot persist
+// half of one (FR-007).
+func TestARejectedFacebookURLPersistsNoAddress(t *testing.T) {
+	draft := validDraft()
+	draft.FacebookURL = "https://example.com/nguyen.van.a"
+
+	address, err := NewAddress(uuid.New(), draft, fixedNow)
+
+	if address != nil {
+		t.Fatalf("a refused draft must yield no address, got %+v", address)
+	}
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected ErrAddressInvalid, got %v", err)
+	}
+}
+
+// The field key the entity reports for the Facebook link is the contract's
+// member name, so presentation can put it straight into the field detail
+// without a second vocabulary that could drift (FR-020).
+func TestFacebookURLFieldKeyMatchesTheContractMemberName(t *testing.T) {
+	if FieldFacebookURL != "facebookUrl" {
+		t.Errorf("field key %q does not match the contract member name %q", FieldFacebookURL, "facebookUrl")
+	}
 }
 
 // A new address is trimmed, carries the normalised recipient phone, starts
@@ -482,8 +656,163 @@ func TestARejectedEditLeavesThePreviousDefaultAndValuesInPlace(t *testing.T) {
 	}
 }
 
-// Marking an address default is the only way the flag is ever set, which is what
-// keeps the transition auditable and refuses the one state the invariant forbids.
+// T013 [US2]: clearing the Facebook link on edit is refused, and the refusal
+// leaves the entity exactly as it was — including the default flag, which is
+// the FR-004 edge case (a default address edited into an invalid state keeps
+// its previous default).
+func TestApplyRejectsClearingTheFacebookURLAndLeavesTheEntityUnchanged(t *testing.T) {
+	for _, value := range []string{"", "   \t\n "} {
+		t.Run("clear to "+quoteForName(value), func(t *testing.T) {
+			address := mustAddress(t, uuid.New())
+			if err := address.BecomeDefault(); err != nil {
+				t.Fatalf("BecomeDefault: %v", err)
+			}
+			before := *address
+
+			err := address.Apply(AddressEdit{FacebookURL: editPtr(value)}, fixedNow.Add(time.Hour))
+
+			if !errors.Is(err, domainerr.ErrAddressInvalid) {
+				t.Fatalf("expected ErrAddressInvalid, got %v", err)
+			}
+			var invalid *domainerr.AddressFieldError
+			if !errors.As(err, &invalid) || invalid.Field != FieldFacebookURL {
+				t.Fatalf("expected the error to name %q, got %v", FieldFacebookURL, err)
+			}
+			if !address.IsDefault {
+				t.Fatal("a rejected edit must leave the previous default in place")
+			}
+			if *address != before {
+				t.Fatalf("a rejected edit changed the entity:\n before %+v\n after  %+v", before, *address)
+			}
+		})
+	}
+}
+
+// quoteForName renders a blank fixture value readably in a subtest name.
+func quoteForName(value string) string {
+	if strings.TrimSpace(value) == "" && value != "" {
+		return "whitespace-only"
+	}
+	return "empty"
+}
+
+// T013 [US2]: omitting the Facebook link on a normal address keeps the stored
+// link while the named members change (FR-004: an absent field keeps its value).
+func TestApplyWithoutAFacebookURLEditKeepsTheStoredLink(t *testing.T) {
+	address := mustAddress(t, uuid.New())
+	later := fixedNow.Add(2 * time.Hour)
+
+	err := address.Apply(AddressEdit{StreetAddress: editPtr("1 Le Loi")}, later)
+
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if address.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("an omitted link must keep its value, got %q", address.FacebookURL)
+	}
+	if address.StreetAddress != "1 Le Loi" {
+		t.Fatalf("the named member must change, got %q", address.StreetAddress)
+	}
+	if !address.UpdatedAt.Equal(later) {
+		t.Fatalf("expected the edit to stamp the row, got %v", address.UpdatedAt)
+	}
+}
+
+// T013 [US2]: the FR-004 exception — an address still carrying the legacy
+// placeholder refuses every edit, even one that omits the link, until the
+// customer supplies a real one. The entity is left untouched.
+func TestApplyWithoutAFacebookURLEditOnASentinelAddressIsRejected(t *testing.T) {
+	address := mustAddress(t, uuid.New())
+	if err := address.BecomeDefault(); err != nil {
+		t.Fatalf("BecomeDefault: %v", err)
+	}
+	// NewAddress never produces the placeholder (FR-002); only the one-time
+	// backfill leaves it behind, so the test stages it directly.
+	address.FacebookURL = sentinelFacebookURL
+	before := *address
+
+	err := address.Apply(AddressEdit{StreetAddress: editPtr("1 Le Loi")}, fixedNow.Add(time.Hour))
+
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected ErrAddressInvalid, got %v", err)
+	}
+	var invalid *domainerr.AddressFieldError
+	if !errors.As(err, &invalid) || invalid.Field != FieldFacebookURL {
+		t.Fatalf("expected the error to name %q, got %v", FieldFacebookURL, err)
+	}
+	if !address.IsDefault {
+		t.Fatal("a rejected edit must leave the previous default in place")
+	}
+	if *address != before {
+		t.Fatalf("a rejected edit changed the entity:\n before %+v\n after  %+v", before, *address)
+	}
+}
+
+// T013 [US2]: a supplied link that is not a valid Facebook URL is refused like
+// on create, and the stored address — including the default flag — survives.
+func TestApplyRejectsAnInvalidNewFacebookURL(t *testing.T) {
+	overlong := "https://facebook.com/" + repeat("a", maxFacebookURLRunes)
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"missing scheme", "facebook.com/nguyen.van.a"},
+		{"http scheme", "http://facebook.com/nguyen.van.a"},
+		{"ftp scheme", "ftp://facebook.com/nguyen.van.a"},
+		{"foreign host", "https://example.com/nguyen.van.a"},
+		{"lookalike host", "https://faceboook.com/nguyen.van.a"},
+		{"host with a Facebook suffix", "https://myfacebook.com/nguyen.van.a"},
+		{"evil subdomain", "https://facebook.com.evil.com/nguyen.van.a"},
+		{"bare host without a path", "https://facebook.com"},
+		{"host with only a slash", "https://facebook.com/"},
+		{"the legacy placeholder", "https://facebook.com/unknown"},
+		{"one character over the ceiling", overlong},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			address := mustAddress(t, uuid.New())
+			if err := address.BecomeDefault(); err != nil {
+				t.Fatalf("BecomeDefault: %v", err)
+			}
+			before := *address
+
+			err := address.Apply(AddressEdit{FacebookURL: editPtr(tc.value)}, fixedNow.Add(time.Hour))
+
+			if !errors.Is(err, domainerr.ErrAddressInvalid) {
+				t.Fatalf("expected ErrAddressInvalid, got %v", err)
+			}
+			var invalid *domainerr.AddressFieldError
+			if !errors.As(err, &invalid) || invalid.Field != FieldFacebookURL {
+				t.Fatalf("expected the error to name %q, got %v", FieldFacebookURL, err)
+			}
+			if !address.IsDefault {
+				t.Fatal("a rejected edit must leave the previous default in place")
+			}
+			if *address != before {
+				t.Fatalf("a rejected edit changed the entity:\n before %+v\n after  %+v", before, *address)
+			}
+		})
+	}
+}
+
+// T013 [US2]: a new valid Facebook link is stored, trimmed, like on create.
+func TestApplyStoresANewValidFacebookURL(t *testing.T) {
+	address := mustAddress(t, uuid.New())
+	later := fixedNow.Add(time.Hour)
+
+	err := address.Apply(AddressEdit{FacebookURL: editPtr("  https://fb.com/nguyen.van.b  ")}, later)
+
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if address.FacebookURL != "https://fb.com/nguyen.van.b" {
+		t.Fatalf("expected the trimmed link to be stored, got %q", address.FacebookURL)
+	}
+	if !address.UpdatedAt.Equal(later) {
+		t.Fatalf("expected the edit to stamp the row, got %v", address.UpdatedAt)
+	}
+}
 func TestBecomeDefaultSetsTheFlagAndRefusesAHiddenAddress(t *testing.T) {
 	address := mustAddress(t, uuid.New())
 
@@ -779,6 +1108,7 @@ func TestAddressFieldKeysMatchTheContractMemberNames(t *testing.T) {
 		FieldWardCode:       "wardCode",
 		FieldWardName:       "wardName",
 		FieldStreetAddress:  "streetAddress",
+		FieldFacebookURL:    "facebookUrl",
 	}
 	for got, expected := range want {
 		if got != expected {

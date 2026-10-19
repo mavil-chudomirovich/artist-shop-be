@@ -131,6 +131,10 @@ type CreateLinkInput struct {
 	CancelURL string
 	// ReturnURL is where the provider redirects after payment.
 	ReturnURL string
+	// ExpiredAt is the link's expiry as Unix seconds (PayOS `expiredAt`). Zero
+	// means omit the field, so a link without a known order deadline keeps the
+	// previous behaviour.
+	ExpiredAt int64
 }
 
 // PaymentLink is what the provider returns when a link is created.

@@ -409,6 +409,7 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 		{fieldProvinceCode, req.ProvinceCode},
 		{fieldWardCode, req.WardCode},
 		{fieldStreet, req.StreetAddress},
+		{fieldFacebookURL, req.FacebookURL},
 	} {
 		if strings.TrimSpace(required.value) == "" {
 			httpx.WriteError(w, r, fieldError(required.field, "is required"), h.logger)
@@ -424,6 +425,7 @@ func (h *Handler) CreateAddress(w http.ResponseWriter, r *http.Request) {
 		WardCode:       req.WardCode,
 		WardName:       req.WardName,
 		StreetAddress:  req.StreetAddress,
+		FacebookURL:    req.FacebookURL,
 	})
 	if err != nil {
 		h.failAddress(w, r, err)
@@ -472,6 +474,7 @@ func (h *Handler) UpdateAddress(w http.ResponseWriter, r *http.Request) {
 		WardCode:       req.WardCode,
 		WardName:       req.WardName,
 		StreetAddress:  req.StreetAddress,
+		FacebookURL:    req.FacebookURL,
 	})
 	if err != nil {
 		h.failAddress(w, r, err)
@@ -615,6 +618,7 @@ func toAddressResponse(address appdto.AddressOutput) httpdto.AddressResponse {
 		WardCode:            address.WardCode,
 		WardName:            address.WardName,
 		StreetAddress:       address.StreetAddress,
+		FacebookURL:         address.FacebookURL,
 		IsDefault:           address.IsDefault,
 		DivisionNeedsReview: address.DivisionNeedsReview,
 	}
@@ -670,6 +674,7 @@ func toCustomerAddressResponses(list []contracts.CustomerAddress) []httpdto.Oper
 			WardCode:       address.WardCode,
 			WardName:       address.WardName,
 			StreetAddress:  address.StreetAddress,
+			FacebookURL:    address.FacebookURL,
 			IsDefault:      address.IsDefault,
 		})
 	}

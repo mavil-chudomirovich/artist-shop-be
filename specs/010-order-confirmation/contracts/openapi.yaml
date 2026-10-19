@@ -382,7 +382,7 @@ components:
     OrderAddress:
       type: object
       required:
-        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress]
+        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress, facebookUrl]
       properties:
         recipientName: { type: string }
         recipientPhone: { type: string }
@@ -391,6 +391,7 @@ components:
         wardCode: { type: string }
         wardName: { type: string }
         streetAddress: { type: string }
+        facebookUrl: { type: string, maxLength: 500 }
 
     OrderSummary:
       type: object

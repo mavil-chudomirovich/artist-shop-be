@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,7 +248,7 @@ func TestEditAppliesTheNamedAddress(t *testing.T) {
 	second := contracts.CustomerAddress{
 		ID: uuid.New(), RecipientName: "Trần Thị B", RecipientPhone: "0987654321",
 		ProvinceCode: "02", ProvinceName: "Hải Phòng", WardCode: "00002", WardName: "X",
-		StreetAddress: "2 Lê Lợi",
+		StreetAddress: "2 Lê Lợi", FacebookURL: "https://facebook.com/test.customer",
 	}
 	f.customers.customer = contracts.Customer{ID: owner, Addresses: []contracts.CustomerAddress{second}}
 
@@ -418,6 +419,79 @@ func TestEditRefusesAForeignAddressID(t *testing.T) {
 	var invalid *domainerr.InvalidValueError
 	if !errors.As(err, &invalid) || invalid.Field != model.FieldAddressID {
 		t.Fatalf("a foreign addressId must be refused naming addressId, got %v", err)
+	}
+	if len(f.orders.replaced) != 0 || len(f.orders.history) != 0 {
+		t.Fatalf("a refused edit must write nothing, got replaced=%d history=%d",
+			len(f.orders.replaced), len(f.orders.history))
+	}
+}
+
+// T018 [US3, FR-006]: an edit that names a saved address snapshots that
+// address's Facebook link into the order.
+func TestEditAppliesTheNewAddressFacebookURL(t *testing.T) {
+	owner := uuid.New()
+	store := &editOrders{orders: map[uuid.UUID]*model.Order{}}
+	f := newEditFixture(store)
+	product := seedEditProduct(f, "Tranh", "tranh", 1000, 10)
+	order := editOrder(owner, line(product, 1000, 1))
+	store.orders[order.ID] = order
+
+	second := contracts.CustomerAddress{
+		ID: uuid.New(), RecipientName: "Trần Thị B", RecipientPhone: "0987654321",
+		ProvinceCode: "02", ProvinceName: "Hải Phòng", WardCode: "00002", WardName: "X",
+		StreetAddress: "2 Lê Lợi", FacebookURL: "https://fb.com/tran.thi.b",
+	}
+	f.customers.customer = contracts.Customer{ID: owner, Addresses: []contracts.CustomerAddress{second}}
+
+	view, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
+		OrderID:   order.ID,
+		AddressID: &second.ID,
+		Lines:     []appdto.EditLineInput{{VariantID: product, Quantity: 1}},
+	})
+	if err != nil {
+		t.Fatalf("EditMine: %v", err)
+	}
+	if view.Address.FacebookURL != second.FacebookURL {
+		t.Fatalf("the named address's link must be snapshotted, got %q want %q", view.Address.FacebookURL, second.FacebookURL)
+	}
+}
+
+// T018 [US3, FR-009]: an edit switching to an address carrying the legacy
+// placeholder is refused naming `facebookUrl`, leaving the order exactly as it
+// was and writing nothing.
+func TestEditRefusesPlaceholderFacebookURL(t *testing.T) {
+	owner := uuid.New()
+	store := &editOrders{orders: map[uuid.UUID]*model.Order{}}
+	f := newEditFixture(store)
+	product := seedEditProduct(f, "Tranh", "tranh", 1000, 10)
+	order := editOrder(owner, line(product, 1000, 1))
+	before := order.Address
+	store.orders[order.ID] = order
+
+	placeholder := contracts.CustomerAddress{
+		ID: uuid.New(), RecipientName: "Nguyễn Văn A", RecipientPhone: "0912345678",
+		ProvinceCode: "01", ProvinceName: "Hà Nội", WardCode: "00001", WardName: "Phúc Xá",
+		StreetAddress: "1 Đinh Tiên Hoàng", FacebookURL: "https://facebook.com/unknown",
+	}
+	f.customers.customer = contracts.Customer{ID: owner, Addresses: []contracts.CustomerAddress{placeholder}}
+
+	_, err := f.svc.EditMine(actorContext(owner), appdto.EditInput{
+		OrderID:   order.ID,
+		AddressID: &placeholder.ID,
+		Lines:     []appdto.EditLineInput{{VariantID: product, Quantity: 1}},
+	})
+	var invalid *domainerr.InvalidValueError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected InvalidValueError, got %v", err)
+	}
+	if invalid.Field != model.FieldFacebookURL {
+		t.Fatalf("the refusal named %q, want %q", invalid.Field, model.FieldFacebookURL)
+	}
+	if !strings.Contains(invalid.Issue, "legacy placeholder") {
+		t.Fatalf("the placeholder refusal must name the legacy placeholder, got %q", invalid.Issue)
+	}
+	if order.Address != before {
+		t.Fatalf("a refused edit must leave the order untouched, got %+v want %+v", order.Address, before)
 	}
 	if len(f.orders.replaced) != 0 || len(f.orders.history) != 0 {
 		t.Fatalf("a refused edit must write nothing, got replaced=%d history=%d",

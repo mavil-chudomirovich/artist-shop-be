@@ -87,13 +87,18 @@ Mọi chi tiết về 25 endpoint: [api-reference.md](../docs/api-reference.md).
 
 ## Bước 4 — Tài khoản admin
 
+Seed là một file SQL chạy thủ công bằng psql qua container `db`
+(không còn container `seed` riêng):
+
 ```bash
-make seed-docker      # trong container
-make seed             # nếu chạy Go trên máy
+ADMIN_PASSWORD='<mật-khẩu-mạnh>' make seed-hash   # in hash Argon2id
+# dán email + hash vào scripts/seed.vars.local.psql (xem scripts/seed_admin.sql)
+make seed-sql
 ```
 
-Đọc `ADMIN_EMAIL` / `ADMIN_PASSWORD` trong `.env`. Mật khẩu phải đạt chính sách:
-≥ 8 ký tự, có chữ, có số, có ký tự đặc biệt.
+Mật khẩu phải đạt chính sách: ≥ 8 ký tự, có chữ, có số, có ký tự đặc
+biệt (`make seed-hash` kiểm tra giúp). Chạy lại file bất cứ lúc nào để
+xoay mật khẩu — câu lệnh là upsert theo email.
 
 ## Dừng / dọn dẹp
 

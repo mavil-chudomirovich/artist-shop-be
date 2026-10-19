@@ -67,6 +67,10 @@ type CustomerAddress struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link of the address, required.
+	// Legacy rows backfilled before the rule carry the placeholder
+	// https://facebook.com/unknown; new addresses must hold a real link.
+	FacebookURL string
 	// IsDefault reports whether this is the customer's default address. At most
 	// one address of the account is default.
 	IsDefault bool

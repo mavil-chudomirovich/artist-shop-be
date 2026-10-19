@@ -135,6 +135,9 @@ type OrderAddressView struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link snapshotted at checkout; it never
+	// changes once the order is placed (feature 021, FR-006).
+	FacebookURL string
 }
 
 // DeliveryPhotoView is one piece of delivery evidence as a use case answers it:

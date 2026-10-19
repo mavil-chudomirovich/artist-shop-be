@@ -167,7 +167,14 @@ func (s *Service) Start(ctx context.Context, in dto.StartInput) (dto.PaymentView
 	// No live payment: create one. The provider call sits outside the
 	// transaction (research D7); the write that follows commits the row and its
 	// event together. A collision on the random order code retries with a fresh
-	// one rather than surfacing (research D4).
+	// one rather than surfacing (research D4). The link carries the order's own
+	// payment deadline (payment_expires_at) as PayOS `expiredAt`, so the
+	// provider-side link expires with the shop-side window; a zero deadline
+	// (unreachable after the AwaitingPayment check above) omits the field.
+	var expiredAt int64
+	if !target.PaymentExpiresAt.IsZero() {
+		expiredAt = target.PaymentExpiresAt.Unix()
+	}
 	for attempt := 0; attempt < maxOrderCodeAttempts; attempt++ {
 		code, err := model.NewOrderCode()
 		if err != nil {
@@ -180,6 +187,7 @@ func (s *Service) Start(ctx context.Context, in dto.StartInput) (dto.PaymentView
 			Description: description,
 			CancelURL:   s.CancelURL,
 			ReturnURL:   s.ReturnURL,
+			ExpiredAt:   expiredAt,
 		})
 		if err != nil {
 			// The provider refused or was unreachable: nothing is written and

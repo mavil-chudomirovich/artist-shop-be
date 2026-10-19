@@ -668,9 +668,11 @@ func (f *variantHideGuardFixture) seedGuardOrder(t *testing.T, ownerID uuid.UUID
 			(id, user_id, status, total_amount, currency,
 			 recipient_name, recipient_phone,
 			 province_code, province_name, ward_code, ward_name, street_address,
+			 facebook_url,
 			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
 		VALUES ($1, $2, $3, 100, 'VND', 'Buyer', '0123456789',
 			'P', 'Province', 'W', 'Ward', 'Street',
+			'https://facebook.com/guard.customer',
 			NULL, 1, NULL, now(), now())`
 	if _, err := f.pool.Exec(context.Background(), orderQuery, id, ownerID, status); err != nil {
 		t.Fatalf("seed order: %v", err)

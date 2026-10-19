@@ -137,6 +137,7 @@ func (s *Service) SubmitFeedback(ctx context.Context, in dto.FeedbackInput) (dto
 	// committed and best-effort, so a delivery failure never fails the feedback
 	// (FR-022, FR-023, research D12).
 	s.notifyArtistFeedbackReceived(ctx, submitted)
+	s.publishFeedbackReceived(ctx, submitted)
 	return view, nil
 }
 

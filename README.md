@@ -58,10 +58,12 @@ rồi `docker compose up -d --force-recreate api`. Xem email: `make mail`.
 ### Tài khoản admin
 
 ```bash
-make seed-docker   # hoặc: make seed nếu chạy Go trên máy
+ADMIN_PASSWORD='<mật-khẩu-mạnh>' make seed-hash   # in hash Argon2id
+# dán email + hash vào scripts/seed.vars.local.psql (xem scripts/seed_admin.sql)
+make seed-sql
 ```
 
-Đọc email/mật khẩu admin từ `ADMIN_EMAIL` / `ADMIN_PASSWORD` trong `.env`.
+Tài khoản đọc từ `ADMIN_EMAIL` trong `.env`; mật khẩu không nằm trong config.
 
 ## Chạy bằng Go trên máy
 
@@ -79,7 +81,7 @@ mặc định.
 
 - `JWT_SECRET` phải dài **≥ 32 byte**, nếu không API sẽ không khởi động.
 - `APP_ENV=production` sẽ bỏ qua việc nạp `.env` (chỉ dùng biến thật từ hệ thống).
-- `cmd/migrate` và `cmd/seed` không cần `JWT_SECRET`/`REDIS_ADDR`.
+- `cmd/migrate` và `cmd/hash-password` không cần `JWT_SECRET`/`REDIS_ADDR`.
 
 ## Lệnh thường dùng
 

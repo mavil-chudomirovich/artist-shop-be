@@ -583,7 +583,7 @@ components:
     OrderAddress:
       type: object
       required:
-        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress]
+        [recipientName, recipientPhone, provinceCode, provinceName, wardCode, wardName, streetAddress, facebookUrl]
       description: The delivery address as it was captured at checkout.
       properties:
         recipientName:
@@ -600,6 +600,10 @@ components:
           type: string
         streetAddress:
           type: string
+        facebookUrl:
+          type: string
+          maxLength: 500
+          description: The contact Facebook link snapshotted at checkout.
     OrderLine:
       type: object
       required: [productId, name, slug, quantity, unitPrice, lineTotal]

@@ -93,6 +93,10 @@ const (
 type Handler struct {
 	svc    Service
 	logger *slog.Logger
+	// streams is the shared SSE hub the stream handlers subscribe to. It is
+	// attached by SetStreams at the composition root and stays out of New so
+	// existing constructions keep working; a nil hub answers streams with 503.
+	streams streamsHub
 }
 
 // New creates the order HTTP handler.
@@ -1161,6 +1165,7 @@ func toOrderResponse(view appdto.OrderView) httpdto.OrderResponse {
 			WardCode:       view.Address.WardCode,
 			WardName:       view.Address.WardName,
 			StreetAddress:  view.Address.StreetAddress,
+			FacebookURL:    view.Address.FacebookURL,
 		},
 		Lines: lines,
 		// The delivery facts are detail-only; a list row never carries them

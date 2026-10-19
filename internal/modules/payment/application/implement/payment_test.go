@@ -254,6 +254,10 @@ func TestStartCreatesOnePaymentForTheOrdersTotal(t *testing.T) {
 	if h.provider.lastCreate.Amount != 120000 || h.provider.lastCreate.OrderCode != payment.OrderCode {
 		t.Errorf("provider got %+v, want amount 120000 and the stored order code", h.provider.lastCreate)
 	}
+	// The provider-side link expires with the order's own payment deadline.
+	if want := h.orders.target.PaymentExpiresAt.Unix(); h.provider.lastCreate.ExpiredAt != want {
+		t.Errorf("provider expiredAt = %d, want the order deadline %d", h.provider.lastCreate.ExpiredAt, want)
+	}
 
 	if len(h.repo.events) != 1 || h.repo.events[0].Action != constant.AuditPaymentCreated {
 		t.Fatalf("events = %+v, want one PAYMENT_CREATED", h.repo.events)
@@ -269,6 +273,23 @@ func TestStartCreatesOnePaymentForTheOrdersTotal(t *testing.T) {
 	}
 	if h.uow.calls != 1 {
 		t.Errorf("the write opened %d transactions, want exactly 1", h.uow.calls)
+	}
+}
+
+// A zero order deadline omits the provider-side expiry, so a link without a
+// known deadline keeps the previous behaviour.
+func TestStartOmitsExpiredAtWhenTheOrderHasNoDeadline(t *testing.T) {
+	h := newHarness()
+	owner := uuid.New()
+	target := awaitingTarget(owner)
+	target.PaymentExpiresAt = time.Time{}
+	h.orders.target = target
+
+	if _, err := h.service.Start(withActor(owner), dto.StartInput{OrderID: uuid.New()}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if h.provider.lastCreate.ExpiredAt != 0 {
+		t.Errorf("provider expiredAt = %d, want 0 (omitted) for a zero deadline", h.provider.lastCreate.ExpiredAt)
 	}
 }
 

@@ -146,8 +146,10 @@ func (s *Service) EditMine(ctx context.Context, in dto.EditInput) (dto.OrderView
 	// that kept the status unchanged does not email the customer (FR-019, FR-020,
 	// FR-021, research D9).
 	s.notifyArtistConfirmationNeeded(ctx, edited)
+	s.publishNeedsConfirmation(ctx, edited)
 	if edited.Status != previousStatus {
 		s.notifyCustomerStatusChange(ctx, edited)
+		s.publishStatusChanged(ctx, edited, previousStatus)
 	}
 	return view, nil
 }

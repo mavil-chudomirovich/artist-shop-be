@@ -3,6 +3,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -267,7 +268,8 @@ func seedProduct(f *checkoutFixture, name, variantName string, amount, available
 	return id
 }
 
-// seedAddress gives the customer one address and returns it.
+// seedAddress gives the customer one address and returns it. The address carries
+// a real Facebook link, so a checkout snapshots it (feature 021, FR-006).
 func seedAddress(f *checkoutFixture, userID uuid.UUID) contracts.CustomerAddress {
 	address := contracts.CustomerAddress{
 		ID:             uuid.New(),
@@ -278,6 +280,7 @@ func seedAddress(f *checkoutFixture, userID uuid.UUID) contracts.CustomerAddress
 		WardCode:       "00001",
 		WardName:       "Phúc Xá",
 		StreetAddress:  "1 Đinh Tiên Hoàng",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 		IsDefault:      true,
 	}
 	f.customers.customer = contracts.Customer{ID: userID, Addresses: []contracts.CustomerAddress{address}}
@@ -399,7 +402,7 @@ func TestCheckoutUsesTheNamedAddress(t *testing.T) {
 	named := contracts.CustomerAddress{
 		ID: uuid.New(), RecipientName: "Trần Thị B", RecipientPhone: "0987654321",
 		ProvinceCode: "02", ProvinceName: "Hải Phòng", WardCode: "00002", WardName: "X",
-		StreetAddress: "2 Lê Lợi",
+		StreetAddress: "2 Lê Lợi", FacebookURL: "https://facebook.com/test.customer",
 	}
 	f.customers.customer.Addresses = append(f.customers.customer.Addresses, named)
 	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
@@ -540,6 +543,107 @@ func TestCheckoutRefusesACustomerWithNoAddress(t *testing.T) {
 		t.Fatal("a refused checkout must create nothing")
 	}
 	assertCartUntouched(t, f, want)
+}
+
+// T018 [US3, FR-006]: a checkout snapshots the address's Facebook link into the
+// order, and the snapshot is immutable: editing the source address afterwards
+// leaves the placed order unchanged.
+func TestCheckoutSnapshotsFacebookURL(t *testing.T) {
+	f := newCheckoutFixture(t)
+	user := uuid.New()
+	address := seedAddress(f, user)
+	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
+
+	view, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
+	if err != nil {
+		t.Fatalf("Checkout: %v", err)
+	}
+	if view.Address.FacebookURL != address.FacebookURL {
+		t.Fatalf("the order must snapshot the address's Facebook link, got %q want %q", view.Address.FacebookURL, address.FacebookURL)
+	}
+	if len(f.orders.created) != 1 {
+		t.Fatalf("expected one order created, got %d", len(f.orders.created))
+	}
+	if f.orders.created[0].Address.FacebookURL != address.FacebookURL {
+		t.Fatalf("the stored order must carry the snapshotted link, got %q want %q",
+			f.orders.created[0].Address.FacebookURL, address.FacebookURL)
+	}
+
+	// The snapshot is immutable: a later edit of the source address leaves the
+	// placed order unchanged (FR-006).
+	f.customers.customer.Addresses[0].FacebookURL = "https://facebook.com/nguyen.van.b"
+	if f.orders.created[0].Address.FacebookURL != address.FacebookURL {
+		t.Fatalf("editing the source address must not change the placed order, got %q want %q",
+			f.orders.created[0].Address.FacebookURL, address.FacebookURL)
+	}
+}
+
+// T018 [US3, FR-009]: a checkout from an address carrying the legacy placeholder
+// is refused with VALIDATION_ERROR naming `facebookUrl`; nothing is created and
+// the cart is untouched.
+func TestCheckoutRefusesPlaceholderFacebookURL(t *testing.T) {
+	f := newCheckoutFixture(t)
+	user := uuid.New()
+	address := seedAddress(f, user)
+	address.FacebookURL = "https://facebook.com/unknown"
+	f.customers.customer.Addresses = []contracts.CustomerAddress{address}
+	product := seedProduct(f, "Tranh", "tranh", 100000, 5)
+	f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
+	want := append([]contracts.CartLine(nil), f.cart.lines...)
+
+	_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
+	var invalid *domainerr.InvalidValueError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected InvalidValueError, got %v", err)
+	}
+	if invalid.Field != model.FieldFacebookURL {
+		t.Fatalf("the refusal named %q, want %q", invalid.Field, model.FieldFacebookURL)
+	}
+	if !strings.Contains(invalid.Issue, "legacy placeholder") {
+		t.Fatalf("the placeholder refusal must name the legacy placeholder, got %q", invalid.Issue)
+	}
+	if len(f.orders.created) != 0 {
+		t.Fatal("a refused checkout must create nothing")
+	}
+	assertCartUntouched(t, f, want)
+}
+
+// T021 [US3, FR-007, FR-009]: a checkout from an address with an empty Facebook
+// link is refused exactly like the legacy placeholder — VALIDATION_ERROR naming
+// `facebookUrl` — so the refusal stays a 400 instead of dying at the storage
+// CHECK; nothing is created and the cart is untouched. The message names the
+// missing link rather than the legacy placeholder.
+func TestCheckoutRefusesEmptyFacebookURL(t *testing.T) {
+	for _, link := range []string{"", "   "} {
+		f := newCheckoutFixture(t)
+		user := uuid.New()
+		address := seedAddress(f, user)
+		address.FacebookURL = link
+		f.customers.customer.Addresses = []contracts.CustomerAddress{address}
+		product := seedProduct(f, "Tranh", "tranh", 100000, 5)
+		f.cart.lines = []contracts.CartLine{{VariantID: product, Quantity: 1, UnitPrice: contracts.ProductPrice{Amount: 100000, Currency: "VND"}}}
+		want := append([]contracts.CartLine(nil), f.cart.lines...)
+
+		_, err := f.svc.Checkout(actorContext(user), appdto.CheckoutInput{})
+		var invalid *domainerr.InvalidValueError
+		if !errors.As(err, &invalid) {
+			t.Fatalf("link %q: expected InvalidValueError, got %v", link, err)
+		}
+		if invalid.Field != model.FieldFacebookURL {
+			t.Fatalf("link %q: the refusal named %q, want %q", link, invalid.Field, model.FieldFacebookURL)
+		}
+		if !strings.Contains(invalid.Issue, "is missing") {
+			t.Fatalf("link %q: the empty-link refusal must state the link is missing, got %q", link, invalid.Issue)
+		}
+		if strings.Contains(invalid.Issue, "legacy placeholder") {
+			t.Fatalf("link %q: the empty-link refusal must not mention the legacy placeholder, got %q", link, invalid.Issue)
+		}
+		if len(f.orders.created) != 0 {
+			t.Fatalf("link %q: a refused checkout must create nothing", link)
+		}
+		assertCartUntouched(t, f, want)
+	}
 }
 
 // error-codes.md: an `addressId` that is not one of the customer's addresses is a

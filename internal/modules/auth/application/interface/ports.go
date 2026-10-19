@@ -149,7 +149,8 @@ type AuthService interface {
 	ProvisionAdmin(ctx context.Context, in dto.ProvisionAdminInput) error
 }
 
-// UserProvisioner is the admin-seed use case consumed by presentation/cli.
+// UserProvisioner is the admin-seed use case, applied manually through
+// scripts/seed_admin.sql (its SQL mirrors the repository upsert below).
 type UserProvisioner interface {
 	ProvisionAdmin(ctx context.Context, in dto.ProvisionAdminInput) error
 }

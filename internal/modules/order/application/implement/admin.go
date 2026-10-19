@@ -107,6 +107,7 @@ func (s *Service) adminMove(ctx context.Context, in dto.OrderRefInput, action st
 	// or cancelled). Sent after commit, best-effort (FR-020, FR-021, research
 	// D9).
 	s.notifyCustomerStatusChange(ctx, moved)
+	s.publishStatusChanged(ctx, moved, constant.StatusPending)
 	return view, nil
 }
 

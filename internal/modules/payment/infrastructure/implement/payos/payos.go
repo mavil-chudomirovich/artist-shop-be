@@ -60,7 +60,10 @@ func NewClient(cfg config.PaymentConfig, httpClient *http.Client) *Client {
 
 // CreateLink signs the request and calls POST /v2/payment-requests. A refusal or an
 // unreachable provider is reported as domainerr.ErrProviderFailure; nothing is
-// written when it fails (FR-002, research D1, D2).
+// written when it fails (FR-002, research D1, D2). The optional ExpiredAt is sent
+// as PayOS `expiredAt` (Unix seconds) so the link expires with the order's own
+// payment deadline; it is not part of the signature, which covers only the five
+// documented fields. A zero ExpiredAt omits the field.
 func (c *Client) CreateLink(ctx context.Context, in dto.CreateLinkInput) (dto.PaymentLink, error) {
 	body := map[string]any{
 		"orderCode":   in.OrderCode,
@@ -69,6 +72,9 @@ func (c *Client) CreateLink(ctx context.Context, in dto.CreateLinkInput) (dto.Pa
 		"cancelUrl":   in.CancelURL,
 		"returnUrl":   in.ReturnURL,
 		"signature":   signCreateLink(c.checksumKey, in),
+	}
+	if in.ExpiredAt > 0 {
+		body["expiredAt"] = in.ExpiredAt
 	}
 
 	var resp struct {
@@ -189,7 +195,8 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 
 // signCreateLink computes the create-link signature: HMAC_SHA256 over exactly
 // amount, cancelUrl, description, orderCode and returnUrl, in that (alphabetical)
-// order, formatted key=value&... (research D2).
+// order, formatted key=value&... (research D2). PayOS `expiredAt` is
+// deliberately excluded: the documented signature covers only these five fields.
 func signCreateLink(checksumKey string, in dto.CreateLinkInput) string {
 	data := fmt.Sprintf("amount=%d&cancelUrl=%s&description=%s&orderCode=%d&returnUrl=%s",
 		in.Amount, in.CancelURL, in.Description, in.OrderCode, in.ReturnURL)

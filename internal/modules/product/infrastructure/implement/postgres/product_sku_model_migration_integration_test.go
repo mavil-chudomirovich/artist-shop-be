@@ -335,6 +335,7 @@ func TestMigration00014MigratedProductStillChecksOut(t *testing.T) {
 			ID:            uuid.New(),
 			RecipientName: "Nguyễn Văn A",
 			WardName:      "Phúc Xá",
+			FacebookURL:   "https://facebook.com/test.customer",
 			IsDefault:     true,
 		}},
 		Tx:     &database.DB{Pool: pool},

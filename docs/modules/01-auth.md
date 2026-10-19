@@ -4,7 +4,7 @@
 - **Spec**: `specs/001-user-auth/spec.md`
 - **Plan**: `specs/001-user-auth/plan.md`
 - **Tasks**: `specs/001-user-auth/tasks.md`
-- **Code**: `internal/modules/auth/{domain,application,infrastructure,presentation}`, `cmd/seed`
+- **Code**: `internal/modules/auth/{domain,application,infrastructure,presentation}`, `scripts/seed_admin.sql`
 - **Ưu tiên / Giai đoạn**: V0 — làm đầu tiên
 - **Phụ thuộc**: cross-cutting
 
@@ -23,7 +23,7 @@ Có:
 - Đăng nhập, làm mới phiên, đăng xuất (nhiều thiết bị).
 - Đặt lại mật khẩu qua email: gửi mã OTP → xác minh mã → nhận reset token dùng một lần →
   đặt mật khẩu mới (không tự đăng nhập).
-- Vai trò CUSTOMER (mặc định) và ADMIN (cấp nội bộ bằng `cmd/seed`).
+- Vai trò CUSTOMER (mặc định) và ADMIN (cấp nội bộ bằng `scripts/seed_admin.sql`).
 - Rate limiting cho các endpoint xác thực.
 - Ghi vết sự kiện bảo mật.
 

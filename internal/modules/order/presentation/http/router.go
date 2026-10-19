@@ -80,6 +80,10 @@ func (h *Handler) Router(hooks middleware.AuthHooks) http.Handler {
 	r.Use(middleware.RequireAuthentication(hooks))
 	r.Get("/", h.ListMine)
 	r.Post("/", h.Checkout)
+	// The live stream is a fixed segment, so it sits ahead of the orderId
+	// parameter routes; chi prefers static segments, but the order keeps the
+	// intent explicit.
+	r.Get("/stream", h.StreamMine)
 	r.Get("/{orderId}", h.GetMine)
 	r.Put("/{orderId}", h.EditMine)
 	r.Post("/{orderId}/cancel", h.CancelMine)
@@ -110,6 +114,9 @@ func (h *Handler) AdminRouter(hooks middleware.AuthHooks) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequireRole(hooks, string(access.RoleAdmin)))
 	r.Get("/", h.ListAll)
+	// The admin live stream is a fixed segment ahead of the orderId parameter
+	// routes, mirroring the customer router.
+	r.Get("/stream", h.StreamAdmin)
 	r.Get("/{orderId}", h.GetByIDAdmin)
 	r.Post("/{orderId}/confirm", h.ConfirmByAdmin)
 	r.Post("/{orderId}/reject", h.RejectByAdmin)

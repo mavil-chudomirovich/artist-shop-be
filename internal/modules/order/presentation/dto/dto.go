@@ -108,6 +108,9 @@ type OrderAddressResponse struct {
 	WardName string `json:"wardName"`
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string `json:"streetAddress"`
+	// FacebookURL is the contact Facebook link as captured at checkout
+	// (feature 021, FR-006).
+	FacebookURL string `json:"facebookUrl"`
 }
 
 // DeliveryPhotoResponse is one piece of delivery evidence as a client reads it

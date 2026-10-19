@@ -81,6 +81,8 @@ type AddressOutput struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link of the address.
+	FacebookURL string
 	// IsDefault reports whether this is the account's default address.
 	IsDefault bool
 	// DivisionNeedsReview is true when the stored province or ward code is no
@@ -130,6 +132,9 @@ type CreateAddressInput struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link. It is required and must be a
+	// valid https Facebook URL; the domain refuses anything else.
+	FacebookURL string
 }
 
 // UpdateAddressInput edits an address. Every field keeps its current value when
@@ -156,6 +161,11 @@ type UpdateAddressInput struct {
 	WardName *string
 	// StreetAddress is the new street address; nil keeps the current value.
 	StreetAddress *string
+	// FacebookURL is the new contact Facebook link; nil keeps the current
+	// value. An empty value clears it, which is refused, and a nil edit on an
+	// address carrying the legacy placeholder is refused until the customer
+	// supplies a real link (FR-004).
+	FacebookURL *string
 }
 
 // AddressRefInput targets one address of the acting account, for the routes

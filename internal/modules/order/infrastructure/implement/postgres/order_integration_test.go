@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,7 +101,8 @@ func (f *orderFixture) insertProduct(t *testing.T) uuid.UUID {
 	return productID
 }
 
-// testAddress is the delivery address the fixture's orders carry.
+// testAddress is the delivery address the fixture's orders carry, including the
+// Facebook link snapshotted at checkout (feature 021, FR-006).
 func testAddress() model.Address {
 	return model.Address{
 		RecipientName:  "Nguyễn Văn A",
@@ -110,6 +112,7 @@ func testAddress() model.Address {
 		WardCode:       "00001",
 		WardName:       "Phúc Xá",
 		StreetAddress:  "1 Đinh Tiên Hoàng",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 	}
 }
 
@@ -206,6 +209,51 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 	}
 	if got.PaymentExpiresAt == nil || !got.PaymentExpiresAt.Equal(*order.PaymentExpiresAt) {
 		t.Errorf("payment_expires_at = %v, want %v", got.PaymentExpiresAt, order.PaymentExpiresAt)
+	}
+}
+
+// T020 [US3]: the storage layer refuses an empty or overlong facebook_url where
+// it is stored — the NOT NULL plus length CHECK counterpart of the snapshot rule
+// — so an order row can never carry a missing or unbounded link.
+func TestTheStorageLayerRefusesAnEmptyOrOverlongOrderFacebookURL(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	// The column list mirrors the adapter's own insert, so the test proves what
+	// the database refuses, not what the application withholds.
+	const query = `
+		INSERT INTO orders
+			(id, user_id, status, total_amount, currency,
+			 recipient_name, recipient_phone,
+			 province_code, province_name, ward_code, ward_name, street_address,
+			 facebook_url,
+			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
+		VALUES ($1, $2, 'PENDING', 1000, 'VND',
+			'Nguyễn Văn A', '0912345678',
+			'01', 'Hà Nội', '00001', 'Phúc Xá', '1 Đinh Tiên Hoàng',
+			$3,
+			NULL, 1, NULL, $4, $4)`
+	tooLong := "https://facebook.com/" + strings.Repeat("a", 500)
+	for _, link := range []string{"", tooLong} {
+		if _, err := f.pool.Exec(ctx, query, uuid.New(), uuid.New(), link, now); err == nil {
+			t.Fatalf("the storage layer accepted facebook_url %q", link)
+		}
+	}
+
+	// A missing link is refused by NOT NULL, not by the CHECK.
+	const nullQuery = `
+		INSERT INTO orders
+			(id, user_id, status, total_amount, currency,
+			 recipient_name, recipient_phone,
+			 province_code, province_name, ward_code, ward_name, street_address,
+			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
+		VALUES ($1, $2, 'PENDING', 1000, 'VND',
+			'Nguyễn Văn A', '0912345678',
+			'01', 'Hà Nội', '00001', 'Phúc Xá', '1 Đinh Tiên Hoàng',
+			NULL, 1, NULL, $3, $3)`
+	if _, err := f.pool.Exec(ctx, nullQuery, uuid.New(), uuid.New(), now); err == nil {
+		t.Fatal("the storage layer accepted a NULL facebook_url")
 	}
 }
 

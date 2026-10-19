@@ -92,8 +92,35 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 	// sends nothing.
 	if paid != nil {
 		s.notifyCustomerStatusChange(ctx, paid)
+		s.publishStatusChanged(ctx, paid, constant.StatusPaymentPending)
 	}
 	return nil
+}
+
+// cancelLocked runs the cancellable-state transition inside the caller's
+// transaction: it locks the order, captures its pre-cancel state, drives the
+// domain Cancel edge and returns every line's hold to availability. The caller
+// owns the transaction boundary and publishes only after its own outermost
+// commit, so a nested call never publishes inside an uncommitted transaction
+// (FR-005).
+func (s *Service) cancelLocked(txCtx context.Context, orderID uuid.UUID) (*model.Order, constant.Status, error) {
+	order, err := s.Orders.LockByID(txCtx, orderID)
+	if err != nil {
+		return nil, "", err
+	}
+	cancelledFrom := order.Status
+	if err := order.Cancel(); err != nil {
+		return nil, "", err
+	}
+	for _, line := range order.Lines {
+		if err := s.Reservations.Release(txCtx, order.ID, line.VariantID); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
+		return nil, "", err
+	}
+	return order, cancelledFrom, nil
 }
 
 // Cancel cancels an order before it is paid — while it awaits the artist's
@@ -104,23 +131,14 @@ func (s *Service) MarkPaid(ctx context.Context, orderID uuid.UUID, sourceReferen
 // FR-024).
 func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 	var cancelled *model.Order
+	var cancelledFrom constant.Status
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
-		order, err := s.Orders.LockByID(txCtx, orderID)
+		order, from, err := s.cancelLocked(txCtx, orderID)
 		if err != nil {
 			return err
 		}
-		if err := order.Cancel(); err != nil {
-			return err
-		}
-		for _, line := range order.Lines {
-			if err := s.Reservations.Release(txCtx, order.ID, line.VariantID); err != nil {
-				return err
-			}
-		}
-		if err := s.Orders.UpdateStatus(txCtx, order.ID, order.Status, s.now()); err != nil {
-			return err
-		}
 		cancelled = order
+		cancelledFrom = from
 		return nil
 	}); err != nil {
 		return err
@@ -128,16 +146,18 @@ func (s *Service) Cancel(ctx context.Context, orderID uuid.UUID) error {
 	// The payment module is told the order was cancelled, so the provider payment
 	// request it created is cancelled too. Called after commit, best-effort: a nil
 	// port is a no-op, and a provider failure is logged by the payment module and
-	// never fails the cancellation (FR-015, research D9). This one call site
-	// covers both the customer's CancelMine and the expiry sweep, which both drive
-	// this use case.
+	// never fails the cancellation (FR-015, research D9). The expiry sweep drives
+	// this use case per order; the customer's CancelMine shares cancelLocked and
+	// repeats these same post-commit steps after its own commit.
 	if s.Cancellations != nil {
 		s.Cancellations.CancelForOrder(ctx, orderID)
 	}
 	// The customer is told the order was cancelled. Sent after commit,
-	// best-effort (FR-020, FR-021, research D9). This covers both the customer's
-	// own cancel and the expiry sweep, which calls this use case.
+	// best-effort (FR-020, FR-021, research D9). This covers the direct cancel
+	// and the expiry sweep, which calls this use case; the customer's own cancel
+	// goes through CancelMine, which publishes the same way after its commit.
 	s.notifyCustomerStatusChange(ctx, cancelled)
+	s.publishStatusChanged(ctx, cancelled, cancelledFrom)
 	return nil
 }
 
@@ -196,6 +216,7 @@ func (s *Service) ConfirmByAdmin(ctx context.Context, in appdto.OrderRefInput) (
 	// The customer is told the order was confirmed. Sent after commit,
 	// best-effort (FR-020, FR-021, research D9).
 	s.notifyCustomerStatusChange(ctx, confirmed)
+	s.publishStatusChanged(ctx, confirmed, constant.StatusPending)
 	return view, nil
 }
 

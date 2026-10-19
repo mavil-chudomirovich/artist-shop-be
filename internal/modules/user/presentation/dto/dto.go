@@ -117,6 +117,8 @@ type CreateAddressRequest struct {
 	WardName string `json:"wardName"`
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string `json:"streetAddress"`
+	// FacebookURL is the contact Facebook link. It is required.
+	FacebookURL string `json:"facebookUrl"`
 }
 
 // UpdateAddressRequest is the PATCH /users/me/addresses/{addressId} body. Every
@@ -137,6 +139,11 @@ type UpdateAddressRequest struct {
 	WardName *string `json:"wardName"`
 	// StreetAddress is omitted to keep the current street address.
 	StreetAddress *string `json:"streetAddress"`
+	// FacebookURL is omitted to keep the current contact Facebook link. An
+	// empty value clears it, which is refused; a nil edit on an address
+	// carrying the legacy placeholder is refused until the customer supplies
+	// a real link.
+	FacebookURL *string `json:"facebookUrl"`
 }
 
 // AddressResponse is one shipping address as the owner of the account sees it.
@@ -161,6 +168,8 @@ type AddressResponse struct {
 	WardName string `json:"wardName"`
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string `json:"streetAddress"`
+	// FacebookURL is the contact Facebook link of the address.
+	FacebookURL string `json:"facebookUrl"`
 	// IsDefault reports whether this is the account's default address.
 	IsDefault bool `json:"isDefault"`
 	// DivisionNeedsReview is true when a stored code is no longer in the official
@@ -201,6 +210,8 @@ type OperatorAddressResponse struct {
 	WardName string `json:"wardName"`
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string `json:"streetAddress"`
+	// FacebookURL is the contact Facebook link of the address.
+	FacebookURL string `json:"facebookUrl"`
 	// IsDefault reports whether the account's default address.
 	IsDefault bool `json:"isDefault"`
 }

@@ -55,6 +55,7 @@ var addressColumns = []string{
 	"ward_code",
 	"ward_name",
 	"street_address",
+	"facebook_url",
 	"is_default",
 	"deleted_at",
 	"created_at",
@@ -106,13 +107,14 @@ func (r *AddressRepository) projection() (string, error) {
 //
 // The stored province and ward names travel in their own columns rather than being
 // derived at read time, so a later rename of an administrative unit cannot rewrite
-// what the customer entered (research D10).
+// what the customer entered (research D10). The Facebook contact link travels in
+// its own column the same way.
 func (r *AddressRepository) Create(ctx context.Context, address *model.Address) error {
 	const query = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default, deleted_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+			 ward_code, ward_name, street_address, facebook_url, is_default, deleted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
 	_, err := r.querier(ctx).Exec(ctx, query,
 		address.ID,
 		address.UserID,
@@ -123,6 +125,7 @@ func (r *AddressRepository) Create(ctx context.Context, address *model.Address) 
 		address.WardCode,
 		address.WardName,
 		address.StreetAddress,
+		address.FacebookURL,
 		address.IsDefault,
 		address.DeletedAt,
 		address.CreatedAt,
@@ -151,6 +154,7 @@ func (r *AddressRepository) Update(ctx context.Context, address *model.Address) 
 		    ward_code       = $7,
 		    ward_name       = $8,
 		    street_address  = $9,
+		    facebook_url    = $10,
 		    updated_at      = now()
 		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`
 	tag, err := r.querier(ctx).Exec(ctx, query,
@@ -163,6 +167,7 @@ func (r *AddressRepository) Update(ctx context.Context, address *model.Address) 
 		address.WardCode,
 		address.WardName,
 		address.StreetAddress,
+		address.FacebookURL,
 	)
 	if err != nil {
 		return fmt.Errorf("update address: %w", err)
@@ -345,6 +350,7 @@ func scanAddress(row baserepo.Row) (*model.Address, error) {
 		&address.WardCode,
 		&address.WardName,
 		&address.StreetAddress,
+		&address.FacebookURL,
 		&address.IsDefault,
 		&address.DeletedAt,
 		&address.CreatedAt,

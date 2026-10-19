@@ -70,7 +70,8 @@ migrations/               # TẬP TRUNG ở gốc: NNNNN_<module>_<desc>.sql
 - **infrastructure/implement**: adapter (PostgreSQL, Redis, JWT, email, audit).
 - **presentation/http**: handler/router; nhận `presentation/dto`, gọi usecase qua
   `application/dto`; map tại tầng này.
-- **presentation/cli**: command CLI gọi use case.
+- **presentation/cli**: command CLI gọi use case (đã bỏ cùng `cmd/seed`; seed admin
+  giờ là `scripts/seed_admin.sql` chạy thủ công bằng psql).
 - **presentation/worker**: placeholder cho background worker.
 
 ## 4. Generic repository (`share/repository`)

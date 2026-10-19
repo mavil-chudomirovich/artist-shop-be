@@ -127,8 +127,10 @@ func TestOneDefaultPerUserEnforcedByDatabase(t *testing.T) {
 
 - Migration đã áp dụng ở bất kỳ đâu thì **không được sửa nữa**.
 - Đổi định nghĩa cột: thêm migration mới (`ALTER … COMMENT`, `ALTER TYPE`).
-- Cần dữ liệu mẫu cho dev? Đặt ở `cmd/seed` (gọi use case) hoặc script SQL riêng
-  trong `migrations/` — không nhét DDL và lẫn vào migration thật.
+- Cần dữ liệu mẫu cho dev? Dùng script SQL riêng **ngoài** `migrations/`
+  (ví dụ `scripts/seed_admin.sql` cho tài khoản admin) — không nhét DDL và
+  lẫn vào migration thật, và không đặt seed trong `migrations/` vì goose sẽ
+  tự áp nó ở mọi môi trường.
 
 ## 8. Checklist trước khi commit migration
 

@@ -6,6 +6,7 @@ package implement
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,6 +72,12 @@ type Service struct {
 	// after the transaction commits, so it never fails a business operation
 	// (FR-019 to FR-021, research D9). A nil notifier is tolerated.
 	Notifier appinterface.Notifier
+	// Events fans live SSE events out to subscribers: admins learn an order
+	// needs confirmation or carries feedback, the owner learns its status
+	// changed. Publishing is best-effort after commit, like the Notifier, and
+	// never fails a business operation (specs/020-order-sse-stream). A nil
+	// publisher is tolerated.
+	Events appinterface.EventPublisher
 	// Media stores the order's dispatch and delivery evidence photos through the
 	// shared media port — the same Cloudinary-backed store the user and product
 	// modules already use. It is supplied by the composition root; the read paths
@@ -145,6 +152,7 @@ func (s *Service) Checkout(ctx context.Context, in dto.CheckoutInput) (dto.Order
 	// the transaction committed and is best-effort, so a delivery failure never
 	// fails the checkout (FR-019, FR-021, research D9).
 	s.notifyArtistConfirmationNeeded(ctx, created)
+	s.publishNeedsConfirmation(ctx, created)
 	return view, nil
 }
 
@@ -249,7 +257,7 @@ func (s *Service) deliveryAddress(ctx context.Context, ownerID uuid.UUID, addres
 	if addressID != nil {
 		for _, address := range customer.Addresses {
 			if address.ID == *addressID {
-				return toAddress(address), nil
+				return toAddress(address)
 			}
 		}
 		return model.Address{}, domainerr.InvalidValue(model.FieldAddressID, "is not one of the customer's addresses")
@@ -257,7 +265,7 @@ func (s *Service) deliveryAddress(ctx context.Context, ownerID uuid.UUID, addres
 
 	for _, address := range customer.Addresses {
 		if address.IsDefault {
-			return toAddress(address), nil
+			return toAddress(address)
 		}
 	}
 	if len(customer.Addresses) == 0 {
@@ -265,7 +273,7 @@ func (s *Service) deliveryAddress(ctx context.Context, ownerID uuid.UUID, addres
 	}
 	// The contract orders addresses default-first; when none is flagged default,
 	// the first is the most recently updated and is the fallback.
-	return toAddress(customer.Addresses[0]), nil
+	return toAddress(customer.Addresses[0])
 }
 
 // available reads what is currently available for one variant through the bulk
@@ -287,7 +295,24 @@ func (s *Service) available(ctx context.Context, variantID uuid.UUID) (int64, er
 // toAddress maps the contract's address DTO onto the order's snapshot value. It
 // copies the values, so a later edit to the customer's address never changes a
 // placed order (FR-003).
-func toAddress(address contracts.CustomerAddress) model.Address {
+//
+// An address still carrying the legacy placeholder, or no link at all, is refused
+// with a VALIDATION_ERROR naming `facebookUrl`: a new order must never snapshot
+// a link the customer was already told to replace, and an empty link would only
+// die at the storage CHECK as a 500-class error instead of the 400 the contract
+// promises (feature 021, FR-007, FR-009). The two cases carry distinct messages so
+// the customer knows whether the link is missing or still the legacy placeholder.
+// The edit path shares this guard through deliveryAddress, so switching an order
+// to such an address is refused the same way.
+func toAddress(address contracts.CustomerAddress) (model.Address, error) {
+	if strings.TrimSpace(address.FacebookURL) == "" {
+		return model.Address{}, domainerr.InvalidValue(model.FieldFacebookURL,
+			"is missing; update the address with a real Facebook link first")
+	}
+	if address.FacebookURL == model.PlaceholderFacebookURL {
+		return model.Address{}, domainerr.InvalidValue(model.FieldFacebookURL,
+			"carries the legacy placeholder; update the address with a real Facebook link first")
+	}
 	return model.Address{
 		RecipientName:  address.RecipientName,
 		RecipientPhone: address.RecipientPhone,
@@ -296,7 +321,8 @@ func toAddress(address contracts.CustomerAddress) model.Address {
 		WardCode:       address.WardCode,
 		WardName:       address.WardName,
 		StreetAddress:  address.StreetAddress,
-	}
+		FacebookURL:    address.FacebookURL,
+	}, nil
 }
 
 // categorySnapshot copies the category pair from the variant facts onto an order

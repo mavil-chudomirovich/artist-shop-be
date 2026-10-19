@@ -1,0 +1,65 @@
+openapi: 3.1.0
+info:
+  title: Address Facebook URL — contract delta (021)
+  version: 1.0.0
+description: >
+  Delta cộng thêm trường `facebookUrl` vào các schema địa chỉ hiện có.
+  Áp vào specs/003-user-profile/contracts/openapi.yaml (Address,
+  CustomerLookupAddress, CreateAddressRequest, UpdateAddressRequest) và
+  specs/009-order/contracts/openapi.yaml, specs/010-order-confirmation/contracts/openapi.yaml,
+  specs/019-order-delivery/contracts/openapi.yaml (OrderAddress).
+  `AddressDelta` bên dưới dùng chung cho cả `Address` và `CustomerLookupAddress`
+  (hai schema đồng hình sau change, chỉ khác `divisionNeedsReview`).
+  Không thêm endpoint, không thêm mã lỗi mới.
+components:
+  schemas:
+    AddressDelta:
+      description: Customer Address + facebookUrl (required khi đọc).
+      type: object
+      required: [facebookUrl]
+      properties:
+        facebookUrl:
+          type: string
+          maxLength: 500
+          format: uri
+          description: >
+            Link Facebook liên hệ của địa chỉ (bắt buộc). Chỉ chấp nhận
+            https với host facebook.com/fb.com hoặc mọi subdomain của chúng
+            (kèm www., không phân biệt hoa/thường, bỏ qua port); path phải có
+            nội dung; từ chối giá trị giữ chỗ https://facebook.com/unknown
+            trên mọi write mới. Dữ liệu cũ chuyển đổi mang giá trị giữ chỗ này.
+            (Không dùng `pattern`: JSON Schema pattern không có flag
+            case-insensitive nên không diễn đạt đúng quy tắc host.)
+    CreateAddressRequestDelta:
+      description: Thêm facebookUrl vào required của CreateAddressRequest.
+      type: object
+      required: [facebookUrl]
+      properties:
+        facebookUrl:
+          type: string
+          maxLength: 500
+          format: uri
+          description: Bắt buộc khi tạo địa chỉ mới.
+    UpdateAddressRequestDelta:
+      description: Thêm facebookUrl optional vào UpdateAddressRequest.
+      type: object
+      properties:
+        facebookUrl:
+          type: string
+          maxLength: 500
+          format: uri
+          description: >
+            Vắng mặt giữ giá trị cũ trên địa chỉ thường; rỗng bị từ chối; giá
+            trị mới phải hợp lệ. Ngoại lệ: vắng mặt trên địa chỉ đang mang
+            https://facebook.com/unknown vẫn bị từ chối với VALIDATION_ERROR
+            trường facebookUrl (FR-004).
+    OrderAddressDelta:
+      description: OrderAddress snapshot + facebookUrl (required khi đọc).
+      type: object
+      required: [facebookUrl]
+      properties:
+        facebookUrl:
+          type: string
+          maxLength: 500
+          format: uri
+          description: Ảnh chụp link tại lúc chốt đơn; bất biến sau tạo đơn.

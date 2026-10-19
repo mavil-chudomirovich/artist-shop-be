@@ -113,8 +113,7 @@ type AuthConfig struct {
 	SMTPPassword string `env:"SMTP_PASSWORD"`
 	SMTPFrom     string `env:"SMTP_FROM" envDefault:"no-reply@artist-shop.local"`
 
-	AdminEmail    string `env:"ADMIN_EMAIL"`
-	AdminPassword string `env:"ADMIN_PASSWORD"`
+	AdminEmail string `env:"ADMIN_EMAIL"`
 }
 
 // HTTPConfig controls the HTTP server lifecycle.

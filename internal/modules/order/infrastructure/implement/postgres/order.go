@@ -49,6 +49,7 @@ var orderColumns = []string{
 	"ward_code",
 	"ward_name",
 	"street_address",
+	"facebook_url",
 	"payment_expires_at",
 	"order_version",
 	"confirmed_at",
@@ -162,8 +163,9 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 			(id, user_id, status, total_amount, currency,
 			 recipient_name, recipient_phone,
 			 province_code, province_name, ward_code, ward_name, street_address,
+			 facebook_url,
 			 payment_expires_at, order_version, confirmed_at, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`
 	if _, err := r.querier(ctx).Exec(ctx, orderQuery,
 		order.ID,
 		order.UserID,
@@ -177,6 +179,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 		order.Address.WardCode,
 		order.Address.WardName,
 		order.Address.StreetAddress,
+		order.Address.FacebookURL,
 		order.PaymentExpiresAt,
 		order.Version,
 		order.ConfirmedAt,
@@ -472,7 +475,8 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 		SET status = $2, total_amount = $3, currency = $4,
 		    recipient_name = $5, recipient_phone = $6,
 		    province_code = $7, province_name = $8, ward_code = $9, ward_name = $10, street_address = $11,
-		    order_version = $12, confirmed_at = $13, payment_expires_at = $14, updated_at = $15
+		    facebook_url = $12,
+		    order_version = $13, confirmed_at = $14, payment_expires_at = $15, updated_at = $16
 		WHERE id = $1`
 	tag, err := r.querier(ctx).Exec(ctx, orderQuery,
 		order.ID,
@@ -486,6 +490,7 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 		order.Address.WardCode,
 		order.Address.WardName,
 		order.Address.StreetAddress,
+		order.Address.FacebookURL,
 		order.Version,
 		order.ConfirmedAt,
 		order.PaymentExpiresAt,
@@ -1139,6 +1144,7 @@ func scanOrder(row baserepo.Row) (*model.Order, error) {
 		&order.Address.WardCode,
 		&order.Address.WardName,
 		&order.Address.StreetAddress,
+		&order.Address.FacebookURL,
 		&order.PaymentExpiresAt,
 		&order.Version,
 		&order.ConfirmedAt,

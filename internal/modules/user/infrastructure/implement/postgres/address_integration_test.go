@@ -71,9 +71,9 @@ func (f *addressFixture) insert(t *testing.T, isDefault bool, deletedAt *time.Ti
 	const query = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default, deleted_at, created_at, updated_at)
+			 ward_code, ward_name, street_address, facebook_url, is_default, deleted_at, created_at, updated_at)
 		VALUES ($1, $2, 'Nguyen Van A', '0912345678', $3, 'Captured province',
-			$4, 'Captured ward', $5, $6, $7, now(), now())`
+			$4, 'Captured ward', $5, 'https://facebook.com/nguyen.van.a', $6, $7, now(), now())`
 	if _, err := f.pool.Exec(context.Background(), query,
 		id, f.owner, provinceCode, wardCode, street, isDefault, deletedAt); err != nil {
 		t.Fatalf("insert a raw address row: %v", err)
@@ -104,9 +104,9 @@ func TestASecondDefaultRowIsRejectedByThePartialUniqueIndex(t *testing.T) {
 	const second = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default)
+			 ward_code, ward_name, street_address, facebook_url, is_default)
 		VALUES ($1, $2, 'Nguyen Van B', '0912345678', '79', 'Captured province',
-			'26735', 'Captured ward', '1 Le Loi', true)`
+			'26735', 'Captured ward', '1 Le Loi', 'https://facebook.com/nguyen.van.b', true)`
 	_, err := f.pool.Exec(context.Background(), second, uuid.New(), f.owner)
 
 	if err == nil {
@@ -230,9 +230,9 @@ func TestEveryReadFiltersHiddenRows(t *testing.T) {
 	const seedForeign = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address)
+			 ward_code, ward_name, street_address, facebook_url)
 		VALUES ($1, $2, 'Someone Else', '0912345678', '79', 'Captured province',
-			'26734', 'Captured ward', '99 Le Loi')`
+			'26734', 'Captured ward', '99 Le Loi', 'https://facebook.com/someone.else')`
 	if _, err := f.pool.Exec(ctx, seedForeign, foreign, other); err != nil {
 		t.Fatalf("seed a foreign address: %v", err)
 	}
@@ -258,9 +258,9 @@ func TestTheProvinceAndWardNamesAreCapturedInTheirOwnColumns(t *testing.T) {
 	const query = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address)
+			 ward_code, ward_name, street_address, facebook_url)
 		VALUES ($1, $2, 'Nguyen Van A', '0912345678', '79', 'Ho Chi Minh (cu)',
-			'11111', 'Phuong Da Xa', '12 Nguyen Hue')`
+			'11111', 'Phuong Da Xa', '12 Nguyen Hue', 'https://facebook.com/nguyen.van.a')`
 	if _, err := f.pool.Exec(ctx, query, id, f.owner); err != nil {
 		t.Fatalf("insert an address with captured names: %v", err)
 	}
@@ -271,6 +271,9 @@ func TestTheProvinceAndWardNamesAreCapturedInTheirOwnColumns(t *testing.T) {
 	}
 	if got.ProvinceName != "Ho Chi Minh (cu)" || got.WardName != "Phuong Da Xa" {
 		t.Fatalf("the captured names did not survive: %+v", got)
+	}
+	if got.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("the Facebook link did not survive: %+v", got)
 	}
 	if got.ProvinceCode != "79" || got.WardCode != "11111" {
 		t.Fatalf("the stored codes did not survive: %+v", got)
@@ -542,6 +545,7 @@ func TestCreateWritesEveryStoredColumn(t *testing.T) {
 		WardCode:       "26734",
 		WardName:       "Phuong Ben Nghe",
 		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 		CreatedAt:      created,
 		UpdatedAt:      created,
 	}
@@ -558,6 +562,9 @@ func TestCreateWritesEveryStoredColumn(t *testing.T) {
 		got.WardName != "Phuong Ben Nghe" || got.StreetAddress != "12 Nguyen Hue" {
 		t.Fatalf("unexpected stored row: %+v", got)
 	}
+	if got.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the Facebook link to round-trip, got %q", got.FacebookURL)
+	}
 	if got.IsDefault {
 		t.Fatal("a created address must not be the default unless the entity says so")
 	}
@@ -566,5 +573,81 @@ func TestCreateWritesEveryStoredColumn(t *testing.T) {
 	}
 	if !got.CreatedAt.Equal(created) || !got.UpdatedAt.Equal(created) {
 		t.Fatalf("expected the entity's timestamps to be stored, got %v / %v", got.CreatedAt, got.UpdatedAt)
+	}
+}
+
+// US1 (021-address-facebook-url): the Facebook link round-trips through the
+// adapter — created through the repository, read back directly and through the
+// listing.
+func TestTheFacebookURLRoundTripsThroughTheAdapter(t *testing.T) {
+	f := newAddressFixture(t)
+	ctx := context.Background()
+	created := time.Now().UTC().Truncate(time.Microsecond)
+	address := &model.Address{
+		ID:             uuid.New(),
+		UserID:         f.owner,
+		RecipientName:  "Nguyen Van A",
+		RecipientPhone: "0912345678",
+		ProvinceCode:   "79",
+		ProvinceName:   "Ho Chi Minh",
+		WardCode:       "26734",
+		WardName:       "Phuong Ben Nghe",
+		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://m.facebook.com/nguyen.van.a",
+		CreatedAt:      created,
+		UpdatedAt:      created,
+	}
+
+	if err := f.repo.Create(ctx, address); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := f.repo.FindByOwner(ctx, f.owner, address.ID)
+	if err != nil {
+		t.Fatalf("FindByOwner: %v", err)
+	}
+	if got.FacebookURL != "https://m.facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the Facebook link to round-trip, got %q", got.FacebookURL)
+	}
+
+	list, total, err := f.repo.ListByOwner(ctx, f.owner, 1, 20)
+	if err != nil {
+		t.Fatalf("ListByOwner: %v", err)
+	}
+	if total != 1 || len(list) != 1 || list[0].FacebookURL != "https://m.facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the listing to carry the Facebook link, got %+v", list)
+	}
+}
+
+// US1 (021-address-facebook-url) storage counterpart of FR-008: the
+// facebook_url column refuses an empty or overlong link where it is stored, so
+// no caller can bypass the application rule with a direct write.
+func TestTheStorageLayerRefusesAnEmptyOrOverlongFacebookURL(t *testing.T) {
+	f := newAddressFixture(t)
+	ctx := context.Background()
+
+	for _, link := range []string{"", strings.Repeat("a", 501)} {
+		const query = `
+			INSERT INTO addresses
+				(id, user_id, recipient_name, recipient_phone, province_code, province_name,
+				 ward_code, ward_name, street_address, facebook_url)
+			VALUES ($1, $2, 'Nguyen Van A', '0912345678', '79', 'Captured province',
+				'26734', 'Captured ward', '12 Nguyen Hue', $3)`
+		_, err := f.pool.Exec(ctx, query, uuid.New(), f.owner, link)
+
+		if err == nil {
+			t.Fatalf("the storage layer accepted facebook_url %q", link)
+		}
+	}
+
+	// A NULL link is refused by the NOT NULL guarantee itself.
+	const nullQuery = `
+		INSERT INTO addresses
+			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
+			 ward_code, ward_name, street_address)
+		VALUES ($1, $2, 'Nguyen Van A', '0912345678', '79', 'Captured province',
+			'26734', 'Captured ward', '12 Nguyen Hue')`
+	if _, err := f.pool.Exec(ctx, nullQuery, uuid.New(), f.owner); err == nil {
+		t.Fatal("the storage layer accepted a NULL facebook_url")
 	}
 }

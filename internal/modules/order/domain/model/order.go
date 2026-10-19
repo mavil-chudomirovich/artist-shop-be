@@ -27,7 +27,20 @@ const (
 	// feedback message. An empty, blank or over-long value is reported against
 	// it (FR-015, contracts/error-codes.md).
 	FieldFeedbackContent = "content"
+	// FieldFacebookURL is the member carrying the delivery address's contact
+	// Facebook link. An address carrying the legacy placeholder is refused
+	// against it at checkout and when an edit switches to it (feature 021,
+	// FR-009, contracts/error-codes.md).
+	FieldFacebookURL = "facebookUrl"
 )
+
+// PlaceholderFacebookURL is the legacy placeholder backfilled onto rows that
+// predate the Facebook-link rule (migrations 00020, 00021). It mirrors the user
+// module's sentinel without importing that module: an order is a snapshot, so it
+// names the placeholder only to refuse it, never to write it (feature 021,
+// FR-009). It is kept as a named constant beside the field it guards so the
+// checkout and edit paths share one spelling.
+const PlaceholderFacebookURL = "https://facebook.com/unknown"
 
 // Price is money as an integer amount in a currency's minor unit together with
 // that currency (FR-008).
@@ -115,6 +128,11 @@ type Address struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link snapshotted from the chosen
+	// address at checkout. It never changes once the order is placed, so a later
+	// edit of the customer's address cannot rewrite history (feature 021,
+	// FR-006).
+	FacebookURL string
 }
 
 // DeliveryCompletionWindow is how long a delivered order awaits the customer's

@@ -686,6 +686,11 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderAddressResponse:
     properties:
+      facebookUrl:
+        description: |-
+          FacebookURL is the contact Facebook link as captured at checkout
+          (feature 021, FR-006).
+        type: string
       provinceCode:
         description: ProvinceCode and ProvinceName identify the first-level unit.
         type: string
@@ -1341,6 +1346,9 @@ definitions:
           Omitting a known false would make a client read "absent" as "unknown",
           which in JavaScript is `undefined` rather than `false`.
         type: boolean
+      facebookUrl:
+        description: FacebookURL is the contact Facebook link of the address.
+        type: string
       id:
         description: ID identifies the address.
         type: string
@@ -1386,6 +1394,9 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest:
     properties:
+      facebookUrl:
+        description: FacebookURL is the contact Facebook link. It is required.
+        type: string
       provinceCode:
         description: ProvinceCode must exist in the official dataset.
         type: string
@@ -1437,6 +1448,9 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse:
     properties:
+      facebookUrl:
+        description: FacebookURL is the contact Facebook link of the address.
+        type: string
       id:
         description: ID identifies the address.
         type: string
@@ -1499,6 +1513,13 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest:
     properties:
+      facebookUrl:
+        description: |-
+          FacebookURL is omitted to keep the current contact Facebook link. An
+          empty value clears it, which is refused; a nil edit on an address
+          carrying the legacy placeholder is refused until the customer supplies
+          a real link.
+        type: string
       provinceCode:
         description: ProvinceCode is omitted to keep the current province.
         type: string
@@ -2650,6 +2671,39 @@ paths:
       summary: Transfer a paid order to another account (administrator)
       tags:
       - Orders
+  /admin/orders/stream:
+    get:
+      description: Opens a live SSE stream of order.needs_confirmation and order.feedback_received
+        for administrators. Read with fetch + ReadableStream and the Authorization
+        header; on reconnect, re-open the stream and re-read GET /admin/orders.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: text/event-stream
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Subscribe to admin order notifications (SSE)
+      tags:
+      - AdminOrders
   /admin/payments:
     get:
       description: Returns every payment, newest first by default, with its owner
@@ -4795,6 +4849,35 @@ paths:
       summary: Start (or reuse) an online payment for the caller's order
       tags:
       - payments
+  /orders/stream:
+    get:
+      description: Opens a live SSE stream of order.status_changed for the signed-in
+        customer's own orders. Read with fetch + ReadableStream and the Authorization
+        header; on reconnect, re-open the stream and re-read GET /orders.
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: text/event-stream
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError'
+      security:
+      - BearerAuth: []
+      summary: Subscribe to my order status changes (SSE)
+      tags:
+      - Orders
   /payments/payos/webhook:
     post:
       consumes:

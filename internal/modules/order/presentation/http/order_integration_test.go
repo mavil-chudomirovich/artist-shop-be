@@ -95,7 +95,7 @@ func (c customerAddresses) LookupCustomer(ctx context.Context, userID uuid.UUID)
 
 	rows, err := c.pool.Query(ctx, `
 		SELECT id, recipient_name, recipient_phone, province_code, province_name,
-		       ward_code, ward_name, street_address, is_default
+		       ward_code, ward_name, street_address, facebook_url, is_default
 		FROM addresses
 		WHERE user_id = $1 AND deleted_at IS NULL
 		ORDER BY is_default DESC, updated_at DESC`, userID)
@@ -109,7 +109,7 @@ func (c customerAddresses) LookupCustomer(ctx context.Context, userID uuid.UUID)
 		var address contracts.CustomerAddress
 		if err := rows.Scan(&address.ID, &address.RecipientName, &address.RecipientPhone,
 			&address.ProvinceCode, &address.ProvinceName, &address.WardCode, &address.WardName,
-			&address.StreetAddress, &address.IsDefault); err != nil {
+			&address.StreetAddress, &address.FacebookURL, &address.IsDefault); err != nil {
 			return contracts.Customer{}, err
 		}
 		addresses = append(addresses, address)
@@ -316,9 +316,9 @@ func seedOrderCustomer(t *testing.T, pool *pgxpool.Pool, userID uuid.UUID) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default)
+			 ward_code, ward_name, street_address, facebook_url, is_default)
 		VALUES ($1, $2, 'Nguyễn Văn A', '0912345678', '01', 'Hà Nội',
-			'00001', 'Phúc Xá', '1 Đinh Tiên Hoàng', true)`,
+			'00001', 'Phúc Xá', '1 Đinh Tiên Hoàng', 'https://facebook.com/nguyen.van.a', true)`,
 		uuid.New(), userID); err != nil {
 		t.Fatalf("insert address: %v", err)
 	}

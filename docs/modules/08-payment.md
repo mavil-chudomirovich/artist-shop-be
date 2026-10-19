@@ -74,7 +74,8 @@ khách, `payments_status_idx` cho hàng đợi đối soát). Chi tiết đầy 
 1. **Bắt đầu** (`POST /orders/{orderId}/payment`): đọc đơn **qua hợp đồng** `OrderPayment` (không đọc
    bảng của module 07); từ chối nếu không phải của khách (trả như không tìm thấy) hoặc không chờ thanh
    toán; nếu đã có thanh toán còn hiệu lực thì **dùng lại** và trả **chính liên kết đó**; nếu chưa, sinh
-   `order_code`, gọi PayOS **trước** transaction (để transaction ngắn, không bọc HTTP), rồi ghi dòng
+   `order_code`, gọi PayOS **trước** transaction (để transaction ngắn, không bọc HTTP) kèm
+   `expiredAt = payment_expires_at`, rồi ghi dòng
    `PENDING` + sự kiện `PAYMENT_CREATED` trong **một** transaction. Cổng lỗi → `422`, **không** ghi gì,
    đơn nguyên vẹn.
 2. **Webhook** (`POST /payments/payos/webhook`): xác minh **chữ ký** trên đúng byte nhận được; tìm thanh
@@ -110,9 +111,12 @@ cổng lỗi thì không ghi gì; hết hạn là đường huỷ của đơn v�
 ## PayOS — tích hợp và chữ ký
 
 - **Tạo liên kết**: `POST {PAYOS_BASE_URL}/v2/payment-requests` với header `x-client-id` + `x-api-key`;
-  body gồm `orderCode`, `amount`, `description`, `cancelUrl`, `returnUrl` và `signature`. Chữ ký là
+  body gồm `orderCode`, `amount`, `description`, `cancelUrl`, `returnUrl`, `expiredAt` và `signature`.
+  `expiredAt` là hạn của đơn (`payment_expires_at`, Unix seconds) nên link/QR phía PayOS tự hết hạn cùng
+  cửa sổ 60 phút với web; deadline zero thì bỏ field. Chữ ký là
   **HMAC_SHA256** với **checksum key** trên đúng các trường **sắp theo alphabet**:
-  `amount=$amount&cancelUrl=$cancelUrl&description=$description&orderCode=$orderCode&returnUrl=$returnUrl`.
+  `amount=$amount&cancelUrl=$cancelUrl&description=$description&orderCode=$orderCode&returnUrl=$returnUrl`
+  (`expiredAt` **không** nằm trong chuỗi ký theo doc PayOS).
   Mô tả là chuỗi ngắn, ổn định, suy từ `orderCode` (`DH%07d`) vì tài liệu PayOS ghi giới hạn 9 ký tự cho
   tài khoản ngân hàng không liên kết PayOS.
 - **Webhook**: body `{code, desc, success, data, signature}`; chữ ký = **HMAC_SHA256** với checksum key

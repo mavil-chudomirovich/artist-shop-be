@@ -4,7 +4,7 @@ Repo có 4 file Docker:
 
 | File | Vai trò |
 |---|---|
-| `Dockerfile` | Build image cho cả 3 command (`api`, `migrate`, `seed`) |
+| `Dockerfile` | Build image cho cả 2 command (`api`, `migrate`) |
 | `.dockerignore` | Loại file khỏi build context |
 | `docker-compose.yml` | Stack mặc định: `db` + `redis` + `api` |
 | `docker-compose.dev.yml` | Override cho dev: mở port, thêm Mailpit |
@@ -28,8 +28,7 @@ COPY . .
 
 ENV CGO_ENABLED=0 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/api    ./cmd/api && \
-    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    go build -trimpath -ldflags="-s -w" -o /out/seed    ./cmd/seed
+    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 ```
 
 | Quyết định | Tại sao |
@@ -39,7 +38,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/api    ./cmd/api && \
 | `GOOS=linux` | Build trên Windows/macOS vẫn ra binary Linux |
 | `-trimpath` | Bỏ đường dẫn máy dev khỏi binary ( reproducible ) |
 | `-ldflags="-s -w"` | Bỏ symbol table + DWARF, giảm ~25% kích thước |
-| Build **3 binary, 1 image** | `migrate`/`seed` chỉ khác `ENTRYPOINT`; tách image riêng là lãng phí |
+| Build **2 binary, 1 image** | `migrate` chỉ khác `ENTRYPOINT`; tách image riêng là lãng phí (seed là file SQL chạy bằng psql, không cần binary) |
 
 ### Tầng runtime
 
@@ -51,7 +50,6 @@ RUN apk add --no-cache ca-certificates tzdata && \
 WORKDIR /app
 COPY --from=build /out/api    /app/api
 COPY --from=build /out/migrate /app/migrate
-COPY --from=build /out/seed    /app/seed
 
 USER app
 EXPOSE 8080
@@ -67,7 +65,7 @@ ENTRYPOINT ["/app/api"]
 | `adduser -u 10001` + `USER app` | Không chạy root |
 | `HEALTHCHECK` dùng `wget` | `alpine` có busybox `wget` sẵn — không cài thêm gói |
 | `--start-period=20s` | Cho app thời gian chạy migration trước khi bị coi là chết |
-| `ENTRYPOINT` không có `CMD` | `migrate`/`seed` override bằng `entrypoint:` trong compose |
+| `ENTRYPOINT` không có `CMD` | `migrate` override bằng `entrypoint:` trong compose |
 
 ### Vì sao image không chứa thư mục `migrations/`
 
@@ -154,7 +152,7 @@ environment:
 - `environment` ghi đè `DATABASE_URL` → host `db`, `REDIS_ADDR` → `redis:6379`.
 - `restart: unless-stopped`.
 
-### Service `migrate` và `seed`
+### Service `migrate`
 Cùng image, override entrypoint, `profiles: [tools]`, `restart: "no"`.
 
 ```yaml
@@ -165,12 +163,17 @@ migrate:
   profiles: [tools]
 ```
 
+Seed admin không còn là service: `scripts/seed_admin.sql` chạy thủ công bằng
+psql qua container `db` (`make seed-sql`), nên không bao giờ chạy nhầm khi
+`up` và không bao giờ fail vì thiếu biến.
+
 Ba bài học từ lỗi thật:
 
 | Vấn đề đã gặp | Nguyên nhân | Cách sửa |
 |---|---|---|
-| `seed: DATABASE_URL is required` | Chỉ `api` có `env_file` | YAML anchor `x-common-env` gắn cho cả 3 service |
-| `migrate`/`seed` chạy mỗi lần `up`, và `seed` fail khi chưa có `ADMIN_*` | Không có profile | Đặt sau `profiles: [tools]`; `docker compose run --rm seed` tự bật profile nên `make seed-docker` vẫn chạy |
+| `migrate: DATABASE_URL is required` | Chạy image trực tiếp từ Docker Desktop / `docker run` thủ công, không qua compose nên không có env | Luôn chạy qua compose: `make migrate-up-docker`. Container one-shot tạo thủ công (`artist-shop-migrate-1`) thì xoá đi (`docker rm`) |
+| `failed to set up container networking: network ... not found` | Bấm Start lại container one-shot cũ trong Docker Desktop, trỏ tới network đã bị xoá | Xoá container cũ, tạo lại bằng `make migrate-up-docker` khi cần |
+| `migrate` chạy mỗi lần `up` | Không có profile | Đặt sau `profiles: [tools]`; `docker compose run --rm migrate` tự bật profile nên `make migrate-up-docker` vẫn chạy |
 | `mailpit` không nhận email dù đã bật | `SMTP_HOST` trong `.env` trỏ nhà cung cấp thật, và API đang chạy trên host nên override của container không áp dụng | Xem [troubleshooting.md](troubleshooting.md) mục `mailpit` không nhận email |
 
 ### Tại sao `db`/`redis` không publish port
@@ -235,7 +238,8 @@ make down-all      # xoá cả volume (MẤT dữ liệu)
 make db-shell      # psql
 make redis-cli     # redis-cli (tự đăng nhập)
 make mail          # email Mailpit bắt được
-make seed-docker   # provision admin
+make seed-hash     # in hash Argon2id cho mật khẩu admin (dev-only)
+make seed-sql      # provision admin từ scripts/seed_admin.sql
 make migrate-up-docker / make migrate-status-docker
 make docker-build  # build image, tag artist-shop-be:<git-sha>
 ```

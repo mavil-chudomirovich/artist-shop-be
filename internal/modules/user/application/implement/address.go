@@ -70,6 +70,7 @@ func (s *Service) CreateAddress(ctx context.Context, in dto.CreateAddressInput) 
 		ProvinceCode:   in.ProvinceCode,
 		WardCode:       in.WardCode,
 		StreetAddress:  in.StreetAddress,
+		FacebookURL:    in.FacebookURL,
 	}
 
 	var stored model.Address
@@ -157,6 +158,7 @@ func (s *Service) UpdateAddress(ctx context.Context, in dto.UpdateAddressInput) 
 		RecipientName:  in.RecipientName,
 		RecipientPhone: in.RecipientPhone,
 		StreetAddress:  in.StreetAddress,
+		FacebookURL:    in.FacebookURL,
 	}
 	if in.ProvinceCode != nil || in.WardCode != nil || in.ProvinceName != nil || in.WardName != nil {
 		provinceCode := address.ProvinceCode
@@ -441,6 +443,9 @@ func changedAddressFields(before, after model.Address) []string {
 	}
 	if before.StreetAddress != after.StreetAddress {
 		changed = append(changed, model.FieldStreetAddress)
+	}
+	if before.FacebookURL != after.FacebookURL {
+		changed = append(changed, model.FieldFacebookURL)
 	}
 	return changed
 }

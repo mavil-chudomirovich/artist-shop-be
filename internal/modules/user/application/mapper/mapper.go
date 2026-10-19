@@ -50,6 +50,7 @@ func (m *Mapper) Address(ctx context.Context, address model.Address) dto.Address
 		WardCode:            address.WardCode,
 		WardName:            address.WardName,
 		StreetAddress:       address.StreetAddress,
+		FacebookURL:         address.FacebookURL,
 		IsDefault:           address.IsDefault,
 		DivisionNeedsReview: m.divisionNeedsReview(ctx, address.ProvinceCode, address.WardCode),
 	}
@@ -111,6 +112,7 @@ func customerAddresses(list []model.Address) []contracts.CustomerAddress {
 			WardCode:       address.WardCode,
 			WardName:       address.WardName,
 			StreetAddress:  address.StreetAddress,
+			FacebookURL:    address.FacebookURL,
 			IsDefault:      address.IsDefault,
 		})
 	}

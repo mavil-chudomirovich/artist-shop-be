@@ -742,7 +742,7 @@ const (
 func addressRequestBody(provinceCode, wardCode, street string) string {
 	return `{"recipientName":"Nguyen Van A","recipientPhone":"0912 345 678",` +
 		`"provinceCode":"` + provinceCode + `","wardCode":"` + wardCode + `",` +
-		`"streetAddress":"` + street + `"}`
+		`"streetAddress":"` + street + `","facebookUrl":"https://facebook.com/nguyen.van.a"}`
 }
 
 const addressesPath = profilePath + "/addresses"
@@ -1032,9 +1032,9 @@ func TestAnAddressWhoseCodeLeftTheDatasetStillReadsBack(t *testing.T) {
 	const seed = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default, created_at, updated_at)
+			 ward_code, ward_name, street_address, facebook_url, is_default, created_at, updated_at)
 		VALUES ($1, $2, 'Nguyen Van A', '0912345678', $3, 'Retired province (cu)',
-			$4, 'Retired ward (cu)', '12 Nguyen Hue', true, now(), now())`
+			$4, 'Retired ward (cu)', '12 Nguyen Hue', 'https://facebook.com/nguyen.van.a', true, now(), now())`
 	province, err := administrative.FindProvince(addressProvinceCode)
 	if err != nil {
 		t.Fatalf("read the province from the dataset: %v", err)
@@ -1188,9 +1188,9 @@ func TestAnotherCustomersAddressIsRefusedAgainstPostgres(t *testing.T) {
 	const seed = `
 		INSERT INTO addresses
 			(id, user_id, recipient_name, recipient_phone, province_code, province_name,
-			 ward_code, ward_name, street_address, is_default, created_at, updated_at)
+			 ward_code, ward_name, street_address, facebook_url, is_default, created_at, updated_at)
 		VALUES ($1, $2, 'Someone Else', '0987654321', $3, 'Someone province',
-			$4, 'Someone ward', '99 Le Loi', true, now(), now())`
+			$4, 'Someone ward', '99 Le Loi', 'https://facebook.com/someone.else', true, now(), now())`
 	if _, err := f.pool.Exec(context.Background(), seed,
 		foreign, f.other, addressProvinceCode, otherAddressWardCode); err != nil {
 		t.Fatalf("seed a foreign address: %v", err)

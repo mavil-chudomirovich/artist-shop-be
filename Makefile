@@ -36,6 +36,10 @@ IMAGE_NAME ?= artist-shop-be
 DB_NAME ?= artist_shop
 DB_USER ?= app
 
+# Admin seed variables (git-ignored): \set admin_email/admin_hash lines
+# consumed by the seed-sql target, never committed.
+SEED_VARS_FILE ?= scripts/seed.vars.local.psql
+
 # Published host ports; must match the defaults in docker-compose*.yml.
 API_PORT ?= 8080
 DB_PORT ?= 5432
@@ -49,6 +53,8 @@ CLEAN_BIN_CMD := if exist "$(subst /,\,$(BIN_DIR))" rmdir /S /Q "$(subst /,\,$(B
 CLEAN_COVERAGE_CMD := if exist coverage.out del /Q coverage.out
 FMT_CHECK_CMD := powershell -Command "$$files = gofmt -l .; if ($$files) { Write-Error ($$files -join [Environment]::NewLine); exit 1 }"
 ENV_CMD := if exist .env (echo .env already exists; left untouched) else (copy /Y .env.example .env >NUL && echo created .env from .env.example)
+SEED_VARS_CHECK_CMD := if not exist "$(subst /,\,$(SEED_VARS_FILE))" (echo Missing $(SEED_VARS_FILE): create it with \set admin_email/admin_hash lines, see scripts/seed_admin.sql & exit 1)
+SEED_SQL_PIPE_CMD := type "$(subst /,\,$(SEED_VARS_FILE))" "scripts\seed_admin.sql" 2>NUL | $(COMPOSE) exec -T db psql -U $(DB_USER) -d $(DB_NAME) -v ON_ERROR_STOP=1
 else
 GO_BIN_EXT :=
 MKDIR_BIN_CMD := mkdir -p "$(BIN_DIR)"
@@ -56,6 +62,8 @@ CLEAN_BIN_CMD := rm -rf "$(BIN_DIR)"
 CLEAN_COVERAGE_CMD := rm -f coverage.out
 FMT_CHECK_CMD := test -z "$$(gofmt -l .)"
 ENV_CMD := if [ -f .env ]; then echo ".env already exists; left untouched"; else cp .env.example .env && echo "created .env from .env.example"; fi
+SEED_VARS_CHECK_CMD := test -f "$(SEED_VARS_FILE)" || (echo "Missing $(SEED_VARS_FILE): create it with \set admin_email/admin_hash lines, see scripts/seed_admin.sql"; exit 1)
+SEED_SQL_PIPE_CMD := cat "$(SEED_VARS_FILE)" scripts/seed_admin.sql | $(COMPOSE) exec -T db psql -U $(DB_USER) -d $(DB_NAME) -v ON_ERROR_STOP=1
 endif
 
 # gofmt -w . recurses into every .go file on both platforms.
@@ -73,15 +81,16 @@ help: ## Show this index
 	@echo   make quality-help   : CI quality checks, tests, compilation
 	@echo   make docker-help    : Docker Compose stack and image
 	@echo   make migration-help : Database migration (goose) commands
-	@echo Most used: make up | make up-tools | make check | make seed
+	@echo Most used: make up | make up-tools | make check | make seed-sql
 	@echo ================
 
 dev-help:
 	@echo DEVELOPMENT:
 	@echo   make env            : Create .env from .env.example if missing
 	@echo   make run            : Run the API locally with 'go run'
-	@echo   make seed           : Provision the admin account (local Go)
-	@echo   make build          : Build api, migrate, seed into bin/
+	@echo   make seed-hash      : Print an Argon2id hash for ADMIN_PASSWORD (dev-only)
+	@echo   make seed-sql       : Provision the admin account via scripts/seed_admin.sql
+	@echo   make build          : Build api and migrate into bin/
 	@echo   make dev            : Build everything, ready to run
 	@echo   make fmt            : Format all Go source files
 	@echo   make tidy           : Tidy go.mod / go.sum
@@ -116,7 +125,6 @@ docker-help:
 	@echo   make db-shell       : psql inside the db container
 	@echo   make redis-cli      : redis-cli inside the redis container
 	@echo   make mail           : Print emails captured by Mailpit
-	@echo   make seed-docker    : Provision the admin account in a container
 	@echo   make docker-build   : Build the image and tag it artist-shop-be:<sha>
 
 migration-help:
@@ -139,18 +147,22 @@ env: ## Create .env from .env.example if missing
 run: ## Run the API locally (go run)
 	$(GO) run ./cmd/api
 
-.PHONY: seed
-seed: ## Provision the admin account using local Go
-	$(GO) run ./cmd/seed
+.PHONY: seed-hash
+seed-hash: ## Print an Argon2id hash for ADMIN_PASSWORD (paste into seed.vars.local.psql)
+	$(GO) run ./cmd/hash-password
+
+.PHONY: seed-sql
+seed-sql: ## Provision the admin account from scripts/seed_admin.sql via the db container
+	@$(SEED_VARS_CHECK_CMD)
+	$(SEED_SQL_PIPE_CMD)
 
 .PHONY: build
-build: ## Build api, migrate and seed into bin/
+build: ## Build api and migrate into bin/
 	@echo Building binaries into $(BIN_DIR)/...
 	@$(MKDIR_BIN_CMD)
 	$(GO) build $(GO_BUILD_FLAGS) -o "$(BIN_DIR)/api$(GO_BIN_EXT)" ./cmd/api
 	$(GO) build $(GO_BUILD_FLAGS) -o "$(BIN_DIR)/migrate$(GO_BIN_EXT)" ./cmd/migrate
-	$(GO) build $(GO_BUILD_FLAGS) -o "$(BIN_DIR)/seed$(GO_BIN_EXT)" ./cmd/seed
-	@echo Build succeeded: $(BIN_DIR)/api$(GO_BIN_EXT), migrate, seed
+	@echo Build succeeded: $(BIN_DIR)/api$(GO_BIN_EXT), migrate
 
 .PHONY: dev
 dev: build ## Build everything and report how to run it
@@ -352,10 +364,6 @@ redis-cli: ## Open redis-cli inside the redis container (auth comes from the con
 .PHONY: mail
 mail: ## Print emails captured by Mailpit (requires make up-tools)
 	curl -s http://localhost:$(MAILPIT_UI_PORT)/api/v1/messages
-
-.PHONY: seed-docker
-seed-docker: ## Provision the admin account in a container
-	$(COMPOSE) run --rm seed
 
 .PHONY: migrate-up-docker
 migrate-up-docker: ## Apply migrations in a container

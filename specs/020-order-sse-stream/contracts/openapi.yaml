@@ -1,0 +1,34 @@
+openapi: 3.0.3
+info:
+  title: Order SSE streams (020)
+  version: 0.2.0
+paths:
+  /orders/stream:
+    get:
+      tags: [Orders]
+      summary: Subscribe to my order status changes (SSE)
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: text/event-stream of order.status_changed for my orders
+          content:
+            text/event-stream:
+              schema: { type: string, example: "event: order.status_changed\ndata: {...}\n\n" }
+        '401': { description: UNAUTHENTICATED }
+        '429': { description: RATE_LIMITED (global rate limit) }
+        '503': { description: SERVICE_UNAVAILABLE (hub not wired) }
+  /admin/orders/stream:
+    get:
+      tags: [AdminOrders]
+      summary: Subscribe to admin order notifications (SSE)
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: text/event-stream of order.needs_confirmation + order.feedback_received
+          content:
+            text/event-stream:
+              schema: { type: string, example: "event: order.needs_confirmation\ndata: {...}\n\n" }
+        '401': { description: UNAUTHENTICATED }
+        '403': { description: FORBIDDEN }
+        '429': { description: RATE_LIMITED (global rate limit) }
+        '503': { description: SERVICE_UNAVAILABLE (hub not wired) }

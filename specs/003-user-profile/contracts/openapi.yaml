@@ -608,6 +608,7 @@ components:
           wardCode,
           wardName,
           streetAddress,
+          facebookUrl,
           isDefault,
         ]
       properties:
@@ -628,6 +629,16 @@ components:
           type: string
         streetAddress:
           type: string
+        facebookUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          description: >
+            Contact Facebook link of the address (required). Only https links
+            with a facebook.com/fb.com host or any subdomain of either
+            (www., m., case-insensitive, port ignored) and content after the
+            host are accepted; the legacy placeholder https://facebook.com/unknown
+            is refused on every new write.
         isDefault:
           type: boolean
         divisionNeedsReview:
@@ -641,7 +652,7 @@ components:
     CustomerLookupAddress:
       type: object
       description: >
-        An address as an operator sees it: the same nine members as Address, without
+        An address as an operator sees it: the same ten members as Address, without
         divisionNeedsReview. The operator lookup never validates the stored codes
         against the dataset, so it reports what was saved and stays silent about
         whether the codes are still current.
@@ -655,6 +666,7 @@ components:
           wardCode,
           wardName,
           streetAddress,
+          facebookUrl,
           isDefault,
         ]
       properties:
@@ -675,12 +687,17 @@ components:
           type: string
         streetAddress:
           type: string
+        facebookUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          description: Contact Facebook link of the address.
         isDefault:
           type: boolean
     CreateAddressRequest:
       type: object
       required:
-        [recipientName, recipientPhone, provinceCode, wardCode, streetAddress]
+        [recipientName, recipientPhone, provinceCode, wardCode, streetAddress, facebookUrl]
       properties:
         recipientName:
           type: string
@@ -702,13 +719,21 @@ components:
         streetAddress:
           type: string
           maxLength: 255
+        facebookUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          description: Required contact Facebook link of the new address.
       additionalProperties: false
     UpdateAddressRequest:
       type: object
       description: >
         Partial update. Every field is optional and an omitted field keeps its current
-        value; no field can be cleared, because recipientName, recipientPhone,
-        provinceCode and streetAddress are NOT NULL and an empty value is refused
+        value — with one exception: an address carrying the legacy placeholder
+        https://facebook.com/unknown refuses every edit, even one that omits
+        facebookUrl, until the customer supplies a real link (FR-004). No field
+        can be cleared, because recipientName, recipientPhone, provinceCode,
+        streetAddress and facebookUrl are NOT NULL and an empty value is refused
         with VALIDATION_ERROR naming the member. The default flag is not settable
         here - use the set-default endpoint.
       properties:
@@ -737,6 +762,11 @@ components:
           type: string
           maxLength: 255
           description: Omitted keeps the current street address.
+        facebookUrl:
+          type: string
+          format: uri
+          maxLength: 500
+          description: Omitted keeps the current contact Facebook link.
       additionalProperties: false
     CustomerLookup:
       type: object

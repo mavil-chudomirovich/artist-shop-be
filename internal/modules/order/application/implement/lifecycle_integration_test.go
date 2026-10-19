@@ -154,7 +154,7 @@ func (f *lifecycleDBFixture) insertProduct(t *testing.T, amount, quantity int64)
 // placed in PAYMENT_PENDING, the state the paid and expiry paths act on.
 func (f *lifecycleDBFixture) createOrder(t *testing.T, owner uuid.UUID, _ time.Time, lines ...model.OrderLine) *model.Order {
 	t.Helper()
-	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A"}, lines, time.Now().UTC())
+	order := model.NewOrder(owner, model.Address{RecipientName: "Nguyễn Văn A", FacebookURL: "https://facebook.com/test.customer"}, lines, time.Now().UTC())
 	order.Status = constant.StatusPaymentPending
 	if err := f.svc.Orders.Create(context.Background(), order); err != nil {
 		t.Fatalf("create order: %v", err)
@@ -337,7 +337,7 @@ func TestExpiredOrderFreesItsGoodsExactlyOnceAcrossBothSweeps(t *testing.T) {
 func TestAnOrderAwaitingTheArtistNeverExpires(t *testing.T) {
 	f := newLifecycleDBFixture(t)
 	product := f.insertProduct(t, 120000, 5)
-	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"}, []model.OrderLine{{
+	order := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A", FacebookURL: "https://facebook.com/test.customer"}, []model.OrderLine{{
 		ProductID: product, VariantID: product, ProductName: "Tranh sơn dầu", ProductCode: product.String(),
 		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 2,
@@ -384,9 +384,9 @@ func TestTwoConfirmationsForTheLastUnitConfirmAtMostOne(t *testing.T) {
 		VariantName: "Tranh sơn dầu", SKU: product.String(),
 		UnitPrice: model.Price{Amount: 120000, Currency: "VND"}, Quantity: 1,
 	}
-	first := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A"},
+	first := model.NewOrder(uuid.New(), model.Address{RecipientName: "Nguyễn Văn A", FacebookURL: "https://facebook.com/test.customer"},
 		[]model.OrderLine{orderLine}, time.Now().UTC())
-	second := model.NewOrder(uuid.New(), model.Address{RecipientName: "Trần Thị B"},
+	second := model.NewOrder(uuid.New(), model.Address{RecipientName: "Trần Thị B", FacebookURL: "https://facebook.com/test.customer"},
 		[]model.OrderLine{orderLine}, time.Now().UTC())
 	orders := []*model.Order{first, second}
 	for _, order := range orders {

@@ -43,24 +43,46 @@ TESTCONTAINERS_RYUK_DISABLED=true go test -tags integration ./...
 Dấu hiệu bạn đang gặp đúng lỗi này: test "PASS" nhưng mất ~60 giây và log có
 `--- SKIP`. Kiểm tra bằng `go test -v -tags integration ./...` và tìm `SKIP`.
 
-### `seed: DATABASE_URL is required`
+### `migrate: DATABASE_URL is required`
 
-Container `seed`/`migrate` không có env. Đã sửa bằng YAML anchor `x-common-env`
-trong `docker-compose.yml` — nếu bạn thêm service mới cần database, nhớ thêm:
+Service `migrate` trong compose đã có env qua YAML anchor `x-common-env` —
+lỗi này chỉ gặp khi chạy image **trực tiếp từ Docker Desktop** (nút Run) hoặc
+`docker run` thủ công mà không kèm env. Luôn chạy qua compose:
+
+```bash
+make migrate-up-docker   # == docker compose run --rm migrate up
+```
+
+Nếu bạn thêm service mới cần database, nhớ thêm:
 
 ```yaml
     <<: *common-env
 ```
 
-### `seed: ADMIN_EMAIL and ADMIN_PASSWORD are required`
+### Không start được container `migrate`/`seed` cũ trong Docker Desktop
 
-Thiếu biến admin trong `.env`. Sửa `.env` rồi chạy lại `make seed-docker`.
+Các container one-shot `artist-shop-migrate-1` / `artist-shop-seed-1` tạo thủ
+công từ image (không qua compose) vừa thiếu env vừa trỏ tới network đã bị
+xoá: bấm Start báo `network ... not found`, log báo `DATABASE_URL is required`.
+Xoá chúng đi và chạy lại bằng lệnh compose ở trên:
 
-### `seed: password does not meet the policy`
+```bash
+docker rm artist-shop-migrate-1 artist-shop-seed-1
+make migrate-up-docker
+```
 
-Mật khẩu admin không đạt chính sách: **≥ 8 ký tự, có chữ, có số, có ký tự đặc
-biệt**. Password sinh tự động (ngẫu nhiên thuần) dễ thiếu một trong bốn loại nên bị
-từ chối — đây là hành vi đúng.
+### `seed-sql` báo thiếu `scripts/seed.vars.local.psql`
+
+Chưa tạo file biến local. Tạo theo mẫu trong header `scripts/seed_admin.sql`
+(email + hash từ `make seed-hash`), rồi chạy lại `make seed-sql`. File này
+đã bị `.gitignore` chặn — không bao giờ commit hash thật.
+
+### `seed-sql` báo hash không hợp lệ
+
+Hash phải có dạng `$argon2id$...` do `make seed-hash` sinh ra (đọc
+`ADMIN_PASSWORD` từ môi trường, có kiểm tra chính sách: **≥ 8 ký tự, có chữ,
+có số, có ký tự đặc biệt**). Password sinh tự động (ngẫu nhiên thuần) dễ
+thiếu một trong các loại nên bị từ chối — đây là hành vi đúng.
 
 ### `mailpit` không nhận email
 
@@ -97,7 +119,7 @@ docker compose logs api
 | `HTTP_ADDR is required` | Thiếu `HTTP_ADDR` |
 | `invalid configuration` | Sai định dạng biến (vd `10s` viết sai) |
 
-Lưu ý: `cmd/migrate` và `cmd/seed` **không** cần `JWT_SECRET`/`REDIS_ADDR`, nên
+Lưu ý: `cmd/migrate` **không** cần `JWT_SECRET`/`REDIS_ADDR`, nên
 `make migrate-up-docker` vẫn chạy được dù app không khởi động.
 
 ### Container không healthy
@@ -231,7 +253,7 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8025/api/v1/messages | Selec
 | Tài khoản đã xác nhận email chưa | `POST /auth/register/verify-otp` trước; đăng ký chưa xác thực thì chưa có tài khoản để đăng nhập |
 | Tài khoản có bị khoá không | 10 lần sai ⇒ `AUTH_LOGIN_LOCKED` trong 15 phút |
 | Email đã normalize chưa | Email được trim + lowercase; dùng `User@Example.com ` cũng được, nhưng nhớ khớp khi verify |
-| Admin có được seed chưa | `make seed-docker`, xem `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
+| Admin có được seed chưa | `make seed-sql` (email trong `ADMIN_EMAIL`, hash từ `make seed-hash`) |
 
 ### `AUTH_OTP_TOO_MANY_ATTEMPTS` khi OTP vẫn còn hạn
 

@@ -283,11 +283,10 @@ log phân loại. Cả hai đều không chứa câu chữ của provider hay cr
 đúng lại là dòng `media provider call failed` với `classification` là câu **của hệ thống
 này** — ví dụ `the provider refused the request (status 401)` khi tên cloud sai.
 
-### Auth — admin seed (chỉ `cmd/seed`)
+### Auth — email cửa hàng
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |
 |---|---|---|---|
-| `ADMIN_EMAIL` | *(rỗng)* | ✅ cho seed | |
-| `ADMIN_PASSWORD` | *(rỗng)* | ✅ cho seed | Phải đạt chính sách mật khẩu |
+| `ADMIN_EMAIL` | *(rỗng)* | ✅ cho seed-SQL + mail đơn hàng | Địa chỉ shop: nhận mail đơn hàng và là email của tài khoản admin do `scripts/seed_admin.sql` tạo (`make seed-sql`). Mật khẩu admin không nằm trong config — hash bằng `make seed-hash` rồi dán vào file biến local |
 
 ### Media — tiền tố `MEDIA_`
 | Biến | Mặc định | Bắt buộc | Ý nghĩa |

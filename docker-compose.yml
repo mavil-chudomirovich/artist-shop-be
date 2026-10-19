@@ -28,8 +28,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
       POSTGRES_DB: ${POSTGRES_DB:-artist_shop}
-    ports:
-      - "${DB_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -55,8 +53,6 @@ services:
       REDISCLI_AUTH: ${REDIS_PASSWORD:-redis-dev-password}
     volumes:
       - redisdata:/data
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
@@ -79,19 +75,11 @@ services:
     profiles: [tools]
     restart: "no"
 
-  # Provisions the single admin account from ADMIN_EMAIL / ADMIN_PASSWORD.
-  # Behind the `tools` profile because it fails when those are unset.
-  # Run explicitly with `make seed-docker`.
-  seed:
-    build:
-      context: .
-    entrypoint: ["/app/seed"]
-    depends_on:
-      db:
-        condition: service_healthy
-    <<: *common-env
-    profiles: [tools]
-    restart: "no"
+  # Provisions the single admin account from scripts/seed_admin.sql.
+  # Kept out of compose on purpose: it is a manual psql step
+  # (`make seed-sql`), not a container, so a plain `up` can never run it
+  # and it can never fail on missing ADMIN_* variables.
+  # Run explicitly with `make seed-sql`.
 
   api:
     build:

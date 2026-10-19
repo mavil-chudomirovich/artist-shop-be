@@ -73,6 +73,7 @@ func (s *Service) ConfirmReceived(ctx context.Context, in dto.OrderRefInput) (dt
 	// The customer is told the order completed. Sent after commit, best-effort
 	// (FR-021, research D12).
 	s.notifyCustomerStatusChange(ctx, completed)
+	s.publishStatusChanged(ctx, completed, constant.StatusDelivered)
 	return view, nil
 }
 
@@ -113,6 +114,7 @@ func (s *Service) AutoCompleteDelivered(ctx context.Context) error {
 		// The customer is told the order completed. Sent after commit, best-effort
 		// (FR-021, research D12).
 		s.notifyCustomerStatusChange(ctx, completed)
+		s.publishStatusChanged(ctx, completed, constant.StatusDelivered)
 	}
 	return nil
 }

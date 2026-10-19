@@ -56,6 +56,7 @@ import (
 	ordernotifier "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/notifier"
 	orderpayment "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/payment"
 	orderpostgres "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/postgres"
+	orderssepublisher "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/ssepublisher"
 	orderstatistics "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/infrastructure/implement/statistics"
 	orderhttp "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/http"
 	orderworker "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/presentation/worker"
@@ -92,6 +93,7 @@ import (
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/logging"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/mailer"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/media"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/sse"
 )
 
 // @title           Artist Shop API
@@ -250,7 +252,7 @@ func run() error {
 
 	// The media store is the real adapter in every configuration, never a nil
 	// stand-in and never a reject-all placeholder. MediaConfig is deliberately kept
-	// out of ValidateForAPI so migrate and seed stay runnable without provider
+	// out of ValidateForAPI so migrate and hash-password stay runnable without provider
 	// credentials, which means this service can legitimately start with none — and
 	// it must still start. The fail-closed behaviour therefore lives in the adapter
 	// (media.requireCredentials, reached through its named NewWithDefaults
@@ -421,6 +423,13 @@ func run() error {
 		cfg.Auth.SMTPUsername, cfg.Auth.SMTPPassword, cfg.Auth.SMTPFrom, logger)
 	orderNotifier := ordernotifier.New(orderSender, logger)
 
+	// The order SSE hub is the shared live-event fan-out the order's stream
+	// handlers subscribe to (specs/020-order-sse-stream). It is in-process and
+	// live-only: a slow subscriber's events are dropped, and a reconnecting
+	// client recovers through REST.
+	orderHub := sse.New(logger)
+	orderEvents := orderssepublisher.New(orderHub)
+
 	orderRepository := orderpostgres.NewOrderRepository(db.Pool)
 	orderService := orderimplement.New(orderimplement.Service{
 		Orders:       orderRepository,
@@ -434,6 +443,7 @@ func run() error {
 		Clock:        wallClock{},
 		Audit:        orderauditor.New(auditWriter),
 		Notifier:     orderNotifier,
+		Events:       orderEvents,
 		// The order module stores its delivery evidence through the same shared
 		// media store the user and product modules already use, so there is one
 		// Cloudinary adapter and one credential set (feature 019 FR-009, FR-010,
@@ -447,7 +457,7 @@ func run() error {
 		ArtistEmail: cfg.Auth.AdminEmail,
 		Mapper:      ordermapper.New(),
 	})
-	orderHandler := orderhttp.New(orderService, logger)
+	orderHandler := orderhttp.New(orderService, logger).SetStreams(orderHub)
 
 	// Module 08 (payment). One customer sub-resource,
 	// /orders/{orderId}/payment, carries the session guard and no owner identifier:

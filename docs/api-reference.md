@@ -1175,6 +1175,7 @@ Response
       "wardCode": "00004",
       "wardName": "Ba Đình",
       "streetAddress": "12 Ngõ 129 Dịch Vọng",
+      "facebookUrl": "https://facebook.com/nguyen.thi.an",
       "isDefault": true,
       "divisionNeedsReview": false
     }
@@ -1196,6 +1197,9 @@ Ghi chú:
   `divisionNeedsReview: true` nghĩa là mã tỉnh/phường đã lưu không còn trong dataset
   hiện hành; tên đã chụp vẫn được trả về để khách thấy đúng thứ đã lưu.
 - `recipientPhone` cũng được chuẩn hoá 10 chữ số, giống `phone` của hồ sơ.
+- `facebookUrl` **luôn có mặt** trên mỗi địa chỉ đọc về (địa chỉ nào cũng có link sau khi
+  nâng cấp dữ liệu; địa chỉ cũ chuyển đổi mang giá trị giữ chỗ
+  `https://facebook.com/unknown`, xem `4.6`).
   - Khi tài khoản chưa có địa chỉ nào, `data` là **`[]`**, không phải `null`. Trường
     `addresses` trong truy vấn của admin (`4.10`) cũng là `[]`: cả hai khớp với
     `type: array` trong contract, nên client không phải xử lý `null`.
@@ -1219,14 +1223,16 @@ Request
   "recipientPhone": "0912345678",
   "provinceCode": "01",
   "wardCode": "00004",
-  "streetAddress": "12 Ngõ 129 Dịch Vọng"
+  "streetAddress": "12 Ngõ 129 Dịch Vọng",
+  "facebookUrl": "https://facebook.com/nguyen.thi.an"
 }
 ```
 
 Response `201` là một phần tử `data` của `GET /users/me/addresses`, cùng hình dạng.
 
 Lỗi: `VALIDATION_ERROR` 400 (thiếu `recipientName` / `recipientPhone` /
-`provinceCode` / `wardCode` / `streetAddress`, hoặc member vượt giới hạn 120 / 255 ký
+`provinceCode` / `wardCode` / `streetAddress` / `facebookUrl`, link Facebook sai
+(`details[].field = "facebookUrl"`), hoặc member vượt giới hạn 120 / 255 ký
 tự; `details[].field` chỉ đúng tên member) · `USER_INVALID_PHONE` 400 ·
 `USER_UNKNOWN_PROVINCE` 400 · `USER_UNKNOWN_WARD` 400 ·
 `USER_WARD_PROVINCE_MISMATCH` 400 · `MALFORMED_REQUEST` 400 · `UNAUTHENTICATED` 401 ·
@@ -1234,6 +1240,15 @@ tự; `details[].field` chỉ đúng tên member) · `USER_INVALID_PHONE` 400 ·
 
 Ghi chú:
 
+- `facebookUrl` là **bắt buộc** khi tạo địa chỉ: thiếu, rỗng, chỉ gồm khoảng trắng
+  hoặc quá 500 ký tự đều trả `400 VALIDATION_ERROR`
+  (`details[].field = "facebookUrl"`) và **không** lưu địa chỉ. Link phải là URL
+  `https` với host `facebook.com`/`fb.com` hoặc mọi subdomain của chúng (kèm `www.`,
+  không phân biệt hoa/thường, bỏ qua port tường minh); phần đường dẫn sau host phải
+  có nội dung (`https://facebook.com` trần hoặc chỉ `/` bị từ chối); mọi host khác
+  (`http://...`, `ftp://...`, `example.com`, `myfacebook.com`, `faceboook.com`,
+  `facebook.com.evil.com`) và giá trị giữ chỗ `https://facebook.com/unknown` đều bị
+  từ chối. Khoảng trắng đầu/cuối được loại bỏ trước khi kiểm tra và lưu.
 - `provinceName` và `wardName` là **tuỳ chọn**: client gửi lên thì dùng, không gửi thì
   tên được chụp từ dataset. Tên đã chụp là thứ hiển thị về sau, nên đổi tên đơn vị hành
   chính sau này không xoá được thứ khách đã nhìn thấy.
@@ -1263,12 +1278,13 @@ Sửa một địa chỉ. Mọi member đều tuỳ chọn; cờ mặc định *
 Request
 
 ```json
-{ "streetAddress": "12 Ngõ 129 Dịch Vọng, căn hộ 5", "wardCode": "00008" }
+{ "streetAddress": "12 Ngõ 129 Dịch Vọng, căn hộ 5", "wardCode": "00008", "facebookUrl": "https://fb.com/nguyen.thi.an" }
 ```
 
 Response `200` là một phần tử `data` của `GET /users/me/addresses`.
 
-Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc member sai cấu trúc;
+Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, member sai cấu trúc,
+hoặc `facebookUrl` rỗng/sai (`details[].field = "facebookUrl"`);
 `details[].field` chỉ đúng tên member) · `USER_INVALID_PHONE` 400 ·
 `USER_UNKNOWN_PROVINCE` 400 · `USER_UNKNOWN_WARD` 400 ·
 `USER_WARD_PROVINCE_MISMATCH` 400 · `USER_ADDRESS_NOT_FOUND` 404 ·
@@ -1276,9 +1292,15 @@ Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc member sai
 
 Ghi chú:
 
-- Member bị bỏ trống thì giữ nguyên. **Khác `PATCH /users/me`, một chuỗi rỗng ở đây bị
+- Member bị bỏ trống thì giữ nguyên — **ngoại lệ duy nhất là `facebookUrl` trên địa
+  chỉ đang mang giá trị giữ chỗ** `https://facebook.com/unknown` (dữ liệu cũ chuyển
+  đổi): mọi `PATCH` trên địa chỉ đó, kể cả vắng mặt `facebookUrl`, đều bị từ chối
+  `400 VALIDATION_ERROR` (`details[].field = "facebookUrl"`) cho tới khi khách gửi
+  link thật. **Khác `PATCH /users/me`, một chuỗi rỗng ở đây bị
   từ chối chứ không phải "xoá"**: `recipientName` và `streetAddress` rỗng trả
-  `400 VALIDATION_ERROR` (`details[].field` là tên member), và `recipientPhone` rỗng trả
+  `400 VALIDATION_ERROR` (`details[].field` là tên member), `facebookUrl` rỗng hoặc
+  sai link trả `400 VALIDATION_ERROR` (`details[].field = "facebookUrl"`), và
+  `recipientPhone` rỗng trả
   `400 USER_INVALID_PHONE` — vì cột tương ứng trong `addresses` là `NOT NULL` và một
   địa chỉ không có người nhận hoặc không có địa chỉ chi tiết là dữ liệu không dùng
   được. Muốn bỏ một địa chỉ thì dùng `4.8`.
@@ -1367,19 +1389,20 @@ Response
     "role": "CUSTOMER",
     "displayName": "Nguyễn Thị An",
     "phone": "0912345678",
-    "addresses": [
-      {
-        "id": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
-        "recipientName": "Nguyễn Thị An",
-        "recipientPhone": "0912345678",
-        "provinceCode": "01",
-        "provinceName": "Hà Nội",
-        "wardCode": "00004",
-        "wardName": "Ba Đình",
-        "streetAddress": "12 Ngõ 129 Dịch Vọng",
-        "isDefault": true
-      }
-    ]
+      "addresses": [
+        {
+          "id": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+          "recipientName": "Nguyễn Thị An",
+          "recipientPhone": "0912345678",
+          "provinceCode": "01",
+          "provinceName": "Hà Nội",
+          "wardCode": "00004",
+          "wardName": "Ba Đình",
+          "streetAddress": "12 Ngõ 129 Dịch Vọng",
+          "facebookUrl": "https://facebook.com/nguyen.thi.an",
+          "isDefault": true
+        }
+      ]
   },
   "meta": { "requestId": "...", "timestamp": "..." }
 }
@@ -2842,9 +2865,11 @@ Ghi chú:
 ## 9. Module 07 — Order (`/api/v1`)
 
 Đơn hàng của shop: biến giỏ thành đơn, artist xác nhận đơn, vòng đời đơn, và **bàn quản trị đơn** của
-operator. **Mười bốn endpoint**: **bảy** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là
-**session**, nên không route nào nêu định danh chủ — và **bảy** của quản trị dưới `/admin/orders`, vai
-trò `ADMIN`, định địa chỉ theo **định danh đơn**.
+operator. **Mười sáu endpoint**: **tám** của khách **đã đăng nhập** dưới `/orders` — chủ sở hữu là
+**session**, nên không route nào nêu định danh chủ — và **tám** của quản trị dưới `/admin/orders`, vai
+trò `ADMIN`, định địa chỉ theo **định danh đơn**. Hai trong số đó là **stream SSE live** (`9.15` của
+khách, `9.16` của admin): cùng các sự kiện email best-effort đã có, nhưng đẩy ngay sau commit thay vì
+qua hộp thư (feature 020).
 
 Một đơn mang **snapshot** của thứ đã mua: mỗi dòng chụp **tên sản phẩm, mã sản phẩm, tên variant,
 SKU, đơn giá, currency và số lượng** lúc checkout, cùng địa chỉ giao chụp từ địa chỉ khách chọn; nên
@@ -2924,7 +2949,8 @@ member = summary + `address` + `lines` + bốn sự kiện giao hàng `delivered
     "provinceName": "Hà Nội",
     "wardCode": "00004",
     "wardName": "Ba Đình",
-    "streetAddress": "12 Ngõ 129 Dịch Vọng"
+    "streetAddress": "12 Ngõ 129 Dịch Vọng",
+    "facebookUrl": "https://facebook.com/nguyen.thi.an"
   },
   "lines": [
     {
@@ -2948,6 +2974,13 @@ member = summary + `address` + `lines` + bốn sự kiện giao hàng `delivered
 **Hình dạng quản trị** — `AdminOrderSummaryResponse` (danh sách, 6 member = summary + `userId`) và
 `AdminOrderResponse` (chi tiết, **12** member = `OrderResponse` + `userId`). **Khác khách đúng một member
 `userId`** (chủ sở hữu đơn); admin đọc cùng bộ sự kiện giao hàng như khách.
+
+**Ảnh địa chỉ của đơn** (`OrderAddressResponse`, 8 member) là bản chụp thông tin giao
+hàng tại lúc chốt đơn, gồm cả `facebookUrl` đã chụp. Về sau khách có sửa địa chỉ gốc
+thì đơn đã đặt **không** đổi theo. Địa chỉ đang mang giá trị giữ chỗ
+`https://facebook.com/unknown` (dữ liệu cũ chuyển đổi) **không** dùng để chốt đơn hay
+sửa đơn được: checkout hoặc sửa đơn đổi sang địa chỉ đó trả
+`400 VALIDATION_ERROR` (`details[].field = "facebookUrl"`), đơn giữ nguyên.
 
 **Bảy trạng thái đơn** — `status` là một trong bảy giá trị:
 
@@ -2991,14 +3024,18 @@ Request (`CheckoutRequest`, `additionalProperties: false`)
 từ **session**, không bao giờ từ body.
 
 Response `201`: `data` = `OrderResponse` với `status: "PENDING"` (như trên).
-
 Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID, hoặc không phải một địa chỉ của khách —
-`details[].field = "addressId"`) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
+`details[].field = "addressId"`; địa chỉ được chọn mang giá trị giữ chỗ
+`https://facebook.com/unknown` — `details[].field = "facebookUrl"`, khách phải cập
+nhật địa chỉ trước khi đặt đơn) · `MALFORMED_REQUEST` 400 (body không parse được hoặc có member lạ) ·
 `UNAUTHENTICATED` 401 · `ORDER_CART_EMPTY` 409 · `ORDER_ITEM_NOT_PURCHASABLE` 409 ·
-`ORDER_ITEM_PRICE_CHANGED` 409 · `ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 · `ORDER_NO_ADDRESS` 409 ·
+`ORDER_ITEM_PRICE_CHANGED` 409 ·
+`ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 · `ORDER_NO_ADDRESS` 409 ·
 `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
 Ghi chú:
+
+- Đơn mới **chụp** `facebookUrl` từ địa chỉ được chọn vào `address` của chi tiết đơn;
 
 - `total` **bằng đúng** tổng `quantity × unitPrice` của các dòng, ở đơn vị nhỏ nhất của currency,
   **không** dùng số thực, **không** làm tròn, và **không** cộng phí ship (FR-008, ADR 015 §5).
@@ -3086,7 +3123,8 @@ Response `200`: `data` = `OrderResponse`; `status` là `PENDING` sau khi sửa (
 cũng về `PENDING`).
 
 Lỗi: `VALIDATION_ERROR` 400 (`addressId` không phải UUID hoặc không phải địa chỉ của khách; `variantId`
-không phải UUID; `quantity < 1` — `details[].field` nêu member) · `MALFORMED_REQUEST` 400 (body không
+không phải UUID; `quantity < 1` — `details[].field` nêu member; đổi sang địa chỉ mang
+giá trị giữ chỗ `https://facebook.com/unknown` — `details[].field = "facebookUrl"`) · `MALFORMED_REQUEST` 400 (body không
 parse được hoặc có member lạ) · `UNAUTHENTICATED` 401 · `ORDER_NOT_FOUND` 404 · `ORDER_NOT_EDITABLE`
 409 (đơn đã trả tiền hoặc xa hơn) · `ORDER_EMPTY` 409 (tập dòng rỗng) · `ORDER_ITEM_NOT_PURCHASABLE`
 409 · `ORDER_QUANTITY_EXCEEDS_AVAILABLE` 409 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
@@ -3095,6 +3133,8 @@ Ghi chú:
 
 - Đơn **đã trả tiền** (hoặc xa hơn) **không** sửa được → `409 ORDER_NOT_EDITABLE`; một tập dòng để đơn
   **còn 0 dòng** → `409 ORDER_EMPTY` (khách muốn bỏ hết thì **huỷ đơn**, `9.5`).
+- Khi sửa đổi kèm `addressId`, đơn **chụp lại** toàn bộ địa chỉ mới (gồm `facebookUrl`)
+  thay cho ảnh cũ; bỏ trống `addressId` thì giữ nguyên ảnh địa chỉ hiện tại của đơn.
 - Mỗi dòng sửa được **chụp lại giá hiện tại** (khách chọn lại món), nên một lần đổi giá kể từ lúc đặt
   **không** bị từ chối — khác checkout, nơi giá trong giỏ là giá khách đã thấy.
 - Sửa đơn `PAYMENT_PENDING` trả hàng về khả dụng **đúng một lần** và **bỏ** hạn thanh toán; đơn về
@@ -3394,6 +3434,61 @@ Ghi chú:
 - Chuyển nhượng hai lần cho cùng một tài khoản là **idempotent** về hiệu quả (chủ đã là người nhận);
   không có mã lỗi riêng cho việc này.
 - Ghi `audit_logs` với action `ORDER_TRANSFERRED`, nêu định danh đơn và administrator.
+
+### 9.15 `GET /orders/stream`
+
+Stream SSE live các lần đổi trạng thái của **đơn thuộc chính khách đang mở stream**. Mở bằng
+`fetch + ReadableStream` với header `Authorization` đang dùng cho REST (`EventSource` chuẩn
+không gắn được header nên không hỗ trợ). Ngắt rồi nối lại thì **mở lại stream + `GET /orders` bù** —
+server giữ live-only, không replay.
+
+| | |
+|---|---|
+| Auth | Bearer access token (khách đã đăng nhập) |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — `text/event-stream`, giữ kết nối mở |
+
+Event (`event:` + `data:` JSON một dòng, heartbeat `: ping` mỗi ~25s):
+
+```text
+event: order.status_changed
+data: {"orderId":"<uuid>","from":"PAID","to":"SHIPPING","version":3,"at":"2026-10-19T08:00:00Z"}
+```
+
+`from`/`to` là một trong bảy trạng thái (`PENDING`, `PAYMENT_PENDING`, `PAID`, `SHIPPING`,
+`DELIVERED`, `COMPLETED`, `CANCELLED`). Payload tối thiểu — không tên/SĐT/địa chỉ; chi tiết xem
+qua `GET /orders/{orderId}`.
+
+Lỗi: `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503 (hub chưa wire —
+lỗi cấu hình phía server).
+
+### 9.16 `GET /admin/orders/stream`
+
+Stream SSE live cho admin: `order.needs_confirmation` khi một đơn vào `PENDING` (checkout mới
+hoặc edit đưa đơn về `PENDING`) và `order.feedback_received` khi feedback được lưu xong.
+
+| | |
+|---|---|
+| Auth | Bearer access token, role `ADMIN` |
+| Rate limit | Toàn cục (module không có hạn mức riêng) |
+| Trả về | `200 OK` — `text/event-stream`, giữ kết nối mở |
+
+```text
+event: order.needs_confirmation
+data: {"orderId":"<uuid>","version":2,"at":"2026-10-19T08:00:00Z"}
+
+event: order.feedback_received
+data: {"orderId":"<uuid>","at":"2026-10-19T08:00:00Z"}
+```
+
+Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 (khách gọi stream admin) · `RATE_LIMITED` 429 ·
+`SERVICE_UNAVAILABLE` 503.
+
+Ghi chú:
+
+- Publish **sau commit, best-effort**: lỗi hub không bao giờ làm hỏng đơn (giống email).
+- Subscriber đọc chậm bị **bỏ event** (drop + đếm) thay vì block use case.
+- Không `audit_logs` riêng cho publish (mutation admin đã ghi sẵn).
 
 ---
 
@@ -3807,6 +3902,7 @@ huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTr
 | POST | `/api/v1/orders/{orderId}/cancel` | Bearer | Huỷ đơn chưa trả tiền, trả hàng đã giữ |
 | POST | `/api/v1/orders/{orderId}/complete` | Bearer | Khách xác nhận đã nhận: đơn `DELIVERED` → `COMPLETED` (feature 019) |
 | POST | `/api/v1/orders/{orderId}/feedback` | Bearer | Gửi feedback cấp đơn cho artist — **multipart**, `content` + 0–5 ảnh `photos`, tối đa một lần mỗi đơn (feature 019, FR-025) |
+| GET | `/api/v1/orders/stream` | Bearer | Stream SSE `order.status_changed` của đơn chính mình (feature 020) |
 | GET | `/api/v1/admin/orders` | ADMIN | Mọi đơn, kèm chủ sở hữu (có phân trang, lọc `status`, sắp xếp `sort`) |
 | GET | `/api/v1/admin/orders/{orderId}` | ADMIN | Chi tiết một đơn bất kỳ, kèm chủ sở hữu |
 | POST | `/api/v1/admin/orders/{orderId}/confirm` | ADMIN | Artist xác nhận: giữ toàn bộ hàng, mở hạn thanh toán |
@@ -3814,6 +3910,7 @@ huống "chưa có dữ liệu" nào là lỗi: các amount bằng 0, `revenueTr
 | POST | `/api/v1/admin/orders/{orderId}/ship` | ADMIN | Đưa đơn `PAID` sang `SHIPPING` — **multipart**, 0–5 ảnh bằng chứng (feature 019) |
 | POST | `/api/v1/admin/orders/{orderId}/deliver` | ADMIN | Đưa đơn `SHIPPING` sang `DELIVERED` — **multipart**, 0–5 ảnh (feature 019) |
 | POST | `/api/v1/admin/orders/{orderId}/transfer` | ADMIN | Chuyển đơn đã trả tiền cho tài khoản khác |
+| GET | `/api/v1/admin/orders/stream` | ADMIN | Stream SSE `order.needs_confirmation` + `order.feedback_received` (feature 020) |
 | POST | `/api/v1/orders/{orderId}/payment` | Bearer | Bắt đầu (hoặc dùng lại) thanh toán online cho đơn chờ thanh toán |
 | GET | `/api/v1/orders/{orderId}/payment` | Bearer | Đọc thanh toán của chính mình (đường đọc riêng) |
 | GET | `/api/v1/admin/payments` | ADMIN | Mọi bản ghi thanh toán (phân trang, lọc `status`; `UNMATCHED` = hàng đợi đối soát) |
@@ -3842,6 +3939,8 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-19 | **Link Facebook bắt buộc của địa chỉ giao hàng (modules 02 User, 07 Order, feature 021) — breaking ở chiều ghi.** `POST /api/v1/users/me/addresses` nay **bắt buộc** `facebookUrl` (thiếu/rỗng/sai link → `400 VALIDATION_ERROR`, `details[].field = "facebookUrl"`, không lưu gì); `PATCH /api/v1/users/me/addresses/{addressId}` không cho xoá link về rỗng (vắng mặt giữ cũ — ngoại lệ: địa chỉ đang mang giữ chỗ `https://facebook.com/unknown` thì mọi `PATCH` đều bị từ chối cho tới khi gửi link thật). Đọc cộng thêm một member: `AddressResponse` (trong `GET /users/me/addresses`, `POST .../addresses`, `PATCH ...`, `POST .../default`), `OperatorAddressResponse` (trong `GET /users/{userId}` của admin) và `OrderAddressResponse` (ảnh địa chỉ trong chi tiết đơn khách và admin — bất biến sau khi chốt) đều mang thêm `facebookUrl`. Checkout `POST /api/v1/orders` và sửa đơn `PUT /api/v1/orders/{orderId}` **chụp** link từ địa chỉ được chọn; chọn địa chỉ mang giữ chỗ → `400 VALIDATION_ERROR` (`details[].field = "facebookUrl"`). Client cũ tạo địa chỉ mà không gửi `facebookUrl` sẽ nhận `400` — đúng thiết kế. **Không** thêm endpoint, **không** thêm mã lỗi mới. Migrations `00020_user_address_facebook_url` / `00021_order_address_facebook_url` thêm cột `facebook_url NOT NULL` + CHECK (rỗng/quá 500 ký tự bị từ chối ở tầng lưu trữ), backfill dữ liệu cũ bằng giữ chỗ. Mục 4.5–4.7, 4.10, hình dạng đơn và mục 9.1/9.4 cập nhật; `docs/swagger/` sinh lại khớp. Xem `specs/021-address-facebook-url/`. | `internal/modules/user/presentation/{dto/dto.go,http/handler.go}`, `internal/modules/order/presentation/{dto/dto.go,http/handler.go}`, `internal/contracts/user.go`, `migrations/00020_user_address_facebook_url.sql`, `migrations/00021_order_address_facebook_url.sql` |
+| 2026-10-19 | **Stream SSE live cho đơn hàng (module 07 Order, feature 020).** **Thêm hai** endpoint stream: `GET /api/v1/orders/stream` (khách nhận `order.status_changed` của đơn chính mình) và `GET /api/v1/admin/orders/stream` (admin nhận `order.needs_confirmation` khi đơn vào `PENDING` + `order.feedback_received` khi feedback lưu xong) — module lên **mười sáu** endpoint (**tám** khách + **tám** admin). Đọc bằng `fetch + ReadableStream` với header `Authorization` hiện có (không hỗ trợ `EventSource` chuẩn); reconnect = mở lại stream + refetch REST (server live-only, không replay). Publish **sau commit, best-effort** tại cùng điểm email đã có; subscriber chậm bị drop; không bảng/migration mới; không mã lỗi mới (`401`/`403`/`429`/`503` dùng mã chung). Mục 9 thêm `9.15`/`9.16`; bảng tổng hợp cập nhật. Xem `specs/020-order-sse-stream/`. | `internal/share/sse/hub.go`, `internal/modules/order/presentation/http/{stream.go,router.go}`, `cmd/api/main.go` |
 | 2026-10-18 | **Giao hàng & hoàn tất đơn (module 07 Order, feature 019) — thay đổi enum phá vỡ hợp đồng công khai.** **Đổi tên** `SHIPPED` → **`SHIPPING`** (đang giao) và **thêm** `DELIVERED` (giao thành công); bộ trạng thái đơn còn **bảy** giá trị. **Thêm hai** endpoint khách: `POST /api/v1/orders/{orderId}/complete` (khách xác nhận đã nhận `DELIVERED → COMPLETED`, không body) và `POST /api/v1/orders/{orderId}/feedback` (body `{ "content": string }`, 1–2000 ký tự, một lần mỗi đơn). **Thêm một** endpoint admin: `POST /api/v1/admin/orders/{orderId}/deliver` (`SHIPPING → DELIVERED`, ghi mốc giao). **Đổi** `POST /api/v1/admin/orders/{orderId}/ship`: payload **đổi sang `multipart/form-data`** nhận 0–5 ảnh `photos` (`PAID → SHIPPING`). **Xoá** `POST /api/v1/admin/orders/{orderId}/complete` — hoàn tất nay do khách xác nhận (`9.6`) hoặc **sweeper tự hoàn tất sau 120 giờ** kể từ `delivered_at`. Detail đơn (khách và admin) mang thêm `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback`. **Thêm sáu** mã vào mục 1.4 — `ORDER_IMAGE_TYPE_UNSUPPORTED` 400, `ORDER_IMAGE_TOO_LARGE` 413, `ORDER_IMAGE_LIMIT_REACHED` 409, `ORDER_MEDIA_UNAVAILABLE` 503, `ORDER_FEEDBACK_NOT_ALLOWED` 409, `ORDER_FEEDBACK_ALREADY_SENT` 409; thêm action audit `ORDER_DELIVERED` (`ORDER_SHIPPED`/`ORDER_COMPLETED` **giữ nguyên**). Migration `00018_order_delivery.sql` backfill `SHIPPED → SHIPPING` trước khi siết check bảy giá trị, thêm `delivered_at`/`completed_at`/`completed_by`, bảng `order_delivery_photos`/`order_feedback`. Mục 9 đánh số lại (`9.6`/`9.7` mới của khách; admin dời thành `9.8`–`9.14`); §11 đổi tập trạng thái doanh thu và `recentOrders[].status` thành bảy giá trị; §12 cập nhật. Xem ADR 023, `specs/019-order-delivery/`. | `internal/modules/order/presentation/http/router.go`, `migrations/00018_order_delivery.sql` |
 | 2026-10-19 | **Ảnh trong feedback cấp đơn (module 07 Order, feature 019 mở rộng, FR-025).** `POST /api/v1/orders/{orderId}/feedback` **đổi sang `multipart/form-data`**: trường `content` (1–2000 ký tự) cộng **0–5 phần** `photos` (JPEG/PNG/WebP ≤ 2 MB), dùng cùng trần body và cùng bộ mã `ORDER_IMAGE_TYPE_UNSUPPORTED` 400 / `ORDER_IMAGE_TOO_LARGE` 413 / `ORDER_IMAGE_LIMIT_REACHED` 409 như hai route giao hàng; **thêm** `ORDER_MEDIA_UNAVAILABLE` 503 cho route này. `feedback` trong chi tiết đơn thêm member `photos[]` (`{ id, url, width, height, position }`, thứ tự theo `position`). Migration `00019_order_feedback_photos.sql` thêm bảng `order_feedback_photos` (FK `feedback_id → order_feedback(id) ON DELETE CASCADE`, index `(feedback_id, position, id)`, trần 5 ảnh do use case thực thi). `content` vẫn **bắt buộc**. | `internal/modules/order/presentation/http/{handler.go,router.go}`, `migrations/00019_order_feedback_photos.sql` |
 | 2026-10-18 | **Kéo-thả sắp xếp danh mục, sản phẩm và variant (modules 03 Category, 04 Product, feature 018).** **Thêm ba** endpoint reorder: `PUT /api/v1/admin/categories/reorder` (body `{ "categoryIds": [...] }`), `PUT /api/v1/admin/products/reorder` (body `{ "productIds": [...] }`) và `PUT /api/v1/admin/products/{id}/variants/reorder` (body `{ "variantIds": [...] }`); mỗi mảng phải là **toàn bộ** các sibling, đúng **một lần**, và được áp bằng **một** câu `UPDATE ... FROM UNNEST(...)` (all-or-nothing, last-write-wins). Response `200` với `data = { "updatedCount": <số nguyên> }`. **Đổi** `GET /admin/categories` và `GET /admin/products`: thêm `all` (boolean) trả trọn danh sách đã sắp xếp, giới hạn ngưỡng an toàn **1000** bản ghi; vượt ngưỡng → `400 VALIDATION_ERROR` với `details[].field` là `"all"`. **Đổi** `POST /admin/categories`, `POST /admin/products`, `POST /admin/products/{id}/variants`: `position` trở thành **tuỳ chọn** — bỏ trống đặt bản ghi mới **lên đầu** (variant bỏ trống trong một lần tạo hàng loạt nhận thứ tự trong mảng `variants`, variant đầu tiên là **mặc định**); giá trị cụ thể vẫn được tôn trọng. **Thêm bốn** mã vào mục 1.4 — `CATEGORY_REORDER_DUPLICATE_ID`, `PRODUCT_REORDER_DUPLICATE_ID`, `VARIANT_REORDER_DUPLICATE_ID`, `VARIANT_BELONGS_TO_OTHER_PRODUCT` (cả bốn `400`); mảng rỗng/thiếu sibling dùng `VALIDATION_ERROR` 400, id không tồn tại dùng `CATEGORY_NOT_FOUND`/`PRODUCT_NOT_FOUND` 404. Không có mã `PRODUCT_BELONGS_TO_OTHER_CATEGORY` (thứ tự sản phẩm toàn catalogue, FR-016). **Không** migration: dùng lại cột `position` và các index sắp xếp hiện có. Mục 5 thêm `5.8`; mục 6 thêm `6.17`, `6.18`; bảng tổng hợp §12 cập nhật. Xem `specs/018-catalog-reorder/`. | `internal/modules/category/presentation/http/router.go`, `internal/modules/product/presentation/http/router.go`, `docs/modules.md` |

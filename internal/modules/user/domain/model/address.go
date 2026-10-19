@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -50,6 +51,11 @@ type Address struct {
 	WardName string
 	// StreetAddress is the free-text house number and street.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link the shop uses to confirm the
+	// order. It is required on every new address; legacy rows backfilled before
+	// the rule carry the placeholder instead (see sentinelFacebookURL), which
+	// is never accepted on a new write.
+	FacebookURL string
 	// IsDefault reports whether this is the account's default address. At most
 	// one non-hidden address of an account is default (FR-008).
 	IsDefault bool
@@ -83,6 +89,8 @@ const (
 	FieldWardName = "wardName"
 	// FieldStreetAddress is the free-text house number and street.
 	FieldStreetAddress = "streetAddress"
+	// FieldFacebookURL is the contact Facebook link of the address.
+	FieldFacebookURL = "facebookUrl"
 )
 
 // requiredIssue is the explanation attached to every blank required member.
@@ -118,6 +126,8 @@ const (
 	maxWardNameRunes = 120
 	// maxStreetAddressRunes is the ceiling on StreetAddress.
 	maxStreetAddressRunes = 255
+	// maxFacebookURLRunes is the ceiling on FacebookURL, on the trimmed value.
+	maxFacebookURLRunes = 500
 )
 
 // limitIssue explains a rejection caused by a contract maxLength. It counts
@@ -154,6 +164,50 @@ func checkRuneLimit(field, value string, limit int) error {
 	return nil
 }
 
+// sentinelFacebookURL is the placeholder legacy rows carry after the one-time
+// backfill. It is a well-shaped URL on purpose, so it satisfies the storage
+// check, but it is never a real contact link: every new write carrying it is
+// refused like any other invalid link.
+const sentinelFacebookURL = "https://facebook.com/unknown"
+
+// validateFacebookURL checks a caller-supplied Facebook contact link and
+// returns the trimmed value to store.
+//
+// The rule, in order: surrounding whitespace is discarded and a link that is
+// then empty is missing; the trimmed link must fit maxFacebookURLRunes
+// characters; it must parse as an https URL whose host is facebook.com or
+// fb.com or any subdomain of either (matched case-insensitively on the
+// hostname, so an explicit port is ignored and a lookalike such as
+// myfacebook.com or facebook.com.evil.com does not match); content must follow
+// the host, so a bare host is refused; and the legacy placeholder is refused
+// on every new write. The stored value keeps what the customer typed
+// (trimmed): no lowercasing, no added scheme, no path normalisation.
+func validateFacebookURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", domainerr.InvalidAddressField(FieldFacebookURL, requiredIssue)
+	}
+	if err := checkRuneLimit(FieldFacebookURL, trimmed, maxFacebookURLRunes); err != nil {
+		return "", err
+	}
+	if trimmed == sentinelFacebookURL {
+		return "", domainerr.InvalidAddressField(FieldFacebookURL, "must be a real Facebook profile link")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", domainerr.InvalidAddressField(FieldFacebookURL, "must be a valid https Facebook link")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "facebook.com" && host != "fb.com" &&
+		!strings.HasSuffix(host, ".facebook.com") && !strings.HasSuffix(host, ".fb.com") {
+		return "", domainerr.InvalidAddressField(FieldFacebookURL, "must be a valid https Facebook link")
+	}
+	if len(parsed.EscapedPath()) <= 1 {
+		return "", domainerr.InvalidAddressField(FieldFacebookURL, "must be a valid https Facebook link")
+	}
+	return trimmed, nil
+}
+
 // AddressDraft carries the caller-supplied members of a new address.
 //
 // The division names are optional because the application layer captures them
@@ -181,6 +235,10 @@ type AddressDraft struct {
 	WardName string
 	// StreetAddress is the free-text house number and street. It must not be blank.
 	StreetAddress string
+	// FacebookURL is the contact Facebook link. It must be a valid https
+	// Facebook URL (see validateFacebookURL); the legacy placeholder is never
+	// accepted on a new address.
+	FacebookURL string
 }
 
 // AddressEdit carries the changes of a partial edit.
@@ -208,6 +266,12 @@ type AddressEdit struct {
 	WardName *string
 	// StreetAddress is the new street address; nil keeps the current value.
 	StreetAddress *string
+	// FacebookURL is the new contact Facebook link; nil keeps the current
+	// value. An empty value clears it, which is refused: the link is required
+	// on every visible address. A nil edit still re-validates the stored link,
+	// so an address carrying the legacy placeholder refuses every edit until
+	// the customer supplies a real one (FR-004).
+	FacebookURL *string
 }
 
 // NewAddress builds a visible address of the given account.
@@ -217,10 +281,13 @@ type AddressEdit struct {
 // change uses, so there is no code path that sets the flag by writing the field
 // (FR-009, Constitution III).
 //
-// It validates structure only: the recipient name, the province and ward codes and
-// the street address must not be blank, the recipient name, both captured division
-// names and the street address must fit the ceilings the contract declares for them
-// (see checkRuneLimit), and the recipient phone must normalise to a Vietnamese
+// It validates structure only: the recipient name, the province and ward codes,
+// the street address and the Facebook contact link must not be blank, the
+// recipient name, both captured division names and the street address must fit
+// the ceilings the contract declares for them
+// (see checkRuneLimit), the Facebook link must be a valid https Facebook URL of
+// at most maxFacebookURLRunes characters (see validateFacebookURL), and the
+// recipient phone must normalise to a Vietnamese
 // mobile number. Whether a province or ward code exists in the official dataset is
 // deliberately not checked here — the domain may not import
 // internal/share/administrative, so the use case resolves it through the Divisions
@@ -262,6 +329,10 @@ func NewAddress(userID uuid.UUID, draft AddressDraft, now time.Time) (*Address, 
 	if err := checkRuneLimit(FieldStreetAddress, streetAddress, maxStreetAddressRunes); err != nil {
 		return nil, err
 	}
+	facebookURL, err := validateFacebookURL(draft.FacebookURL)
+	if err != nil {
+		return nil, err
+	}
 	recipientPhone, err := NormalizePhone(draft.RecipientPhone)
 	if err != nil {
 		return nil, err
@@ -277,6 +348,7 @@ func NewAddress(userID uuid.UUID, draft AddressDraft, now time.Time) (*Address, 
 		WardCode:       wardCode,
 		WardName:       wardName,
 		StreetAddress:  streetAddress,
+		FacebookURL:    facebookURL,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}, nil
@@ -312,6 +384,7 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 		WardCode:       a.WardCode,
 		WardName:       a.WardName,
 		StreetAddress:  a.StreetAddress,
+		FacebookURL:    a.FacebookURL,
 	}
 	if edit.RecipientName != nil {
 		draft.RecipientName = *edit.RecipientName
@@ -333,6 +406,9 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 	}
 	if edit.StreetAddress != nil {
 		draft.StreetAddress = *edit.StreetAddress
+	}
+	if edit.FacebookURL != nil {
+		draft.FacebookURL = *edit.FacebookURL
 	}
 
 	recipientName := strings.TrimSpace(draft.RecipientName)
@@ -369,6 +445,13 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 	if err := checkRuneLimit(FieldStreetAddress, streetAddress, maxStreetAddressRunes); err != nil {
 		return err
 	}
+	// The stored link is re-validated even when the edit omits it: a staged
+	// draft carrying the legacy placeholder is refused, which is the FR-004
+	// exception that blocks every edit until the customer supplies a real link.
+	facebookURL, err := validateFacebookURL(draft.FacebookURL)
+	if err != nil {
+		return err
+	}
 	recipientPhone, err := NormalizePhone(draft.RecipientPhone)
 	if err != nil {
 		return err
@@ -381,6 +464,7 @@ func (a *Address) Apply(edit AddressEdit, now time.Time) error {
 	a.WardCode = wardCode
 	a.WardName = wardName
 	a.StreetAddress = streetAddress
+	a.FacebookURL = facebookURL
 	a.UpdatedAt = now
 	return nil
 }

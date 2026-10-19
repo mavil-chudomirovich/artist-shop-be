@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/application/dto"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/constant"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/order/domain/model"
 )
 
 // This file is US3: a customer's own orders. Every read or change takes the
@@ -59,34 +61,43 @@ func (s *Service) GetMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderV
 
 // CancelMine cancels one of the caller's own orders before it is paid — while it
 // awaits the artist's confirmation or payment — and returns it. The ownership
-// check answers the same not-found an unknown order does, and then the US2 Cancel
-// transition releases any hold of every line; both run in one transaction, so the
-// order and the released goods commit together or not at all (FR-019, FR-020).
+// check and the US2 Cancel transition run in one transaction, so the order and
+// the released goods commit together or not at all; the payment-module notice,
+// the email and the live event publish only after that outermost commit, never
+// inside it (FR-019, FR-020).
 func (s *Service) CancelMine(ctx context.Context, in dto.OrderRefInput) (dto.OrderView, error) {
 	actor, err := s.actor(ctx)
 	if err != nil {
 		return dto.OrderView{}, err
 	}
 
-	var view dto.OrderView
+	var cancelled *model.Order
+	var cancelledFrom constant.Status
 	if err := s.Tx.WithinTx(ctx, func(txCtx context.Context) error {
 		order, err := s.Orders.FindByOwner(txCtx, actor.ID, in.OrderID)
 		if err != nil {
 			return err
 		}
-		if err := s.Cancel(txCtx, order.ID); err != nil {
-			return err
-		}
-		cancelled, err := s.Orders.FindByOwner(txCtx, actor.ID, order.ID)
+		locked, from, err := s.cancelLocked(txCtx, order.ID)
 		if err != nil {
 			return err
 		}
-		view = s.Mapper.Order(*cancelled)
+		cancelled = locked
+		cancelledFrom = from
 		return nil
 	}); err != nil {
 		return dto.OrderView{}, err
 	}
-	return view, nil
+	// The payment module is told the order was cancelled, so the provider payment
+	// request it created is cancelled too. Called after commit, best-effort.
+	if s.Cancellations != nil {
+		s.Cancellations.CancelForOrder(ctx, cancelled.ID)
+	}
+	// The customer is told the order was cancelled. Sent after commit,
+	// best-effort.
+	s.notifyCustomerStatusChange(ctx, cancelled)
+	s.publishStatusChanged(ctx, cancelled, cancelledFrom)
+	return s.Mapper.Order(*cancelled), nil
 }
 
 // orderListWindow bounds a requested listing window. An out-of-range window is

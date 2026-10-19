@@ -1045,6 +1045,55 @@
                 }
             }
         },
+        "/admin/orders/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Opens a live SSE stream of order.needs_confirmation and order.feedback_received for administrators. Read with fetch + ReadableStream and the Authorization header; on reconnect, re-open the stream and re-read GET /admin/orders.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "AdminOrders"
+                ],
+                "summary": "Subscribe to admin order notifications (SSE)",
+                "responses": {
+                    "200": {
+                        "description": "text/event-stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/orders/{orderId}": {
             "get": {
                 "security": [
@@ -4390,6 +4439,49 @@
                 }
             }
         },
+        "/orders/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Opens a live SSE stream of order.status_changed for the signed-in customer's own orders. Read with fetch + ReadableStream and the Authorization header; on reconnect, re-open the stream and re-read GET /orders.",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "Orders"
+                ],
+                "summary": "Subscribe to my order status changes (SSE)",
+                "responses": {
+                    "200": {
+                        "description": "text/event-stream",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_share_httpx.SwaggerError"
+                        }
+                    }
+                }
+            }
+        },
         "/orders/{orderId}": {
             "get": {
                 "security": [
@@ -6729,6 +6821,10 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderAddressResponse": {
             "type": "object",
             "properties": {
+                "facebookUrl": {
+                    "description": "FacebookURL is the contact Facebook link as captured at checkout\n(feature 021, FR-006).",
+                    "type": "string"
+                },
                 "provinceCode": {
                     "description": "ProvinceCode and ProvinceName identify the first-level unit.",
                     "type": "string"
@@ -7603,6 +7699,10 @@
                     "description": "DivisionNeedsReview is true when a stored code is no longer in the official\ndataset; the captured names are still returned so the customer can see what\nwas saved.\n\nIt is always stated, false included: the customer's own list knows the\nanswer, because the use case checks every stored code against the dataset.\nOmitting a known false would make a client read \"absent\" as \"unknown\",\nwhich in JavaScript is `undefined` rather than `false`.",
                     "type": "boolean"
                 },
+                "facebookUrl": {
+                    "description": "FacebookURL is the contact Facebook link of the address.",
+                    "type": "string"
+                },
                 "id": {
                     "description": "ID identifies the address.",
                     "type": "string"
@@ -7665,6 +7765,10 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.CreateAddressRequest": {
             "type": "object",
             "properties": {
+                "facebookUrl": {
+                    "description": "FacebookURL is the contact Facebook link. It is required.",
+                    "type": "string"
+                },
                 "provinceCode": {
                     "description": "ProvinceCode must exist in the official dataset.",
                     "type": "string"
@@ -7734,6 +7838,10 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.OperatorAddressResponse": {
             "type": "object",
             "properties": {
+                "facebookUrl": {
+                    "description": "FacebookURL is the contact Facebook link of the address.",
+                    "type": "string"
+                },
                 "id": {
                     "description": "ID identifies the address.",
                     "type": "string"
@@ -7825,6 +7933,10 @@
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_user_presentation_dto.UpdateAddressRequest": {
             "type": "object",
             "properties": {
+                "facebookUrl": {
+                    "description": "FacebookURL is omitted to keep the current contact Facebook link. An\nempty value clears it, which is refused; a nil edit on an address\ncarrying the legacy placeholder is refused until the customer supplies\na real link.",
+                    "type": "string"
+                },
                 "provinceCode": {
                     "description": "ProvinceCode is omitted to keep the current province.",
                     "type": "string"

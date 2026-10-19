@@ -122,6 +122,7 @@ func (s *Service) StartShippingByAdmin(ctx context.Context, in dto.EvidenceInput
 	// The customer is told the order is on its way. Sent after commit,
 	// best-effort (FR-021, research D12).
 	s.notifyCustomerStatusChange(ctx, moved)
+	s.publishStatusChanged(ctx, moved, constant.StatusPaid)
 	return view, nil
 }
 
@@ -227,6 +228,7 @@ func (s *Service) DeliverByAdmin(ctx context.Context, in dto.EvidenceInput) (dto
 	// The customer is told the order has arrived. Sent after commit, best-effort
 	// (FR-021, research D12).
 	s.notifyCustomerStatusChange(ctx, moved)
+	s.publishStatusChanged(ctx, moved, constant.StatusShipping)
 	return view, nil
 }
 

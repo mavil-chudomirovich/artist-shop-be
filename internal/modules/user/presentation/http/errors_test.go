@@ -200,6 +200,7 @@ func TestTheAddressFieldDetailsAreTheContractMemberNames(t *testing.T) {
 		fieldProvinceCode:  "provinceCode",
 		fieldWardCode:      "wardCode",
 		fieldStreet:        "streetAddress",
+		fieldFacebookURL:   "facebookUrl",
 	}
 	for got, want := range cases {
 		if got != want {

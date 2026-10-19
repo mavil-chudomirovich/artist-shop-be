@@ -106,8 +106,9 @@ trên POSIX).
 |---|---|
 | `env` | Copy `.env.example` → `.env` nếu chưa có (dùng `ENV_CMD`) |
 | `run` | `go run ./cmd/api` |
-| `seed` | `go run ./cmd/seed` |
-| `build` | Build `api`, `migrate`, `seed` vào `bin/` với `-trimpath -ldflags="-s -w"` |
+| `seed-hash` | `go run ./cmd/hash-password` — in hash Argon2id cho `ADMIN_PASSWORD` (dev-only, không vào image) |
+| `seed-sql` | Nối `scripts/seed.vars.local.psql` + `scripts/seed_admin.sql` vào `exec -T db psql` |
+| `build` | Build `api`, `migrate` vào `bin/` với `-trimpath -ldflags="-s -w"` |
 | `dev` | `build` + hướng dẫn cách chạy |
 | `fmt` | `gofmt -w .` |
 | `tidy` | `go mod tidy` |
@@ -211,7 +212,6 @@ binary**, không phải Goose CLI, nên tạo file migration mới là thêm fil
 | `db-shell` | `exec db psql -U app -d artist_shop` |
 | `redis-cli` | `exec redis redis-cli` |
 | `mail` | `curl http://localhost:8025/api/v1/messages` |
-| `seed-docker` | `run --rm seed` |
 
 Ba điểm cố ý:
 

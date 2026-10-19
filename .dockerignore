@@ -22,6 +22,8 @@ coverage.out
 .env
 .env.*
 !.env.example
+# Local admin-seed variables must never enter the build context
+scripts/*.local.psql
 
 # Editor / OS
 .idea

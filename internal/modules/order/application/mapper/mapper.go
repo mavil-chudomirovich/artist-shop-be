@@ -21,7 +21,8 @@ func (m *Mapper) Money(price model.Price) dto.MoneyView {
 	return dto.MoneyView{Amount: price.Amount, Currency: price.Currency}
 }
 
-// Address maps the delivery-address snapshot to its DTO shape.
+// Address maps the delivery-address snapshot to its DTO shape, including the
+// Facebook link captured at checkout (feature 021, FR-006).
 func (m *Mapper) Address(address model.Address) dto.OrderAddressView {
 	return dto.OrderAddressView{
 		RecipientName:  address.RecipientName,
@@ -31,6 +32,7 @@ func (m *Mapper) Address(address model.Address) dto.OrderAddressView {
 		WardCode:       address.WardCode,
 		WardName:       address.WardName,
 		StreetAddress:  address.StreetAddress,
+		FacebookURL:    address.FacebookURL,
 	}
 }
 

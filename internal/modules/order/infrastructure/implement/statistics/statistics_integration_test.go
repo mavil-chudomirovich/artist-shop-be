@@ -73,6 +73,7 @@ func statsAddress() model.Address {
 		WardCode:       "00001",
 		WardName:       "Phúc Xá",
 		StreetAddress:  "1 Đinh Tiên Hoàng",
+		FacebookURL:    "https://facebook.com/test.customer",
 	}
 }
 

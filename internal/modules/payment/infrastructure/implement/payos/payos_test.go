@@ -178,6 +178,76 @@ func TestCreateLinkPostsSignedAndReturnsTheLink(t *testing.T) {
 	}
 }
 
+// The provider-side link expires with the order's own payment deadline: a set
+// ExpiredAt is sent as PayOS `expiredAt` (Unix seconds).
+func TestCreateLinkSendsExpiredAtWhenSet(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"00","desc":"success","data":{"paymentLinkId":"pl-1","checkoutUrl":"https://pay.example/pl-1","qrCode":"qr-1"}}`))
+	}))
+	defer server.Close()
+
+	cfg := config.PaymentConfig{PayOSBaseURL: server.URL, PayOSClientID: "cid", PayOSAPIKey: "key", PayOSChecksumKey: checksumKey}
+	client := NewClient(cfg, server.Client())
+
+	in := dto.CreateLinkInput{OrderCode: 123, Amount: 3000, Description: "VQRIO123", CancelURL: "https://shop.example/cancel", ReturnURL: "https://shop.example/return", ExpiredAt: 1790000000}
+	if _, err := client.CreateLink(context.Background(), in); err != nil {
+		t.Fatalf("CreateLink: %v", err)
+	}
+	if gotBody["expiredAt"] != float64(1790000000) {
+		t.Errorf("expiredAt = %v, want 1790000000", gotBody["expiredAt"])
+	}
+}
+
+// A zero ExpiredAt omits the field, so a link without a known order deadline
+// keeps the previous behaviour.
+func TestCreateLinkOmitsExpiredAtWhenZero(t *testing.T) {
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"00","desc":"success","data":{"paymentLinkId":"pl-1","checkoutUrl":"https://pay.example/pl-1","qrCode":"qr-1"}}`))
+	}))
+	defer server.Close()
+
+	cfg := config.PaymentConfig{PayOSBaseURL: server.URL, PayOSClientID: "cid", PayOSAPIKey: "key", PayOSChecksumKey: checksumKey}
+	client := NewClient(cfg, server.Client())
+
+	in := dto.CreateLinkInput{OrderCode: 123, Amount: 3000, Description: "VQRIO123", CancelURL: "https://shop.example/cancel", ReturnURL: "https://shop.example/return"}
+	if _, err := client.CreateLink(context.Background(), in); err != nil {
+		t.Fatalf("CreateLink: %v", err)
+	}
+	if _, ok := gotBody["expiredAt"]; ok {
+		t.Errorf("expiredAt = %v, want the field omitted when zero", gotBody["expiredAt"])
+	}
+}
+
+// research D2: ExpiredAt must not leak into the create-link signature, which the
+// PayOS documentation fixes to the five fields amount/cancelUrl/description/
+// orderCode/returnUrl.
+func TestCreateLinkSignatureIgnoresExpiredAt(t *testing.T) {
+	base := dto.CreateLinkInput{
+		OrderCode:   123,
+		Amount:      3000,
+		Description: "VQRIO123",
+		CancelURL:   "https://shop.example/cancel",
+		ReturnURL:   "https://shop.example/return",
+	}
+	withExpiry := base
+	withExpiry.ExpiredAt = 1790000000
+
+	if got, want := signCreateLink(checksumKey, withExpiry), signCreateLink(checksumKey, base); got != want {
+		t.Fatalf("signature with expiredAt = %s, want the same %s without it", got, want)
+	}
+	if got, want := signCreateLink(checksumKey, withExpiry), "60224b08adffbddddfc1bf4ab0f94111aa450d00b860c5acd27aa9db002592c3"; got != want {
+		t.Fatalf("signature = %s, want the documented vector %s", got, want)
+	}
+}
+
 // research D1: a provider refusal (a non-"00" code) is reported as a provider
 // failure, so the use case can answer PAYMENT_PROVIDER_ERROR.
 func TestCreateLinkReportsAProviderRefusal(t *testing.T) {

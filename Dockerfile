@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# Build stage: compile the three commands into static binaries.
+# Build stage: compile the two commands into static binaries.
 # Migrations are embedded via go:embed, so the runtime needs no extra files.
+# (Admin seeding is scripts/seed_admin.sql, applied manually with psql.)
 # ---------------------------------------------------------------------------
 FROM golang:1.26-alpine AS build
 
@@ -17,8 +18,7 @@ COPY . .
 ENV CGO_ENABLED=0 GOOS=linux
 
 RUN go build -trimpath -ldflags="-s -w" -o /out/api    ./cmd/api && \
-    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate && \
-    go build -trimpath -ldflags="-s -w" -o /out/seed    ./cmd/seed
+    go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 # ---------------------------------------------------------------------------
 # Runtime stage.
@@ -33,7 +33,6 @@ RUN apk add --no-cache ca-certificates tzdata && \
 WORKDIR /app
 COPY --from=build /out/api    /app/api
 COPY --from=build /out/migrate /app/migrate
-COPY --from=build /out/seed    /app/seed
 
 USER app
 EXPOSE 8080

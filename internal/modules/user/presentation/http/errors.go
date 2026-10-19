@@ -133,6 +133,7 @@ const (
 	fieldProvinceCode  = model.FieldProvinceCode
 	fieldWardCode      = model.FieldWardCode
 	fieldStreet        = model.FieldStreetAddress
+	fieldFacebookURL   = model.FieldFacebookURL
 	fieldFile          = "file"
 	fieldPage          = "page"
 	fieldPageSize      = "pageSize"

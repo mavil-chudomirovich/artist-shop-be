@@ -89,7 +89,8 @@ Use the Makefile targets rather than raw `go test`
 (see [`docs/makefile.md`](../../../docs/makefile.md)):
 
 ```sh
-make seed        # provision the admin account (ADMIN_EMAIL/ADMIN_PASSWORD)
+ADMIN_PASSWORD='<mật-khẩu-mạnh>' make seed-hash  # in hash Argon2id (dev-only)
+make seed-sql    # provision the admin account (scripts/seed_admin.sql)
 make test        # unit + HTTP tests
 make test-integration  # repository/HTTP tests against Docker
 ```

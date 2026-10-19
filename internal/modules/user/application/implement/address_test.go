@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,6 +145,7 @@ func (m *memoryAddresses) Update(_ context.Context, address *model.Address) erro
 	stored.WardCode = address.WardCode
 	stored.WardName = address.WardName
 	stored.StreetAddress = address.StreetAddress
+	stored.FacebookURL = address.FacebookURL
 	stored.UpdatedAt = address.UpdatedAt
 	m.rows[address.ID] = stored
 	return nil
@@ -396,6 +398,9 @@ func (h *addressHarness) seedAddress(t *testing.T, userID uuid.UUID, address mod
 	if address.StreetAddress == "" {
 		address.StreetAddress = "12 Nguyen Hue"
 	}
+	if address.FacebookURL == "" {
+		address.FacebookURL = "https://facebook.com/nguyen.van.a"
+	}
 	if address.CreatedAt.IsZero() {
 		address.CreatedAt = clock
 		address.UpdatedAt = clock
@@ -416,6 +421,7 @@ func (h *addressHarness) create(t *testing.T, userID uuid.UUID) appdto.AddressOu
 		ProvinceCode:   "79",
 		WardCode:       "26734",
 		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 	})
 	if err != nil {
 		t.Fatalf("create an address: %v", err)
@@ -664,6 +670,7 @@ func TestDivisionsOutsideTheDatasetAreRejectedWithoutPersisting(t *testing.T) {
 				ProvinceCode:   tc.provinceCode,
 				WardCode:       tc.wardCode,
 				StreetAddress:  "12 Nguyen Hue",
+				FacebookURL:    "https://facebook.com/nguyen.van.a",
 			})
 
 			if !errors.Is(err, tc.want) {
@@ -739,6 +746,7 @@ func TestAnInvalidRecipientPhoneIsRejectedWithoutPersisting(t *testing.T) {
 		ProvinceCode:   "79",
 		WardCode:       "26734",
 		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://facebook.com/nguyen.van.a",
 	})
 
 	if !errors.Is(err, domainerr.ErrInvalidPhone) {
@@ -1146,6 +1154,7 @@ func TestAFailedRoleReadCannotReportAStoredAddressChangeAsAFailure(t *testing.T)
 					ProvinceCode:   "79",
 					WardCode:       "26734",
 					StreetAddress:  "12 Nguyen Hue",
+					FacebookURL:    "https://facebook.com/nguyen.van.a",
 				})
 				return err
 			},
@@ -1224,6 +1233,210 @@ func TestAFailedRoleReadCannotReportAStoredAddressChangeAsAFailure(t *testing.T)
 					h.audit.events[eventsBefore:])
 			}
 		})
+	}
+}
+
+// T014 [US2]: omitting the Facebook link on a normal address keeps the stored
+// link while the named members change (FR-004: an absent field keeps its value).
+func TestUpdateAddressWithoutFacebookURLKeepsTheStoredLink(t *testing.T) {
+	h := newAddressHarness(t)
+	address := h.create(t, h.owner)
+
+	out, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+		UserID: h.owner, AddressID: address.ID, StreetAddress: stringPtr("1 Le Loi"),
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateAddress: %v", err)
+	}
+	if out.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("an omitted link must keep its value, got %q", out.FacebookURL)
+	}
+	if out.StreetAddress != "1 Le Loi" {
+		t.Fatalf("the named member must change, got %q", out.StreetAddress)
+	}
+	if !out.IsDefault {
+		t.Fatal("an edit must preserve the default flag")
+	}
+}
+
+// T014 [US2]: clearing the Facebook link is refused with the facebookUrl field
+// named, and the stored address — including the default flag — survives with
+// no audit event (FR-004, FR-007).
+func TestUpdateAddressClearingTheFacebookURLIsRejected(t *testing.T) {
+	for _, value := range []string{"", "   "} {
+		t.Run("clear to "+describeBlank(value), func(t *testing.T) {
+			h := newAddressHarness(t)
+			address := h.create(t, h.owner)
+			before := h.repo.rows[address.ID]
+
+			_, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+				UserID: h.owner, AddressID: address.ID, FacebookURL: stringPtr(value),
+			})
+
+			assertFacebookURLRefusal(t, err)
+			if after := h.repo.rows[address.ID]; after != before {
+				t.Fatalf("a rejected edit changed the stored row:\n before %+v\n after  %+v", before, after)
+			}
+			if !h.repo.rows[address.ID].IsDefault {
+				t.Fatal("a rejected edit must leave the previous default in place")
+			}
+			if h.audit.countOf(constant.AuditAddressUpdated) != 0 {
+				t.Fatal("a rejected edit must leave no audit event")
+			}
+		})
+	}
+}
+
+// describeBlank renders a blank fixture value readably in a subtest name.
+func describeBlank(value string) string {
+	if value == "" {
+		return "empty"
+	}
+	return "whitespace-only"
+}
+
+// assertFacebookURLRefusal states the one refusal every invalid Facebook link
+// shares: the domain's invalid-address error naming exactly facebookUrl.
+func assertFacebookURLRefusal(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, domainerr.ErrAddressInvalid) {
+		t.Fatalf("expected ErrAddressInvalid, got %v", err)
+	}
+	var invalid *domainerr.AddressFieldError
+	if !errors.As(err, &invalid) || invalid.Field != model.FieldFacebookURL {
+		t.Fatalf("expected the error to name %q, got %v", model.FieldFacebookURL, err)
+	}
+}
+
+// T014 [US2]: a supplied link that is not a valid Facebook URL is refused like
+// on create, and nothing is stored or audited.
+func TestUpdateAddressWithAnInvalidFacebookURLIsRejected(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{"missing scheme", "facebook.com/nguyen.van.a"},
+		{"http scheme", "http://facebook.com/nguyen.van.a"},
+		{"foreign host", "https://example.com/nguyen.van.a"},
+		{"lookalike host", "https://faceboook.com/nguyen.van.a"},
+		{"evil subdomain", "https://facebook.com.evil.com/nguyen.van.a"},
+		{"bare host without a path", "https://facebook.com"},
+		{"the legacy placeholder", "https://facebook.com/unknown"},
+		{"one character over the ceiling", "https://facebook.com/" + strings.Repeat("a", 500)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAddressHarness(t)
+			address := h.create(t, h.owner)
+			before := h.repo.rows[address.ID]
+
+			_, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+				UserID: h.owner, AddressID: address.ID, FacebookURL: stringPtr(tc.value),
+			})
+
+			assertFacebookURLRefusal(t, err)
+			if after := h.repo.rows[address.ID]; after != before {
+				t.Fatalf("a rejected edit changed the stored row:\n before %+v\n after  %+v", before, after)
+			}
+			if h.audit.countOf(constant.AuditAddressUpdated) != 0 {
+				t.Fatal("a rejected edit must leave no audit event")
+			}
+		})
+	}
+}
+
+// T014 [US2]: the FR-004 exception — an address still carrying the legacy
+// placeholder refuses every edit, even one that omits the link, until the
+// customer supplies a real one.
+func TestUpdateAddressOnASentinelAddressIsRejectedWithoutTouchingAnything(t *testing.T) {
+	h := newAddressHarness(t)
+	sentinel := h.seedAddress(t, h.owner, model.Address{
+		RecipientName:  "Nguyen Van A",
+		RecipientPhone: "0912345678",
+		ProvinceCode:   "79",
+		ProvinceName:   "Ho Chi Minh",
+		WardCode:       "26734",
+		WardName:       "Phuong Ben Nghe",
+		StreetAddress:  "12 Nguyen Hue",
+		FacebookURL:    "https://facebook.com/unknown",
+		IsDefault:      true,
+	})
+	before := h.repo.rows[sentinel.ID]
+
+	_, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+		UserID: h.owner, AddressID: sentinel.ID, StreetAddress: stringPtr("1 Le Loi"),
+	})
+
+	assertFacebookURLRefusal(t, err)
+	if after := h.repo.rows[sentinel.ID]; after != before {
+		t.Fatalf("a rejected edit changed the stored row:\n before %+v\n after  %+v", before, after)
+	}
+	if !h.repo.rows[sentinel.ID].IsDefault {
+		t.Fatal("a rejected edit must leave the previous default in place")
+	}
+	if h.audit.countOf(constant.AuditAddressUpdated) != 0 {
+		t.Fatal("a rejected edit must leave no audit event")
+	}
+}
+
+// T014 [US2]: a new valid Facebook link is stored, and the audit event names
+// the facebookUrl member — never its value (Constitution VI).
+func TestUpdateAddressWithANewValidFacebookURL(t *testing.T) {
+	h := newAddressHarness(t)
+	address := h.create(t, h.owner)
+
+	out, err := h.svc.UpdateAddress(context.Background(), appdto.UpdateAddressInput{
+		UserID: h.owner, AddressID: address.ID,
+		FacebookURL: stringPtr("https://fb.com/nguyen.van.b"),
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateAddress: %v", err)
+	}
+	if out.FacebookURL != "https://fb.com/nguyen.van.b" {
+		t.Fatalf("expected the new link to be stored, got %q", out.FacebookURL)
+	}
+	if !out.IsDefault {
+		t.Fatal("an edit must preserve the default flag")
+	}
+	if stored := h.repo.rows[address.ID]; stored.FacebookURL != "https://fb.com/nguyen.van.b" {
+		t.Fatalf("the stored row kept the old link: %+v", stored)
+	}
+	updated := h.audit.events
+	var fields []string
+	for _, e := range updated {
+		if e.action == constant.AuditAddressUpdated {
+			changed, ok := e.metadata["changedFields"].([]string)
+			if !ok {
+				t.Fatalf("expected changedFields to name the members, got %+v", e.metadata)
+			}
+			fields = changed
+		}
+	}
+	if len(fields) != 1 || fields[0] != model.FieldFacebookURL {
+		t.Fatalf("expected the event to name %q, got %v", model.FieldFacebookURL, fields)
+	}
+}
+
+// T014 [US2]: the operator lookup carries the stored Facebook link (FR-005),
+// so an administrator sees the same contact the customer sees.
+func TestLookupCustomerCarriesTheStoredFacebookURL(t *testing.T) {
+	h := newAddressHarness(t)
+	created := h.create(t, h.owner)
+
+	customer, err := h.svc.LookupCustomer(context.Background(), h.owner)
+
+	if err != nil {
+		t.Fatalf("LookupCustomer: %v", err)
+	}
+	if len(customer.Addresses) != 1 {
+		t.Fatalf("expected the one stored address, got %+v", customer.Addresses)
+	}
+	if customer.Addresses[0].FacebookURL != created.FacebookURL {
+		t.Fatalf("expected the lookup to carry %q, got %q",
+			created.FacebookURL, customer.Addresses[0].FacebookURL)
 	}
 }
 

@@ -251,8 +251,8 @@ func (f *adminFixture) seedAddresses(t *testing.T) {
 		RecipientName: "Nguyen Van A", RecipientPhone: "0912345678",
 		ProvinceCode: "79", ProvinceName: "Ho Chi Minh",
 		WardCode: "26735", WardName: "Phuong Ben Thanh",
-		StreetAddress: "1 Le Loi",
-		CreatedAt:     now, UpdatedAt: now,
+		StreetAddress: "1 Le Loi", FacebookURL: "https://fb.com/nguyen.van.a",
+		CreatedAt: now, UpdatedAt: now,
 	}
 	f.addresses.seq = append(f.addresses.seq, f.otherAddress)
 	f.addresses.rows[f.defaultAddress] = model.Address{
@@ -260,7 +260,8 @@ func (f *adminFixture) seedAddresses(t *testing.T) {
 		RecipientName: "Nguyen Van A", RecipientPhone: "0912345678",
 		ProvinceCode: "79", ProvinceName: "Ho Chi Minh",
 		WardCode: "26734", WardName: "Phuong Ben Nghe",
-		StreetAddress: "12 Nguyen Hue", IsDefault: true,
+		StreetAddress: "12 Nguyen Hue", FacebookURL: "https://facebook.com/nguyen.van.a",
+		IsDefault: true,
 		CreatedAt: older, UpdatedAt: older,
 	}
 	f.addresses.seq = append(f.addresses.seq, f.defaultAddress)
@@ -380,6 +381,32 @@ func TestTheOperatorViewCarriesNoDivisionNeedsReviewMember(t *testing.T) {
 		// The members both views do share must survive the split.
 		if _, present := address["isDefault"]; !present {
 			t.Fatalf("address %d lost isDefault: %v", i, address)
+		}
+	}
+}
+
+// T014 [US2]: the operator lookup carries the stored Facebook link of every
+// address (FR-005), so an administrator sees the same contact the customer sees.
+func TestTheOperatorLookupCarriesTheStoredFacebookURL(t *testing.T) {
+	fixture := newAdminFixture(t)
+	fixture.seedAddresses(t)
+
+	rec := fixture.lookup(adminToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := decodeLookup(t, rec)
+	if len(body.Data.Addresses) != 2 {
+		t.Fatalf("expected both addresses, got %+v", body.Data.Addresses)
+	}
+	want := map[string]string{
+		fixture.defaultAddress.String(): "https://facebook.com/nguyen.van.a",
+		fixture.otherAddress.String():   "https://fb.com/nguyen.van.a",
+	}
+	for _, address := range body.Data.Addresses {
+		if address.FacebookURL != want[address.ID] {
+			t.Fatalf("expected address %s to carry %q, got %q", address.ID, want[address.ID], address.FacebookURL)
 		}
 	}
 }

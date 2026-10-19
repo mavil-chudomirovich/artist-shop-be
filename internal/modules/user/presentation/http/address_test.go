@@ -117,6 +117,7 @@ func (m *memoryAddressRepo) Update(_ context.Context, address *model.Address) er
 	stored.WardCode = address.WardCode
 	stored.WardName = address.WardName
 	stored.StreetAddress = address.StreetAddress
+	stored.FacebookURL = address.FacebookURL
 	stored.UpdatedAt = address.UpdatedAt
 	m.rows[address.ID] = stored
 	return nil
@@ -401,13 +402,20 @@ func (f *addressFixture) seedForeign(t *testing.T) {
 		RecipientName: "Someone Else", RecipientPhone: "0912345678",
 		ProvinceCode: "79", ProvinceName: "Ho Chi Minh",
 		WardCode: "26734", WardName: "Phuong Ben Nghe",
-		StreetAddress: "99 Le Loi", IsDefault: true,
+		StreetAddress: "99 Le Loi", FacebookURL: "https://facebook.com/someone.else",
+		IsDefault: true,
 		CreatedAt: stamp, UpdatedAt: stamp,
 	}
 	f.repo.seq = append(f.repo.seq, f.foreign)
 }
 
 const addressBody = `{"recipientName":"Nguyen Van A","recipientPhone":"0912 345 678",` +
+	`"provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue",` +
+	`"facebookUrl":"https://facebook.com/nguyen.van.a"}`
+
+// addressBodyWithoutFacebook is the same payload with the Facebook link
+// removed, so the required rule has a body to refuse.
+const addressBodyWithoutFacebook = `{"recipientName":"Nguyen Van A","recipientPhone":"0912 345 678",` +
 	`"provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`
 
 type addressListBody struct {
@@ -430,6 +438,7 @@ type httpdtoAddress struct {
 	WardCode            string `json:"wardCode"`
 	WardName            string `json:"wardName"`
 	StreetAddress       string `json:"streetAddress"`
+	FacebookURL         string `json:"facebookUrl"`
 	IsDefault           bool   `json:"isDefault"`
 	DivisionNeedsReview bool   `json:"divisionNeedsReview"`
 }
@@ -489,6 +498,9 @@ func TestCreatingTheFirstAddressStoresItAndMakesItTheDefault(t *testing.T) {
 	if !created.IsDefault {
 		t.Fatal("expected the first address to become the default")
 	}
+	if created.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the Facebook link to round-trip, got %q", created.FacebookURL)
+	}
 	if created.RecipientPhone != "0912345678" {
 		t.Fatalf("expected the normalised recipient phone, got %q", created.RecipientPhone)
 	}
@@ -502,6 +514,106 @@ func TestCreatingTheFirstAddressStoresItAndMakesItTheDefault(t *testing.T) {
 	listed := fixture.list(t, liveToken, "")
 	if listed.Meta.Total != 1 || len(listed.Data) != 1 || listed.Data[0].ID != created.ID {
 		t.Fatalf("expected the saved address in the list, got %+v", listed)
+	}
+	if listed.Data[0].FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("expected the listed address to carry the Facebook link, got %q", listed.Data[0].FacebookURL)
+	}
+}
+
+// US1 (021-address-facebook-url) acceptance scenarios 2 and 3: creating an
+// address without a Facebook link, with a blank one, or with a link that is not
+// a valid https Facebook URL is refused with 400 VALIDATION_ERROR naming
+// facebookUrl, and nothing is stored (FR-001, FR-002, FR-003, FR-007).
+func TestCreateAddressWithoutAValidFacebookURLIsRefused(t *testing.T) {
+	base := `{"recipientName":"Nguyen Van A","recipientPhone":"0912 345 678",` +
+		`"provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue"`
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing", addressBodyWithoutFacebook},
+		{"blank", base + `,"facebookUrl":""}`},
+		{"whitespace-only", base + `,"facebookUrl":"   "}`},
+		{"missing scheme", base + `,"facebookUrl":"facebook.com/nguyen.van.a"}`},
+		{"http scheme", base + `,"facebookUrl":"http://facebook.com/nguyen.van.a"}`},
+		{"ftp scheme", base + `,"facebookUrl":"ftp://facebook.com/nguyen.van.a"}`},
+		{"foreign host", base + `,"facebookUrl":"https://example.com/nguyen.van.a"}`},
+		{"lookalike host", base + `,"facebookUrl":"https://faceboook.com/nguyen.van.a"}`},
+		{"host with a Facebook suffix", base + `,"facebookUrl":"https://myfacebook.com/nguyen.van.a"}`},
+		{"evil subdomain", base + `,"facebookUrl":"https://facebook.com.evil.com/nguyen.van.a"}`},
+		{"bare host without a path", base + `,"facebookUrl":"https://facebook.com"}`},
+		{"host with only a slash", base + `,"facebookUrl":"https://facebook.com/"}`},
+		{"the legacy placeholder", base + `,"facebookUrl":"https://facebook.com/unknown"}`},
+		{
+			"overlong",
+			base + `,"facebookUrl":` + `"https://facebook.com/` + strings.Repeat("a", 500) + `"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAddressFixture(t)
+
+			rec := doJSON(fixture.router, http.MethodPost, "/me/addresses", tc.body, liveToken)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := errorCode(t, rec); got != string(httpx.CodeValidation) {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", got)
+			}
+			if got := detailField(t, rec); got != fieldFacebookURL {
+				t.Fatalf("expected the detail to name %q, got %q", fieldFacebookURL, got)
+			}
+			if listed := fixture.list(t, liveToken, ""); listed.Meta.Total != 0 {
+				t.Fatalf("a refused save must persist nothing, got %+v", listed)
+			}
+			if got := fixture.audit.countOf(constant.AuditAddressCreated); got != 0 {
+				t.Fatalf("a refused save must leave no create event, got %d", got)
+			}
+		})
+	}
+}
+
+// US1 (021-address-facebook-url) acceptance scenario 1: a valid Facebook link is
+// stored and echoed back, both on the create response and on the next read.
+func TestCreateAddressWithAValidFacebookURLEchoesIt(t *testing.T) {
+	cases := []struct {
+		name string
+		link string
+		want string
+	}{
+		{"plain", "https://facebook.com/nguyen.van.a", "https://facebook.com/nguyen.van.a"},
+		{"subdomain", "https://www.facebook.com/nguyen.van.a", "https://www.facebook.com/nguyen.van.a"},
+		{"short domain", "https://fb.com/nguyen.van.a", "https://fb.com/nguyen.van.a"},
+		{
+			"surrounding whitespace is trimmed",
+			"  https://facebook.com/nguyen.van.a  ",
+			"https://facebook.com/nguyen.van.a",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAddressFixture(t)
+
+			rec := doJSON(fixture.router, http.MethodPost, "/me/addresses",
+				`{"recipientName":"Nguyen Van A","recipientPhone":"0912 345 678",`+
+					`"provinceCode":"79","wardCode":"26734","streetAddress":"12 Nguyen Hue",`+
+					`"facebookUrl":`+mustJSONString(t, tc.link)+`}`,
+				liveToken)
+
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("expected 201, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := decodeAddress(t, rec).FacebookURL; got != tc.want {
+				t.Fatalf("expected the response to echo %q, got %q", tc.want, got)
+			}
+			listed := fixture.list(t, liveToken, "")
+			if listed.Meta.Total != 1 || listed.Data[0].FacebookURL != tc.want {
+				t.Fatalf("expected the listed address to carry %q, got %+v", tc.want, listed)
+			}
+		})
 	}
 }
 
@@ -928,19 +1040,19 @@ func TestDivisionsOutsideTheDatasetAreRefusedWithTheFieldNamed(t *testing.T) {
 	}{
 		{
 			name:  "unknown province",
-			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"99","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`,
+			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"99","wardCode":"26734","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 			code:  constant.CodeUnknownProvince,
 			field: fieldProvinceCode,
 		},
 		{
 			name:  "unknown ward",
-			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"99999","streetAddress":"12 Nguyen Hue"}`,
+			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"79","wardCode":"99999","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 			code:  constant.CodeUnknownWard,
 			field: fieldWardCode,
 		},
 		{
 			name:  "a ward of another province",
-			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"01","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`,
+			body:  `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"01","wardCode":"26734","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 			code:  constant.CodeWardProvinceMismatch,
 			field: fieldWardCode,
 		},
@@ -984,14 +1096,14 @@ func TestAnAddressMemberOverTheContractLengthCeilingIsRefused(t *testing.T) {
 			field: fieldRecipientName,
 			body: `{"recipientName":"` + strings.Repeat("a", 121) + `",` +
 				`"recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734",` +
-				`"streetAddress":"12 Nguyen Hue"}`,
+				`"streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 		},
 		{
 			name:  "the street address",
 			field: fieldStreet,
 			body: `{"recipientName":"Nguyen Van A","recipientPhone":"0912345678",` +
 				`"provinceCode":"79","wardCode":"26734","streetAddress":"` +
-				strings.Repeat("a", 256) + `"}`,
+				strings.Repeat("a", 256) + `","facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 		},
 	}
 
@@ -1040,7 +1152,8 @@ func TestAnAddressMemberAtTheContractLengthCeilingIsAccepted(t *testing.T) {
 			rec := doJSON(fixture.router, http.MethodPost, "/me/addresses",
 				`{"recipientName":`+mustJSONString(t, tc.recipientName)+`,`+
 					`"recipientPhone":"0912345678","provinceCode":"79","wardCode":"26734",`+
-					`"streetAddress":`+mustJSONString(t, tc.streetAddress)+`}`,
+					`"streetAddress":`+mustJSONString(t, tc.streetAddress)+`,`+
+					`"facebookUrl":"https://facebook.com/nguyen.van.a"}`,
 				liveToken)
 
 			if rec.Code != http.StatusCreated {
@@ -1056,6 +1169,165 @@ func TestAnAddressMemberAtTheContractLengthCeilingIsAccepted(t *testing.T) {
 					len([]rune(created.StreetAddress)))
 			}
 		})
+	}
+}
+
+// T014 [US2]: omitting facebookUrl on a normal address keeps the stored link
+// while the named members change (FR-004: an absent field keeps its value).
+func TestPatchWithoutFacebookURLKeepsTheStoredLink(t *testing.T) {
+	fixture := newAddressFixture(t)
+	id := fixture.create(t, liveToken)
+
+	rec := doJSON(fixture.router, http.MethodPatch, "/me/addresses/"+id,
+		`{"streetAddress":"1 Le Loi"}`, liveToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	edited := decodeAddress(t, rec)
+	if edited.FacebookURL != "https://facebook.com/nguyen.van.a" {
+		t.Fatalf("an omitted link must keep its value, got %q", edited.FacebookURL)
+	}
+	if edited.StreetAddress != "1 Le Loi" {
+		t.Fatalf("the named member must change, got %q", edited.StreetAddress)
+	}
+	if !edited.IsDefault {
+		t.Fatal("an edit must preserve the default flag")
+	}
+}
+
+// T014 [US2]: clearing facebookUrl or sending an invalid link is refused with
+// 400 VALIDATION_ERROR naming facebookUrl, and the stored address — including
+// the default flag — survives (FR-004, FR-007).
+func TestPatchWithAnInvalidFacebookURLIsRefusedAndChangesNothing(t *testing.T) {
+	base := `{"facebookUrl":`
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"clear to empty", `{"facebookUrl":""}`},
+		{"clear to whitespace-only", `{"facebookUrl":"   "}`},
+		{"missing scheme", base + `"facebook.com/nguyen.van.a"}`},
+		{"http scheme", base + `"http://facebook.com/nguyen.van.a"}`},
+		{"foreign host", base + `"https://example.com/nguyen.van.a"}`},
+		{"lookalike host", base + `"https://faceboook.com/nguyen.van.a"}`},
+		{"evil subdomain", base + `"https://facebook.com.evil.com/nguyen.van.a"}`},
+		{"bare host without a path", base + `"https://facebook.com"}`},
+		{"the legacy placeholder", base + `"https://facebook.com/unknown"}`},
+		{
+			"overlong",
+			base + `"https://facebook.com/` + strings.Repeat("a", 500) + `"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newAddressFixture(t)
+			id := fixture.create(t, liveToken)
+			before := fixture.list(t, liveToken, "")
+			if len(before.Data) != 1 {
+				t.Fatalf("expected the seeded address, got %+v", before.Data)
+			}
+
+			rec := doJSON(fixture.router, http.MethodPatch, "/me/addresses/"+id, tc.body, liveToken)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := errorCode(t, rec); got != string(httpx.CodeValidation) {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", got)
+			}
+			if got := detailField(t, rec); got != fieldFacebookURL {
+				t.Fatalf("expected the detail to name %q, got %q", fieldFacebookURL, got)
+			}
+			listed := fixture.list(t, liveToken, "")
+			if !reflect.DeepEqual(listed.Data, before.Data) {
+				t.Fatalf("a refused edit changed the stored address:\n before %+v\n after  %+v",
+					before.Data, listed.Data)
+			}
+			if !listed.Data[0].IsDefault {
+				t.Fatal("a refused edit must leave the previous default in place")
+			}
+		})
+	}
+}
+
+// seedSentinelAddress stores an address still carrying the legacy placeholder,
+// which NewAddress never produces (FR-002). Only the one-time backfill leaves
+// it behind, so the test stages it directly.
+func (f *addressFixture) seedSentinelAddress(t *testing.T) string {
+	t.Helper()
+	id := uuid.New()
+	stamp := time.Now().UTC()
+	f.repo.mu.Lock()
+	defer f.repo.mu.Unlock()
+	f.repo.rows[id] = model.Address{
+		ID: id, UserID: f.customer,
+		RecipientName: "Nguyen Van A", RecipientPhone: "0912345678",
+		ProvinceCode: "79", ProvinceName: "Ho Chi Minh",
+		WardCode: "26734", WardName: "Phuong Ben Nghe",
+		StreetAddress: "12 Nguyen Hue", FacebookURL: "https://facebook.com/unknown",
+		IsDefault: true,
+		CreatedAt: stamp, UpdatedAt: stamp,
+	}
+	f.repo.seq = append(f.repo.seq, id)
+	return id.String()
+}
+
+// T014 [US2]: the FR-004 exception — an address still carrying the legacy
+// placeholder refuses every edit, even one that omits facebookUrl, until the
+// customer supplies a real link.
+func TestPatchOnASentinelAddressIsRefusedEvenWhenTheLinkIsOmitted(t *testing.T) {
+	for _, body := range []string{
+		`{"streetAddress":"1 Le Loi"}`,
+		`{"recipientName":"Nguyen Van B"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			fixture := newAddressFixture(t)
+			id := fixture.seedSentinelAddress(t)
+			before := fixture.list(t, liveToken, "")
+
+			rec := doJSON(fixture.router, http.MethodPatch, "/me/addresses/"+id, body, liveToken)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := errorCode(t, rec); got != string(httpx.CodeValidation) {
+				t.Fatalf("expected VALIDATION_ERROR, got %s", got)
+			}
+			if got := detailField(t, rec); got != fieldFacebookURL {
+				t.Fatalf("expected the detail to name %q, got %q", fieldFacebookURL, got)
+			}
+			listed := fixture.list(t, liveToken, "")
+			if !reflect.DeepEqual(listed.Data, before.Data) {
+				t.Fatalf("a refused edit changed the stored address:\n before %+v\n after  %+v",
+					before.Data, listed.Data)
+			}
+			if !listed.Data[0].IsDefault {
+				t.Fatal("a refused edit must leave the previous default in place")
+			}
+		})
+	}
+}
+
+// T014 [US2]: a new valid Facebook link is stored and echoed on the response
+// and on the next read.
+func TestPatchWithANewValidFacebookURLStoresIt(t *testing.T) {
+	fixture := newAddressFixture(t)
+	id := fixture.create(t, liveToken)
+
+	rec := doJSON(fixture.router, http.MethodPatch, "/me/addresses/"+id,
+		`{"facebookUrl":"https://fb.com/nguyen.van.b"}`, liveToken)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if got := decodeAddress(t, rec).FacebookURL; got != "https://fb.com/nguyen.van.b" {
+		t.Fatalf("expected the response to echo the new link, got %q", got)
+	}
+	listed := fixture.list(t, liveToken, "")
+	if len(listed.Data) != 1 || listed.Data[0].FacebookURL != "https://fb.com/nguyen.van.b" {
+		t.Fatalf("expected the listed address to carry the new link, got %+v", listed.Data)
 	}
 }
 
@@ -1126,7 +1398,7 @@ func TestEditingAnAddressOverTheContractLengthCeilingIsRefusedAndChangesNothing(
 // A rejected create is never audited, because nothing changed.
 func TestARefusedAddressWriteIsNotAudited(t *testing.T) {
 	fixture := newAddressFixture(t)
-	body := `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"99","wardCode":"26734","streetAddress":"12 Nguyen Hue"}`
+	body := `{"recipientName":"A","recipientPhone":"0912345678","provinceCode":"99","wardCode":"26734","streetAddress":"12 Nguyen Hue","facebookUrl":"https://facebook.com/nguyen.van.a"}`
 
 	rec := doJSON(fixture.router, http.MethodPost, "/me/addresses", body, liveToken)
 
@@ -1185,6 +1457,7 @@ func TestAStoredCodeThatLeftTheDatasetIsFlaggedInTheResponse(t *testing.T) {
 		ProvinceCode: "79", ProvinceName: "Ho Chi Minh (cu)",
 		WardCode: "11111", WardName: "Phuong Da Xa",
 		StreetAddress: "12 Nguyen Hue",
+		FacebookURL:   "https://facebook.com/nguyen.van.a",
 		CreatedAt:     stamp, UpdatedAt: stamp,
 	}
 	fixture.repo.seq = append(fixture.repo.seq, retired)

@@ -53,8 +53,12 @@ Có:
   hoặc đơn **tự hoàn tất sau 120 giờ (5 × 24h)** kể từ mốc giao bởi sweeper — **đúng một lần**; operator
   **không** còn đánh dấu hoàn tất trực tiếp.
 - **Feedback cấp đơn** (feature 019): khách gửi **một** feedback cho artist khi đơn `DELIVERED`/`COMPLETED`.
-- **Thông báo email**: artist được báo khi đơn cần xác nhận và khi có feedback; khách được báo mỗi khi
-  trạng thái đơn đổi (đang giao, đã giao, hoàn tất, …).
+- **Thông báo email**: artist được báo khi đơn cần xác nhận và khi có feedback; khách được báo mỗi
+  khi trạng thái đơn đổi (đang giao, đã giao, hoàn tất, …).
+- **Stream SSE live** (feature 020): cùng các sự kiện email trên, đẩy ngay sau commit qua
+  `GET /orders/stream` (khách, `order.status_changed` của đơn mình) và `GET /admin/orders/stream`
+  (admin, `order.needs_confirmation` + `order.feedback_received`); hub dùng chung ở
+  `internal/share/sse/`, live-only không lưu trữ/replay.
 - **Lịch sử chỉnh sửa** + **phiên bản đơn** (`order_version`) để module 08 đối chiếu về sau.
 - Chuyển nhượng một đơn **đã trả tiền** sang tài khoản khác đã tồn tại (nêu bằng email).
 

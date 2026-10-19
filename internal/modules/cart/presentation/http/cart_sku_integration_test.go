@@ -62,6 +62,7 @@ func (fixedCustomerLookup) LookupCustomer(_ context.Context, userID uuid.UUID) (
 			ProvinceCode: "01", ProvinceName: "Hà Nội",
 			WardCode: "00001", WardName: "Phúc Xá",
 			StreetAddress: "1 Đinh Tiên Hoàng", IsDefault: true,
+			FacebookURL: "https://facebook.com/test.customer",
 		}},
 	}, nil
 }
