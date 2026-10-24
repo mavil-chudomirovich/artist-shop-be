@@ -115,6 +115,7 @@ var lineColumns = []string{
 	"created_at",
 	"category_id",
 	"category_name",
+	"image_url",
 }
 
 // OrderRepository persists the order and its lines.
@@ -191,8 +192,8 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name, image_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	for i := range order.Lines {
 		line := order.Lines[i]
 		categoryID, categoryName := categoryColumnValues(line.Category)
@@ -212,6 +213,7 @@ func (r *OrderRepository) Create(ctx context.Context, order *model.Order) error 
 			line.CreatedAt,
 			categoryID,
 			categoryName,
+			line.ImageURL,
 		); err != nil {
 			return fmt.Errorf("create order line: %w", err)
 		}
@@ -440,8 +442,8 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 
 	const lineQuery = `
 		INSERT INTO order_items
-			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`
+			(id, order_id, product_id, variant_id, name, product_code, variant_name, sku, unit_price_amount, currency, quantity, position, created_at, category_id, category_name, image_url)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	for i := range order.Lines {
 		line := order.Lines[i]
 		lineID := line.ID
@@ -465,6 +467,7 @@ func (r *OrderRepository) ReplaceLines(ctx context.Context, order *model.Order, 
 			line.CreatedAt,
 			categoryID,
 			categoryName,
+			line.ImageURL,
 		); err != nil {
 			return fmt.Errorf("insert order line: %w", err)
 		}
@@ -1057,8 +1060,9 @@ func (r *OrderRepository) RecentOrders(ctx context.Context, limit int) ([]model.
 	return out, nil
 }
 
-// loadLines reads one order's lines in position order and attaches them, so a
-// detail read never depends on a product still existing (research D3).
+// loadLines reads one order's lines in position order and attaches them. Every
+// column — including the image — is read from the line's own snapshot, so a detail
+// read never depends on a product or variant still existing (FR-002, research D3).
 func (r *OrderRepository) loadLines(ctx context.Context, order *model.Order) error {
 	query := fmt.Sprintf(
 		`SELECT %s FROM order_items WHERE order_id = $1 ORDER BY position, id`,
@@ -1187,6 +1191,7 @@ func scanLine(row baserepo.Row) (*model.OrderLine, error) {
 		&line.CreatedAt,
 		&categoryID,
 		&categoryName,
+		&line.ImageURL,
 	); err != nil {
 		return nil, fmt.Errorf("scan order line: %w", err)
 	}

@@ -40,9 +40,9 @@ func mapError(err error) *httpx.AppError {
 	case errors.Is(err, domainerr.ErrOTPExpired):
 		return coded(constant.CodeOTPExpired, http.StatusBadRequest, "Confirmation code expired")
 	case errors.Is(err, domainerr.ErrOTPTooManyAttempts):
-		return coded(constant.CodeOTPTooManyAttempts, http.StatusTooManyRequests, "Too many confirmation attempts")
+		return coded(constant.CodeOTPTooManyAttempts, http.StatusTooManyRequests, constant.MsgTooManyConfirmationAttempts)
 	case errors.Is(err, domainerr.ErrOTPBlocked):
-		return coded(constant.CodeOTPTooManyAttempts, http.StatusTooManyRequests, "Too many confirmation attempts")
+		return coded(constant.CodeOTPTooManyAttempts, http.StatusTooManyRequests, constant.MsgTooManyConfirmationAttempts)
 	case errors.Is(err, domainerr.ErrResendCooldown):
 		return coded(constant.CodeResendCooldown, http.StatusTooManyRequests, "Please wait before requesting another code")
 	case errors.Is(err, domainerr.ErrAccountLocked):

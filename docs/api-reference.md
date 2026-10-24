@@ -631,7 +631,7 @@ Request
 Response `200`
 
 ```json
-{ "data": { "message": "Registration confirmed." }, "meta": { "requestId": "...", "timestamp": "..." } }
+{ "data": { "code": "AUTH_REGISTRATION_CONFIRMED", "message": "Registration confirmed." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
 Lỗi: `AUTH_REGISTRATION_NOT_FOUND` 400 · `AUTH_OTP_INVALID` 400 · `AUTH_OTP_EXPIRED` 400 · `AUTH_OTP_TOO_MANY_ATTEMPTS` 429 · `AUTH_USERNAME_TAKEN` 409 · `RATE_LIMITED` 429
@@ -663,7 +663,7 @@ Request
 Response `202`
 
 ```json
-{ "data": { "message": "A fresh confirmation code has been sent." }, "meta": { "requestId": "...", "timestamp": "..." } }
+{ "data": { "code": "AUTH_CODE_SENT", "message": "A confirmation code has been sent." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
 Lỗi: `AUTH_RESEND_COOLDOWN` 429 · `AUTH_REGISTRATION_NOT_FOUND` 400 · `RATE_LIMITED` 429 · `SERVICE_UNAVAILABLE` 503
@@ -695,7 +695,7 @@ Request
 Response `200`
 
 ```json
-{ "data": { "message": "Registration cancelled." }, "meta": { "requestId": "...", "timestamp": "..." } }
+{ "data": { "code": "AUTH_REGISTRATION_CANCELLED", "message": "Registration cancelled." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
 Lỗi: `RATE_LIMITED` 429
@@ -780,7 +780,7 @@ Request `{ "email": "user@example.com" }`
 Response `202`
 
 ```json
-{ "data": { "message": "If the email is registered, a reset code has been sent." }, "meta": { "...": "..." } }
+{ "data": { "code": "AUTH_CODE_SENT", "message": "A confirmation code has been sent." }, "meta": { "...": "..." } }
 ```
 
 Email chứa **mã 6 chữ số** dùng cho `verify-otp`; email **không** chứa reset token. Mã được
@@ -854,7 +854,7 @@ Request
 Response `200`
 
 ```json
-{ "data": { "message": "Password reset." }, "meta": { "requestId": "...", "timestamp": "..." } }
+{ "data": { "code": "AUTH_PASSWORD_RESET", "message": "Password reset." }, "meta": { "requestId": "...", "timestamp": "..." } }
 ```
 
 Lỗi: `AUTH_RESET_INVALID` 400 · `AUTH_WEAK_PASSWORD` 400 · `RATE_LIMITED` 429
@@ -929,7 +929,7 @@ Endpoint kiểm tra RBAC: chỉ `ADMIN` mới truy cập được. Khách không
 | Auth | Bearer access token, role `ADMIN` |
 | Trả về | `200 OK` |
 
-Response `{ "data": { "message": "admin" }, "meta": { "requestId": "...", "timestamp": "..." } }`
+Response `{ "data": { "code": "AUTH_ADMIN_PROBE", "message": "admin" }, "meta": { "requestId": "...", "timestamp": "..." } }`
 
 Lỗi: `UNAUTHENTICATED` 401 · `FORBIDDEN` 403
 
@@ -2926,9 +2926,13 @@ artist (`GET /admin/orders`, `9.8`).
 
 **Hình dạng khách** — `OrderSummaryResponse` (danh sách, 5 member) và `OrderResponse` (chi tiết, **11**
 member = summary + `address` + `lines` + bốn sự kiện giao hàng `deliveredAt`, `completedAt`,
-`deliveryPhotos`, `feedback`). Mỗi phần tử `lines` là `OrderLineResponse` (8 member: `productId`,
-`productName`, `variantId`, `variantName`, `quantity`, `unitPrice`, `lineTotal`, `position`);
-`productId`/`variantId` là **bản ghi**, không phải tham chiếu sống. Bốn member giao hàng chỉ có trên
+`deliveryPhotos`, `feedback`). Mỗi phần tử `lines` là `OrderLineResponse` (**10** member: `productId`,
+`productCode`, `productName`, `variantId`, `variantName`, `imageUrl`, `quantity`, `unitPrice`,
+`lineTotal`, `position`); `productId`/`variantId` là **bản ghi**, không phải tham chiếu sống.
+`imageUrl` là ảnh **đã chụp** lúc checkout/sửa đơn — ảnh riêng của variant, fallback ảnh chính của
+gallery sản phẩm, `null` khi không có ảnh — nên đổi/xoá ảnh sản phẩm sau này **không** làm đổi ảnh
+trên đơn cũ. `productCode` là mã sản phẩm đã chụp (dùng để mở lại trang sản phẩm), `null` khi dòng
+cũ không có. Bốn member giao hàng chỉ có trên
 **chi tiết**, không có trên danh sách (feature 019): `deliveredAt`/`completedAt` là mốc ISO 8601 hoặc
 `null`; `deliveryPhotos` là mảng ảnh bằng chứng, mỗi phần tử 6 member (`id`, `stage`, `url`, `width`,
 `height`, `position`), luôn là mảng (đơn chưa có ảnh trả `[]`); `feedback` là object 3 member
@@ -2955,9 +2959,11 @@ member = summary + `address` + `lines` + bốn sự kiện giao hàng `delivered
   "lines": [
     {
       "productId": "b2f1c0d4-5a6e-4b7c-8d9e-0f1a2b3c4d5e",
+      "productCode": "tranh-son-dau",
       "productName": "Tranh sơn dầu",
       "variantId": "c3a2b1e5-6f7a-4c8d-9e0f-1a2b3c4d5e6f",
       "variantName": "Bản lớn",
+      "imageUrl": "https://res.cloudinary.com/demo/image/upload/tranh-son-dau.jpg",
       "quantity": 2,
       "unitPrice": { "amount": 150000, "currency": "VND" },
       "lineTotal": { "amount": 300000, "currency": "VND" },
@@ -3079,6 +3085,9 @@ là `"page"` hoặc `"pageSize"`) · `UNAUTHENTICATED` 401 · `RATE_LIMITED` 429
 
 Path: `orderId` (UUID). Response `200`: `data` = `OrderResponse`.
 
+Mỗi dòng mang `imageUrl`/`productCode` **đã chụp** lúc đặt đơn; ảnh không đổi khi shop thay ảnh variant
+hay ảnh gallery sau đó (feature order-line-image, mục 9 hình dạng).
+
 Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 ·
 `ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
 
@@ -3092,7 +3101,8 @@ Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED
 Sửa một đơn của chính khách khi đơn đang **chờ artist xác nhận** (`PENDING`) hoặc **chờ thanh toán**
 (`PAYMENT_PENDING`): thay **toàn bộ** tập dòng (thêm/bớt/đổi số lượng) và, khi nêu, **địa chỉ giao**
 (chọn từ địa chỉ đã lưu bằng `addressId`, như checkout). Mỗi dòng được **đối chiếu lại** và **chụp lại
-giá hiện tại**; tổng được **tính lại** và **phiên bản nội dung** của đơn tăng. Sửa đơn đang
+giá hiện tại**; tổng được **tính lại** và **phiên bản nội dung** của đơn tăng. Ảnh hiển thị của mỗi dòng
+cũng được **chụp lại** từ variant/gallery hiện tại (fallback như checkout). Sửa đơn đang
 `PAYMENT_PENDING` **trả hàng** đã giữ và đưa đơn **quay lại `PENDING`** (artist phải xác nhận lại, và
 xác nhận/phiên thanh toán cũ mất hiệu lực); sửa đơn `PENDING` giữ nguyên `PENDING`.
 
@@ -3282,7 +3292,8 @@ khác `newest`/`oldest` — `details[].field` là `"page"`, `"pageSize"`, `"stat
 | Rate limit | Toàn cục (module không có hạn mức riêng) |
 | Trả về | `200 OK` |
 
-Path: `orderId` (UUID). Response `200`: `data` = `AdminOrderResponse`.
+Path: `orderId` (UUID). Response `200`: `data` = `AdminOrderResponse`. Admin đọc cùng ảnh đã chụp
+(`lines[].imageUrl`) và `productCode` như khách.
 
 Lỗi: `VALIDATION_ERROR` 400 (`orderId` không phải UUID) · `UNAUTHENTICATED` 401 · `FORBIDDEN` 403 ·
 `ORDER_NOT_FOUND` 404 · `RATE_LIMITED` 429 · `INTERNAL_ERROR` 500
@@ -3939,6 +3950,8 @@ Khi thêm endpoint mới (module mới hoặc tính năng mới trong module cũ
 
 | Ngày | Thay đổi | Nguồn |
 |---|---|---|
+| 2026-10-24 | **Ảnh hiển thị của dòng đơn (module 07 Order, feature order-line-image).** `OrderLineResponse` mang thêm hai member: `imageUrl` (ảnh riêng của variant, fallback ảnh chính gallery sản phẩm, `null` khi không có) và `productCode` (mã sản phẩm đã chụp, `null` khi dòng cũ không có) — luôn có mặt trong JSON, không bị omit. Đơn **chụp** ảnh lúc checkout và **chụp lại** lúc sửa đơn, nên đổi/xoá ảnh variant/gallery sau này không làm đổi ảnh trên đơn cũ. Áp dụng cho `POST /api/v1/orders`, `PUT /api/v1/orders/{orderId}`, `GET /api/v1/orders/{orderId}` và `GET /api/v1/admin/orders/{orderId}`. Migration `00022_order_item_image_url.sql` thêm `order_items.image_url NOT NULL DEFAULT ''` + CHECK rỗng-hoặc-HTTPS, backfill một lần từ ảnh variant/product hiện tại cho đơn cũ. Không thêm endpoint/mã lỗi; `docs/swagger/` sinh lại khớp. | `internal/modules/order/{domain/model/order.go,application/{implement/{checkout.go,edit.go},dto/dto.go,mapper/mapper.go},infrastructure/implement/postgres/order.go,presentation/{dto/dto.go,http/handler.go}}`, `internal/contracts/product.go`, `internal/modules/product/infrastructure/implement/{postgres/variant.go,catalog/catalog.go}`, `migrations/00022_order_item_image_url.sql` |
+| 2026-10-20 | **Success code cho acknowledgement của auth (module 01 Auth).** `MessageResponse` mang thêm member `code` (máy-đọc-được, ổn định): `POST /register/verify-otp` → `AUTH_REGISTRATION_CONFIRMED`, `POST /register/resend-otp` và `POST /password/forgot` → chung `AUTH_CODE_SENT`, `POST /register/cancel` → `AUTH_REGISTRATION_CANCELLED`, `POST /password/reset` → `AUTH_PASSWORD_RESET`, `GET /admin/probe` → `AUTH_ADMIN_PROBE`. **Đổi wording**: resend-otp từ `"A fresh confirmation code has been sent."` và forgot từ `"OTP code has been sent."` (tài liệu cũ ghi `"If the email is registered, ..."`, vốn đã lệch code) thành chung `"A confirmation code has been sent."`; các message còn lại giữ nguyên. Client rẽ nhánh theo `data.code`, không so sánh `data.message`. HTTP status giữ nguyên; error contract không đổi; `docs/swagger/` sinh lại khớp. | `internal/modules/auth/domain/constant/{codes.go,messages.go}`, `internal/modules/auth/presentation/{dto/dto.go,http/handler.go,http/success_test.go}` |
 | 2026-10-19 | **Link Facebook bắt buộc của địa chỉ giao hàng (modules 02 User, 07 Order, feature 021) — breaking ở chiều ghi.** `POST /api/v1/users/me/addresses` nay **bắt buộc** `facebookUrl` (thiếu/rỗng/sai link → `400 VALIDATION_ERROR`, `details[].field = "facebookUrl"`, không lưu gì); `PATCH /api/v1/users/me/addresses/{addressId}` không cho xoá link về rỗng (vắng mặt giữ cũ — ngoại lệ: địa chỉ đang mang giữ chỗ `https://facebook.com/unknown` thì mọi `PATCH` đều bị từ chối cho tới khi gửi link thật). Đọc cộng thêm một member: `AddressResponse` (trong `GET /users/me/addresses`, `POST .../addresses`, `PATCH ...`, `POST .../default`), `OperatorAddressResponse` (trong `GET /users/{userId}` của admin) và `OrderAddressResponse` (ảnh địa chỉ trong chi tiết đơn khách và admin — bất biến sau khi chốt) đều mang thêm `facebookUrl`. Checkout `POST /api/v1/orders` và sửa đơn `PUT /api/v1/orders/{orderId}` **chụp** link từ địa chỉ được chọn; chọn địa chỉ mang giữ chỗ → `400 VALIDATION_ERROR` (`details[].field = "facebookUrl"`). Client cũ tạo địa chỉ mà không gửi `facebookUrl` sẽ nhận `400` — đúng thiết kế. **Không** thêm endpoint, **không** thêm mã lỗi mới. Migrations `00020_user_address_facebook_url` / `00021_order_address_facebook_url` thêm cột `facebook_url NOT NULL` + CHECK (rỗng/quá 500 ký tự bị từ chối ở tầng lưu trữ), backfill dữ liệu cũ bằng giữ chỗ. Mục 4.5–4.7, 4.10, hình dạng đơn và mục 9.1/9.4 cập nhật; `docs/swagger/` sinh lại khớp. Xem `specs/021-address-facebook-url/`. | `internal/modules/user/presentation/{dto/dto.go,http/handler.go}`, `internal/modules/order/presentation/{dto/dto.go,http/handler.go}`, `internal/contracts/user.go`, `migrations/00020_user_address_facebook_url.sql`, `migrations/00021_order_address_facebook_url.sql` |
 | 2026-10-19 | **Stream SSE live cho đơn hàng (module 07 Order, feature 020).** **Thêm hai** endpoint stream: `GET /api/v1/orders/stream` (khách nhận `order.status_changed` của đơn chính mình) và `GET /api/v1/admin/orders/stream` (admin nhận `order.needs_confirmation` khi đơn vào `PENDING` + `order.feedback_received` khi feedback lưu xong) — module lên **mười sáu** endpoint (**tám** khách + **tám** admin). Đọc bằng `fetch + ReadableStream` với header `Authorization` hiện có (không hỗ trợ `EventSource` chuẩn); reconnect = mở lại stream + refetch REST (server live-only, không replay). Publish **sau commit, best-effort** tại cùng điểm email đã có; subscriber chậm bị drop; không bảng/migration mới; không mã lỗi mới (`401`/`403`/`429`/`503` dùng mã chung). Mục 9 thêm `9.15`/`9.16`; bảng tổng hợp cập nhật. Xem `specs/020-order-sse-stream/`. | `internal/share/sse/hub.go`, `internal/modules/order/presentation/http/{stream.go,router.go}`, `cmd/api/main.go` |
 | 2026-10-18 | **Giao hàng & hoàn tất đơn (module 07 Order, feature 019) — thay đổi enum phá vỡ hợp đồng công khai.** **Đổi tên** `SHIPPED` → **`SHIPPING`** (đang giao) và **thêm** `DELIVERED` (giao thành công); bộ trạng thái đơn còn **bảy** giá trị. **Thêm hai** endpoint khách: `POST /api/v1/orders/{orderId}/complete` (khách xác nhận đã nhận `DELIVERED → COMPLETED`, không body) và `POST /api/v1/orders/{orderId}/feedback` (body `{ "content": string }`, 1–2000 ký tự, một lần mỗi đơn). **Thêm một** endpoint admin: `POST /api/v1/admin/orders/{orderId}/deliver` (`SHIPPING → DELIVERED`, ghi mốc giao). **Đổi** `POST /api/v1/admin/orders/{orderId}/ship`: payload **đổi sang `multipart/form-data`** nhận 0–5 ảnh `photos` (`PAID → SHIPPING`). **Xoá** `POST /api/v1/admin/orders/{orderId}/complete` — hoàn tất nay do khách xác nhận (`9.6`) hoặc **sweeper tự hoàn tất sau 120 giờ** kể từ `delivered_at`. Detail đơn (khách và admin) mang thêm `deliveredAt`, `completedAt`, `deliveryPhotos[]`, `feedback`. **Thêm sáu** mã vào mục 1.4 — `ORDER_IMAGE_TYPE_UNSUPPORTED` 400, `ORDER_IMAGE_TOO_LARGE` 413, `ORDER_IMAGE_LIMIT_REACHED` 409, `ORDER_MEDIA_UNAVAILABLE` 503, `ORDER_FEEDBACK_NOT_ALLOWED` 409, `ORDER_FEEDBACK_ALREADY_SENT` 409; thêm action audit `ORDER_DELIVERED` (`ORDER_SHIPPED`/`ORDER_COMPLETED` **giữ nguyên**). Migration `00018_order_delivery.sql` backfill `SHIPPED → SHIPPING` trước khi siết check bảy giá trị, thêm `delivered_at`/`completed_at`/`completed_by`, bảng `order_delivery_photos`/`order_feedback`. Mục 9 đánh số lại (`9.6`/`9.7` mới của khách; admin dời thành `9.8`–`9.14`); §11 đổi tập trạng thái doanh thu và `recentOrders[].status` thành bảy giá trị; §12 cập nhật. Xem ADR 023, `specs/019-order-delivery/`. | `internal/modules/order/presentation/http/router.go`, `migrations/00018_order_delivery.sql` |

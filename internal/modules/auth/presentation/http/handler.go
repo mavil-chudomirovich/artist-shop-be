@@ -11,6 +11,7 @@ import (
 
 	appdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/dto"
 	appinterface "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/application/interface"
+	"github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/constant"
 	domainerr "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/domain/error"
 	httpdto "github.com/mavil-chudomirovich/artist-shop-be/internal/modules/auth/presentation/dto"
 	"github.com/mavil-chudomirovich/artist-shop-be/internal/share/httpx"
@@ -107,7 +108,7 @@ func (h *Handler) VerifyRegistrationOTP(w http.ResponseWriter, r *http.Request) 
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Registration confirmed."})
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Code: constant.CodeRegistrationConfirmed, Message: constant.MsgRegistrationConfirmed})
 }
 
 // ResendRegistrationOTP replaces the confirmation code for a registration.
@@ -133,7 +134,7 @@ func (h *Handler) ResendRegistrationOTP(w http.ResponseWriter, r *http.Request) 
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "A fresh confirmation code has been sent."})
+	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Code: constant.CodeCodeSent, Message: constant.MsgCodeSent})
 }
 
 // CancelRegistration discards a temporary registration.
@@ -158,7 +159,7 @@ func (h *Handler) CancelRegistration(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Registration cancelled."})
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Code: constant.CodeRegistrationCancelled, Message: constant.MsgRegistrationCancelled})
 }
 
 // Login authenticates and issues tokens.
@@ -269,7 +270,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Message: "If the email is registered, a reset code has been sent."})
+	httpx.WriteSuccess(w, r, http.StatusAccepted, httpdto.MessageResponse{Code: constant.CodeCodeSent, Message: constant.MsgCodeSent})
 }
 
 // VerifyResetOTP verifies the emailed reset code and returns a reset token.
@@ -320,7 +321,7 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "Password reset."})
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Code: constant.CodePasswordReset, Message: constant.MsgPasswordReset})
 }
 
 // ChangePassword changes the password of the signed-in account.
@@ -416,5 +417,5 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 //	@Failure		403	{object}	httpx.SwaggerError
 //	@Router			/auth/admin/probe [get]
 func (h *Handler) AdminProbe(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Message: "admin"})
+	httpx.WriteSuccess(w, r, http.StatusOK, httpdto.MessageResponse{Code: constant.CodeAdminProbe, Message: constant.MsgAdminProbe})
 }

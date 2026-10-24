@@ -76,12 +76,17 @@ type MoneyResponse struct {
 type OrderLineResponse struct {
 	// ProductID is the product recorded on the line.
 	ProductID uuid.UUID `json:"productId"`
+	// ProductCode is the product's link segment.
+	ProductCode *string `json:"productCode"`
 	// ProductName is the product's name at checkout.
 	ProductName string `json:"productName"`
 	// VariantID is the variant recorded on the line.
 	VariantID uuid.UUID `json:"variantId"`
 	// VariantName is the variant's display name at checkout.
 	VariantName string `json:"variantName"`
+	// ImageURL is the display image of the variant or fallback, or null when the
+	// line was sold without one.
+	ImageURL *string `json:"imageUrl"`
 	// Quantity is the whole number bought.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the snapshot unit price.

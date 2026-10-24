@@ -74,7 +74,8 @@ const variantFactsColumns = `
 	v.sku,
 	v.sell_state,
 	COALESCE(v.price_amount, p.price_amount),
-	p.currency`
+	p.currency,
+	COALESCE(NULLIF(v.image_secure_url, ''), (SELECT i.secure_url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.position ASC, i.id ASC LIMIT 1), '')`
 
 // VariantRepository persists a product's variants and reads them back.
 //
@@ -323,6 +324,7 @@ func (r *VariantRepository) FindFactsByIDs(ctx context.Context, ids []uuid.UUID)
 			&sellState,
 			&facts.Price.Amount,
 			&facts.Price.Currency,
+			&facts.ImageURL,
 		); err != nil {
 			return nil, fmt.Errorf("scan variant facts: %w", err)
 		}

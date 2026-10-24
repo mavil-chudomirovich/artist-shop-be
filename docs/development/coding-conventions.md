@@ -75,6 +75,14 @@ if err := repo.ByEmail(ctx, email); err != nil {
 5. Lỗi trả về cho client **không bao giờ** chứa chi tiết nội bộ. Mã 5xx được log kèm
    correlation id, client chỉ nhận message an toàn.
 
+6. Thông báo thành công (acknowledgement) mang cả **mã ổn định + message** và thuộc
+   module sở hữu: mã trong `domain/constant` (cạnh mã lỗi), text trong
+   `domain/constant/messages.go`, handler chỉ tham chiếu const — **không** viết
+   literal trong handler. Client rẽ nhánh theo mã, không so sánh message.
+   Mỗi acknowledgement có một test chốt status + code + message (xem
+   `auth/presentation/http/success_test.go` làm mẫu), và mọi đổi wording/code
+   phải cập nhật `docs/api-reference.md` trong cùng thay đổi.
+
 ## Ngữ cảnh (context)
 
 - `ctx context.Context` là **tham số đầu tiên** của mọi hàm có I/O, không bao giờ lưu

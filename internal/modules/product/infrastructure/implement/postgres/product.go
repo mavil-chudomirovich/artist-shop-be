@@ -513,7 +513,7 @@ func (r *ProductRepository) FindVisibleByCode(ctx context.Context, code string, 
 	}
 	query := fmt.Sprintf(`
 		SELECT %s FROM products
-		WHERE code = $1
+		WHERE (code = $1 OR (length($1) = 36 AND id::text = $1))
 		  AND category_id = ANY($2)
 		  AND is_visible
 		  AND EXISTS (

@@ -94,32 +94,32 @@ func mapError(err error) *httpx.AppError {
 		return coded(constant.CodeCartEmpty, http.StatusConflict, "Cart is empty")
 	case errors.As(err, &notPurchasable):
 		return withField(
-			coded(constant.CodeItemNotPurchasable, http.StatusConflict, "Order item is not purchasable"),
+			coded(constant.CodeItemNotPurchasable, http.StatusConflict, constant.MsgItemNotPurchasable),
 			fieldVariantID, notPurchasable.VariantID.String(),
 		)
 	case errors.Is(err, domainerr.ErrItemNotPurchasable):
 		return withField(
-			coded(constant.CodeItemNotPurchasable, http.StatusConflict, "Order item is not purchasable"),
+			coded(constant.CodeItemNotPurchasable, http.StatusConflict, constant.MsgItemNotPurchasable),
 			fieldVariantID, "is not on sale or was removed",
 		)
 	case errors.As(err, &priceChanged):
 		return withField(
-			coded(constant.CodeItemPriceChanged, http.StatusConflict, "Order item price changed"),
+			coded(constant.CodeItemPriceChanged, http.StatusConflict, constant.MsgItemPriceChanged),
 			fieldVariantID, priceChanged.VariantID.String(),
 		)
 	case errors.Is(err, domainerr.ErrItemPriceChanged):
 		return withField(
-			coded(constant.CodeItemPriceChanged, http.StatusConflict, "Order item price changed"),
+			coded(constant.CodeItemPriceChanged, http.StatusConflict, constant.MsgItemPriceChanged),
 			fieldVariantID, "price changed since it was added",
 		)
 	case errors.As(err, &exceeds):
 		return withField(
-			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
+			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, constant.MsgQuantityExceedsAvailable),
 			fieldVariantID, fmt.Sprintf("%s: requested %d, only %d available", exceeds.VariantID, exceeds.Requested, exceeds.Available),
 		)
 	case errors.Is(err, domainerr.ErrQuantityExceedsAvailable):
 		return withField(
-			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
+			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, constant.MsgQuantityExceedsAvailable),
 			fieldVariantID, "exceeds the available quantity",
 		)
 	case errors.Is(err, domainerr.ErrNoAddress):

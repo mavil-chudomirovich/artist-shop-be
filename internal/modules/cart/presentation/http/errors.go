@@ -67,22 +67,22 @@ func mapError(err error) *httpx.AppError {
 		return coded(codeProductNotFound, http.StatusNotFound, "Product not found")
 	case errors.As(err, &notPurchasable):
 		return withField(
-			coded(constant.CodeProductNotPurchasable, http.StatusConflict, "Product not purchasable"),
+			coded(constant.CodeProductNotPurchasable, http.StatusConflict, constant.MsgProductNotPurchasable),
 			fieldVariantID, "is not on sale",
 		)
 	case errors.Is(err, domainerr.ErrProductNotPurchasable):
 		return withField(
-			coded(constant.CodeProductNotPurchasable, http.StatusConflict, "Product not purchasable"),
+			coded(constant.CodeProductNotPurchasable, http.StatusConflict, constant.MsgProductNotPurchasable),
 			fieldVariantID, "is not on sale",
 		)
 	case errors.As(err, &exceeds):
 		return withField(
-			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
+			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, constant.MsgQuantityExceedsAvailable),
 			fieldQuantity, fmt.Sprintf("only %d available", exceeds.Available),
 		)
 	case errors.Is(err, domainerr.ErrQuantityExceedsAvailable):
 		return withField(
-			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, "Quantity exceeds available"),
+			coded(constant.CodeQuantityExceedsAvailable, http.StatusConflict, constant.MsgQuantityExceedsAvailable),
 			fieldQuantity, "exceeds the available quantity",
 		)
 	case errors.As(err, &invalid):

@@ -140,6 +140,7 @@ func seedEditProduct(f *editFixture, name, variantName string, amount, available
 		VariantName:  variantName,
 		SKU:          "SKU-" + suffix,
 		OnSale:       true,
+		ImageURL:     "https://cdn.example/" + suffix + ".jpg",
 		Price:        contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
@@ -163,14 +164,16 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 	f.catalog.products[kept] = contracts.VariantSummary{
 		VariantID: kept, ProductID: uuid.New(), ProductName: "Tranh mới", VariantName: "tranh-moi", OnSale: true,
 		CategoryID: keptCategory, CategoryName: "Category kept",
-		Price: contracts.ProductPrice{Amount: 1500, Currency: "VND"},
+		ImageURL: "https://cdn.example/kept-new.jpg",
+		Price:    contracts.ProductPrice{Amount: 1500, Currency: "VND"},
 	}
 	f.availability.available[kept] = 10
 	addedCategory := uuid.New()
 	f.catalog.products[added] = contracts.VariantSummary{
 		VariantID: added, ProductID: uuid.New(), ProductName: "Sản phẩm B", VariantName: "san-pham-b", OnSale: true,
 		CategoryID: addedCategory, CategoryName: "Category added",
-		Price: contracts.ProductPrice{Amount: 2000, Currency: "VND"},
+		ImageURL: "https://cdn.example/added.jpg",
+		Price:    contracts.ProductPrice{Amount: 2000, Currency: "VND"},
 	}
 	f.availability.available[added] = 10
 
@@ -210,6 +213,17 @@ func TestEditPendingReplacesLinesResnapshotsPricesAndStaysPending(t *testing.T) 
 	}
 	if order.Lines[1].Category == nil || order.Lines[1].Category.ID != addedCategory {
 		t.Fatalf("the added line must snapshot its category, got %+v", order.Lines[1].Category)
+	}
+	// FR-002: an edit re-snapshots the image from the variant facts, exactly as
+	// checkout does, so the response and the stored line carry the current image.
+	if got, want := order.Lines[0].ImageURL, f.catalog.products[kept].ImageURL; got != want {
+		t.Fatalf("the kept line image = %q, want %q", got, want)
+	}
+	if got, want := order.Lines[1].ImageURL, f.catalog.products[added].ImageURL; got != want {
+		t.Fatalf("the added line image = %q, want %q", got, want)
+	}
+	if view.Lines[0].ImageURL != order.Lines[0].ImageURL || view.Lines[1].ImageURL != order.Lines[1].ImageURL {
+		t.Fatalf("the edit response must carry the snapshotted images, got %+v", view.Lines)
 	}
 	if view.Address.RecipientName != "Nguyễn Văn A" || view.Address.StreetAddress != "1 Đinh Tiên Hoàng" {
 		t.Fatalf("an edit with no addressId must keep the current address, got %+v", view.Address)

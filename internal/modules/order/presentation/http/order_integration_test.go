@@ -372,6 +372,32 @@ func seedOrderProduct(t *testing.T, pool *pgxpool.Pool, amount, quantity int64) 
 	return productID
 }
 
+// setVariantImage gives the product's default variant its own picture. The four
+// image columns are all-or-none (migration 00014), so the dimensions are written
+// with the link.
+func setVariantImage(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID, url string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE product_variants
+		SET image_public_id = $2, image_secure_url = $3, image_width = 100, image_height = 80
+		WHERE id = $1`,
+		defaultVariantID(t, pool, productID), "variant-"+productID.String()[:8], url); err != nil {
+		t.Fatalf("set variant image: %v", err)
+	}
+}
+
+// addProductGalleryImage appends one picture to the product's gallery, so a test
+// can prove the variant facts fall back to the primary gallery picture.
+func addProductGalleryImage(t *testing.T, pool *pgxpool.Pool, productID uuid.UUID, url string, isPrimary bool, position int) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO product_images (id, product_id, public_id, secure_url, width, height, position, is_primary)
+		VALUES ($1, $2, $3, $4, 100, 80, $5, $6)`,
+		uuid.New(), productID, "gallery-"+productID.String()[:8]+"-"+url, url, position, isPrimary); err != nil {
+		t.Fatalf("insert product gallery image: %v", err)
+	}
+}
+
 // defaultVariantID resolves the product's default variant: the first by position,
 // created_at and id. A seeded product owns exactly one variant, so this is that
 // variant.
@@ -579,6 +605,100 @@ func TestCheckoutCreatesTheOrderHoldsNothingThenConfirmHoldsTheGoods(t *testing.
 	}
 	if got := physicalStock(t, f.pool, product); got != 8 {
 		t.Fatalf("a replayed payment must not sell again, got %d physical, want 8", got)
+	}
+}
+
+// FR-002: a line snapshots the display image at checkout — the variant picture,
+// falling back to the product's primary gallery picture — and every later detail
+// read answers that snapshot, not the product's current picture. An edit
+// re-snapshots the image exactly as it re-takes the name and the price.
+func TestOrderLinesSnapshotTheImageAgainstPostgres(t *testing.T) {
+	f := newOrderIntegrationFixture(t)
+	seedOrderCustomer(t, f.pool, testCustomerID)
+
+	const variantImage = "https://cdn.example/variant-first.jpg"
+	product := seedOrderProduct(t, f.pool, 120000, 10)
+	setVariantImage(t, f.pool, product, variantImage)
+	seedOrderCart(t, f.pool, testCustomerID, product, 1, 120000)
+
+	rec := perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var created orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode the checkout body %q: %v", rec.Body.String(), err)
+	}
+	if len(created.Data.Lines) != 1 {
+		t.Fatalf("expected one line, got %+v", created.Data.Lines)
+	}
+	if got := created.Data.Lines[0].ImageURL; got == nil || *got != variantImage {
+		t.Fatalf("the checkout response image = %v, want the variant picture %q", got, variantImage)
+	}
+	orderID := created.Data.ID
+
+	// The shop replaces the variant picture after the order was placed. The placed
+	// order keeps what was bought, so both detail reads answer the old link.
+	const changedImage = "https://cdn.example/variant-changed.jpg"
+	setVariantImage(t, f.pool, product, changedImage)
+
+	for _, read := range []struct {
+		name  string
+		path  string
+		token string
+	}{
+		{"customer", ordersPath + "/" + orderID.String(), "customer-token"},
+		{"admin", adminOrdersPath + "/" + orderID.String(), "admin-token"},
+	} {
+		rec := perform(f.root, http.MethodGet, read.path, "", read.token)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s detail: expected 200, got %d (%s)", read.name, rec.Code, rec.Body.String())
+		}
+		var detail orderBody
+		if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+			t.Fatalf("decode the %s detail %q: %v", read.name, rec.Body.String(), err)
+		}
+		if len(detail.Data.Lines) != 1 {
+			t.Fatalf("%s detail: expected one line, got %+v", read.name, detail.Data.Lines)
+		}
+		if got := detail.Data.Lines[0].ImageURL; got == nil || *got != variantImage {
+			t.Fatalf("%s detail image = %v, want the snapshot %q", read.name, got, variantImage)
+		}
+	}
+
+	// An edit re-snapshots the line from the current facts: the picture now reads
+	// the replacement, exactly as a changed price is re-taken (FR-015).
+	editPayload := fmt.Sprintf(`{"lines":[{"variantId":%q,"quantity":1}]}`,
+		defaultVariantID(t, f.pool, product).String())
+	rec = perform(f.root, http.MethodPut, ordersPath+"/"+orderID.String(), editPayload, "customer-token")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit: expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var edited orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &edited); err != nil {
+		t.Fatalf("decode the edited order %q: %v", rec.Body.String(), err)
+	}
+	if got := edited.Data.Lines[0].ImageURL; got == nil || *got != changedImage {
+		t.Fatalf("the edit response image = %v, want the current picture %q", got, changedImage)
+	}
+
+	// A variant with no picture of its own falls back to the product's primary
+	// gallery picture, so a card is still renderable (FR-002).
+	const galleryImage = "https://cdn.example/gallery-primary.jpg"
+	fallbackProduct := seedOrderProduct(t, f.pool, 50000, 5)
+	addProductGalleryImage(t, f.pool, fallbackProduct, galleryImage, true, 0)
+	seedOrderCartLine(t, f.pool, testCustomerID, fallbackProduct, 1, 50000)
+
+	rec = perform(f.root, http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("fallback checkout: expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var fallback orderBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &fallback); err != nil {
+		t.Fatalf("decode the fallback order %q: %v", rec.Body.String(), err)
+	}
+	if got := fallback.Data.Lines[0].ImageURL; got == nil || *got != galleryImage {
+		t.Fatalf("the fallback line image = %v, want the primary gallery picture %q", got, galleryImage)
 	}
 }
 

@@ -56,6 +56,7 @@ func (a *Adapter) Variants(ctx context.Context, variantIDs []uuid.UUID) ([]contr
 			VariantName:  fact.VariantName,
 			SKU:          fact.SKU,
 			OnSale:       fact.OnSale,
+			ImageURL:     fact.ImageURL,
 			Price: contracts.ProductPrice{
 				Amount:   fact.Price.Amount,
 				Currency: fact.Price.Currency,

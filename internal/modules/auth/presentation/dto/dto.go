@@ -89,7 +89,10 @@ type IdentityResponse struct {
 	Role  string `json:"role"`
 }
 
-// MessageResponse is a generic message.
+// MessageResponse is a generic acknowledgement. Code is the stable,
+// machine-readable identifier of the acknowledgement; clients branch on it
+// rather than on the message text.
 type MessageResponse struct {
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }

@@ -136,8 +136,10 @@ type adminDetailBody struct {
 			StreetAddress string `json:"streetAddress"`
 		} `json:"address"`
 		Lines []struct {
-			ProductID uuid.UUID `json:"productId"`
-			Quantity  int64     `json:"quantity"`
+			ProductID   uuid.UUID `json:"productId"`
+			ProductCode *string   `json:"productCode"`
+			ImageURL    *string   `json:"imageUrl"`
+			Quantity    int64     `json:"quantity"`
 		} `json:"lines"`
 		DeliveredAt    *string             `json:"deliveredAt"`
 		CompletedAt    *string             `json:"completedAt"`
@@ -337,6 +339,11 @@ func TestAdminDetailReturnsAnyOrderInFull(t *testing.T) {
 	}
 	if body.Data.ID != view.ID || body.Data.UserID != testCustomerID || len(body.Data.Lines) != 1 {
 		t.Fatalf("unexpected order: %+v", body.Data)
+	}
+	// The administrator reads the same line snapshot the customer does, image
+	// and product code included (FR-017).
+	if got, want := body.Data.Lines[0].ImageURL, view.Lines[0].ImageURL; got == nil || *got != want {
+		t.Fatalf("the admin line image = %v, want the snapshot %q", got, want)
 	}
 	if fake.gotRefInput.OrderID != view.ID {
 		t.Fatalf("the addressed identifier must be passed through, got %s", fake.gotRefInput.OrderID)

@@ -65,12 +65,12 @@ func mapError(err error) *httpx.AppError {
 		return coded(codeVariantNotFound, http.StatusNotFound, "Variant not found")
 	case errors.As(err, &insufficient):
 		return withField(
-			coded(constant.CodeInsufficientStock, http.StatusConflict, "Insufficient stock"),
+			coded(constant.CodeInsufficientStock, http.StatusConflict, constant.MsgInsufficientStock),
 			insufficient.Field, "not enough stock to complete the operation",
 		)
 	case errors.Is(err, domainerr.ErrInsufficientStock):
 		return withField(
-			coded(constant.CodeInsufficientStock, http.StatusConflict, "Insufficient stock"),
+			coded(constant.CodeInsufficientStock, http.StatusConflict, constant.MsgInsufficientStock),
 			fieldQuantity, "not enough stock to complete the operation",
 		)
 	case errors.As(err, &invalid):

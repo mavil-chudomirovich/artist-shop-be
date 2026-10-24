@@ -226,6 +226,7 @@ func (s *Service) checkout(ctx context.Context, ownerID uuid.UUID, in dto.Checko
 			SKU:         summary.SKU,
 			UnitPrice:   model.Price{Amount: summary.Price.Amount, Currency: summary.Price.Currency},
 			Category:    categorySnapshot(summary),
+			ImageURL:    summary.ImageURL,
 			Quantity:    line.Quantity,
 		})
 	}

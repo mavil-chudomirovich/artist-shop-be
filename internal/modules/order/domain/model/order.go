@@ -98,6 +98,8 @@ type OrderLine struct {
 	// legacy line whose variant or category could not be resolved; new lines
 	// always carry it (FR-022, data-model.md).
 	Category *CategorySnapshot
+	// ImageURL is the variant picture or product fallback.
+	ImageURL string
 	// Quantity is how many, at least 1.
 	Quantity int64
 	// Position is the order the lines are listed in.

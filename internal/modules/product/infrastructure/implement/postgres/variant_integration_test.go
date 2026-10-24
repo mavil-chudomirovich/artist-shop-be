@@ -355,3 +355,77 @@ func TestVariantListOrderingAndCount(t *testing.T) {
 		t.Fatalf("a product with no variant must answer an empty slice, got %d, %v", len(none), err)
 	}
 }
+
+// FR-002: the facts read answers the display image the order snapshots — the
+// variant's own picture when it has one, otherwise the product's primary gallery
+// picture — and an empty string when neither exists.
+func TestVariantFactsReadTheDisplayImage(t *testing.T) {
+	f := newProductFixture(t)
+	ctx := context.Background()
+	categoryID := f.requireCategory(t, "category-facts-image")
+	product := buildProduct(t, categoryID, "facts-image-product")
+	if err := f.repo.Create(ctx, product); err != nil {
+		t.Fatalf("Create product: %v", err)
+	}
+
+	ownImage := &model.VariantImage{PublicID: "demo/own", URL: "https://example.test/own.jpg", Width: 10, Height: 20}
+	withImage, err := model.NewVariant(product.ID, model.VariantDraft{
+		Name: "With image", SKU: "sku-facts-image-own", Image: ownImage, Position: 0,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewVariant with image: %v", err)
+	}
+	plain, err := model.NewVariant(product.ID, model.VariantDraft{
+		Name: "Plain", SKU: "sku-facts-image-plain", Position: 1,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewVariant plain: %v", err)
+	}
+	noImageProduct := buildProduct(t, categoryID, "facts-image-empty")
+	if err := f.repo.Create(ctx, noImageProduct); err != nil {
+		t.Fatalf("Create empty product: %v", err)
+	}
+	bare, err := model.NewVariant(noImageProduct.ID, model.VariantDraft{
+		Name: "Bare", SKU: "sku-facts-image-bare", Position: 0,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewVariant bare: %v", err)
+	}
+	for _, variant := range []*model.Variant{withImage, plain, bare} {
+		if err := f.variants.Create(ctx, variant); err != nil {
+			t.Fatalf("Create(%q): %v", variant.SKU, err)
+		}
+	}
+
+	// The gallery's primary picture wins over a non-primary one at a lower
+	// position, mirroring the catalogue and checkout fallback order.
+	const galleryPrimary = "https://example.test/gallery-primary.jpg"
+	if _, err := f.pool.Exec(ctx, `
+		INSERT INTO product_images (id, product_id, public_id, secure_url, width, height, position, is_primary)
+		VALUES ($1, $2, 'gallery-secondary', 'https://example.test/gallery-secondary.jpg', 10, 20, 0, false),
+		       ($3, $2, 'gallery-primary', $4, 10, 20, 5, true)`,
+		uuid.New(), product.ID, uuid.New(), galleryPrimary); err != nil {
+		t.Fatalf("insert product gallery: %v", err)
+	}
+
+	facts, err := f.variants.FindFactsByIDs(ctx, []uuid.UUID{withImage.ID, plain.ID, bare.ID})
+	if err != nil {
+		t.Fatalf("FindFactsByIDs: %v", err)
+	}
+	if len(facts) != 3 {
+		t.Fatalf("expected three facts, got %d", len(facts))
+	}
+	byID := make(map[uuid.UUID]string, len(facts))
+	for _, fact := range facts {
+		byID[fact.VariantID] = fact.ImageURL
+	}
+	if got := byID[withImage.ID]; got != ownImage.URL {
+		t.Fatalf("a variant with its own picture must report it, got %q", got)
+	}
+	if got := byID[plain.ID]; got != galleryPrimary {
+		t.Fatalf("a variant without a picture must fall back to the primary gallery picture, got %q", got)
+	}
+	if got := byID[bare.ID]; got != "" {
+		t.Fatalf("a variant and product with no picture must report an empty image, got %q", got)
+	}
+}

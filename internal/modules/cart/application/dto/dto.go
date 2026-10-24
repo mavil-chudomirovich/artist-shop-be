@@ -55,6 +55,8 @@ type MoneyView struct {
 type LineView struct {
 	// ProductID is the product the variant belongs to.
 	ProductID uuid.UUID
+	// ProductCode is the link segment of the product.
+	ProductCode string
 	// ProductName is the product's current name, or nil when the variant is gone.
 	ProductName *string
 	// VariantID is the variant the line is for.
@@ -62,6 +64,8 @@ type LineView struct {
 	// VariantName is the variant's current display name, or nil when the variant
 	// is gone.
 	VariantName *string
+	// ImageURL is the variant picture or product fallback.
+	ImageURL string
 	// Quantity is the whole number the customer chose.
 	Quantity int64
 	// UnitPrice is the captured price.

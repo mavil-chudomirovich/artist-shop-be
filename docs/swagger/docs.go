@@ -6172,6 +6172,9 @@ const docTemplate = `{
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse": {
             "type": "object",
             "properties": {
+                "code": {
+                    "type": "string"
+                },
                 "message": {
                     "type": "string"
                 }
@@ -6309,6 +6312,10 @@ const docTemplate = `{
                     "description": "Buyable reports whether the line can be bought as it stands.",
                     "type": "boolean"
                 },
+                "imageUrl": {
+                    "description": "ImageURL is the display image of the variant or fallback.",
+                    "type": "string"
+                },
                 "lineTotal": {
                     "description": "LineTotal is quantity times the captured price.",
                     "allOf": [
@@ -6316,6 +6323,10 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse"
                         }
                     ]
+                },
+                "productCode": {
+                    "description": "ProductCode is the link segment of the product.",
+                    "type": "string"
                 },
                 "productId": {
                     "description": "ProductID is the product the variant belongs to.",
@@ -6863,6 +6874,10 @@ const docTemplate = `{
         "github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderLineResponse": {
             "type": "object",
             "properties": {
+                "imageUrl": {
+                    "description": "ImageURL is the display image of the variant or fallback, or null when the\nline was sold without one.",
+                    "type": "string"
+                },
                 "lineTotal": {
                     "description": "LineTotal is quantity times the snapshot unit price.",
                     "allOf": [
@@ -6874,6 +6889,10 @@ const docTemplate = `{
                 "position": {
                     "description": "Position is the order the line is listed in.",
                     "type": "integer"
+                },
+                "productCode": {
+                    "description": "ProductCode is the product's link segment.",
+                    "type": "string"
                 },
                 "productId": {
                     "description": "ProductID is the product recorded on the line.",

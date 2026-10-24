@@ -156,6 +156,7 @@ func newLine(productID uuid.UUID, name string, price, quantity int64, position i
 		VariantName: name,
 		SKU:         name,
 		UnitPrice:   model.Price{Amount: price, Currency: "VND"},
+		ImageURL:    "https://cdn.example/" + name + ".jpg",
 		Quantity:    quantity,
 		Position:    position,
 	}
@@ -200,6 +201,9 @@ func TestOrderRoundTripsWithItsSnapshot(t *testing.T) {
 	if got.Lines[0].ProductID != first || got.Lines[0].ProductName != "Ink wash" ||
 		got.Lines[0].UnitPrice.Amount != 120000 || got.Lines[0].Quantity != 2 {
 		t.Errorf("first line does not round-trip: %+v", got.Lines[0])
+	}
+	if got.Lines[0].ImageURL != order.Lines[0].ImageURL {
+		t.Errorf("line image = %q, want the snapshot %q", got.Lines[0].ImageURL, order.Lines[0].ImageURL)
 	}
 	if got.Version != 1 {
 		t.Errorf("order_version = %d, want 1", got.Version)
@@ -410,6 +414,32 @@ func TestRemovedProductLeavesTheLine(t *testing.T) {
 	line := got.Lines[0]
 	if line.ProductID != product || line.ProductName != "Gone" || line.UnitPrice.Amount != 120000 || line.Quantity != 2 {
 		t.Fatalf("the snapshot must be unchanged: %+v", line)
+	}
+	if line.ImageURL != "https://cdn.example/Gone.jpg" {
+		t.Fatalf("the line image must survive its product's removal, got %q", line.ImageURL)
+	}
+}
+
+// FR-002, FR-016: the storage layer refuses a non-HTTPS line image where it is
+// stored, so a snapshot can never carry an undisplayable link. An empty value is
+// still valid: it means the line was sold without a picture.
+func TestTheStorageLayerRefusesANonHTTPSOrderLineImage(t *testing.T) {
+	f := newOrderFixture(t)
+	ctx := context.Background()
+	product := f.insertProduct(t)
+	order := buildOrder(uuid.New(), time.Now().UTC(), []model.OrderLine{newLine(product, "first", 1000, 1, 0)})
+	if err := f.repo.Create(ctx, order); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := f.pool.Exec(ctx,
+		`UPDATE order_items SET image_url = 'http://insecure.example/a.jpg' WHERE order_id = $1`,
+		order.ID); err == nil {
+		t.Fatal("the storage must refuse a non-HTTPS line image")
+	}
+	if _, err := f.pool.Exec(ctx,
+		`UPDATE order_items SET image_url = '' WHERE order_id = $1`, order.ID); err != nil {
+		t.Fatalf("the storage must accept a line without an image: %v", err)
 	}
 }
 

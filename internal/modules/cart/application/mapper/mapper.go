@@ -38,12 +38,14 @@ func (m *Mapper) Subtotal(price model.Price, present bool) *dto.MoneyView {
 // rules, so the shape a client is shown is the same rule the use case enforces
 // (FR-012, research D10). The product and variant names are nil when the variant
 // is gone.
-func (m *Mapper) Line(line model.CartLine, facts model.VariantFacts, productID uuid.UUID, productName, variantName *string) dto.LineView {
+func (m *Mapper) Line(line model.CartLine, facts model.VariantFacts, productID uuid.UUID, productName, variantName *string, productCode, imageURL string) dto.LineView {
 	view := dto.LineView{
 		ProductID:   productID,
+		ProductCode: productCode,
 		ProductName: productName,
 		VariantID:   line.VariantID,
 		VariantName: variantName,
+		ImageURL:    imageURL,
 		Quantity:    line.Quantity,
 		UnitPrice:   m.Money(line.UnitPrice),
 		LineTotal:   m.Money(line.LineTotal()),

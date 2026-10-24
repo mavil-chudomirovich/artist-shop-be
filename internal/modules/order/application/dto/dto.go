@@ -191,12 +191,16 @@ type FeedbackView struct {
 type OrderLineView struct {
 	// ProductID is the product recorded on the line, not a live reference.
 	ProductID uuid.UUID
+	// ProductCode is the product's link segment.
+	ProductCode string
 	// ProductName is the product's name as it was at checkout.
 	ProductName string
 	// VariantID is the variant recorded on the line, not a live reference.
 	VariantID uuid.UUID
 	// VariantName is the variant's display name as it was at checkout.
 	VariantName string
+	// ImageURL is the variant picture or product fallback.
+	ImageURL string
 	// Quantity is the whole number bought.
 	Quantity int64
 	// UnitPrice is the snapshot unit price.

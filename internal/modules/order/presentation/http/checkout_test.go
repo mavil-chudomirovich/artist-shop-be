@@ -154,9 +154,11 @@ type orderBody struct {
 		} `json:"address"`
 		Lines []struct {
 			ProductID   uuid.UUID `json:"productId"`
+			ProductCode *string   `json:"productCode"`
 			ProductName string    `json:"productName"`
 			VariantID   uuid.UUID `json:"variantId"`
 			VariantName string    `json:"variantName"`
+			ImageURL    *string   `json:"imageUrl"`
 			Quantity    int64     `json:"quantity"`
 			UnitPrice   moneyBody `json:"unitPrice"`
 			LineTotal   moneyBody `json:"lineTotal"`
@@ -192,6 +194,8 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) errorBody {
 // sampleView is one order view as the use case answers it.
 func sampleView() appdto.OrderView {
 	product := uuid.New()
+	productCode := "tranh-son-dau"
+	imageURL := "https://cdn.example/tranh-son-dau.jpg"
 	return appdto.OrderView{
 		OrderSummaryView: appdto.OrderSummaryView{
 			ID:        uuid.New(),
@@ -207,9 +211,11 @@ func sampleView() appdto.OrderView {
 		},
 		Lines: []appdto.OrderLineView{{
 			ProductID:   product,
+			ProductCode: productCode,
 			ProductName: "Tranh",
 			VariantID:   uuid.New(),
 			VariantName: "Khổ lớn",
+			ImageURL:    imageURL,
 			Quantity:    2,
 			UnitPrice:   appdto.MoneyView{Amount: 120000, Currency: "VND"},
 			LineTotal:   appdto.MoneyView{Amount: 240000, Currency: "VND"},
@@ -280,11 +286,53 @@ func TestCheckoutReturns201WithTheCreatedOrder(t *testing.T) {
 		body.Data.Lines[0].LineTotal.Amount != 240000 || body.Data.Lines[0].Quantity != 2 {
 		t.Fatalf("unexpected line: %+v", body.Data.Lines[0])
 	}
+	if body.Data.Lines[0].ProductCode == nil || *body.Data.Lines[0].ProductCode != "tranh-son-dau" {
+		t.Fatalf("the line must carry the snapshot product code, got %+v", body.Data.Lines[0].ProductCode)
+	}
+	if body.Data.Lines[0].ImageURL == nil || *body.Data.Lines[0].ImageURL != "https://cdn.example/tranh-son-dau.jpg" {
+		t.Fatalf("the line must carry the snapshot image, got %+v", body.Data.Lines[0].ImageURL)
+	}
 	if body.Data.Address.RecipientName != "Nguyễn Văn A" || body.Data.Address.StreetAddress != "1 Đinh Tiên Hoàng" {
 		t.Fatalf("unexpected address: %+v", body.Data.Address)
 	}
 	if fake.gotActor.ID != testCustomerID {
 		t.Fatalf("the handler must hand the session's account to the use case, got %s", fake.gotActor.ID)
+	}
+}
+
+// A line sold without an image or product code still answers both members, as
+// null: the keys are part of the contract and a client must never need to tell an
+// omitted member from an empty one (FR-002).
+func TestOrderLineAlwaysAnswersImageAndCodeKeys(t *testing.T) {
+	view := sampleView()
+	view.Lines[0].ImageURL = ""
+	view.Lines[0].ProductCode = ""
+	fake := &fakeCheckout{view: view}
+
+	rec := perform(newOrderRouter(fake), http.MethodPost, ordersPath, `{}`, "customer-token")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var raw struct {
+		Data struct {
+			Lines []map[string]any `json:"lines"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode the order body %q: %v", rec.Body.String(), err)
+	}
+	if len(raw.Data.Lines) != 1 {
+		t.Fatalf("expected one line, got %+v", raw.Data.Lines)
+	}
+	for _, member := range []string{"imageUrl", "productCode"} {
+		value, present := raw.Data.Lines[0][member]
+		if !present {
+			t.Fatalf("the line must always answer %q, got %+v", member, raw.Data.Lines[0])
+		}
+		if value != nil {
+			t.Fatalf("an absent %q must answer null, got %#v", member, value)
+		}
 	}
 }
 

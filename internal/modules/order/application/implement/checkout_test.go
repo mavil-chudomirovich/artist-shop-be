@@ -262,6 +262,7 @@ func seedProduct(f *checkoutFixture, name, variantName string, amount, available
 		VariantName:  variantName,
 		SKU:          "SKU-" + suffix,
 		OnSale:       true,
+		ImageURL:     "https://cdn.example/" + suffix + ".jpg",
 		Price:        contracts.ProductPrice{Amount: amount, Currency: "VND"},
 	}
 	f.availability.available[id] = available
@@ -381,6 +382,17 @@ func TestCheckoutSnapshotsLinesAndAddressAndHoldsNothing(t *testing.T) {
 	if secondCategory := f.catalog.products[second].CategoryID; created.Lines[1].Category == nil ||
 		created.Lines[1].Category.ID != secondCategory {
 		t.Fatalf("the second line must snapshot its own variant's category, got %+v", created.Lines[1].Category)
+	}
+	// FR-002: each line also snapshots the display image the variant facts
+	// resolved, so the order detail can render it without reading the product.
+	if got, want := created.Lines[0].ImageURL, f.catalog.products[first].ImageURL; got != want {
+		t.Fatalf("first line image = %q, want the variant fact %q", got, want)
+	}
+	if got, want := created.Lines[1].ImageURL, f.catalog.products[second].ImageURL; got != want {
+		t.Fatalf("second line image = %q, want the variant fact %q", got, want)
+	}
+	if view.Lines[0].ImageURL != created.Lines[0].ImageURL || view.Lines[1].ImageURL != created.Lines[1].ImageURL {
+		t.Fatalf("the checkout response must carry the snapshotted images, got %+v", view.Lines)
 	}
 
 	// FR-001, FR-002: checkout holds nothing — the goods are set aside only when

@@ -22,3 +22,21 @@ const (
 	// resend and cancel do not reveal whether a reference existed (FR-016).
 	CodeRegistrationNotFound = "AUTH_REGISTRATION_NOT_FOUND"
 )
+
+// Stable, machine-readable auth success codes answered in MessageResponse.
+// They identify which acknowledgement the endpoint returned, so clients
+// branch on code rather than on the message text.
+const (
+	// CodeRegistrationConfirmed answers a verified registration OTP.
+	CodeRegistrationConfirmed = "AUTH_REGISTRATION_CONFIRMED"
+	// CodeCodeSent answers both the registration resend and the password-reset
+	// request: the two share one code and one message on purpose, so a client
+	// handles "a code was sent" the same way on either flow.
+	CodeCodeSent = "AUTH_CODE_SENT"
+	// CodeRegistrationCancelled answers a cancelled registration.
+	CodeRegistrationCancelled = "AUTH_REGISTRATION_CANCELLED"
+	// CodePasswordReset answers a completed password reset.
+	CodePasswordReset = "AUTH_PASSWORD_RESET"
+	// CodeAdminProbe answers the admin RBAC probe.
+	CodeAdminProbe = "AUTH_ADMIN_PROBE"
+)

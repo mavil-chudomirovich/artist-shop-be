@@ -246,7 +246,7 @@ func quantityValue(raw json.Number) (int64, *httpx.AppError) {
 func parseUUID(raw, field string) (uuid.UUID, *httpx.AppError) {
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return uuid.Nil, fieldError(field, "must be a UUID")
+		return uuid.Nil, fieldError(field, httpx.IssueMustBeUUID)
 	}
 	return parsed, nil
 }
@@ -267,11 +267,20 @@ func toMoneyResponse(money appdto.MoneyView) httpdto.MoneyResponse {
 // the available quantity only when the line is on sale but short (FR-012, research
 // D10).
 func toLineResponse(line appdto.LineView) httpdto.CartLineResponse {
+	var productCodePtr, imageURLPtr *string
+	if line.ProductCode != "" {
+		productCodePtr = &line.ProductCode
+	}
+	if line.ImageURL != "" {
+		imageURLPtr = &line.ImageURL
+	}
 	return httpdto.CartLineResponse{
 		ProductID:         line.ProductID,
+		ProductCode:       productCodePtr,
 		ProductName:       line.ProductName,
 		VariantID:         line.VariantID,
 		VariantName:       line.VariantName,
+		ImageURL:          imageURLPtr,
 		Quantity:          line.Quantity,
 		UnitPrice:         toMoneyResponse(line.UnitPrice),
 		LineTotal:         toMoneyResponse(line.LineTotal),

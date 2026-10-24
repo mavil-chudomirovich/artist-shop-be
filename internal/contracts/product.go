@@ -128,6 +128,8 @@ type VariantSummary struct {
 	// is visible; a hidden variant is absent from the result rather than
 	// reported with OnSale=false, exactly like a removed variant.
 	OnSale bool
+	// ImageURL is the variant's display picture URL or fallback product image.
+	ImageURL string
 	// Price is the variant's current effective price: its own amount, or the
 	// product's default when the variant carries none.
 	Price ProductPrice

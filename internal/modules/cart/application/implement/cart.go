@@ -381,15 +381,18 @@ func (s *Service) view(ctx context.Context, lines []model.CartLine) (dto.CartVie
 	for _, line := range lines {
 		var productID uuid.UUID
 		var productName, variantName *string
+		var productCode, imageURL string
 		facts := model.VariantFacts{}
 		if summary, ok := byID[line.VariantID]; ok {
 			productID = summary.ProductID
 			productText, variantText := summary.ProductName, summary.VariantName
 			productName, variantName = &productText, &variantText
+			productCode = summary.ProductCode
+			imageURL = summary.ImageURL
 			facts.OnSale = summary.OnSale
 		}
 		facts.Available = availableByID[line.VariantID]
-		views = append(views, s.Mapper.Line(line, facts, productID, productName, variantName))
+		views = append(views, s.Mapper.Line(line, facts, productID, productName, variantName, productCode, imageURL))
 	}
 
 	cart := model.Cart{Lines: lines}

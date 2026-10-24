@@ -49,6 +49,8 @@ type VariantFacts struct {
 	// SKU is the variant's SKU at read time (FR-019). It is stored on the order
 	// line but never shown to a customer.
 	SKU string
+	// ImageURL is the variant's picture or product fallback.
+	ImageURL string
 	// OnSale reports whether the variant is ACTIVE (FR-007).
 	OnSale bool
 	// Price is the variant's effective price (FR-017).

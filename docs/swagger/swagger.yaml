@@ -205,6 +205,8 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_auth_presentation_dto.MessageResponse:
     properties:
+      code:
+        type: string
       message:
         type: string
     type: object
@@ -297,10 +299,16 @@ definitions:
       buyable:
         description: Buyable reports whether the line can be bought as it stands.
         type: boolean
+      imageUrl:
+        description: ImageURL is the display image of the variant or fallback.
+        type: string
       lineTotal:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_cart_presentation_dto.MoneyResponse'
         description: LineTotal is quantity times the captured price.
+      productCode:
+        description: ProductCode is the link segment of the product.
+        type: string
       productId:
         description: ProductID is the product the variant belongs to.
         type: string
@@ -713,6 +721,11 @@ definitions:
     type: object
   github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.OrderLineResponse:
     properties:
+      imageUrl:
+        description: |-
+          ImageURL is the display image of the variant or fallback, or null when the
+          line was sold without one.
+        type: string
       lineTotal:
         allOf:
         - $ref: '#/definitions/github_com_mavil-chudomirovich_artist-shop-be_internal_modules_order_presentation_dto.MoneyResponse'
@@ -720,6 +733,9 @@ definitions:
       position:
         description: Position is the order the line is listed in.
         type: integer
+      productCode:
+        description: ProductCode is the product's link segment.
+        type: string
       productId:
         description: ProductID is the product recorded on the line.
         type: string

@@ -231,7 +231,7 @@ func (h *Handler) sessionActor(w http.ResponseWriter, r *http.Request) (appinter
 func parseUUID(raw, field string) (uuid.UUID, *httpx.AppError) {
 	parsed, err := uuid.Parse(raw)
 	if err != nil {
-		return uuid.Nil, fieldError(field, "must be a UUID")
+		return uuid.Nil, fieldError(field, httpx.IssueMustBeUUID)
 	}
 	return parsed, nil
 }
@@ -261,14 +261,14 @@ func pageParams(r *http.Request) (int, int, *httpx.AppError) {
 	query := r.URL.Query()
 	page, err := positiveQuery(query.Get("page"), 1)
 	if err != nil {
-		return 0, 0, fieldError(fieldPage, "must be an integer of at least 1")
+		return 0, 0, fieldError(fieldPage, httpx.IssueIntAtLeast1)
 	}
 	pageSize, err := positiveQuery(query.Get("pageSize"), defaultPageSize)
 	if err != nil {
-		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+		return 0, 0, fieldError(fieldPageSize, httpx.IssueIntBetween1And100)
 	}
 	if pageSize > maxPageSize {
-		return 0, 0, fieldError(fieldPageSize, "must be an integer between 1 and 100")
+		return 0, 0, fieldError(fieldPageSize, httpx.IssueIntBetween1And100)
 	}
 	return page, pageSize, nil
 }

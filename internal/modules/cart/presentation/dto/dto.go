@@ -25,6 +25,8 @@ type MoneyResponse struct {
 type CartLineResponse struct {
 	// ProductID is the product the variant belongs to.
 	ProductID uuid.UUID `json:"productId"`
+	// ProductCode is the link segment of the product.
+	ProductCode *string `json:"productCode,omitempty"`
 	// ProductName is the product's current name, or null when the variant is
 	// gone.
 	ProductName *string `json:"productName"`
@@ -33,6 +35,8 @@ type CartLineResponse struct {
 	// VariantName is the variant's current display name, or null when the variant
 	// is gone.
 	VariantName *string `json:"variantName"`
+	// ImageURL is the display image of the variant or fallback.
+	ImageURL *string `json:"imageUrl,omitempty"`
 	// Quantity is the whole number the customer chose.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the captured price.
